@@ -293,6 +293,27 @@ program
     }
   });
 
+program
+  .command("update")
+  .description("Update Assentor (pull latest + rebuild, or re-run installer)")
+  .action(async () => {
+    const { updateAssentor } = await import("../self/index.js");
+    const result = await updateAssentor();
+    console.log(result.output);
+    process.exitCode = result.code === 0 ? 0 : 1;
+  });
+
+program
+  .command("uninstall")
+  .description("Remove the assentor CLI symlink (project data kept)")
+  .option("--purge", "Also remove managed ~/.assentor install", false)
+  .action(async (options: { purge?: boolean }) => {
+    const { uninstallAssentor } = await import("../self/index.js");
+    const result = await uninstallAssentor({ purge: Boolean(options.purge) });
+    console.log(result.output);
+    process.exitCode = result.code === 0 ? 0 : 1;
+  });
+
 // Default to TUI when no args
 if (process.argv.length <= 2) {
   process.argv.push("ui");

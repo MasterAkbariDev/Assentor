@@ -71,13 +71,15 @@ assentor          # or: assentor ui
 |------|----------------|
 | **Defaults** | Set project defaults for executor, reviewer, routing, models, max rounds — **Save** writes `.assentor/config.yaml` |
 | Providers | List AI providers and key health |
-| API Keys | Add/list keys; **c** Check · **C** Check All |
+| **API Keys** | **Add** key (pick provider → label → paste secret); **c** Check · **C** Check All · **d** Delete |
 | Models | Capability-ranked model catalog (`AUTO` picks) |
 | Executors | Detect / install plan for Cursor and other CLIs |
 | Agents | Logical agent profiles |
 | Diagnostics | Environment health check |
 | Logs / Audit | Recent Assentor audit events |
 | Settings | Shortcut into Defaults + config file locations |
+| **Update** | Pull / rebuild Assentor and refresh the CLI symlink |
+| **Uninstall** | Remove the `assentor` command (project `.assentor/` data kept) |
 
 Navigate with ↑ ↓ Enter Esc · **q** quit. ← → cycles values on the Defaults screen.
 
@@ -178,10 +180,14 @@ assentor status <taskId> [--project <path>]
 assentor logs <taskId> [--project <path>]
 assentor doctor [--executor <name>] [--reviewer <name>] [--project <path>]
 assentor keys list|add|check|…
+assentor update
+assentor uninstall [--purge]
 assentor executors
 assentor agents
 assentor diagnostics
 ```
+
+Prefer saving keys in the TUI (**API Keys → Add**) so secrets are encrypted in `.assentor/secrets.json`. Env vars still work as a fallback seed.
 
 CLI flags override `.assentor/config.yaml` for a single run.
 

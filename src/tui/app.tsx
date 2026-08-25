@@ -10,18 +10,25 @@ import {
   saveAssentorConfig,
   type AssentorConfig,
 } from "../config/load.js";
+import { uninstallAssentor, updateAssentor } from "../self/index.js";
 
 type Screen =
   | "main"
   | "providers"
   | "keys"
+  | "add-key"
   | "executors"
   | "agents"
   | "models"
   | "diagnostics"
   | "logs"
   | "settings"
-  | "defaults";
+  | "defaults"
+  | "confirm-uninstall";
+
+type AddKeyStep = "provider" | "name" | "secret";
+
+const KEY_PROVIDERS = ["gemini", "openai", "openrouter", "qwen"] as const;
 
 const MAIN_ITEMS = [
   { id: "defaults", label: "Defaults (executor / reviewer / models)" },
@@ -34,6 +41,8 @@ const MAIN_ITEMS = [
   { id: "diagnostics", label: "Diagnostics" },
   { id: "logs", label: "Logs / Audit" },
   { id: "settings", label: "Settings" },
+  { id: "update", label: "Update Assentor" },
+  { id: "uninstall", label: "Uninstall Assentor" },
   { id: "exit", label: "Exit" },
 ] as const;
 
@@ -99,6 +108,12 @@ function cycle<T>(values: readonly T[], current: T, dir: 1 | -1): T {
   return values[next]!;
 }
 
+function maskPreview(secret: string): string {
+  if (!secret) return "(empty)";
+  if (secret.length <= 8) return "*".repeat(secret.length);
+  return `${secret.slice(0, 4)}${"*".repeat(Math.min(secret.length - 8, 24))}${secret.slice(-4)}`;
+}
+
 function App({
   services,
   initialConfig,
@@ -113,9 +128,18 @@ function App({
   const [busy, setBusy] = useState(false);
   const [diagLines, setDiagLines] = useState<string[]>([]);
   const [config, setConfig] = useState<AssentorConfig>(initialConfig);
+  const [keysVersion, setKeysVersion] = useState(0);
+
+  const [addStep, setAddStep] = useState<AddKeyStep>("provider");
+  const [addProviderIdx, setAddProviderIdx] = useState(0);
+  const [addName, setAddName] = useState("Personal");
+  const [addSecret, setAddSecret] = useState("");
 
   const providers = useMemo(() => [...services.providers.values()], [services]);
-  const keys = services.vault.list();
+  const keys = useMemo(() => {
+    void keysVersion;
+    return services.vault.list();
+  }, [services, keysVersion]);
   const agents = services.agents.list();
   const models = services.models.list();
 
@@ -143,24 +167,39 @@ function App({
     "Save defaults to .assentor/config.yaml",
   ];
 
+  const keyMenuItems = [
+    "+ Add API key…",
+    ...keys.map(
+      (k) =>
+        `${k.name} (${k.provider}) ${k.masked} · ${k.health}${k.enabled ? "" : " · disabled"}`,
+    ),
+  ];
+
+  const capturingText =
+    screen === "add-key" && (addStep === "name" || addStep === "secret");
+
   const itemCount = (() => {
     switch (screen) {
       case "main":
         return MAIN_ITEMS.length;
       case "providers":
-        return providers.length;
+        return Math.max(providers.length, 1);
       case "keys":
-        return Math.max(keys.length, 1);
+        return keyMenuItems.length;
       case "agents":
-        return agents.length;
+        return Math.max(agents.length, 1);
       case "models":
         return Math.max(models.length, 1);
       case "executors":
-        return services.executors.list().length;
+        return Math.max(services.executors.list().length, 1);
       case "defaults":
         return defaultRows.length;
       case "settings":
         return 2;
+      case "confirm-uninstall":
+        return 2;
+      case "add-key":
+        return addStep === "provider" ? KEY_PROVIDERS.length : 1;
       default:
         return 1;
     }
@@ -169,11 +208,29 @@ function App({
   useInput((input, key) => {
     if (busy) return;
 
+    if (capturingText) {
+      handleTextCapture(input, key);
+      return;
+    }
+
     if (input === "q" && screen === "main") {
       exit();
       return;
     }
+
     if (key.escape) {
+      if (screen === "add-key") {
+        setScreen("keys");
+        setSelected(0);
+        setMessage("Cancelled add key");
+        return;
+      }
+      if (screen === "confirm-uninstall") {
+        setScreen("main");
+        setSelected(MAIN_ITEMS.findIndex((i) => i.id === "uninstall"));
+        setMessage("Uninstall cancelled");
+        return;
+      }
       if (screen === "defaults") {
         setScreen("settings");
         setSelected(0);
@@ -184,6 +241,7 @@ function App({
       setMessage("");
       return;
     }
+
     if (key.upArrow) {
       setSelected((s) => (s - 1 + itemCount) % itemCount);
       return;
@@ -201,12 +259,145 @@ function App({
 
     if (key.return) {
       void onEnter();
+      return;
     }
 
-    if (screen === "keys" && input.toLowerCase() === "c") {
-      void checkSelectedKey(input === "C");
+    if (screen === "keys") {
+      if (input === "a") {
+        startAddKey();
+        return;
+      }
+      if (input.toLowerCase() === "c") {
+        void checkSelectedKey(input === "C");
+        return;
+      }
+      if (input === "d") {
+        void deleteSelectedKey();
+        return;
+      }
     }
   });
+
+  function handleTextCapture(
+    input: string,
+    key: {
+      escape?: boolean;
+      return?: boolean;
+      backspace?: boolean;
+      delete?: boolean;
+      ctrl?: boolean;
+      meta?: boolean;
+    },
+  ) {
+    if (key.escape) {
+      setScreen("keys");
+      setSelected(0);
+      setMessage("Cancelled add key");
+      return;
+    }
+    if (key.return) {
+      void advanceAddKey();
+      return;
+    }
+    if (key.backspace || key.delete) {
+      if (addStep === "name") {
+        setAddName((v) => v.slice(0, -1));
+      } else {
+        setAddSecret((v) => v.slice(0, -1));
+      }
+      return;
+    }
+    if (key.ctrl || key.meta) return;
+    if (!input) return;
+    // Ink may deliver paste as a multi-character string
+    if (addStep === "name") {
+      setAddName((v) => (v + input).slice(0, 64));
+    } else {
+      setAddSecret((v) => (v + input).replace(/\s+/g, "").slice(0, 512));
+    }
+  }
+
+  function startAddKey() {
+    setAddStep("provider");
+    setAddProviderIdx(0);
+    setAddName("Personal");
+    setAddSecret("");
+    setSelected(0);
+    setScreen("add-key");
+    setMessage("Pick provider · Enter next · Esc cancel");
+  }
+
+  async function advanceAddKey(providerIdx = addProviderIdx) {
+    if (addStep === "provider") {
+      setAddProviderIdx(providerIdx);
+      setAddStep("name");
+      setMessage("Type a label for this key, then Enter");
+      return;
+    }
+    if (addStep === "name") {
+      if (!addName.trim()) {
+        setMessage("Name cannot be empty");
+        return;
+      }
+      setAddStep("secret");
+      setMessage("Paste API key, then Enter to save (hidden)");
+      return;
+    }
+    // secret
+    const secret = addSecret.trim();
+    if (secret.length < 8) {
+      setMessage("Key looks too short — paste the full API key");
+      return;
+    }
+    setBusy(true);
+    try {
+      const provider = KEY_PROVIDERS[providerIdx]!;
+      const key = await services.vault.add({
+        provider,
+        name: addName.trim(),
+        secret,
+      });
+      await services.audit.append(
+        "key.changed",
+        `Added key ${key.name} for ${provider}`,
+        { provider, name: key.name, masked: key.masked },
+      );
+      setKeysVersion((v) => v + 1);
+      setScreen("keys");
+      setSelected(0);
+      setAddSecret("");
+      setMessage(`✓ Saved ${key.name} (${key.masked}) → .assentor/secrets.json`);
+    } catch (error) {
+      setMessage(
+        `Failed to save key: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteSelectedKey() {
+    // index 0 is "Add…"
+    const key = keys[selected - 1];
+    if (!key) {
+      setMessage("Select a key to delete (not Add)");
+      return;
+    }
+    setBusy(true);
+    try {
+      await services.vault.remove(key.id);
+      await services.audit.append(
+        "key.changed",
+        `Removed key ${key.name}`,
+        { provider: key.provider, name: key.name },
+      );
+      setKeysVersion((v) => v + 1);
+      setSelected(0);
+      setMessage(`✓ Removed ${key.name}`);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function checkSelectedKey(all: boolean) {
     setBusy(true);
@@ -216,18 +407,21 @@ function App({
         const results = await services.vault.checkAll((id) =>
           services.providers.get(id),
         );
+        setKeysVersion((v) => v + 1);
         setMessage(
-          results
-            .map(
-              (r) =>
-                `${r.key.name}: ${r.status.valid ? "✓" : "✗"} ${r.status.message}`,
-            )
-            .join(" | "),
+          results.length
+            ? results
+                .map(
+                  (r) =>
+                    `${r.key.name}: ${r.status.valid ? "✓" : "✗"} ${r.status.message}`,
+                )
+                .join(" | ")
+            : "No keys to check",
         );
       } else {
-        const key = keys[selected];
+        const key = keys[selected - 1];
         if (!key) {
-          setMessage("No keys configured");
+          setMessage("Select a stored key (or press C for Check All)");
           return;
         }
         const provider = services.providers.get(key.provider);
@@ -236,6 +430,7 @@ function App({
           return;
         }
         const { status } = await services.vault.checkKey(key.id, provider);
+        setKeysVersion((v) => v + 1);
         setMessage(
           status.valid
             ? `✓ ${key.name}: valid · auth · reachable · models=${status.modelsAvailable}`
@@ -267,6 +462,28 @@ function App({
         setMessage("← → change value · Enter on Save · Esc back");
         return;
       }
+      if (item.id === "update") {
+        setBusy(true);
+        setMessage("Updating Assentor…");
+        try {
+          const result = await updateAssentor();
+          const tail = result.output.split("\n").slice(-6).join(" · ");
+          setMessage(
+            result.code === 0
+              ? `✓ Updated. ${tail || "Restart assentor to use the new build."}`
+              : `✗ Update failed (exit ${result.code}). ${tail}`,
+          );
+        } finally {
+          setBusy(false);
+        }
+        return;
+      }
+      if (item.id === "uninstall") {
+        setScreen("confirm-uninstall");
+        setSelected(0);
+        setMessage("Confirm uninstall");
+        return;
+      }
       if (item.id === "diagnostics") {
         setScreen("diagnostics");
         setBusy(true);
@@ -288,6 +505,30 @@ function App({
       setScreen(item.id as Screen);
       setSelected(0);
       setMessage("");
+      return;
+    }
+
+    if (screen === "confirm-uninstall") {
+      if (selected === 1) {
+        setScreen("main");
+        setSelected(MAIN_ITEMS.findIndex((i) => i.id === "uninstall"));
+        setMessage("Uninstall cancelled");
+        return;
+      }
+      setBusy(true);
+      setMessage("Uninstalling…");
+      try {
+        const result = await uninstallAssentor({ purge: false });
+        const tail = result.output.split("\n").slice(-4).join(" · ");
+        if (result.code === 0) {
+          setMessage(`✓ ${tail || "Assentor CLI removed."}`);
+          setTimeout(() => exit(), 800);
+        } else {
+          setMessage(`✗ Uninstall failed. ${tail}`);
+        }
+      } finally {
+        setBusy(false);
+      }
       return;
     }
 
@@ -327,6 +568,26 @@ function App({
       return;
     }
 
+    if (screen === "keys") {
+      if (selected === 0) {
+        startAddKey();
+        return;
+      }
+      const key = keys[selected - 1];
+      if (key) {
+        setMessage(
+          `${key.name}: [c] check · [d] delete · Enter again for check`,
+        );
+        void checkSelectedKey(false);
+      }
+      return;
+    }
+
+    if (screen === "add-key") {
+      void advanceAddKey(addStep === "provider" ? selected : addProviderIdx);
+      return;
+    }
+
     if (screen === "executors") {
       const adapter = services.executors.list()[selected];
       if (!adapter) return;
@@ -348,29 +609,65 @@ function App({
       )}
       {screen === "providers" && (
         <MenuList
-          items={providers.map(
-            (p) =>
-              `${p.name} · keys=${services.vault.list(p.id).length} · healthy=${services.vault.list(p.id).filter((k) => k.health === "healthy").length}`,
-          )}
+          items={
+            providers.length
+              ? providers.map(
+                  (p) =>
+                    `${p.name} · keys=${services.vault.list(p.id).length} · healthy=${services.vault.list(p.id).filter((k) => k.health === "healthy").length}`,
+                )
+              : ["(no providers)"]
+          }
           selected={selected}
         />
       )}
       {screen === "keys" && (
         <Box flexDirection="column">
           <Text dimColor>
-            [c] Check · [C] Check All · Enter select · Esc back
+            [a] Add · [c] Check · [C] Check All · [d] Delete · Esc back
           </Text>
-          <MenuList
-            items={
-              keys.length
-                ? keys.map(
-                    (k) =>
-                      `${k.name} (${k.provider}) ${k.masked} · ${k.health}${k.enabled ? "" : " · disabled"}`,
-                  )
-                : ["(no keys — set GEMINI_API_KEY or add via vault)"]
-            }
-            selected={selected}
-          />
+          <MenuList items={keyMenuItems} selected={selected} />
+          <Text dimColor>
+            Keys are encrypted in .assentor/secrets.json for this project.
+          </Text>
+        </Box>
+      )}
+      {screen === "add-key" && (
+        <Box flexDirection="column">
+          {addStep === "provider" && (
+            <>
+              <Text>Provider (↑ ↓, then Enter):</Text>
+              <MenuList items={[...KEY_PROVIDERS]} selected={selected} />
+            </>
+          )}
+          {addStep === "name" && (
+            <>
+              <Text>
+                Label: <Text color="green">{addName || " "}</Text>
+                <Text color="gray">█</Text>
+              </Text>
+              <Text dimColor>Type a name · Enter next · Esc cancel</Text>
+            </>
+          )}
+          {addStep === "secret" && (
+            <>
+              <Text>
+                Provider:{" "}
+                <Text color="cyan">{KEY_PROVIDERS[addProviderIdx]}</Text>
+                {" · "}
+                Name: <Text color="cyan">{addName}</Text>
+              </Text>
+              <Text>
+                API key: <Text color="green">{maskPreview(addSecret)}</Text>
+                <Text color="gray">█</Text>
+              </Text>
+              <Text dimColor>
+                Paste key (Cmd/Ctrl+V) · Enter save · Esc cancel
+              </Text>
+              <Text dimColor>
+                Length: {addSecret.length} · stored encrypted, never printed
+              </Text>
+            </>
+          )}
         </Box>
       )}
       {screen === "models" && (
@@ -388,10 +685,14 @@ function App({
       )}
       {screen === "agents" && (
         <MenuList
-          items={agents.map(
-            (a) =>
-              `${a.name} · ${a.kind} · ${a.provider}/${a.model} · ${a.enabled ? "on" : "off"}`,
-          )}
+          items={
+            agents.length
+              ? agents.map(
+                  (a) =>
+                    `${a.name} · ${a.kind} · ${a.provider}/${a.model} · ${a.enabled ? "on" : "off"}`,
+                )
+              : ["(no agents)"]
+          }
           selected={selected}
         />
       )}
@@ -410,7 +711,9 @@ function App({
             ]}
             selected={selected}
           />
-          <Text dimColor>These defaults apply to `assentor run` in this project.</Text>
+          <Text dimColor>
+            These defaults apply to `assentor run` in this project.
+          </Text>
         </Box>
       )}
       {screen === "defaults" && (
@@ -420,13 +723,27 @@ function App({
           </Text>
           <MenuList items={defaultRows} selected={selected} />
           <Box marginTop={1}>
-            <Text>
-              After save, run without flags uses these defaults:
-            </Text>
+            <Text>After save, run without flags uses these defaults:</Text>
           </Box>
           <Text color="green">
             {`  assentor run --project . "…"   →  ${config.executor.provider} + ${config.reviewers[0]?.provider}`}
           </Text>
+        </Box>
+      )}
+      {screen === "confirm-uninstall" && (
+        <Box flexDirection="column">
+          <Text>
+            Remove the `assentor` command from ~/.local/bin?
+          </Text>
+          <Text dimColor>
+            Project .assentor/ folders (keys, tasks) are kept.
+          </Text>
+          <Box marginTop={1}>
+            <MenuList
+              items={["Yes, uninstall CLI", "Cancel"]}
+              selected={selected}
+            />
+          </Box>
         </Box>
       )}
       {(screen === "diagnostics" || screen === "logs") && (
@@ -444,7 +761,11 @@ function App({
       ) : null}
       {busy ? <Text color="cyan">Working…</Text> : null}
       <Box marginTop={1}>
-        <Text dimColor>↑↓ navigate · Enter · Esc back · q quit</Text>
+        <Text dimColor>
+          {capturingText
+            ? "Type / paste · Enter · Esc cancel"
+            : "↑↓ navigate · Enter · Esc back · q quit"}
+        </Text>
       </Box>
     </Box>
   );
