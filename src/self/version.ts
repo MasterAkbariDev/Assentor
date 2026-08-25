@@ -5,6 +5,7 @@ import { resolvePackageRoot } from "./lifecycle.js";
 
 export const ASSENTOR_REPO_SLUG = "MasterAkbariDev/Assentor";
 export const ASSENTOR_PACKAGE_URL = `https://raw.githubusercontent.com/${ASSENTOR_REPO_SLUG}/main/package.json`;
+export const ASSENTOR_API_PACKAGE_URL = `https://api.github.com/repos/${ASSENTOR_REPO_SLUG}/contents/package.json?ref=main`;
 export const ASSENTOR_CHANGELOG_URL = `https://github.com/${ASSENTOR_REPO_SLUG}/blob/main/CHANGELOG.md`;
 
 export type SemVerTuple = [number, number, number];
@@ -117,32 +118,66 @@ async function writeCache(data: UpdateCacheFile): Promise<void> {
   }
 }
 
-async function fetchLatestVersion(timeoutMs: number): Promise<string> {
+function versionFromPackageJsonText(text: string): string {
+  const pkg = JSON.parse(text) as { version?: string };
+  if (!pkg.version) {
+    throw new Error("Remote package.json missing version");
+  }
+  return pkg.version;
+}
+
+async function fetchText(
+  url: string,
+  timeoutMs: number,
+  headers: Record<string, string>,
+): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    // Bust CDN / intermediary caches after pushes to main.
-    const url = `${ASSENTOR_PACKAGE_URL}?t=${Date.now()}`;
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        Accept: "application/json",
         "User-Agent": "assentor-update-check",
         "Cache-Control": "no-cache",
         Pragma: "no-cache",
+        ...headers,
       },
     });
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      throw new Error(`HTTP ${response.status} for ${url}`);
     }
-    const pkg = (await response.json()) as { version?: string };
-    if (!pkg.version) {
-      throw new Error("Remote package.json missing version");
-    }
-    return pkg.version;
+    return await response.text();
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Prefer GitHub Contents API (fresher than raw CDN), then raw.githubusercontent.com.
+ * Avoid query-string cache busters on raw URLs — they can hit stale CDN edges.
+ */
+export async function fetchLatestVersion(timeoutMs: number): Promise<string> {
+  const errors: string[] = [];
+
+  try {
+    const text = await fetchText(ASSENTOR_API_PACKAGE_URL, timeoutMs, {
+      Accept: "application/vnd.github.raw+json",
+    });
+    return versionFromPackageJsonText(text);
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error));
+  }
+
+  try {
+    const text = await fetchText(ASSENTOR_PACKAGE_URL, timeoutMs, {
+      Accept: "application/json",
+    });
+    return versionFromPackageJsonText(text);
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error));
+  }
+
+  throw new Error(errors.join(" | "));
 }
 
 /**
@@ -156,7 +191,7 @@ export async function checkForUpdate(options: {
   fetchFn?: typeof fetchLatestVersion;
 } = {}): Promise<UpdateCheckResult> {
   const local = getLocalVersionSync();
-  const timeoutMs = options.timeoutMs ?? 4_000;
+  const timeoutMs = options.timeoutMs ?? 5_000;
   const cacheTtlMs = options.cacheTtlMs ?? 6 * 60 * 60 * 1000;
   const changelogUrl = ASSENTOR_CHANGELOG_URL;
 
@@ -187,9 +222,20 @@ export async function checkForUpdate(options: {
     return finalizeResult(local, latest, checkedAt, "network");
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    // Fall back to cache even if "ahead", better than nothing when offline.
     const cached = await readCache();
     if (cached?.latest) {
+      // Never claim "local ahead" from a failed refresh — that snapshot is usually stale.
+      if (isRemoteNewer(local, cached.latest)) {
+        return {
+          local,
+          latest: null,
+          updateAvailable: false,
+          checkedAt: new Date().toISOString(),
+          source: "error",
+          message: `Could not verify updates (v${local} installed). ${detail}`,
+          changelogUrl,
+        };
+      }
       const fallback = finalizeResult(
         local,
         cached.latest,
@@ -198,7 +244,7 @@ export async function checkForUpdate(options: {
       );
       return {
         ...fallback,
-        message: `${fallback.message} (offline; using cache — ${detail})`,
+        message: `${fallback.message} (using cache — ${detail})`,
       };
     }
     return {

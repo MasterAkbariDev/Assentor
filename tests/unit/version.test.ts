@@ -101,8 +101,8 @@ describe("checkForUpdate", () => {
       cachePath,
       `${JSON.stringify({
         checkedAt: new Date().toISOString(),
-        local: "0.2.0",
-        latest: "0.1.0",
+        local: "0.2.1",
+        latest: "0.2.0",
       })}\n`,
     );
 
@@ -111,12 +111,36 @@ describe("checkForUpdate", () => {
       force: false,
       fetchFn: async () => {
         fetches += 1;
-        return "0.2.0";
+        return "0.2.1";
       },
     });
     expect(fetches).toBe(1);
-    expect(result.latest).toBe("0.2.0");
+    expect(result.latest).toBe("0.2.1");
     expect(result.updateAvailable).toBe(false);
     expect(result.message).toMatch(/Up to date/i);
+  });
+
+  it("does not claim local-ahead when refresh fails against a stale cache", async () => {
+    const cachePath = updateCheckCachePath();
+    await mkdir(path.dirname(cachePath), { recursive: true });
+    await writeFile(
+      cachePath,
+      `${JSON.stringify({
+        checkedAt: new Date().toISOString(),
+        local: "0.2.1",
+        latest: "0.2.0",
+      })}\n`,
+    );
+
+    const result = await checkForUpdate({
+      force: true,
+      fetchFn: async () => {
+        throw new Error("network down");
+      },
+    });
+    expect(result.updateAvailable).toBe(false);
+    expect(result.source).toBe("error");
+    expect(result.message).not.toMatch(/ahead/i);
+    expect(result.message).toMatch(/Could not verify/i);
   });
 });

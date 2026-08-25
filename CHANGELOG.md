@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Broader multi-reviewer debate wiring into the default `run` path
 
+## [0.2.2] — 2026-08-25
+
+### Fixed
+
+- Update checker prefers GitHub Contents API over raw CDN to avoid stale remote versions
+- Failed refresh no longer falsely reports “local ahead” from an old cache snapshot
+
 ## [0.2.1] — 2026-08-25
 
 ### Changed
@@ -54,7 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logical agents, diagnostics, and resumable task state under `.assentor/tasks/`
 - One-line install scripts for macOS/Linux and Windows
 
-[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/MasterAkbariDev/Assentor/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/MasterAkbariDev/Assentor/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/MasterAkbariDev/Assentor/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/MasterAkbariDev/Assentor/releases/tag/v0.1.0
