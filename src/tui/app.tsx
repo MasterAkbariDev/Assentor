@@ -11,6 +11,9 @@ import {
   type AssentorConfig,
 } from "../config/load.js";
 import { uninstallAssentor, updateAssentor } from "../self/index.js";
+import { KeyVault, userAssentorProjectRoot } from "../keys/index.js";
+import path from "node:path";
+import os from "node:os";
 
 type Screen =
   | "main"
@@ -357,16 +360,33 @@ function App({
         name: addName.trim(),
         secret,
       });
+      // Also mirror into the user vault (~/.assentor) so keys work across projects.
+      const homeRoot = path.resolve(userAssentorProjectRoot());
+      const projectRoot = path.resolve(services.projectPath);
+      let mirrored = false;
+      if (homeRoot !== projectRoot) {
+        const userVault = new KeyVault(homeRoot);
+        await userVault.load();
+        await userVault.add({
+          provider,
+          name: addName.trim(),
+          secret,
+        });
+        mirrored = true;
+      }
       await services.audit.append(
         "key.changed",
         `Added key ${key.name} for ${provider}`,
-        { provider, name: key.name, masked: key.masked },
+        { provider, name: key.name, masked: key.masked, mirrored },
       );
       setKeysVersion((v) => v + 1);
       setScreen("keys");
       setSelected(0);
       setAddSecret("");
-      setMessage(`✓ Saved ${key.name} (${key.masked}) → .assentor/secrets.json`);
+      const vaultHint = mirrored
+        ? `project + ~/.assentor`
+        : path.join(projectRoot, ".assentor", "secrets.json");
+      setMessage(`✓ Saved ${key.name} (${key.masked}) → ${vaultHint}`);
     } catch (error) {
       setMessage(
         `Failed to save key: ${error instanceof Error ? error.message : String(error)}`,
@@ -627,7 +647,10 @@ function App({
           </Text>
           <MenuList items={keyMenuItems} selected={selected} />
           <Text dimColor>
-            Keys are encrypted in .assentor/secrets.json for this project.
+            Keys: {path.join(path.resolve(services.projectPath), ".assentor", "secrets.json")}
+            {path.resolve(services.projectPath) !== path.resolve(os.homedir())
+              ? ` · also mirrored to ~/.assentor on Add`
+              : ""}
           </Text>
         </Box>
       )}

@@ -20,6 +20,7 @@ import type { Reviewer } from "../providers/reviewers/types.js";
 import { loadAssentorConfig, type AssentorConfig } from "../config/load.js";
 import { printPreflight, runPreflight } from "./preflight.js";
 import { RunReporter } from "./ui/reporter.js";
+import { resolveProviderApiKey } from "../keys/resolve.js";
 
 export interface RunAssentorInput {
   projectPath: string;
@@ -64,6 +65,7 @@ export async function createReviewer(
   options: {
     onStatus?: (message: string) => void;
     model?: string;
+    apiKey?: string;
   } = {},
 ): Promise<Reviewer> {
   const model =
@@ -72,11 +74,15 @@ export async function createReviewer(
     case "mock":
       return new MockReviewer({ steps: [{ type: "pass" }] });
     case "openai":
-      return new OpenAICompatibleReviewer(model ? { model } : {});
+      return new OpenAICompatibleReviewer({
+        ...(model ? { model } : {}),
+        ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+      });
     case "gemini":
       return new GeminiReviewer({
         onStatus: options.onStatus,
         ...(model ? { model } : {}),
+        ...(options.apiKey ? { apiKey: options.apiKey } : {}),
       });
     default:
       throw new Error(
@@ -139,8 +145,7 @@ export async function runAssentorTask(input: RunAssentorInput) {
       throw new Error(
         "Preflight failed. Fix the issues above, then re-run.\n" +
           "Cursor: `agent login` or set CURSOR_API_KEY\n" +
-          "Gemini: export GEMINI_API_KEY=...\n" +
-          "OpenAI: export OPENAI_API_KEY=...",
+          "Gemini/OpenAI: assentor → API Keys → Add (saves to vault), or export GEMINI_API_KEY / OPENAI_API_KEY",
       );
     }
   }
@@ -154,10 +159,20 @@ export async function runAssentorTask(input: RunAssentorInput) {
   const executor = await createExecutor(executorProvider, projectPath, {
     onStatus: (status) => reporter.onExecutorStatus(status),
   });
+  const resolvedKey =
+    reviewerProvider === "mock"
+      ? undefined
+      : await resolveProviderApiKey(reviewerProvider, projectPath);
   const reviewer = await createReviewer(reviewerProvider, {
     onStatus: (message) => reporter.onReviewerStatus(message),
     model: resolveReviewerModel(config, reviewerProvider),
+    apiKey: resolvedKey?.secret,
   });
+  if (resolvedKey) {
+    reporter.note(
+      `reviewer key: ${resolvedKey.source}${resolvedKey.masked ? ` (${resolvedKey.masked})` : ""}`,
+    );
+  }
   const contract = buildContract(input.prompt, input.acceptanceCriteria);
   const budgets = createBudgets({
     maxRounds: config.limits.maxRounds,
@@ -258,9 +273,14 @@ export async function resumeAssentorTask(input: {
   const executor = await createExecutor(executorProvider, projectPath, {
     onStatus: (status) => reporter.onExecutorStatus(status),
   });
+  const resumeKey =
+    reviewerProvider === "mock"
+      ? undefined
+      : await resolveProviderApiKey(reviewerProvider, projectPath);
   const reviewer = await createReviewer(reviewerProvider, {
     onStatus: (message) => reporter.onReviewerStatus(message),
     model: resolveReviewerModel(config, reviewerProvider),
+    apiKey: resumeKey?.secret,
   });
 
   try {

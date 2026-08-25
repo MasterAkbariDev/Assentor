@@ -4,6 +4,7 @@ import {
   isCursorAppBinary,
   resolveCursorBinary,
 } from "../providers/executors/cursor/index.js";
+import { resolveProviderApiKey } from "../keys/resolve.js";
 
 export interface PreflightCheck {
   name: string;
@@ -45,26 +46,9 @@ export async function runPreflight(input: {
   }
 
   if (input.reviewer === "gemini") {
-    const key =
-      process.env.ASSENTOR_GEMINI_API_KEY ||
-      process.env.GEMINI_API_KEY ||
-      process.env.GOOGLE_API_KEY;
-    checks.push({
-      name: "reviewer:gemini",
-      ok: Boolean(key),
-      detail: key
-        ? "API key present"
-        : "missing GEMINI_API_KEY / ASSENTOR_GEMINI_API_KEY / GOOGLE_API_KEY",
-    });
+    checks.push(await checkReviewerKey("gemini", projectPath));
   } else if (input.reviewer === "openai") {
-    const key = process.env.ASSENTOR_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
-    checks.push({
-      name: "reviewer:openai",
-      ok: Boolean(key),
-      detail: key
-        ? "API key present"
-        : "missing OPENAI_API_KEY / ASSENTOR_OPENAI_API_KEY",
-    });
+    checks.push(await checkReviewerKey("openai", projectPath));
   } else if (input.reviewer === "mock") {
     checks.push({
       name: "reviewer:mock",
@@ -79,9 +63,39 @@ export async function runPreflight(input: {
   };
 }
 
+async function checkReviewerKey(
+  provider: "gemini" | "openai",
+  projectPath: string,
+): Promise<PreflightCheck> {
+  const resolved = await resolveProviderApiKey(provider, projectPath);
+  if (resolved) {
+    const where =
+      resolved.source === "env"
+        ? "environment"
+        : resolved.source === "project-vault"
+          ? "project vault (.assentor/secrets.json)"
+          : "user vault (~/.assentor/secrets.json)";
+    return {
+      name: `reviewer:${provider}`,
+      ok: true,
+      detail: `API key present (${where}${resolved.masked ? `: ${resolved.masked}` : ""})`,
+    };
+  }
+
+  const hint =
+    provider === "gemini"
+      ? "Add via: assentor → API Keys → Add, or set GEMINI_API_KEY"
+      : "Add via: assentor → API Keys → Add, or set OPENAI_API_KEY";
+
+  return {
+    name: `reviewer:${provider}`,
+    ok: false,
+    detail: `no API key in env, project vault, or ~/.assentor — ${hint}`,
+  };
+}
+
 async function checkCursor(projectPath: string): Promise<PreflightCheck> {
   const binary = resolveCursorBinary();
-  // Match the real executor flags: non-interactive + trust the target project.
   const baseArgs = [
     "-p",
     "--print",
