@@ -72,9 +72,9 @@ async function checkReviewerKey(
     const where =
       resolved.source === "env"
         ? "environment"
-        : resolved.source === "project-vault"
-          ? "project vault (.assentor/secrets.json)"
-          : "user vault (~/.assentor/secrets.json)";
+        : resolved.source === "user-vault"
+          ? "user vault (~/.assentor/secrets.json)"
+          : "project vault (.assentor/secrets.json)";
     return {
       name: `reviewer:${provider}`,
       ok: true,
@@ -84,13 +84,13 @@ async function checkReviewerKey(
 
   const hint =
     provider === "gemini"
-      ? "Add via: assentor → API Keys → Add, or set GEMINI_API_KEY"
-      : "Add via: assentor → API Keys → Add, or set OPENAI_API_KEY";
+      ? "Add once via: assentor → API Keys → Add (saved globally), or set GEMINI_API_KEY"
+      : "Add once via: assentor → API Keys → Add (saved globally), or set OPENAI_API_KEY";
 
   return {
     name: `reviewer:${provider}`,
     ok: false,
-    detail: `no API key in env, project vault, or ~/.assentor — ${hint}`,
+    detail: `no API key in env or ~/.assentor — ${hint}`,
   };
 }
 

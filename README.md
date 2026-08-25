@@ -69,9 +69,9 @@ assentor          # or: assentor ui
 
 | Menu | What it does |
 |------|----------------|
-| **Defaults** | Set project defaults for executor, reviewer, routing, models, max rounds — **Save** writes `.assentor/config.yaml` |
+| **Defaults** | Global executor / reviewer / models — **Save** writes `~/.assentor/config.yaml` |
 | Providers | List AI providers and key health |
-| **API Keys** | **Add** key (pick provider → label → paste secret); **c** Check · **C** Check All · **d** Delete |
+| **API Keys** | **Add** once to `~/.assentor/secrets.json` (works in every project) |
 | Models | Capability-ranked model catalog (`AUTO` picks) |
 | Executors | Detect / install plan for Cursor and other CLIs |
 | Agents | Logical agent profiles |
@@ -191,27 +191,34 @@ assentor agents
 assentor diagnostics
 ```
 
-Prefer saving keys in the TUI (**API Keys → Add**) so secrets are encrypted in `.assentor/secrets.json`. Env vars still work as a fallback seed.
+Prefer saving keys in the TUI (**API Keys → Add**) — they go to **`~/.assentor/secrets.json`** and work in every project. Env vars still work as a fallback.
 
 The TUI checks GitHub on startup (cached ~6h under `~/.assentor/update-check.json`). Set `ASSENTOR_SKIP_UPDATE_CHECK=1` to disable.
 
-CLI flags override `.assentor/config.yaml` for a single run.
+CLI flags override config for a single run.
 
 ---
 
 ## Configuration
 
-`assentor init` (or TUI **Defaults → Save**) writes `.assentor/config.yaml`:
+**Global (recommended)** — TUI **Defaults → Save** and **API Keys** write here:
+
+- `~/.assentor/config.yaml` — executor, reviewer, models, routing
+- `~/.assentor/secrets.json` — encrypted API keys
+
+These apply everywhere. You do **not** need to reconfigure in each folder.
+
+**Per-project (optional)** — `assentor init` writes a project override at `.assentor/config.yaml`. Task state still lives under the project’s `.assentor/tasks/` when you run.
+
+Merge order: built-in defaults → `~/.assentor/config.yaml` → project `.assentor/config.yaml` → CLI flags.
 
 ```yaml
-project:
-  path: .
-
+# ~/.assentor/config.yaml (example)
 executor:
-  provider: mock   # mock | cursor
+  provider: cursor   # mock | cursor
 
 reviewers:
-  - provider: mock # mock | gemini | openai
+  - provider: gemini # mock | gemini | openai
     role: general
 
 routing:
@@ -228,17 +235,9 @@ limits:
   maxMessages: 50
   maxRuntimeMinutes: 120
   maxToolCalls: 200
-
-git:
-  checkpoints: true
-  autoCommit: false
-
-security:
-  redactSecrets: true
-  allowExternalPaths: false
 ```
 
-**Tip:** If `assentor run` finishes instantly with `mock` / `mock`, open the TUI → **Defaults**, switch to `cursor` + `gemini`, and **Save**.
+**Tip:** Open `assentor` once → **Defaults** (`cursor` + `gemini`) → **Save**, then **API Keys → Add**. After that, `assentor run --project ~/any-app "…"` uses those globals.
 
 ---
 

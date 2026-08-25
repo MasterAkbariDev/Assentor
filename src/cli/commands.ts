@@ -145,7 +145,7 @@ export async function runAssentorTask(input: RunAssentorInput) {
       throw new Error(
         "Preflight failed. Fix the issues above, then re-run.\n" +
           "Cursor: `agent login` or set CURSOR_API_KEY\n" +
-          "Gemini/OpenAI: assentor → API Keys → Add (saves to vault), or export GEMINI_API_KEY / OPENAI_API_KEY",
+          "Gemini/OpenAI: assentor → API Keys (global ~/.assentor), or export GEMINI_API_KEY / OPENAI_API_KEY",
       );
     }
   }
@@ -315,7 +315,9 @@ export async function initAssentorProject(projectPath: string): Promise<string> 
   } catch {
     // create defaults
   }
-  return saveAssentorConfig(projectPath, parseAssentorConfig({}));
+  return saveAssentorConfig(projectPath, parseAssentorConfig({}), {
+    scope: "project",
+  });
 }
 
 export async function doctorAssentor(): Promise<string[]> {

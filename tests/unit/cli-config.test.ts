@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, afterEach } from "vitest";
 import { parseAssentorConfig } from "../../src/index.js";
 import { doctorAssentor, initAssentorProject } from "../../src/cli/commands.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { afterEach } from "vitest";
+import os from "node:os";
 
 const TEMP_ROOT = path.join(process.cwd(), ".tmp", "cli-tests");
 const tempDirs: string[] = [];
@@ -24,12 +24,13 @@ describe("config + cli helpers", () => {
     expect(config.models.default).toBe("AUTO");
   });
 
-  it("initializes .assentor/config.yaml", async () => {
+  it("initializes optional project .assentor/config.yaml override", async () => {
     await fs.mkdir(TEMP_ROOT, { recursive: true });
     const dir = await fs.mkdtemp(path.join(TEMP_ROOT, "proj-"));
     tempDirs.push(dir);
 
     const configPath = await initAssentorProject(dir);
+    expect(configPath).toContain(path.join(dir, ".assentor"));
     const raw = await fs.readFile(configPath, "utf8");
     expect(raw).toContain("executor:");
     expect(raw).toContain("provider: mock");
@@ -37,7 +38,7 @@ describe("config + cli helpers", () => {
     expect(raw).toContain("models:");
   });
 
-  it("saves and reloads run defaults", async () => {
+  it("saves and reloads project overrides", async () => {
     const { loadAssentorConfig, saveAssentorConfig, parseAssentorConfig } =
       await import("../../src/config/load.js");
     await fs.mkdir(TEMP_ROOT, { recursive: true });
@@ -49,11 +50,47 @@ describe("config + cli helpers", () => {
       reviewers: [{ provider: "gemini", role: "general" }],
       models: { default: "AUTO", gemini: "gemini-2.5-flash", openai: "AUTO" },
     });
-    await saveAssentorConfig(dir, config);
+    await saveAssentorConfig(dir, config, { scope: "project" });
     const loaded = await loadAssentorConfig(dir);
     expect(loaded.executor.provider).toBe("cursor");
     expect(loaded.reviewers[0]?.provider).toBe("gemini");
     expect(loaded.models.gemini).toBe("gemini-2.5-flash");
+  });
+
+  it("merges user defaults under project overrides", async () => {
+    const {
+      loadAssentorConfig,
+      saveAssentorConfig,
+      parseAssentorConfig,
+      mergeConfigLayers,
+    } = await import("../../src/config/load.js");
+
+    const merged = mergeConfigLayers(
+      { executor: { provider: "cursor" }, models: { gemini: "AUTO" } },
+      { models: { gemini: "gemini-2.5-flash" } },
+    );
+    expect(merged).toEqual({
+      executor: { provider: "cursor" },
+      models: { gemini: "gemini-2.5-flash" },
+    });
+
+    // Project-only override without touching real ~/.assentor
+    await fs.mkdir(TEMP_ROOT, { recursive: true });
+    const dir = await fs.mkdtemp(path.join(TEMP_ROOT, "proj-"));
+    tempDirs.push(dir);
+    await saveAssentorConfig(
+      dir,
+      parseAssentorConfig({
+        executor: { provider: "mock" },
+        reviewers: [{ provider: "openai", role: "general" }],
+      }),
+      { scope: "project" },
+    );
+    const loaded = await loadAssentorConfig(dir);
+    expect(loaded.reviewers[0]?.provider).toBe("openai");
+    // ensure we did not require a project path === home
+    expect(path.resolve(loaded.project.path)).toBe(path.resolve(dir));
+    expect(path.resolve(dir)).not.toBe(path.resolve(os.homedir()));
   });
 
   it("doctor reports runtime info", async () => {

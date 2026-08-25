@@ -1,19 +1,11 @@
-import os from "node:os";
 import path from "node:path";
 import { KeyVault } from "./vault.js";
+import {
+  userAssentorProjectRoot,
+  userSecretsPath,
+} from "../config/paths.js";
 
-/**
- * User-level Assentor data root (`~/.assentor`), used as a global key vault
- * when keys were added outside a specific project (e.g. `assentor` from $HOME).
- */
-export function userAssentorProjectRoot(): string {
-  // Secrets live at <root>/.assentor/secrets.json — so root is the home directory.
-  return os.homedir();
-}
-
-export function userSecretsPath(): string {
-  return path.join(userAssentorProjectRoot(), ".assentor", "secrets.json");
-}
+export { userAssentorProjectRoot, userSecretsPath };
 
 const ENV_KEYS: Record<string, string[]> = {
   gemini: ["ASSENTOR_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"],
@@ -24,14 +16,15 @@ const ENV_KEYS: Record<string, string[]> = {
 
 export interface ResolvedApiKey {
   secret: string;
-  /** env | project-vault | user-vault */
-  source: "env" | "project-vault" | "user-vault";
+  /** env | user-vault | project-vault */
+  source: "env" | "user-vault" | "project-vault";
   name: string;
   masked?: string;
 }
 
 /**
- * Resolve a provider API key: process env → project vault → user (~) vault.
+ * Resolve a provider API key: process env → user vault (~/.assentor) → project vault.
+ * User vault wins over per-project leftovers so one key works everywhere.
  */
 export async function resolveProviderApiKey(
   provider: string,
@@ -50,20 +43,20 @@ export async function resolveProviderApiKey(
   const projectRoot = path.resolve(projectPath);
   const homeRoot = path.resolve(userAssentorProjectRoot());
 
-  const fromProject = await revealFromVault(provider, projectRoot);
-  if (fromProject) {
+  const fromUser = await revealFromVault(provider, homeRoot);
+  if (fromUser) {
     return {
-      ...fromProject,
-      source: "project-vault",
+      ...fromUser,
+      source: "user-vault",
     };
   }
 
   if (homeRoot !== projectRoot) {
-    const fromUser = await revealFromVault(provider, homeRoot);
-    if (fromUser) {
+    const fromProject = await revealFromVault(provider, projectRoot);
+    if (fromProject) {
       return {
-        ...fromUser,
-        source: "user-vault",
+        ...fromProject,
+        source: "project-vault",
       };
     }
   }

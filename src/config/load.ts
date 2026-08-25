@@ -2,11 +2,69 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { parseAssentorConfig, type AssentorConfig } from "./schema.js";
+import {
+  assentorConfigPath,
+  projectConfigPath,
+  userConfigPath,
+  userAssentorProjectRoot,
+} from "./paths.js";
 
-export function assentorConfigPath(projectPath: string): string {
-  return path.join(path.resolve(projectPath), ".assentor", "config.yaml");
+export {
+  assentorConfigPath,
+  projectConfigPath,
+  userConfigPath,
+  userAssentorDir,
+  userAssentorProjectRoot,
+  userSecretsPath,
+  isUserDataRoot,
+} from "./paths.js";
+
+async function readYamlFile(filePath: string): Promise<unknown> {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    return parseYaml(raw) ?? {};
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err.code === "ENOENT") {
+      return {};
+    }
+    throw error;
+  }
 }
 
+/**
+ * Shallow-merge nested config objects. Arrays (reviewers) replace wholesale.
+ */
+export function mergeConfigLayers(
+  ...layers: Array<Record<string, unknown>>
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const layer of layers) {
+    for (const [key, value] of Object.entries(layer)) {
+      if (
+        value &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        out[key] &&
+        typeof out[key] === "object" &&
+        !Array.isArray(out[key])
+      ) {
+        out[key] = {
+          ...(out[key] as Record<string, unknown>),
+          ...(value as Record<string, unknown>),
+        };
+      } else if (value !== undefined) {
+        out[key] = value;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Load run defaults: built-in → ~/.assentor/config.yaml → project .assentor/config.yaml → CLI overrides.
+ * Project files are optional overrides; you do not need one in every folder.
+ */
 export async function loadAssentorConfig(
   projectPath: string,
   overrides: Partial<{
@@ -16,20 +74,22 @@ export async function loadAssentorConfig(
     maxMessages: number;
   }> = {},
 ): Promise<AssentorConfig> {
-  const configPath = assentorConfigPath(projectPath);
-  let fileConfig: unknown = {};
+  const userRaw = (await readYamlFile(userConfigPath())) as Record<
+    string,
+    unknown
+  >;
+  const projectRoot = path.resolve(projectPath);
+  const homeRoot = path.resolve(userAssentorProjectRoot());
+  const projectRaw =
+    projectRoot === homeRoot
+      ? {}
+      : ((await readYamlFile(projectConfigPath(projectRoot))) as Record<
+          string,
+          unknown
+        >);
 
-  try {
-    const raw = await fs.readFile(configPath, "utf8");
-    fileConfig = parseYaml(raw);
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException;
-    if (err.code !== "ENOENT") {
-      throw error;
-    }
-  }
-
-  const parsed = parseAssentorConfig(fileConfig);
+  const merged = mergeConfigLayers(userRaw, projectRaw);
+  const parsed = parseAssentorConfig(merged);
 
   if (overrides.executor) {
     parsed.executor.provider =
@@ -51,21 +111,14 @@ export async function loadAssentorConfig(
     parsed.limits.maxMessages = overrides.maxMessages;
   }
 
-  parsed.project.path = path.resolve(projectPath);
+  parsed.project.path = projectRoot;
   return parsed;
 }
 
-/**
- * Persist run defaults used by `assentor run` (and the TUI Settings screen).
- */
-export async function saveAssentorConfig(
-  projectPath: string,
-  config: AssentorConfig,
-): Promise<string> {
-  const configPath = assentorConfigPath(projectPath);
-  await fs.mkdir(path.dirname(configPath), { recursive: true });
+export type ConfigSaveScope = "user" | "project";
 
-  const serializable = {
+function toSerializable(config: AssentorConfig) {
+  return {
     project: { path: "." },
     executor: { provider: config.executor.provider },
     reviewers: config.reviewers.map((r) => ({
@@ -92,10 +145,25 @@ export async function saveAssentorConfig(
     security: config.security,
     artifacts: config.artifacts,
   };
+}
 
+/**
+ * Persist defaults. TUI saves to the user scope (`~/.assentor/config.yaml`) by default
+ * so settings follow you across projects. Use scope "project" for per-repo overrides.
+ */
+export async function saveAssentorConfig(
+  projectPath: string,
+  config: AssentorConfig,
+  options: { scope?: ConfigSaveScope } = {},
+): Promise<string> {
+  const scope = options.scope ?? "user";
+  const configPath =
+    scope === "user" ? userConfigPath() : projectConfigPath(projectPath);
+
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
   await fs.writeFile(
     configPath,
-    stringifyYaml(serializable, { lineWidth: 100 }),
+    stringifyYaml(toSerializable(config), { lineWidth: 100 }),
     "utf8",
   );
   return configPath;

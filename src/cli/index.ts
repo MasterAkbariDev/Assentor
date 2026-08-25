@@ -38,7 +38,9 @@ program
 
 program
   .command("init")
-  .description("Create a .assentor/config.yaml in the target project")
+  .description(
+    "Create an optional project .assentor/config.yaml override (global defaults live in ~/.assentor)",
+  )
   .option("-p, --project <path>", "Project directory", ".")
   .action(async (options: { project: string }) => {
     const configPath = await initAssentorProject(options.project);

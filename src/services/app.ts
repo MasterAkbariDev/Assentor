@@ -1,4 +1,5 @@
 import { AgentRegistry } from "../agents/index.js";
+import { userAssentorProjectRoot } from "../config/paths.js";
 import { buildExecutorRegistry } from "../executors/index.js";
 import { KeyVault } from "../keys/index.js";
 import { createSeededModelRegistry } from "../models/index.js";
@@ -8,9 +9,13 @@ import {
 } from "../providers/ai/index.js";
 import { RoutingEngine } from "../routing/index.js";
 import { AuditLog } from "./audit.js";
+import path from "node:path";
 
 export interface AssentorServices {
+  /** Workspace used for `assentor run` / Cursor (cwd or --project). */
   projectPath: string;
+  /** Always the user home root so keys/agents live in ~/.assentor. */
+  userRoot: string;
   providers: Map<string, AIProvider>;
   models: ReturnType<typeof createSeededModelRegistry>;
   vault: KeyVault;
@@ -20,21 +25,28 @@ export interface AssentorServices {
   audit: AuditLog;
 }
 
+/**
+ * Shared services for TUI / keys / diagnostics.
+ * Vault, agents, and audit always use the user data root (~/.assentor),
+ * so opening the menu in a random folder does not create a local .assentor.
+ */
 export async function createAssentorServices(
   projectPath: string,
 ): Promise<AssentorServices> {
+  const userRoot = userAssentorProjectRoot();
+  const resolvedProject = path.resolve(projectPath);
+
   const providers = createDefaultProviderRegistry();
   const models = createSeededModelRegistry({ providers });
-  const vault = new KeyVault(projectPath);
+  const vault = new KeyVault(userRoot);
   await vault.load();
-  // Import env keys once if vault empty
   await seedEnvKeys(vault);
 
-  const agents = new AgentRegistry(projectPath);
+  const agents = new AgentRegistry(userRoot);
   await agents.load();
 
   const executors = buildExecutorRegistry();
-  const audit = new AuditLog(projectPath);
+  const audit = new AuditLog(userRoot);
   const routing = new RoutingEngine({
     providers,
     models,
@@ -47,7 +59,8 @@ export async function createAssentorServices(
   });
 
   return {
-    projectPath,
+    projectPath: resolvedProject,
+    userRoot,
     providers,
     models,
     vault,
@@ -79,7 +92,8 @@ async function seedEnvKeys(vault: KeyVault): Promise<void> {
     {
       provider: "openrouter",
       name: "Env OpenRouter",
-      secret: process.env.OPENROUTER_API_KEY || process.env.ASSENTOR_OPENROUTER_API_KEY,
+      secret:
+        process.env.OPENROUTER_API_KEY || process.env.ASSENTOR_OPENROUTER_API_KEY,
     },
     {
       provider: "qwen",
@@ -115,7 +129,7 @@ export async function runFullDiagnostics(
       items.push({
         name: `provider:${provider.id}`,
         ok: false,
-        detail: "No API keys configured",
+        detail: "No API keys configured (user vault ~/.assentor)",
       });
       continue;
     }

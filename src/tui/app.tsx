@@ -17,9 +17,7 @@ import {
   updateAssentor,
   type UpdateCheckResult,
 } from "../self/index.js";
-import { KeyVault, userAssentorProjectRoot } from "../keys/index.js";
-import path from "node:path";
-import os from "node:os";
+import { userSecretsPath, userConfigPath } from "../config/paths.js";
 
 type Screen =
   | "main"
@@ -223,7 +221,7 @@ function App({
     `Gemini model:       ${config.models.gemini}`,
     `OpenAI model:       ${config.models.openai}`,
     `Max rounds:         ${config.limits.maxRounds}`,
-    "Save defaults to .assentor/config.yaml",
+    "Save defaults to ~/.assentor/config.yaml (global)",
   ];
 
   const keyMenuItems = [
@@ -416,33 +414,18 @@ function App({
         name: addName.trim(),
         secret,
       });
-      // Also mirror into the user vault (~/.assentor) so keys work across projects.
-      const homeRoot = path.resolve(userAssentorProjectRoot());
-      const projectRoot = path.resolve(services.projectPath);
-      let mirrored = false;
-      if (homeRoot !== projectRoot) {
-        const userVault = new KeyVault(homeRoot);
-        await userVault.load();
-        await userVault.add({
-          provider,
-          name: addName.trim(),
-          secret,
-        });
-        mirrored = true;
-      }
       await services.audit.append(
         "key.changed",
         `Added key ${key.name} for ${provider}`,
-        { provider, name: key.name, masked: key.masked, mirrored },
+        { provider, name: key.name, masked: key.masked },
       );
       setKeysVersion((v) => v + 1);
       setScreen("keys");
       setSelected(0);
       setAddSecret("");
-      const vaultHint = mirrored
-        ? `project + ~/.assentor`
-        : path.join(projectRoot, ".assentor", "secrets.json");
-      setMessage(`✓ Saved ${key.name} (${key.masked}) → ${vaultHint}`);
+      setMessage(
+        `✓ Saved ${key.name} (${key.masked}) → ${userSecretsPath()} (global)`,
+      );
     } catch (error) {
       setMessage(
         `Failed to save key: ${error instanceof Error ? error.message : String(error)}`,
@@ -635,11 +618,12 @@ function App({
           const saved = await saveAssentorConfig(
             services.projectPath,
             config,
+            { scope: "user" },
           );
-          setMessage(`✓ Saved defaults → ${saved}`);
+          setMessage(`✓ Saved global defaults → ${saved}`);
           await services.audit.append(
             "agent.updated",
-            "Updated run defaults from TUI",
+            "Updated global run defaults from TUI",
             {
               executor: config.executor.provider,
               reviewer: config.reviewers[0]?.provider,
@@ -725,10 +709,7 @@ function App({
           </Text>
           <MenuList items={keyMenuItems} selected={selected} />
           <Text dimColor>
-            Keys: {path.join(path.resolve(services.projectPath), ".assentor", "secrets.json")}
-            {path.resolve(services.projectPath) !== path.resolve(os.homedir())
-              ? ` · also mirrored to ~/.assentor on Add`
-              : ""}
+            Global keys: {userSecretsPath()} · work everywhere
           </Text>
         </Box>
       )}
@@ -808,12 +789,13 @@ function App({
           <MenuList
             items={[
               "Defaults (executor / reviewer / models)…",
-              "Files: .assentor/config.yaml · secrets.json · agents.json",
+              `Global: ${userConfigPath()} · ${userSecretsPath()}`,
             ]}
             selected={selected}
           />
           <Text dimColor>
-            These defaults apply to `assentor run` in this project.
+            Defaults and API keys are global (~/.assentor). Project folders only
+            store task state when you run. Optional: assentor init for per-repo overrides.
           </Text>
         </Box>
       )}
@@ -827,7 +809,10 @@ function App({
             <Text>After save, run without flags uses these defaults:</Text>
           </Box>
           <Text color="green">
-            {`  assentor run --project . "…"   →  ${config.executor.provider} + ${config.reviewers[0]?.provider}`}
+            {`  assentor run --project <dir> "…"   →  ${config.executor.provider} + ${config.reviewers[0]?.provider}`}
+          </Text>
+          <Text dimColor>
+            Workspace for this session: {services.projectPath}
           </Text>
         </Box>
       )}

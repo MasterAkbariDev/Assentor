@@ -19,8 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TUI **Update** / **Uninstall** actions plus `assentor update` and `assentor uninstall`
 - `scripts/update.sh` and `scripts/uninstall.sh`
 - Project run **Defaults** screen (executor, reviewer, routing, models) persisted to `.assentor/config.yaml`
-- API key resolution: environment → project vault → user vault (`~/.assentor`)
-- Mirror newly added keys into the user vault so they work across projects
+- API key resolution: environment → **user vault** (`~/.assentor`) → project vault
+- Global defaults in `~/.assentor/config.yaml` (TUI no longer scatters config into every cwd)
 - Versioning, `CHANGELOG.md`, and startup update check in the TUI / `assentor version --check`
 
 ### Fixed

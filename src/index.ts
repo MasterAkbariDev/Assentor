@@ -11,7 +11,13 @@ export {
   loadAssentorConfig,
   saveAssentorConfig,
   assentorConfigPath,
+  projectConfigPath,
+  userConfigPath,
+  userAssentorDir,
+  userAssentorProjectRoot,
+  userSecretsPath,
   type AssentorConfig,
+  type ConfigSaveScope,
 } from "./config/load.js";
 
 export type {
