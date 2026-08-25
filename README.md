@@ -78,10 +78,12 @@ assentor          # or: assentor ui
 | Diagnostics | Environment health check |
 | Logs / Audit | Recent Assentor audit events |
 | Settings | Shortcut into Defaults + config file locations |
-| **Update** | Pull / rebuild Assentor and refresh the CLI symlink |
+| **Update** | Pull / rebuild Assentor; banner + menu label when a newer version is on GitHub |
 | **Uninstall** | Remove the `assentor` command (project `.assentor/` data kept) |
 
 Navigate with ↑ ↓ Enter Esc · **q** quit. ← → cycles values on the Defaults screen.
+
+Version: see `assentor -V`, `assentor version --check`, and [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
@@ -182,12 +184,16 @@ assentor doctor [--executor <name>] [--reviewer <name>] [--project <path>]
 assentor keys list|add|check|…
 assentor update
 assentor uninstall [--purge]
+assentor version [--check]
+assentor changelog
 assentor executors
 assentor agents
 assentor diagnostics
 ```
 
 Prefer saving keys in the TUI (**API Keys → Add**) so secrets are encrypted in `.assentor/secrets.json`. Env vars still work as a fallback seed.
+
+The TUI checks GitHub on startup (cached ~6h under `~/.assentor/update-check.json`). Set `ASSENTOR_SKIP_UPDATE_CHECK=1` to disable.
 
 CLI flags override `.assentor/config.yaml` for a single run.
 

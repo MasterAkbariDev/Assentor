@@ -320,6 +320,7 @@ export async function initAssentorProject(projectPath: string): Promise<string> 
 
 export async function doctorAssentor(): Promise<string[]> {
   const lines: string[] = [];
+  lines.push(`assentor: v${(await import("../self/version.js")).getLocalVersionSync()}`);
   lines.push(`node: ${process.version}`);
   lines.push(
     `OPENAI_API_KEY: ${process.env.OPENAI_API_KEY || process.env.ASSENTOR_OPENAI_API_KEY ? "set" : "missing"}`,

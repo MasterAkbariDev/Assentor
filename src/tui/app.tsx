@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useApp, useInput, render } from "ink";
 import {
   createAssentorServices,
@@ -10,7 +10,13 @@ import {
   saveAssentorConfig,
   type AssentorConfig,
 } from "../config/load.js";
-import { uninstallAssentor, updateAssentor } from "../self/index.js";
+import {
+  checkForUpdate,
+  getLocalVersionSync,
+  uninstallAssentor,
+  updateAssentor,
+  type UpdateCheckResult,
+} from "../self/index.js";
 import { KeyVault, userAssentorProjectRoot } from "../keys/index.js";
 import path from "node:path";
 import os from "node:os";
@@ -66,14 +72,15 @@ const REVIEW_STRATEGY_OPTIONS = [
 ] as const;
 const ROUND_OPTIONS = [4, 6, 8, 10, 12, 16] as const;
 
-function Header({ title }: { title: string }) {
+function Header({ title, version }: { title: string; version: string }) {
+  const label = `${title}  v${version}`;
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Text color="cyan" bold>
         ╭────────────────────────────────────────────╮
       </Text>
       <Text color="cyan" bold>
-        │ ASSENTOR — {title.padEnd(30)}│
+        │ ASSENTOR — {label.padEnd(30)}│
       </Text>
       <Text color="cyan" bold>
         ╰────────────────────────────────────────────╯
@@ -137,6 +144,55 @@ function App({
   const [addProviderIdx, setAddProviderIdx] = useState(0);
   const [addName, setAddName] = useState("Personal");
   const [addSecret, setAddSecret] = useState("");
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
+  const localVersion = useMemo(() => getLocalVersionSync(), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void checkForUpdate()
+      .then((result) => {
+        if (!cancelled) {
+          setUpdateInfo(result);
+          if (result.updateAvailable) {
+            setMessage(result.message);
+          }
+        }
+      })
+      .catch(() => {
+        /* ignore */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const mainMenuItems = useMemo(() => {
+    return MAIN_ITEMS.map((item) => {
+      if (item.id !== "update") return item;
+      if (updateInfo?.updateAvailable && updateInfo.latest) {
+        return {
+          ...item,
+          label: `Update Assentor  ·  v${updateInfo.latest} available`,
+        };
+      }
+      if (updateInfo?.latest && updateInfo.message.includes("ahead")) {
+        return {
+          ...item,
+          label: `Update Assentor  ·  v${localVersion} (local ahead)`,
+        };
+      }
+      if (updateInfo && !updateInfo.updateAvailable && updateInfo.latest) {
+        return {
+          ...item,
+          label: `Update Assentor  ·  up to date (v${localVersion})`,
+        };
+      }
+      return {
+        ...item,
+        label: `Update Assentor  ·  v${localVersion}`,
+      };
+    });
+  }, [updateInfo, localVersion]);
 
   const providers = useMemo(() => [...services.providers.values()], [services]);
   const keys = useMemo(() => {
@@ -184,7 +240,7 @@ function App({
   const itemCount = (() => {
     switch (screen) {
       case "main":
-        return MAIN_ITEMS.length;
+        return mainMenuItems.length;
       case "providers":
         return Math.max(providers.length, 1);
       case "keys":
@@ -464,7 +520,7 @@ function App({
 
   async function onEnter() {
     if (screen === "main") {
-      const item = MAIN_ITEMS[selected];
+      const item = mainMenuItems[selected];
       if (!item) return;
       if (item.id === "exit") {
         exit();
@@ -484,13 +540,24 @@ function App({
       }
       if (item.id === "update") {
         setBusy(true);
-        setMessage("Updating Assentor…");
+        setMessage(
+          updateInfo?.updateAvailable
+            ? `Updating to v${updateInfo.latest}…`
+            : "Checking for updates / rebuilding…",
+        );
         try {
+          const check = await checkForUpdate({ force: true });
+          setUpdateInfo(check);
+          if (!check.updateAvailable && check.latest) {
+            setMessage(`✓ Already on latest (v${check.local}). Rebuilding locally…`);
+          }
           const result = await updateAssentor();
+          const refreshed = await checkForUpdate({ force: true });
+          setUpdateInfo(refreshed);
           const tail = result.output.split("\n").slice(-6).join(" · ");
           setMessage(
             result.code === 0
-              ? `✓ Updated. ${tail || "Restart assentor to use the new build."}`
+              ? `✓ Updated to v${getLocalVersionSync()}. ${tail || "Restart assentor to use the new build."}`
               : `✗ Update failed (exit ${result.code}). ${tail}`,
           );
         } finally {
@@ -623,9 +690,20 @@ function App({
 
   return (
     <Box flexDirection="column" padding={1}>
-      <Header title={screen.toUpperCase()} />
+      <Header title={screen.toUpperCase()} version={localVersion} />
+      {screen === "main" && updateInfo?.updateAvailable ? (
+        <Box marginBottom={1}>
+          <Text color="yellow" bold>
+            ↑ Update available: v{updateInfo.local} → v{updateInfo.latest} — select
+            Update Assentor
+          </Text>
+        </Box>
+      ) : null}
       {screen === "main" && (
-        <MenuList items={MAIN_ITEMS.map((i) => i.label)} selected={selected} />
+        <MenuList
+          items={mainMenuItems.map((i) => i.label)}
+          selected={selected}
+        />
       )}
       {screen === "providers" && (
         <MenuList

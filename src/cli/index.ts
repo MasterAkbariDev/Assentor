@@ -13,13 +13,19 @@ import {
   createAssentorServices,
   runFullDiagnostics,
 } from "../services/app.js";
+import {
+  checkForUpdate,
+  getLocalVersionSync,
+  readChangelog,
+} from "../self/index.js";
 
 const program = new Command();
+const version = getLocalVersionSync();
 
 program
   .name("assentor")
   .description("AI agent orchestrator for software development tasks")
-  .version("0.1.0");
+  .version(version);
 
 program
   .command("ui")
@@ -298,8 +304,17 @@ program
   .description("Update Assentor (pull latest + rebuild, or re-run installer)")
   .action(async () => {
     const { updateAssentor } = await import("../self/index.js");
+    const check = await checkForUpdate({ force: true });
+    if (check.updateAvailable) {
+      console.log(check.message);
+    } else if (check.latest) {
+      console.log(`Already on latest (v${check.local}). Rebuilding…`);
+    } else {
+      console.log(check.message);
+    }
     const result = await updateAssentor();
     console.log(result.output);
+    console.log(`Local version after update: v${getLocalVersionSync()}`);
     process.exitCode = result.code === 0 ? 0 : 1;
   });
 
@@ -312,6 +327,42 @@ program
     const result = await uninstallAssentor({ purge: Boolean(options.purge) });
     console.log(result.output);
     process.exitCode = result.code === 0 ? 0 : 1;
+  });
+
+program
+  .command("version")
+  .description("Show Assentor version and optionally check for updates")
+  .option("--check", "Check GitHub for a newer release", false)
+  .action(async (options: { check?: boolean }) => {
+    console.log(`assentor v${getLocalVersionSync()}`);
+    if (!options.check) {
+      console.log("Tip: assentor version --check");
+      return;
+    }
+    const result = await checkForUpdate({ force: true });
+    console.log(result.message);
+    if (result.latest) {
+      console.log(`latest: v${result.latest} (${result.source})`);
+    }
+    if (result.updateAvailable) {
+      console.log(`Changelog: ${result.changelogUrl}`);
+      console.log("Run: assentor update");
+      process.exitCode = 0;
+    }
+  });
+
+program
+  .command("changelog")
+  .description("Print the local CHANGELOG.md")
+  .action(async () => {
+    try {
+      console.log(await readChangelog());
+    } catch (error) {
+      console.error(
+        error instanceof Error ? error.message : String(error),
+      );
+      process.exitCode = 1;
+    }
   });
 
 // Default to TUI when no args
