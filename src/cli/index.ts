@@ -1,0 +1,305 @@
+#!/usr/bin/env node
+import { Command } from "commander";
+import path from "node:path";
+import {
+  doctorAssentor,
+  initAssentorProject,
+  resumeAssentorTask,
+  runAssentorTask,
+  statusAssentorTask,
+} from "./commands.js";
+import { TaskStore } from "../persistence/store.js";
+import {
+  createAssentorServices,
+  runFullDiagnostics,
+} from "../services/app.js";
+
+const program = new Command();
+
+program
+  .name("assentor")
+  .description("AI agent orchestrator for software development tasks")
+  .version("0.1.0");
+
+program
+  .command("ui")
+  .description("Launch interactive terminal UI")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(async (options: { project: string }) => {
+    const { startTui } = await import("../tui/index.js");
+    await startTui(path.resolve(options.project));
+  });
+
+program
+  .command("init")
+  .description("Create a .assentor/config.yaml in the target project")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(async (options: { project: string }) => {
+    const configPath = await initAssentorProject(options.project);
+    console.log(`Initialized Assentor config at ${configPath}`);
+  });
+
+program
+  .command("run")
+  .description("Run an orchestrated development task")
+  .argument("[prompt...]", "Task prompt")
+  .option("-p, --project <path>", "Project directory", ".")
+  .option("-e, --executor <provider>", "Executor provider (mock|cursor)")
+  .option("-r, --reviewer <provider>", "Reviewer provider (mock|openai|gemini)")
+  .option("--max-rounds <n>", "Maximum rounds", (v: string) => Number(v))
+  .option("--max-messages <n>", "Maximum messages", (v: string) => Number(v))
+  .option("-v, --verbose", "Verbose event logging", false)
+  .action(
+    async (
+      promptParts: string[],
+      options: {
+        project: string;
+        executor?: string;
+        reviewer?: string;
+        maxRounds?: number;
+        maxMessages?: number;
+        verbose?: boolean;
+      },
+    ) => {
+      const prompt = promptParts.join(" ").trim();
+      if (!prompt) {
+        console.error("Provide a task prompt, e.g. assentor run \"Add average()\"");
+        process.exitCode = 1;
+        return;
+      }
+
+      const { result } = await runAssentorTask({
+        projectPath: options.project,
+        prompt,
+        executor: options.executor,
+        reviewer: options.reviewer,
+        maxRounds: options.maxRounds,
+        maxMessages: options.maxMessages,
+        verbose: options.verbose,
+      });
+
+      console.log(`Task ${result.taskId} finished: ${result.status}`);
+      if (result.reason) {
+        console.log(`Reason: ${result.reason}`);
+      }
+      if (result.status !== "DONE") {
+        process.exitCode = 1;
+      }
+    },
+  );
+
+program
+  .command("resume")
+  .description("Resume a previously interrupted task")
+  .argument("<task-id>", "Task id")
+  .option("-p, --project <path>", "Project directory", ".")
+  .option("-v, --verbose", "Verbose event logging", false)
+  .action(async (taskId: string, options: { project: string; verbose?: boolean }) => {
+    const result = await resumeAssentorTask({
+      projectPath: options.project,
+      taskId,
+      verbose: options.verbose,
+    });
+    console.log(`Task ${result.taskId} finished: ${result.status}`);
+    if (result.status !== "DONE") {
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command("status")
+  .description("Show persisted task status")
+  .argument("<task-id>", "Task id")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(async (taskId: string, options: { project: string }) => {
+    const snapshot = await statusAssentorTask(options.project, taskId);
+    console.log(JSON.stringify(snapshot, null, 2));
+  });
+
+program
+  .command("logs")
+  .description("Show persisted task events")
+  .argument("<task-id>", "Task id")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(async (taskId: string, options: { project: string }) => {
+    const store = await TaskStore.open(path.resolve(options.project), taskId);
+    const events = await store.loadEvents();
+    for (const event of events) {
+      console.log(`${event.at} ${event.type}`);
+    }
+  });
+
+program
+  .command("doctor")
+  .description("Check local environment for Assentor")
+  .option("--executor <provider>", "Also probe this executor", "cursor")
+  .option("--reviewer <provider>", "Also probe this reviewer", "gemini")
+  .option("-p, --project <path>", "Project directory to trust/probe", ".")
+  .action(
+    async (options: {
+      executor: string;
+      reviewer: string;
+      project: string;
+    }) => {
+      for (const line of await doctorAssentor()) {
+        console.log(line);
+      }
+      console.log("");
+      const { printPreflight, runPreflight } = await import("./preflight.js");
+      const result = await runPreflight({
+        executor: options.executor,
+        reviewer: options.reviewer,
+        projectPath: options.project,
+      });
+      printPreflight(result);
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
+    },
+  );
+
+const keysCmd = program.command("keys").description("Manage API keys");
+
+keysCmd
+  .command("list")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(async (options: { project: string }) => {
+    const services = await createAssentorServices(path.resolve(options.project));
+    for (const key of services.vault.list()) {
+      console.log(
+        `${key.id.slice(0, 8)}  ${key.provider.padEnd(12)} ${key.name.padEnd(20)} ${key.masked}  ${key.health}  ${key.enabled ? "on" : "off"}`,
+      );
+    }
+  });
+
+keysCmd
+  .command("add")
+  .requiredOption("--provider <id>", "Provider id")
+  .requiredOption("--name <name>", "Key label")
+  .requiredOption("--secret <secret>", "API key secret")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(
+    async (options: {
+      provider: string;
+      name: string;
+      secret: string;
+      project: string;
+    }) => {
+      const services = await createAssentorServices(
+        path.resolve(options.project),
+      );
+      const key = await services.vault.add({
+        provider: options.provider,
+        name: options.name,
+        secret: options.secret,
+      });
+      console.log(`Added ${key.name} (${key.masked})`);
+    },
+  );
+
+keysCmd
+  .command("check")
+  .argument("[key-id]", "Key id (omit with --all)")
+  .option("--all", "Check all enabled keys", false)
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(
+    async (
+      keyId: string | undefined,
+      options: { all?: boolean; project: string },
+    ) => {
+      const services = await createAssentorServices(
+        path.resolve(options.project),
+      );
+      if (options.all) {
+        const results = await services.vault.checkAll((id) =>
+          services.providers.get(id),
+        );
+        for (const result of results) {
+          const mark = result.status.valid ? "✓" : "✗";
+          console.log(
+            `${mark} ${result.key.name}: ${result.status.message}`,
+          );
+        }
+        return;
+      }
+      if (!keyId) {
+        console.error("Provide a key id or --all");
+        process.exitCode = 1;
+        return;
+      }
+      const key = services.vault.get(keyId) ??
+        services.vault.list().find((k) => k.id.startsWith(keyId));
+      if (!key) {
+        console.error("Key not found");
+        process.exitCode = 1;
+        return;
+      }
+      const provider = services.providers.get(key.provider);
+      if (!provider) {
+        console.error("Unknown provider");
+        process.exitCode = 1;
+        return;
+      }
+      const { status } = await services.vault.checkKey(key.id, provider);
+      console.log(status.valid ? "✓ HEALTHY" : "✗ FAILED");
+      console.log(status.message);
+      if (!status.valid) process.exitCode = 1;
+    },
+  );
+
+program
+  .command("executors")
+  .description("Detect installed coding-agent CLIs")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(async (options: { project: string }) => {
+    const services = await createAssentorServices(path.resolve(options.project));
+    const results = await services.executors.detectAll();
+    for (const result of results) {
+      const mark = result.detection.installed ? "✓" : "✗";
+      console.log(
+        `${mark} ${result.name}: ${result.detection.installed ? result.detection.path : result.detection.error}`,
+      );
+      const adapter = services.executors.get(result.id);
+      const plan = adapter?.installPlan?.();
+      if (!result.detection.installed && plan) {
+        console.log(`    install: ${plan.command}`);
+      }
+    }
+  });
+
+program
+  .command("diagnostics")
+  .description("Run full Assentor diagnostics")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(async (options: { project: string }) => {
+    const services = await createAssentorServices(path.resolve(options.project));
+    const items = await runFullDiagnostics(services);
+    for (const item of items) {
+      console.log(`${item.ok ? "✓" : "✗"} ${item.name}: ${item.detail}`);
+    }
+    if (items.some((i) => !i.ok)) process.exitCode = 1;
+  });
+
+program
+  .command("agents")
+  .description("List logical agents")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(async (options: { project: string }) => {
+    const services = await createAssentorServices(path.resolve(options.project));
+    for (const agent of services.agents.list()) {
+      console.log(
+        `${agent.id.padEnd(24)} ${agent.kind.padEnd(12)} ${agent.provider}/${agent.model}  ${agent.enabled ? "on" : "off"}`,
+      );
+    }
+  });
+
+// Default to TUI when no args
+if (process.argv.length <= 2) {
+  process.argv.push("ui");
+}
+
+program.parseAsync(process.argv).catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(message);
+  process.exitCode = 1;
+});

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Resolve assentor repo root whether this file is the real script or a symlink.
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
+
+CLI="$ROOT/dist/cli/index.js"
+
+if [[ ! -f "$CLI" ]]; then
+  echo "Assentor is not built yet. Building..."
+  if command -v pnpm >/dev/null 2>&1; then
+    (cd "$ROOT" && pnpm build)
+  else
+    (cd "$ROOT" && npm run build)
+  fi
+fi
+
+# Prefer standalone Cursor agent CLI when available.
+if [[ -x "$HOME/.local/bin" ]]; then
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+if [[ -x "/Applications/Cursor.app/Contents/Resources/app/bin" ]]; then
+  export PATH="/Applications/Cursor.app/Contents/Resources/app/bin:$PATH"
+fi
+
+exec node "$CLI" "$@"

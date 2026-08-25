@@ -1,0 +1,62 @@
+{
+  "name": "assentor",
+  "version": "0.1.0",
+  "description": "Local supervisor CLI that coordinates AI coding agents with evidence-based review",
+  "type": "module",
+  "bin": {
+    "assentor": "./bin/assentor"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "install-cli": "./scripts/install-cli.sh",
+    "assentor": "./bin/assentor"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "orchestrator",
+    "cli",
+    "assentor",
+    "code-review",
+    "supervisor"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^13.1.0",
+    "ink": "^5.2.1",
+    "react": "^18.3.1",
+    "yaml": "^2.7.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/react": "^18.3.31",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  },
+  "packageManager": "pnpm@11.23.0+sha512.f00082e5b283a199b74e079da28d155c008fe232f44c8a06ea7ddfa014ecf719fc362f790ecc67b28106ddac2afb24c49a9a079159da560b2ce7d1e98efd11af",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MasterAkbariDev/Assentor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MasterAkbariDev/Assentor/issues"
+  },
+  "homepage": "https://github.com/MasterAkbariDev/Assentor#readme"
+}
