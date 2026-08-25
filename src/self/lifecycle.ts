@@ -60,13 +60,20 @@ export async function runScript(
 export async function updateAssentor(): Promise<{ code: number; output: string }> {
   const root = resolvePackageRoot();
   const updateScript = path.join(root, "scripts", "update.sh");
+  let result: { code: number; output: string };
   try {
     await fs.access(updateScript);
-    return runScript("update.sh");
+    result = await runScript("update.sh");
   } catch {
     // Fall back to install.sh (self-updates when ASSENTOR_HOME is set)
-    return runScript("install.sh");
+    result = await runScript("install.sh");
   }
+  // Drop stale "local ahead" snapshots after a successful update/rebuild.
+  if (result.code === 0) {
+    const { clearUpdateCheckCache } = await import("./version.js");
+    await clearUpdateCheckCache();
+  }
+  return result;
 }
 
 export async function uninstallAssentor(options: {

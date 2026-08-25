@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import {
-  isRemoteNewer,
-  parseSemver,
   checkForUpdate,
+  isRemoteNewer,
+  isUpdateCacheReusable,
+  parseSemver,
+  updateCheckCachePath,
 } from "../../src/self/version.js";
 
 describe("semver helpers", () => {
@@ -17,6 +21,56 @@ describe("semver helpers", () => {
     expect(isRemoteNewer("0.1.0", "0.2.0")).toBe(false);
     expect(isRemoteNewer("0.2.0", "0.2.0")).toBe(false);
     expect(isRemoteNewer("1.0.0", "0.9.9")).toBe(true);
+  });
+});
+
+describe("update cache reuse", () => {
+  const now = Date.parse("2026-08-25T16:00:00.000Z");
+  const ttl = 6 * 60 * 60 * 1000;
+
+  it("reuses fresh equal-version cache", () => {
+    expect(
+      isUpdateCacheReusable(
+        {
+          checkedAt: "2026-08-25T15:00:00.000Z",
+          local: "0.2.0",
+          latest: "0.2.0",
+        },
+        "0.2.0",
+        ttl,
+        now,
+      ),
+    ).toBe(true);
+  });
+
+  it("invalidates when cache says local is ahead of remote", () => {
+    expect(
+      isUpdateCacheReusable(
+        {
+          checkedAt: "2026-08-25T15:00:00.000Z",
+          local: "0.2.0",
+          latest: "0.1.0",
+        },
+        "0.2.0",
+        ttl,
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  it("invalidates when installed version changed", () => {
+    expect(
+      isUpdateCacheReusable(
+        {
+          checkedAt: "2026-08-25T15:00:00.000Z",
+          local: "0.1.0",
+          latest: "0.1.0",
+        },
+        "0.2.0",
+        ttl,
+        now,
+      ),
+    ).toBe(false);
   });
 });
 
@@ -38,5 +92,31 @@ describe("checkForUpdate", () => {
     });
     expect(result.updateAvailable).toBe(false);
     expect(result.latest).toBe("0.0.1");
+  });
+
+  it("refetches instead of trusting a stale ahead cache", async () => {
+    const cachePath = updateCheckCachePath();
+    await mkdir(path.dirname(cachePath), { recursive: true });
+    await writeFile(
+      cachePath,
+      `${JSON.stringify({
+        checkedAt: new Date().toISOString(),
+        local: "0.2.0",
+        latest: "0.1.0",
+      })}\n`,
+    );
+
+    let fetches = 0;
+    const result = await checkForUpdate({
+      force: false,
+      fetchFn: async () => {
+        fetches += 1;
+        return "0.2.0";
+      },
+    });
+    expect(fetches).toBe(1);
+    expect(result.latest).toBe("0.2.0");
+    expect(result.updateAvailable).toBe(false);
+    expect(result.message).toMatch(/Up to date/i);
   });
 });

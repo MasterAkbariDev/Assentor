@@ -9,9 +9,12 @@ export {
 export {
   getLocalVersionSync,
   checkForUpdate,
+  clearUpdateCheckCache,
   isRemoteNewer,
+  isUpdateCacheReusable,
   parseSemver,
   readChangelog,
+  updateCheckCachePath,
   ASSENTOR_CHANGELOG_URL,
   ASSENTOR_PACKAGE_URL,
   type UpdateCheckResult,

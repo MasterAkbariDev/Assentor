@@ -62,19 +62,43 @@ interface UpdateCacheFile {
   latest: string;
 }
 
-function cachePath(): string {
+export function updateCheckCachePath(): string {
   const home = process.env.HOME || process.env.USERPROFILE || "";
   return path.join(home, ".assentor", "update-check.json");
 }
 
-async function readCache(maxAgeMs: number): Promise<UpdateCacheFile | null> {
+export async function clearUpdateCheckCache(): Promise<void> {
   try {
-    const raw = await fs.readFile(cachePath(), "utf8");
-    const data = JSON.parse(raw) as UpdateCacheFile;
-    if (!data.checkedAt || !data.latest || !data.local) return null;
-    const age = Date.now() - Date.parse(data.checkedAt);
-    if (!Number.isFinite(age) || age > maxAgeMs) return null;
-    return data;
+    await fs.unlink(updateCheckCachePath());
+  } catch {
+    // ignore missing
+  }
+}
+
+/**
+ * Decide whether a cached remote version is still trustworthy.
+ * Invalidate when the installed version changed, or when the cache claims
+ * "local ahead" (usually means GitHub caught up after a push).
+ */
+export function isUpdateCacheReusable(
+  cached: UpdateCacheFile,
+  local: string,
+  maxAgeMs: number,
+  nowMs = Date.now(),
+): boolean {
+  if (!cached.checkedAt || !cached.latest || !cached.local) return false;
+  const age = nowMs - Date.parse(cached.checkedAt);
+  if (!Number.isFinite(age) || age < 0 || age > maxAgeMs) return false;
+  if (cached.local !== local) return false;
+  // Stale "ahead" snapshots: remote may have been updated since we last fetched.
+  if (isRemoteNewer(local, cached.latest)) return false;
+  return true;
+}
+
+async function readCache(): Promise<UpdateCacheFile | null> {
+  try {
+    const raw = await fs.readFile(updateCheckCachePath(), "utf8");
+    return JSON.parse(raw) as UpdateCacheFile;
   } catch {
     return null;
   }
@@ -82,10 +106,12 @@ async function readCache(maxAgeMs: number): Promise<UpdateCacheFile | null> {
 
 async function writeCache(data: UpdateCacheFile): Promise<void> {
   try {
-    await fs.mkdir(path.dirname(cachePath()), { recursive: true });
-    await fs.writeFile(cachePath(), `${JSON.stringify(data, null, 2)}\n`, {
-      mode: 0o600,
-    });
+    await fs.mkdir(path.dirname(updateCheckCachePath()), { recursive: true });
+    await fs.writeFile(
+      updateCheckCachePath(),
+      `${JSON.stringify(data, null, 2)}\n`,
+      { mode: 0o600 },
+    );
   } catch {
     // best-effort cache
   }
@@ -95,9 +121,16 @@ async function fetchLatestVersion(timeoutMs: number): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(ASSENTOR_PACKAGE_URL, {
+    // Bust CDN / intermediary caches after pushes to main.
+    const url = `${ASSENTOR_PACKAGE_URL}?t=${Date.now()}`;
+    const response = await fetch(url, {
       signal: controller.signal,
-      headers: { Accept: "application/json", "User-Agent": "assentor-update-check" },
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "assentor-update-check",
+        "Cache-Control": "no-cache",
+        Pragma: "no-cache",
+      },
     });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -140,8 +173,8 @@ export async function checkForUpdate(options: {
   }
 
   if (!options.force) {
-    const cached = await readCache(cacheTtlMs);
-    if (cached) {
+    const cached = await readCache();
+    if (cached && isUpdateCacheReusable(cached, local, cacheTtlMs)) {
       return finalizeResult(local, cached.latest, cached.checkedAt, "cache");
     }
   }
@@ -154,6 +187,20 @@ export async function checkForUpdate(options: {
     return finalizeResult(local, latest, checkedAt, "network");
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+    // Fall back to cache even if "ahead", better than nothing when offline.
+    const cached = await readCache();
+    if (cached?.latest) {
+      const fallback = finalizeResult(
+        local,
+        cached.latest,
+        cached.checkedAt,
+        "cache",
+      );
+      return {
+        ...fallback,
+        message: `${fallback.message} (offline; using cache — ${detail})`,
+      };
+    }
     return {
       local,
       latest: null,
