@@ -1,6 +1,8 @@
 import React from "react";
+import { Box, Text } from "ink";
 import type { LogicalAgentProfile } from "../../agents/index.js";
-import { Table } from "../components/table.js";
+import { Badge } from "../components/badge.js";
+import { MenuList } from "./shared.js";
 
 export function AgentsScreen({
   agents,
@@ -11,26 +13,60 @@ export function AgentsScreen({
   selected: number;
   focused: boolean;
 }) {
+  const executors = agents.filter((a) => a.kind === "executor");
+  const reviewers = agents.filter(
+    (a) => a.kind === "reviewer" || a.kind === "adjudicator",
+  );
+
+  if (agents.length === 0) {
+    return (
+      <Box flexDirection="column">
+        <Text bold>No agents configured</Text>
+        <Text dimColor>
+          Agents are the people Assentor assigns: an executor that edits code,
+          and reviewers that inspect evidence.
+        </Text>
+        <Text dimColor>
+          Defaults load automatically on first run. Use Configuration → AI to
+          change providers.
+        </Text>
+      </Box>
+    );
+  }
+
+  const labels = [
+    ...executors.map(
+      (a) =>
+        `EXEC  ${a.name}  · ${a.executorId ?? a.provider}/${a.model}  ${a.enabled ? "on" : "off"}`,
+    ),
+    ...reviewers.map(
+      (a) =>
+        `REV   ${a.name}  · ${(a.specialty ?? "general").padEnd(12)} ${a.provider}/${a.model}  ${a.transport ?? "api"}`,
+    ),
+  ];
+
   return (
-    <Table
-      focused={focused}
-      selected={selected}
-      columns={[
-        { key: "name", label: "NAME", width: 18 },
-        { key: "kind", label: "KIND", width: 10 },
-        { key: "model", label: "MODEL", width: 22 },
-        { key: "on", label: "ON", width: 4 },
-      ]}
-      rows={
-        agents.length
-          ? agents.map((a) => ({
-              name: a.name,
-              kind: a.kind,
-              model: `${a.provider}/${a.model}`,
-              on: a.enabled ? "yes" : "no",
-            }))
-          : [{ name: "(no agents)", kind: "", model: "", on: "" }]
-      }
-    />
+    <Box flexDirection="column">
+      <Text dimColor>
+        Executors implement. Reviewers inspect. Select for details.
+      </Text>
+      <Box marginTop={1}>
+        <MenuList items={labels} selected={selected} focused={focused} />
+      </Box>
+      {agents[selected] ? (
+        <Box marginTop={1} flexDirection="column">
+          <Text>
+            <Badge
+              label={agents[selected]!.enabled ? "enabled" : "disabled"}
+              tone={agents[selected]!.enabled ? "ok" : "warn"}
+            />{" "}
+            {agents[selected]!.role}
+          </Text>
+          <Text dimColor>
+            {agents[selected]!.instructions.slice(0, 120)}
+          </Text>
+        </Box>
+      ) : null}
+    </Box>
   );
 }

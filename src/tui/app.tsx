@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useApp, useInput, render } from "ink";
+import { Box, Text, useApp, useInput, render } from "ink";
 import {
   analyzeReviewPlan,
   checkAllApiKeys,
@@ -9,54 +9,56 @@ import {
   detectExecutors,
   getLocalVersionSync,
   listProjectTasks,
-  loadAuditEvents,
   performUninstall,
   performUpdate,
   performUpdateCheck,
   runFullDiagnostics,
   saveGlobalDefaults,
   type AssentorServices,
+  type DiagnosticItem,
 } from "../services/app.js";
-import {
-  loadAssentorConfig,
-  type AssentorConfig,
-} from "../config/load.js";
-import { userSecretsPath } from "../config/paths.js";
+import { loadAssentorConfig, type AssentorConfig } from "../config/load.js";
 import type { UpdateCheckResult } from "../self/index.js";
 import type { TaskSnapshot } from "../persistence/store.js";
 import type { ComplexityAnalysis } from "../review/complexity.js";
+import { Dialog } from "./components/dialog.js";
+import { CommandPalette, HelpOverlay } from "./components/overlays.js";
 import { Shell } from "./layout/shell.js";
 import {
   createInitialUiState,
+  filterPaletteCommands,
   footerHints,
   mapKeyToAction,
+  NAV_SCREENS,
   reduceUi,
+  screenAt,
+  type ConfigSection,
   type ScreenId,
   type UiState,
 } from "./keymap.js";
 import {
   AgentsScreen,
+  buildDefaultRows,
+  CONFIG_MENU,
+  ConfigurationScreen,
   cycle,
-  DashboardScreen,
   DiagnosticsScreen,
   EXECUTOR_OPTIONS,
-  ExecutorsScreen,
   type ExecutorRow,
-  KeysScreen,
+  HelpScreen,
   KEY_PROVIDERS,
   type AddKeyStep,
-  LogsScreen,
-  ModelsScreen,
-  ProvidersScreen,
-  ReviewScreen,
+  KeysScreen,
+  MenuList,
+  REVIEW_ACTIONS,
   REVIEWER_OPTIONS,
   REVIEW_STRATEGY_OPTIONS,
+  ReviewScreen,
   ROUND_OPTIONS,
   ROUTING_OPTIONS,
-  SettingsScreen,
-  buildDefaultRows,
-  SystemScreen,
   TasksScreen,
+  WORKSPACE_ACTIONS,
+  WorkspaceScreen,
 } from "./screens/index.js";
 
 function App({
@@ -74,23 +76,22 @@ function App({
   const [message, setMessage] = useState("");
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
   const [keysVersion, setKeysVersion] = useState(0);
-  const [diagLines, setDiagLines] = useState<string[]>([]);
-  const [logLines, setLogLines] = useState<string[]>([]);
+  const [diagItems, setDiagItems] = useState<DiagnosticItem[]>([]);
   const [tasks, setTasks] = useState<TaskSnapshot[]>([]);
   const [executorRows, setExecutorRows] = useState<ExecutorRow[]>([]);
-  const [executorDetail, setExecutorDetail] = useState("");
   const [reviewPlan, setReviewPlan] = useState<ComplexityAnalysis | null>(null);
 
   const [addStep, setAddStep] = useState<AddKeyStep>("provider");
   const [addProviderIdx, setAddProviderIdx] = useState(0);
   const [addName, setAddName] = useState("Personal");
   const [addSecret, setAddSecret] = useState("");
+  const [taskPrompt, setTaskPrompt] = useState("");
+  const [paletteQuery, setPaletteQuery] = useState("");
 
   const keys = useMemo(() => {
     void keysVersion;
     return services.vault.list();
   }, [services, keysVersion]);
-  const providers = useMemo(() => [...services.providers.values()], [services]);
   const agents = services.agents.list();
   const models = services.models.list();
 
@@ -106,87 +107,483 @@ function App({
     return [...new Set(ids)];
   }, [models]);
 
+  const paletteCommands = useMemo(
+    () => filterPaletteCommands(paletteQuery),
+    [paletteQuery],
+  );
+
   const mainItemCount = useMemo(() => {
+    if (ui.dialog === "palette") return Math.max(paletteCommands.length, 1);
     if (ui.dialog === "add-key") {
       return addStep === "provider" ? KEY_PROVIDERS.length : 1;
     }
     if (ui.dialog === "confirm-uninstall") return 2;
-    if (ui.dialog === "defaults") return buildDefaultRows(config).length;
-    if (ui.dialog === "review-plan") return 1;
+    if (ui.dialog === "ai-defaults") return buildDefaultRows(config).length;
+    if (ui.dialog === "review-plan" || ui.dialog === "help") return 1;
+    if (ui.dialog === "start-task") return 1;
+
     switch (ui.screen) {
+      case "workspace":
+        return WORKSPACE_ACTIONS.length;
       case "tasks":
-        return Math.max(tasks.length, 1);
+        return ui.selectedTaskId ? 1 : Math.max(tasks.length, 1);
       case "agents":
         return Math.max(agents.length, 1);
-      case "executors":
-        return Math.max(executorRows.length || services.executors.list().length, 1);
-      case "providers":
-        return Math.max(providers.length, 1);
-      case "models":
-        return Math.max(models.length, 1);
-      case "keys":
-        return keys.length + 1;
       case "review":
-        return 5;
-      case "settings":
-        return 3;
-      case "system":
-        return 3;
+        return REVIEW_ACTIONS.length;
+      case "configuration":
+        if (ui.configSection === "menu") return CONFIG_MENU.length;
+        if (ui.configSection === "keys") return Math.max(keys.length + 1, 1);
+        if (ui.configSection === "executors") {
+          return Math.max(
+            executorRows.length || services.executors.list().length,
+            1,
+          );
+        }
+        if (ui.configSection === "system") return 3;
+        return 1;
       case "diagnostics":
-      case "logs":
-      case "dashboard":
+        return Math.max(diagItems.length, 1);
+      case "help":
+        return 1;
       default:
         return 1;
     }
   }, [
     ui.dialog,
     ui.screen,
+    ui.selectedTaskId,
+    ui.configSection,
     addStep,
     config,
     tasks.length,
     agents.length,
     executorRows.length,
     services.executors,
-    providers.length,
-    models.length,
     keys.length,
+    diagItems.length,
+    paletteCommands.length,
   ]);
 
   useEffect(() => {
-    setUi((s) => ({ ...s, mainItemCount }));
+    setUi((s) => ({
+      ...s,
+      mainItemCount,
+      mainIndex: Math.min(s.mainIndex, Math.max(0, mainItemCount - 1)),
+    }));
   }, [mainItemCount]);
 
   useEffect(() => {
-    let cancelled = false;
-    void performUpdateCheck()
-      .then((result) => {
-        if (!cancelled) {
-          setUpdateInfo(result);
-          if (result.updateAvailable) setMessage(result.message);
-        }
-      })
-      .catch(() => {
-        /* ignore */
-      });
-    return () => {
-      cancelled = true;
-    };
+    void performUpdateCheck(false).then(setUpdateInfo);
+    void listProjectTasks(services.projectPath).then(setTasks);
+    void refreshExecutors();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (ui.screen === "executors" && executorRows.length === 0) {
-      void refreshExecutors();
-    }
-    if (ui.screen === "tasks" && tasks.length === 0) {
-      void refreshTasks();
-    }
-  }, [ui.screen]);
+  async function refreshExecutors() {
+    const listed = services.executors.list();
+    setExecutorRows(
+      listed.map((a) => ({
+        id: a.id,
+        name: a.name,
+        installPlan: a.installPlan?.(),
+      })),
+    );
+    const detected = await detectExecutors(services);
+    setExecutorRows(
+      detected.map((d) => ({
+        id: d.id,
+        name: d.name,
+        detection: d.detection,
+        installPlan: services.executors.get(d.id)?.installPlan?.(),
+      })),
+    );
+  }
 
-  const capturingText =
-    ui.dialog === "add-key" && (addStep === "name" || addStep === "secret");
+  function patchUi(partial: Partial<UiState>) {
+    setUi((s) => ({ ...s, ...partial }));
+  }
+
+  function goScreen(
+    screen: ScreenId,
+    extras: Partial<UiState> = {},
+  ) {
+    const navIndex = Math.max(
+      0,
+      NAV_SCREENS.findIndex((n) => n.id === screen),
+    );
+    setUi((s) => ({
+      ...s,
+      screen,
+      navIndex,
+      focus: "main",
+      mainIndex: 0,
+      dialog: "none",
+      capturingText: false,
+      selectedTaskId: null,
+      ...extras,
+    }));
+  }
+
+  async function runDiagnostics() {
+    patchUi({ busy: true });
+    setMessage("Checking…");
+    try {
+      const items = await runFullDiagnostics(services);
+      setDiagItems(items);
+      const bad = items.filter((i) => !i.ok).length;
+      setMessage(bad === 0 ? "All checks passed" : `${bad} issue(s) found`);
+    } finally {
+      patchUi({ busy: false });
+    }
+  }
+
+  async function openReviewPlan(goal?: string) {
+    patchUi({ busy: true, dialog: "review-plan" });
+    setMessage("Analyzing complexity…");
+    try {
+      const plan = analyzeReviewPlan(
+        goal ??
+          tasks[0]?.contract.goal ??
+          "Review current project changes",
+      );
+      setReviewPlan(plan);
+      setMessage(
+        `Score ${plan.score} · ${plan.recommendedCount} reviewers · ${plan.evidenceDepth}`,
+      );
+    } finally {
+      patchUi({ busy: false });
+    }
+  }
+
+  function applyPalette(index: number) {
+    const cmd = paletteCommands[index] ?? paletteCommands[0];
+    if (!cmd) {
+      patchUi({ dialog: "none", focus: "main" });
+      return;
+    }
+    setPaletteQuery("");
+    if (cmd.dialog === "start-task") {
+      setTaskPrompt("");
+      patchUi({
+        dialog: "start-task",
+        capturingText: true,
+        focus: "dialog",
+        mainIndex: 0,
+      });
+      return;
+    }
+    if (cmd.dialog === "review-plan") {
+      void openReviewPlan();
+      return;
+    }
+    if (cmd.dialog === "ai-defaults") {
+      goScreen("configuration", {
+        configSection: "ai",
+        dialog: "ai-defaults",
+        focus: "dialog",
+      });
+      return;
+    }
+    if (cmd.dialog === "help") {
+      patchUi({ dialog: "help", focus: "dialog" });
+      return;
+    }
+    if (cmd.screen) {
+      goScreen(cmd.screen, {
+        configSection: cmd.configSection ?? "menu",
+      });
+      if (cmd.screen === "diagnostics") void runDiagnostics();
+    } else {
+      patchUi({ dialog: "none", focus: "main" });
+    }
+  }
+
+  async function handleActivate() {
+    if (ui.dialog === "palette") {
+      applyPalette(ui.mainIndex);
+      return;
+    }
+
+    if (ui.dialog === "help" || ui.dialog === "review-plan") {
+      patchUi({ dialog: "none", focus: "main" });
+      return;
+    }
+
+    if (ui.dialog === "start-task") {
+      const prompt = taskPrompt.trim();
+      patchUi({ dialog: "none", capturingText: false, focus: "main" });
+      if (!prompt) {
+        setMessage("Cancelled — empty goal");
+        return;
+      }
+      setMessage(
+        `Start via CLI:\nassentor run --project ${services.projectPath} ${JSON.stringify(prompt)}`,
+      );
+      return;
+    }
+
+    if (ui.dialog === "confirm-uninstall") {
+      if (ui.mainIndex === 0) {
+        patchUi({ busy: true });
+        const result = await performUninstall({ purge: false });
+        setMessage(result.output.slice(0, 200));
+        patchUi({ busy: false, dialog: "none" });
+      } else {
+        patchUi({ dialog: "none", focus: "main" });
+      }
+      return;
+    }
+
+    if (ui.dialog === "ai-defaults") {
+      const rows = buildDefaultRows(config);
+      const idx = ui.mainIndex;
+      if (idx === rows.length - 1) {
+        await saveGlobalDefaults(services, config);
+        setMessage("Saved defaults to ~/.assentor/config.yaml");
+        patchUi({ dialog: "none", focus: "main" });
+        return;
+      }
+      setConfig((c) => cycleDefaultField(c, idx, 1, modelChoices));
+      return;
+    }
+
+    if (ui.dialog === "add-key") {
+      if (addStep === "provider") {
+        setAddProviderIdx(ui.mainIndex);
+        setAddStep("name");
+        patchUi({ capturingText: true, mainIndex: 0 });
+        return;
+      }
+      if (addStep === "name") {
+        setAddStep("secret");
+        patchUi({ capturingText: true });
+        return;
+      }
+      if (addStep === "secret") {
+        if (!addSecret.trim()) {
+          setMessage("Paste a non-empty API key");
+          return;
+        }
+        await services.vault.add({
+          provider: KEY_PROVIDERS[addProviderIdx]!,
+          name: addName.trim() || "Personal",
+          secret: addSecret.trim(),
+        });
+        setKeysVersion((v) => v + 1);
+        setAddStep("provider");
+        setAddName("Personal");
+        setAddSecret("");
+        setMessage("API key saved");
+        patchUi({ dialog: "none", capturingText: false, focus: "main" });
+      }
+      return;
+    }
+
+    // Main screen activations
+    if (ui.screen === "workspace") {
+      const action = WORKSPACE_ACTIONS[ui.mainIndex];
+      if (action?.id === "start") {
+        setTaskPrompt("");
+        patchUi({
+          dialog: "start-task",
+          capturingText: true,
+          focus: "dialog",
+        });
+      } else if (action?.id === "continue") {
+        const latest = tasks.find(
+          (t) =>
+            t.status !== "DONE" &&
+            t.status !== "FAILED" &&
+            t.status !== "CANCELLED",
+        );
+        if (latest) {
+          setMessage(
+            `Resume: assentor resume ${latest.taskId} --project ${services.projectPath}`,
+          );
+          goScreen("tasks", { selectedTaskId: latest.taskId });
+        } else {
+          setMessage("No resumable task — start a new one");
+        }
+      } else if (action?.id === "review") {
+        void openReviewPlan();
+      } else if (action?.id === "diagnostics") {
+        goScreen("diagnostics");
+        void runDiagnostics();
+      }
+      return;
+    }
+
+    if (ui.screen === "tasks") {
+      if (ui.selectedTaskId) return;
+      const task = tasks[ui.mainIndex];
+      if (task) {
+        patchUi({ selectedTaskId: task.taskId });
+      }
+      return;
+    }
+
+    if (ui.screen === "review") {
+      const action = REVIEW_ACTIONS[ui.mainIndex];
+      if (action?.id === "plan") void openReviewPlan();
+      if (action?.id === "cli") {
+        setMessage('CLI: assentor review "your goal here"');
+      }
+      if (action?.id === "strategy") {
+        goScreen("configuration", {
+          configSection: "review",
+          dialog: "ai-defaults",
+          focus: "dialog",
+        });
+      }
+      return;
+    }
+
+    if (ui.screen === "configuration") {
+      if (ui.configSection === "menu") {
+        const item = CONFIG_MENU[ui.mainIndex];
+        if (!item) return;
+        if (item.id === "ai" || item.id === "review" || item.id === "advanced") {
+          patchUi({
+            configSection: item.id,
+            dialog: "ai-defaults",
+            focus: "dialog",
+            mainIndex: 0,
+          });
+        } else {
+          patchUi({ configSection: item.id as ConfigSection, mainIndex: 0 });
+          if (item.id === "executors") void refreshExecutors();
+        }
+        return;
+      }
+      if (ui.configSection === "keys") {
+        if (ui.mainIndex === 0) {
+          setAddStep("provider");
+          patchUi({ dialog: "add-key", focus: "dialog", mainIndex: 0 });
+        }
+        return;
+      }
+      if (ui.configSection === "executors") {
+        const row = executorRows[ui.mainIndex];
+        if (row) {
+          const result = await detectExecutor(services, row.id);
+          setMessage(
+            result.detection.installed
+              ? `✓ ${row.name} at ${result.detection.path}`
+              : `✗ ${row.name}: ${result.detection.error ?? "missing"}`,
+          );
+          void refreshExecutors();
+        }
+        return;
+      }
+      if (ui.configSection === "system") {
+        if (ui.mainIndex === 0) {
+          patchUi({ busy: true });
+          const info = await performUpdateCheck(true);
+          setUpdateInfo(info);
+          setMessage(info.message);
+          patchUi({ busy: false });
+        } else if (ui.mainIndex === 1) {
+          patchUi({ busy: true });
+          const result = await performUpdate();
+          setMessage(result.output.slice(0, 240));
+          patchUi({ busy: false });
+        } else if (ui.mainIndex === 2) {
+          patchUi({
+            dialog: "confirm-uninstall",
+            focus: "dialog",
+            mainIndex: 1,
+          });
+        }
+      }
+      return;
+    }
+
+    if (ui.screen === "diagnostics") {
+      void runDiagnostics();
+    }
+  }
 
   useInput((input, key) => {
-    const event = {
+    if (ui.dialog === "palette") {
+      if (key.escape) {
+        setPaletteQuery("");
+        setUi((s) => reduceUi(s, { type: "escape" }));
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setPaletteQuery((q) => q.slice(0, -1));
+        return;
+      }
+      if (key.upArrow || key.downArrow || key.return) {
+        const action = mapKeyToAction(ui, {
+          input,
+          upArrow: key.upArrow,
+          downArrow: key.downArrow,
+          return: key.return,
+          escape: key.escape,
+          ctrl: key.ctrl,
+        });
+        if (action.type === "activate") {
+          void handleActivate();
+          return;
+        }
+        setUi((s) => reduceUi(s, action));
+        return;
+      }
+      if (input && !key.ctrl && !key.meta) {
+        setPaletteQuery((q) => q + input);
+        setUi((s) => ({ ...s, mainIndex: 0 }));
+        return;
+      }
+    }
+
+    if (ui.capturingText && ui.dialog === "start-task") {
+      if (key.escape) {
+        setTaskPrompt("");
+        setUi((s) => reduceUi(s, { type: "escape" }));
+        return;
+      }
+      if (key.return) {
+        void handleActivate();
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setTaskPrompt((t) => t.slice(0, -1));
+        return;
+      }
+      if (input && !key.ctrl && !key.meta) {
+        setTaskPrompt((t) => t + input);
+        return;
+      }
+      return;
+    }
+
+    if (ui.capturingText && ui.dialog === "add-key") {
+      if (key.escape) {
+        setAddStep("provider");
+        setAddSecret("");
+        setUi((s) => reduceUi(s, { type: "escape" }));
+        return;
+      }
+      if (key.return) {
+        void handleActivate();
+        return;
+      }
+      if (key.backspace || key.delete) {
+        if (addStep === "name") setAddName((n) => n.slice(0, -1));
+        if (addStep === "secret") setAddSecret((s) => s.slice(0, -1));
+        return;
+      }
+      if (input && !key.ctrl && !key.meta) {
+        if (addStep === "name") setAddName((n) => n + input);
+        if (addStep === "secret") setAddSecret((s) => s + input);
+        return;
+      }
+      return;
+    }
+
+    const action = mapKeyToAction(ui, {
       input,
       upArrow: key.upArrow,
       downArrow: key.downArrow,
@@ -199,569 +596,145 @@ function App({
       delete: key.delete,
       ctrl: key.ctrl,
       meta: key.meta,
-    };
-
-    if (capturingText) {
-      handleTextCapture(event);
-      return;
-    }
-
-    const stateForMap: UiState = {
-      ...ui,
-      capturingText: false,
-      mainItemCount,
-    };
-    const action = mapKeyToAction(stateForMap, event);
+    });
 
     if (action.type === "quit") {
       exit();
       return;
     }
 
-    if (
-      action.type === "nav_up" ||
-      action.type === "nav_down" ||
-      action.type === "main_up" ||
-      action.type === "main_down" ||
-      action.type === "focus_nav" ||
-      action.type === "focus_main" ||
-      action.type === "select_nav" ||
-      action.type === "keys_add" ||
-      action.type === "review_plan"
-    ) {
-      if (action.type === "select_nav") setMessage("");
-      if (action.type === "keys_add") startAddKeyState();
-      if (action.type === "review_plan") openReviewPlan();
-      setUi((s) => reduceUi({ ...s, mainItemCount }, action));
+    if (action.type === "activate" || action.type === "space") {
+      void handleActivate();
+      setUi((s) => reduceUi(s, action));
       return;
     }
 
-    if (action.type === "escape") {
-      if (ui.dialog === "add-key") {
-        setUi((s) => ({
-          ...s,
-          dialog: "none",
-          capturingText: false,
-          focus: "main",
-          mainIndex: 0,
-        }));
-        setMessage("Cancelled add key");
-        return;
-      }
-      if (ui.dialog === "confirm-uninstall") {
-        setUi((s) => ({
-          ...s,
-          dialog: "none",
-          focus: "main",
-          mainIndex: 1,
-        }));
-        setMessage("Uninstall cancelled");
-        return;
-      }
-      setUi((s) => reduceUi({ ...s, mainItemCount }, action));
-      setMessage("");
+    if (action.type === "open_palette") {
+      setPaletteQuery("");
+      setUi((s) => reduceUi(s, action));
       return;
     }
 
-    if (action.type === "cycle_left" || action.type === "cycle_right") {
-      const dir: 1 | -1 = action.type === "cycle_right" ? 1 : -1;
-      setConfig((prev) =>
-        applyDefaultCycle(prev, ui.mainIndex, dir, modelChoices),
-      );
+    if (action.type === "start_task") {
+      setTaskPrompt("");
+      setUi((s) => reduceUi(s, action));
+      return;
+    }
+
+    if (action.type === "review_plan") {
+      void openReviewPlan();
+      return;
+    }
+
+    if (action.type === "keys_add") {
+      setAddStep("provider");
+      setUi((s) => reduceUi(s, action));
       return;
     }
 
     if (action.type === "keys_check") {
-      void runCheckKey(false);
-      return;
-    }
-    if (action.type === "keys_check_all") {
-      void runCheckKey(true);
-      return;
-    }
-    if (action.type === "keys_delete") {
-      void deleteSelectedKey();
-      return;
-    }
-    if (action.type === "executors_detect") {
-      void refreshExecutors();
-      return;
-    }
-    if (action.type === "executors_install") {
-      void showInstallPlan();
-      return;
-    }
-    if (action.type === "space") {
-      // Space mirrors Enter on most list screens
-      void onActivate();
-      return;
-    }
-    if (action.type === "activate") {
-      void onActivate();
-    }
-  });
-
-  function startAddKeyState() {
-    setAddStep("provider");
-    setAddProviderIdx(0);
-    setAddName("Personal");
-    setAddSecret("");
-    setMessage("Pick provider · Enter next · Esc cancel");
-  }
-
-  function openReviewPlan() {
-    const sample =
-      config.reviewers[0]?.provider === "mock"
-        ? "Review architecture and security for auth refactor with tests"
-        : `Review using ${config.routing.reviewStrategy} strategy`;
-    const plan = analyzeReviewPlan(sample, {
-      projectType: "unknown",
-      hasTests: true,
-    });
-    setReviewPlan(plan);
-    setMessage("Review Plan open — Esc to close");
-  }
-
-  function handleTextCapture(key: {
-    input: string;
-    escape?: boolean;
-    return?: boolean;
-    backspace?: boolean;
-    delete?: boolean;
-    ctrl?: boolean;
-    meta?: boolean;
-  }) {
-    if (key.escape) {
-      setUi((s) => ({
-        ...s,
-        dialog: "none",
-        capturingText: false,
-        focus: "main",
-        mainIndex: 0,
-      }));
-      setMessage("Cancelled add key");
-      return;
-    }
-    if (key.return) {
-      void advanceAddKey();
-      return;
-    }
-    if (key.backspace || key.delete) {
-      if (addStep === "name") setAddName((v) => v.slice(0, -1));
-      else setAddSecret((v) => v.slice(0, -1));
-      return;
-    }
-    if (key.ctrl || key.meta) return;
-    if (!key.input) return;
-    if (addStep === "name") {
-      setAddName((v) => (v + key.input).slice(0, 64));
-    } else {
-      setAddSecret((v) => (v + key.input).replace(/\s+/g, "").slice(0, 512));
-    }
-  }
-
-  async function advanceAddKey(providerIdx = addProviderIdx) {
-    if (addStep === "provider") {
-      setAddProviderIdx(providerIdx);
-      setAddStep("name");
-      setUi((s) => ({ ...s, capturingText: true, mainIndex: 0 }));
-      setMessage("Type a label for this key, then Enter");
-      return;
-    }
-    if (addStep === "name") {
-      if (!addName.trim()) {
-        setMessage("Name cannot be empty");
-        return;
-      }
-      setAddStep("secret");
-      setMessage("Paste API key, then Enter to save (hidden)");
-      return;
-    }
-    const secret = addSecret.trim();
-    if (secret.length < 8) {
-      setMessage("Key looks too short — paste the full API key");
-      return;
-    }
-    setUi((s) => ({ ...s, busy: true }));
-    try {
-      const provider = KEY_PROVIDERS[providerIdx]!;
-      const key = await services.vault.add({
-        provider,
-        name: addName.trim(),
-        secret,
-      });
-      await services.audit.append(
-        "key.changed",
-        `Added key ${key.name} for ${provider}`,
-        { provider, name: key.name, masked: key.masked },
-      );
-      setKeysVersion((v) => v + 1);
-      setUi((s) => ({
-        ...s,
-        dialog: "none",
-        capturingText: false,
-        busy: false,
-        mainIndex: 0,
-      }));
-      setAddSecret("");
-      setMessage(
-        `✓ Saved ${key.name} (${key.masked}) → ${userSecretsPath()} (global)`,
-      );
-    } catch (error) {
-      setMessage(
-        `Failed to save key: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      setUi((s) => ({ ...s, busy: false }));
-    }
-  }
-
-  async function deleteSelectedKey() {
-    const key = keys[ui.mainIndex - 1];
-    if (!key) {
-      setMessage("Select a key to delete (not Add)");
-      return;
-    }
-    setUi((s) => ({ ...s, busy: true }));
-    try {
-      await services.vault.remove(key.id);
-      await services.audit.append("key.changed", `Removed key ${key.name}`, {
-        provider: key.provider,
-        name: key.name,
-      });
-      setKeysVersion((v) => v + 1);
-      setUi((s) => ({ ...s, busy: false, mainIndex: 0 }));
-      setMessage(`✓ Removed ${key.name}`);
-    } finally {
-      setUi((s) => ({ ...s, busy: false }));
-    }
-  }
-
-  async function runCheckKey(all: boolean) {
-    setUi((s) => ({ ...s, busy: true }));
-    setMessage(all ? "Checking all keys…" : "Checking key…");
-    try {
-      if (all) {
-        const results = await checkAllApiKeys(services);
-        setKeysVersion((v) => v + 1);
-        setMessage(
-          results.length
-            ? results
-                .map(
-                  (r) =>
-                    `${r.key.name}: ${r.status.valid ? "✓" : "✗"} ${r.status.message}`,
-                )
-                .join(" | ")
-            : "No keys to check",
-        );
-      } else {
+      void (async () => {
         const key = keys[ui.mainIndex - 1];
         if (!key) {
-          setMessage("Select a stored key (or press C for Check All)");
+          setMessage("Select a key row first");
           return;
         }
-        const { status } = await checkApiKey(services, key.id);
+        patchUi({ busy: true });
+        const result = await checkApiKey(services, key.id);
+        setMessage(
+          `${result.status.valid ? "✓" : "✗"} ${key.name}: ${result.status.message}`,
+        );
         setKeysVersion((v) => v + 1);
+        patchUi({ busy: false });
+      })();
+      return;
+    }
+
+    if (action.type === "keys_check_all") {
+      void (async () => {
+        patchUi({ busy: true });
+        const results = await checkAllApiKeys(services);
+        const bad = results.filter((r) => !r.status.valid).length;
         setMessage(
-          status.valid
-            ? `✓ ${key.name}: valid · auth · reachable · models=${status.modelsAvailable}`
-            : `✗ ${key.name}: ${status.message}`,
+          bad === 0
+            ? `✓ ${results.length} keys healthy`
+            : `✗ ${bad}/${results.length} failed`,
+        );
+        setKeysVersion((v) => v + 1);
+        patchUi({ busy: false });
+      })();
+      return;
+    }
+
+    if (action.type === "keys_delete") {
+      void (async () => {
+        const key = keys[ui.mainIndex - 1];
+        if (!key) {
+          setMessage("Select a key to delete");
+          return;
+        }
+        await services.vault.remove(key.id);
+        setKeysVersion((v) => v + 1);
+        setMessage(`Deleted ${key.name}`);
+      })();
+      return;
+    }
+
+    if (action.type === "executors_detect") {
+      void refreshExecutors().then(() => setMessage("Executors re-detected"));
+      return;
+    }
+
+    if (action.type === "executors_install") {
+      const row = executorRows[ui.mainIndex];
+      const plan = row?.installPlan;
+      setMessage(
+        plan
+          ? `Install ${row?.name}: ${plan.command}`
+          : "No install plan for selection",
+      );
+      return;
+    }
+
+    if (action.type === "cycle_left" || action.type === "cycle_right") {
+      if (ui.dialog === "ai-defaults") {
+        const dir = action.type === "cycle_right" ? 1 : -1;
+        setConfig((c) =>
+          cycleDefaultField(c, ui.mainIndex, dir as 1 | -1, modelChoices),
         );
       }
-    } finally {
-      setUi((s) => ({ ...s, busy: false }));
-    }
-  }
-
-  async function refreshExecutors() {
-    setUi((s) => ({ ...s, busy: true }));
-    setMessage("Detecting executors…");
-    try {
-      const detections = await detectExecutors(services);
-      setExecutorRows(
-        detections.map((d) => ({
-          id: d.id,
-          name: d.name,
-          detection: d.detection,
-          installPlan: services.executors.get(d.id)?.installPlan?.(),
-        })),
-      );
-      setMessage(`Detected ${detections.length} executor(s)`);
-      setExecutorDetail("");
-    } finally {
-      setUi((s) => ({ ...s, busy: false }));
-    }
-  }
-
-  async function showInstallPlan() {
-    const list =
-      executorRows.length > 0
-        ? executorRows
-        : services.executors.list().map((e) => ({
-            id: e.id,
-            name: e.name,
-            installPlan: e.installPlan?.(),
-          }));
-    const row = list[ui.mainIndex];
-    if (!row) return;
-    const plan = row.installPlan;
-    if (!plan) {
-      setExecutorDetail(`No install plan for ${row.name}`);
-      setMessage(`No install plan for ${row.name}`);
-      return;
-    }
-    setExecutorDetail(`${plan.command}${plan.notes ? ` — ${plan.notes}` : ""}`);
-    setMessage(`Install plan: ${plan.command}`);
-  }
-
-  async function refreshTasks() {
-    setUi((s) => ({ ...s, busy: true }));
-    try {
-      const list = await listProjectTasks(services.projectPath);
-      setTasks(list);
-      setMessage(list.length ? `${list.length} task(s)` : "No tasks found");
-    } finally {
-      setUi((s) => ({ ...s, busy: false }));
-    }
-  }
-
-  async function onActivate() {
-    const { screen, dialog, mainIndex, focus } = ui;
-
-    if (focus === "nav") {
-      setUi((s) =>
-        reduceUi({ ...s, mainItemCount }, { type: "select_nav" }),
-      );
-      setMessage("");
-      return;
-    }
-
-    if (dialog === "add-key") {
-      void advanceAddKey(addStep === "provider" ? mainIndex : addProviderIdx);
-      return;
-    }
-
-    if (dialog === "confirm-uninstall") {
-      if (mainIndex === 1) {
-        setUi((s) => ({ ...s, dialog: "none", mainIndex: 1 }));
-        setMessage("Uninstall cancelled");
-        return;
+      if (ui.dialog === "add-key" && addStep === "provider") {
+        // arrows already move mainIndex via reduce
       }
-      setUi((s) => ({ ...s, busy: true }));
-      setMessage("Uninstalling…");
-      try {
-        const result = await performUninstall({ purge: false });
-        const tail = result.output.split("\n").slice(-4).join(" · ");
-        if (result.code === 0) {
-          setMessage(`✓ ${tail || "Assentor CLI removed."}`);
-          setTimeout(() => exit(), 800);
-        } else {
-          setMessage(`✗ Uninstall failed. ${tail}`);
-        }
-      } finally {
-        setUi((s) => ({ ...s, busy: false }));
+      setUi((s) => reduceUi(s, action));
+      return;
+    }
+
+    if (action.type === "select_nav") {
+      const screen = screenAt(ui.navIndex);
+      setUi((s) => reduceUi(s, action));
+      if (screen === "diagnostics" && diagItems.length === 0) {
+        void runDiagnostics();
+      }
+      if (screen === "tasks") {
+        void listProjectTasks(services.projectPath).then(setTasks);
       }
       return;
     }
 
-    if (dialog === "defaults") {
-      const rows = buildDefaultRows(config);
-      if (mainIndex === rows.length - 1) {
-        setUi((s) => ({ ...s, busy: true }));
-        try {
-          const saved = await saveGlobalDefaults(services, config);
-          setMessage(`✓ Saved global defaults → ${saved}`);
-        } finally {
-          setUi((s) => ({ ...s, busy: false }));
-        }
-        return;
-      }
-      setConfig((prev) =>
-        applyDefaultCycle(prev, mainIndex, 1, modelChoices),
-      );
-      return;
-    }
+    setUi((s) => reduceUi(s, action));
+  });
 
-    if (dialog === "review-plan") {
-      setUi((s) => ({ ...s, dialog: "none" }));
-      return;
-    }
+  const keyHealthy = keys.filter((k) => k.health === "healthy").length;
+  const screenLabel =
+    NAV_SCREENS.find((s) => s.id === ui.screen)?.label ?? ui.screen;
 
-    switch (screen) {
-      case "keys": {
-        if (mainIndex === 0) {
-          startAddKeyState();
-          setUi((s) => ({
-            ...s,
-            dialog: "add-key",
-            mainIndex: 0,
-            focus: "main",
-          }));
-          return;
-        }
-        void runCheckKey(false);
-        return;
-      }
-      case "executors": {
-        const adapters =
-          executorRows.length > 0
-            ? executorRows
-            : services.executors.list().map((e) => ({
-                id: e.id,
-                name: e.name,
-              }));
-        const row = adapters[mainIndex];
-        if (!row) return;
-        setUi((s) => ({ ...s, busy: true }));
-        try {
-          const result = await detectExecutor(services, row.id);
-          setExecutorRows((prev) => {
-            const base =
-              prev.length > 0
-                ? prev
-                : services.executors.list().map((e) => ({
-                    id: e.id,
-                    name: e.name,
-                    installPlan: e.installPlan?.(),
-                  }));
-            return base.map((r) =>
-              r.id === result.id
-                ? {
-                    ...r,
-                    detection: result.detection,
-                    installPlan: result.installPlan,
-                  }
-                : r,
-            );
-          });
-          setMessage(
-            result.detection.installed
-              ? `✓ ${result.name} at ${result.detection.path}`
-              : `✗ Not installed. ${result.installPlan ? `Install: ${result.installPlan.command}` : ""}`,
-          );
-        } finally {
-          setUi((s) => ({ ...s, busy: false }));
-        }
-        return;
-      }
-      case "review": {
-        if (mainIndex === 4) {
-          openReviewPlan();
-          setUi((s) => ({ ...s, dialog: "review-plan" }));
-        } else {
-          setMessage("Change defaults under Settings · press [p] for Review Plan");
-        }
-        return;
-      }
-      case "diagnostics": {
-        setUi((s) => ({ ...s, busy: true }));
-        setMessage("Running full diagnostics…");
-        try {
-          const items = await runFullDiagnostics(services);
-          setDiagLines(
-            items.map((i) => `${i.ok ? "✓" : "✗"} ${i.name}: ${i.detail}`),
-          );
-          setMessage("");
-        } finally {
-          setUi((s) => ({ ...s, busy: false }));
-        }
-        return;
-      }
-      case "logs": {
-        setUi((s) => ({ ...s, busy: true }));
-        try {
-          const events = await loadAuditEvents(services, 40);
-          setLogLines(events.map((e) => `${e.at} ${e.type} ${e.message}`));
-          setMessage("");
-        } finally {
-          setUi((s) => ({ ...s, busy: false }));
-        }
-        return;
-      }
-      case "settings": {
-        if (mainIndex === 0) {
-          setUi((s) => ({
-            ...s,
-            dialog: "defaults",
-            mainIndex: 0,
-          }));
-          setMessage("← → change value · Enter on Save · Esc close");
-        }
-        return;
-      }
-      case "system": {
-        if (mainIndex === 0) {
-          setUi((s) => ({ ...s, busy: true }));
-          setMessage(
-            updateInfo?.updateAvailable
-              ? `Updating to v${updateInfo.latest}…`
-              : "Checking for updates / rebuilding…",
-          );
-          try {
-            const check = await performUpdateCheck(true);
-            setUpdateInfo(check);
-            if (!check.updateAvailable && check.latest) {
-              setMessage(
-                `✓ Already on latest (v${check.local}). Rebuilding locally…`,
-              );
-            }
-            const result = await performUpdate();
-            const refreshed = await performUpdateCheck(true);
-            setUpdateInfo(refreshed);
-            const tail = result.output.split("\n").slice(-6).join(" · ");
-            setMessage(
-              result.code === 0
-                ? `✓ Updated to v${result.localVersion}. ${tail || "Restart assentor to use the new build."}`
-                : `✗ Update failed (exit ${result.code}). ${tail}`,
-            );
-          } finally {
-            setUi((s) => ({ ...s, busy: false }));
-          }
-          return;
-        }
-        if (mainIndex === 1) {
-          setUi((s) => ({
-            ...s,
-            dialog: "confirm-uninstall",
-            mainIndex: 0,
-          }));
-          setMessage("Confirm uninstall");
-          return;
-        }
-        if (mainIndex === 2) {
-          exit();
-        }
-        return;
-      }
-      case "tasks": {
-        void refreshTasks();
-        return;
-      }
-      case "dashboard": {
-        setMessage(
-          `Defaults: executor=${config.executor.provider} reviewer=${config.reviewers[0]?.provider}. Run: assentor run --project . "…"`,
-        );
-        return;
-      }
-      default:
-        return;
-    }
-  }
-
-  const status = deriveStatus(ui.screen, ui.busy, updateInfo, keys);
-  const dialogForKeys: "none" | "add-key" =
-    ui.dialog === "add-key" ? "add-key" : "none";
-  const dialogForReview: "none" | "review-plan" =
-    ui.dialog === "review-plan" ? "review-plan" : "none";
-  const dialogForSettings: "none" | "defaults" =
-    ui.dialog === "defaults" ? "defaults" : "none";
-  const dialogForSystem: "none" | "confirm-uninstall" =
-    ui.dialog === "confirm-uninstall" ? "confirm-uninstall" : "none";
-
-  const footerState: UiState = {
-    ...ui,
-    capturingText,
-    mainItemCount,
-  };
+  const statusTone =
+    updateInfo?.updateAvailable
+      ? "warn"
+      : ui.busy
+        ? "warn"
+        : "ok";
 
   return (
     <Shell
@@ -769,189 +742,230 @@ function App({
       screen={ui.screen}
       focus={ui.focus}
       navIndex={ui.navIndex}
-      statusLabel={status.label}
-      statusTone={status.tone}
+      statusLabel={ui.busy ? "Busy" : "Ready"}
+      statusTone={statusTone}
       message={message}
       busy={ui.busy}
-      footer={footerHints(footerState)}
+      footer={footerHints(ui)}
+      statusBar={{
+        projectLabel: shortPath(services.projectPath),
+        executor: config.executor.provider,
+        reviewStrategy: config.routing.reviewStrategy,
+        model: config.models.default,
+        keysHealthy: `${keyHealthy}/${keys.length}`,
+        taskLabel: tasks[0]
+          ? tasks[0].contract.goal.slice(0, 24)
+          : undefined,
+      }}
     >
-      {ui.screen === "dashboard" && (
-        <DashboardScreen
-          services={services}
-          config={config}
-          version={localVersion}
-          updateInfo={updateInfo}
-          keyCount={keys.length}
-          agentCount={agents.length}
-        />
-      )}
-      {ui.screen === "tasks" && (
-        <TasksScreen
-          tasks={tasks}
+      {ui.dialog === "palette" ? (
+        <CommandPalette
+          query={paletteQuery}
+          commands={paletteCommands}
           selected={ui.mainIndex}
-          focused={ui.focus === "main"}
         />
-      )}
-      {ui.screen === "agents" && (
-        <AgentsScreen
-          agents={agents}
-          selected={ui.mainIndex}
-          focused={ui.focus === "main"}
-        />
-      )}
-      {ui.screen === "executors" && (
-        <ExecutorsScreen
-          rows={
-            executorRows.length > 0
-              ? executorRows
-              : services.executors.list().map((e) => ({
-                  id: e.id,
-                  name: e.name,
-                  installPlan: e.installPlan?.(),
-                }))
-          }
-          selected={ui.mainIndex}
-          focused={ui.focus === "main"}
-          detail={executorDetail}
-        />
-      )}
-      {ui.screen === "providers" && (
-        <ProvidersScreen
-          providers={providers}
-          keys={keys}
-          selected={ui.mainIndex}
-          focused={ui.focus === "main"}
-        />
-      )}
-      {ui.screen === "models" && (
-        <ModelsScreen
-          models={models}
-          selected={ui.mainIndex}
-          focused={ui.focus === "main"}
-        />
-      )}
-      {ui.screen === "keys" && (
+      ) : null}
+
+      {ui.dialog === "help" ? <HelpOverlay screenLabel={screenLabel} /> : null}
+
+      {ui.dialog === "start-task" ? (
+        <Dialog title="Start a task" hint="Describe the goal">
+          <Text>
+            {taskPrompt || " "}
+            <Text color="green">▌</Text>
+          </Text>
+          <Text dimColor>
+            Enter prints the assentor run command (TUI does not spawn agents
+            yet).
+          </Text>
+        </Dialog>
+      ) : null}
+
+      {ui.dialog === "review-plan" ? (
+        <Dialog title="Review plan" hint="Enter close">
+          {reviewPlan ? (
+            <Box flexDirection="column">
+              <Text>
+                Score {reviewPlan.score}/100 · risk {reviewPlan.risk} · depth{" "}
+                {reviewPlan.evidenceDepth}
+              </Text>
+              <Text>
+                Assentor recommends {reviewPlan.recommendedCount} reviewers:{" "}
+                {reviewPlan.recommendedRoles.join(", ")}
+              </Text>
+              {reviewPlan.signals.slice(0, 6).map((s) => (
+                <Text key={s} dimColor>
+                  • {s}
+                </Text>
+              ))}
+              <Text dimColor>
+                Accept via routing.reviewStrategy=
+                {config.routing.reviewStrategy} on assentor run
+              </Text>
+            </Box>
+          ) : (
+            <Text dimColor>Analyzing…</Text>
+          )}
+        </Dialog>
+      ) : null}
+
+      {ui.dialog === "ai-defaults" ? (
+        <Dialog title="AI defaults" hint="←→ cycle · Enter save on last row">
+          <MenuList items={buildDefaultRows(config)} selected={ui.mainIndex} />
+        </Dialog>
+      ) : null}
+
+      {ui.dialog === "confirm-uninstall" ? (
+        <Dialog title="Uninstall Assentor?">
+          <MenuList
+            items={["Yes, uninstall CLI", "Cancel"]}
+            selected={ui.mainIndex}
+          />
+        </Dialog>
+      ) : null}
+
+      {ui.dialog === "add-key" ? (
         <KeysScreen
           keys={keys}
           selected={ui.mainIndex}
-          focused={ui.focus === "main"}
-          dialog={dialogForKeys}
+          focused
+          dialog="add-key"
           addStep={addStep}
           addProviderIdx={addProviderIdx}
           addName={addName}
           addSecret={addSecret}
         />
-      )}
-      {ui.screen === "review" && (
-        <ReviewScreen
-          config={config}
-          selected={ui.mainIndex}
-          focused={ui.focus === "main"}
-          dialog={dialogForReview}
-          plan={reviewPlan}
-          planTaskPreview={
-            "Review architecture and security for auth refactor with tests"
-          }
-          liveLines={[]}
-        />
-      )}
-      {ui.screen === "diagnostics" && (
-        <DiagnosticsScreen lines={diagLines} />
-      )}
-      {ui.screen === "logs" && <LogsScreen lines={logLines} />}
-      {ui.screen === "settings" && (
-        <SettingsScreen
-          selected={ui.mainIndex}
-          focused={ui.focus === "main"}
-          dialog={dialogForSettings}
-          config={config}
-          projectPath={services.projectPath}
-          defaultSelected={ui.mainIndex}
-        />
-      )}
-      {ui.screen === "system" && (
-        <SystemScreen
-          selected={ui.mainIndex}
-          focused={ui.focus === "main"}
-          updateInfo={updateInfo}
-          version={localVersion}
-          dialog={dialogForSystem}
-          confirmSelected={ui.mainIndex}
-        />
-      )}
+      ) : null}
+
+      {ui.dialog === "none" ? (
+        <>
+          {ui.screen === "workspace" ? (
+            <WorkspaceScreen
+              services={services}
+              config={config}
+              selected={ui.mainIndex}
+              tasks={tasks}
+              updateInfo={updateInfo}
+              keyHealthy={keyHealthy}
+              keyTotal={keys.length}
+            />
+          ) : null}
+          {ui.screen === "tasks" ? (
+            <TasksScreen
+              tasks={tasks}
+              selected={ui.mainIndex}
+              focused={ui.focus === "main"}
+              selectedTaskId={ui.selectedTaskId}
+            />
+          ) : null}
+          {ui.screen === "agents" ? (
+            <AgentsScreen
+              agents={agents}
+              selected={ui.mainIndex}
+              focused={ui.focus === "main"}
+            />
+          ) : null}
+          {ui.screen === "review" ? (
+            <ReviewScreen
+              config={config}
+              selected={ui.mainIndex}
+              focused={ui.focus === "main"}
+              plan={reviewPlan}
+            />
+          ) : null}
+          {ui.screen === "configuration" ? (
+            <ConfigurationScreen
+              section={ui.configSection}
+              selected={ui.mainIndex}
+              focused={ui.focus === "main"}
+              config={config}
+              keys={keys}
+              executorRows={executorRows}
+            />
+          ) : null}
+          {ui.screen === "diagnostics" ? (
+            <DiagnosticsScreen
+              items={diagItems}
+              selected={ui.mainIndex}
+              focused={ui.focus === "main"}
+              busy={ui.busy}
+            />
+          ) : null}
+          {ui.screen === "help" ? <HelpScreen /> : null}
+        </>
+      ) : null}
     </Shell>
   );
 }
 
-function deriveStatus(
-  screen: ScreenId,
-  busy: boolean,
-  updateInfo: UpdateCheckResult | null,
-  keys: { health: string }[],
-): { label: string; tone: "ok" | "warn" | "error" | "info" | "brand" } {
-  if (busy) return { label: "busy", tone: "info" };
-  if (updateInfo?.updateAvailable) return { label: "update", tone: "warn" };
-  if (screen === "keys") {
-    const failed = keys.some((k) => k.health === "failed");
-    if (failed) return { label: "keys!", tone: "error" };
-    return { label: `${keys.length} keys`, tone: "ok" };
-  }
-  return { label: screen, tone: "brand" };
-}
-
-function applyDefaultCycle(
-  prev: AssentorConfig,
-  row: number,
+function cycleDefaultField(
+  config: AssentorConfig,
+  idx: number,
   dir: 1 | -1,
   modelChoices: string[],
 ): AssentorConfig {
-  const next = structuredClone(prev);
-  switch (row) {
-    case 0: {
-      const current = EXECUTOR_OPTIONS.includes(
-        prev.executor.provider as (typeof EXECUTOR_OPTIONS)[number],
-      )
-        ? (prev.executor.provider as (typeof EXECUTOR_OPTIONS)[number])
-        : "mock";
-      next.executor.provider = cycle(EXECUTOR_OPTIONS, current, dir);
+  const next = { ...config };
+  switch (idx) {
+    case 0:
+      next.executor = {
+        ...next.executor,
+        provider: cycle(EXECUTOR_OPTIONS, next.executor.provider, dir),
+      };
       break;
-    }
     case 1: {
-      const current = (prev.reviewers[0]?.provider ??
-        "mock") as (typeof REVIEWER_OPTIONS)[number];
-      const provider = cycle(REVIEWER_OPTIONS, current, dir);
-      next.reviewers = [{ provider, role: "general", transport: "api" }];
+      const provider = cycle(
+        REVIEWER_OPTIONS,
+        (next.reviewers[0]?.provider ?? "mock") as (typeof REVIEWER_OPTIONS)[number],
+        dir,
+      );
+      next.reviewers = [
+        {
+          provider,
+          role: next.reviewers[0]?.role ?? "general",
+          transport: next.reviewers[0]?.transport ?? "api",
+        },
+      ];
       break;
     }
     case 2:
-      next.routing.strategy = cycle(
-        ROUTING_OPTIONS,
-        prev.routing.strategy,
-        dir,
-      );
+      next.routing = {
+        ...next.routing,
+        strategy: cycle(ROUTING_OPTIONS, next.routing.strategy, dir),
+      };
       break;
     case 3:
-      next.routing.reviewStrategy = cycle(
-        REVIEW_STRATEGY_OPTIONS,
-        prev.routing.reviewStrategy,
-        dir,
-      );
+      next.routing = {
+        ...next.routing,
+        reviewStrategy: cycle(
+          REVIEW_STRATEGY_OPTIONS,
+          next.routing.reviewStrategy,
+          dir,
+        ),
+      };
       break;
     case 4:
-      next.models.default = cycle(modelChoices, prev.models.default, dir);
+      next.models = {
+        ...next.models,
+        default: cycle(modelChoices, next.models.default, dir),
+      };
       break;
     case 5:
-      next.models.gemini = cycle(modelChoices, prev.models.gemini, dir);
+      next.models = {
+        ...next.models,
+        gemini: cycle(modelChoices, next.models.gemini, dir),
+      };
       break;
     case 6:
-      next.models.openai = cycle(modelChoices, prev.models.openai, dir);
+      next.models = {
+        ...next.models,
+        openai: cycle(modelChoices, next.models.openai, dir),
+      };
       break;
     case 7:
-      next.limits.maxRounds = cycle(
-        ROUND_OPTIONS,
-        prev.limits.maxRounds as (typeof ROUND_OPTIONS)[number],
-        dir,
-      );
+      next.limits = {
+        ...next.limits,
+        maxRounds: cycle(ROUND_OPTIONS, next.limits.maxRounds as (typeof ROUND_OPTIONS)[number], dir),
+      };
       break;
     default:
       break;
@@ -959,19 +973,17 @@ function applyDefaultCycle(
   return next;
 }
 
+function shortPath(p: string): string {
+  const home = process.env.HOME;
+  if (home && p.startsWith(home)) return `~${p.slice(home.length)}`;
+  return p;
+}
+
 export async function startTui(projectPath: string): Promise<void> {
   const services = await createAssentorServices(projectPath);
   const initialConfig = await loadAssentorConfig(projectPath);
-  render(<App services={services} initialConfig={initialConfig} />);
+  const instance = render(
+    <App services={services} initialConfig={initialConfig} />,
+  );
+  await instance.waitUntilExit();
 }
-
-export { App };
-export type { ScreenId };
-export {
-  NAV_SCREENS,
-  mapKeyToAction,
-  reduceUi,
-  createInitialUiState,
-  screenAt,
-} from "./keymap.js";
-export type { DialogKind, UiState, UiAction, KeyEvent } from "./keymap.js";

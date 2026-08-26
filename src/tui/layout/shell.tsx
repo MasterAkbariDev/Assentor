@@ -4,6 +4,41 @@ import { Badge, type BadgeTone } from "../components/badge.js";
 import { Progress } from "../components/progress.js";
 import { NAV_SCREENS, type FocusPane, type ScreenId } from "../keymap.js";
 
+export interface StatusBarProps {
+  projectLabel: string;
+  executor: string;
+  reviewStrategy: string;
+  model: string;
+  keysHealthy: string;
+  taskLabel?: string;
+}
+
+export function StatusBar({
+  projectLabel,
+  executor,
+  reviewStrategy,
+  model,
+  keysHealthy,
+  taskLabel,
+}: StatusBarProps) {
+  return (
+    <Box flexDirection="column" marginBottom={0}>
+      <Text dimColor>
+        {projectLabel}
+        {"  ·  "}
+        exec {executor}
+        {"  ·  "}
+        review {reviewStrategy}
+        {"  ·  "}
+        model {model}
+        {"  ·  "}
+        keys {keysHealthy}
+        {taskLabel ? `  ·  task ${taskLabel}` : ""}
+      </Text>
+    </Box>
+  );
+}
+
 export function Shell({
   version,
   screen,
@@ -14,6 +49,7 @@ export function Shell({
   message,
   busy,
   footer,
+  statusBar,
   children,
 }: {
   version: string;
@@ -25,49 +61,51 @@ export function Shell({
   message?: string;
   busy?: boolean;
   footer: string;
+  statusBar?: StatusBarProps;
   children: React.ReactNode;
 }) {
-  const title = `v${version}`;
+  const current = NAV_SCREENS.find((s) => s.id === screen);
   return (
-    <Box flexDirection="column" paddingX={1} paddingTop={0}>
-      <Box flexDirection="column" marginBottom={0}>
+    <Box flexDirection="column" paddingX={1}>
+      <Box>
         <Text color="cyan" bold>
-          ╭────────────────────────────────────────────────────╮
+          ASSENTOR
         </Text>
-        <Text color="cyan" bold>
-          │ ASSENTOR — {title.padEnd(38)}│
-        </Text>
-        <Text color="cyan" bold>
-          ╰────────────────────────────────────────────────────╯
-        </Text>
+        <Text dimColor>  v{version}</Text>
+        <Text>  </Text>
+        <Badge label={statusLabel} tone={statusTone} />
+        {focus === "main" || focus === "palette" || focus === "dialog" ? (
+          <Text color="green"> · focused</Text>
+        ) : (
+          <Text dimColor> · nav</Text>
+        )}
       </Box>
 
-      <Box flexDirection="row" flexGrow={1}>
+      {statusBar ? <StatusBar {...statusBar} /> : null}
+
+      <Box flexDirection="row" flexGrow={1} marginTop={0}>
         <Box
           flexDirection="column"
-          width={18}
+          width={16}
           borderStyle="single"
           borderColor={focus === "nav" ? "green" : "gray"}
           paddingX={1}
           marginRight={1}
         >
-          <Text bold dimColor={focus !== "nav"}>
-            NAV
-          </Text>
           {NAV_SCREENS.map((item, index) => {
             const active = index === navIndex;
-            const current = item.id === screen;
+            const onScreen = item.id === screen;
             return (
               <Text
                 key={item.id}
                 color={
                   active && focus === "nav"
                     ? "green"
-                    : current
+                    : onScreen
                       ? "cyan"
                       : undefined
                 }
-                bold={active || current}
+                bold={active || onScreen}
               >
                 {active ? "> " : "  "}
                 {item.label}
@@ -79,23 +117,23 @@ export function Shell({
         <Box flexDirection="column" flexGrow={1}>
           <Box marginBottom={0}>
             <Text bold color="cyan">
-              {screen.toUpperCase()}
+              {(current?.label ?? screen).toUpperCase()}
             </Text>
-            <Text> </Text>
-            <Badge label={statusLabel} tone={statusTone} />
-            {focus === "main" ? (
-              <Text color="green"> · main</Text>
-            ) : (
-              <Text dimColor> · nav</Text>
-            )}
+            {current?.hint ? (
+              <Text dimColor>  — {current.hint}</Text>
+            ) : null}
           </Box>
           <Box
             flexDirection="column"
             borderStyle="single"
-            borderColor={focus === "main" ? "green" : "gray"}
+            borderColor={
+              focus === "main" || focus === "dialog" || focus === "palette"
+                ? "green"
+                : "gray"
+            }
             paddingX={1}
             flexGrow={1}
-            minHeight={12}
+            minHeight={14}
           >
             {children}
           </Box>
@@ -103,12 +141,12 @@ export function Shell({
       </Box>
 
       {message ? (
-        <Box marginTop={0}>
+        <Box>
           <Text color="yellow">{message}</Text>
         </Box>
       ) : null}
       <Progress active={Boolean(busy)} />
-      <Box marginTop={0}>
+      <Box>
         <Text dimColor>{footer}</Text>
       </Box>
     </Box>

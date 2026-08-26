@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **TUI UX rewrite** — Workspace-first navigation (Tasks / Agents / Review / Configure / Diagnostics / Help); removed root Providers/Models/Logs/System destinations; command palette (`/` / Ctrl+K); contextual help (`?`); status bar; progressive configuration
+
 ## [0.3.1] — 2026-08-26
 
 ### Added

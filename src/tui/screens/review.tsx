@@ -2,62 +2,48 @@ import React from "react";
 import { Box, Text } from "ink";
 import type { AssentorConfig } from "../../config/load.js";
 import type { ComplexityAnalysis } from "../../review/complexity.js";
-import { Dialog } from "../components/dialog.js";
 import { Badge } from "../components/badge.js";
 import { MenuList } from "./shared.js";
+
+export const REVIEW_ACTIONS = [
+  { id: "plan", label: "Open review plan (complexity → reviewers)" },
+  { id: "cli", label: "Show CLI: assentor review \"…\"" },
+  { id: "strategy", label: "Change review strategy (defaults)" },
+] as const;
 
 export function ReviewScreen({
   config,
   selected,
   focused,
-  dialog,
   plan,
-  planTaskPreview,
-  liveLines,
 }: {
   config: AssentorConfig;
   selected: number;
   focused: boolean;
-  dialog: "none" | "review-plan";
   plan: ComplexityAnalysis | null;
-  planTaskPreview: string;
-  liveLines: string[];
 }) {
-  const items = [
-    `Review strategy:  ${config.routing.reviewStrategy}`,
-    `Primary reviewer: ${config.reviewers[0]?.provider ?? "mock"} (${config.reviewers[0]?.transport ?? "api"})`,
-    `Routing:          ${config.routing.strategy}`,
-    `Max rounds:       ${config.limits.maxRounds}`,
-    "Open Review Plan (complexity)…",
-  ];
-
   return (
     <Box flexDirection="column">
+      <Text bold>Review</Text>
       <Text dimColor>
-        Config + live panel · [p] Review Plan · runs attach status here
+        Assentor recommends reviewers from task complexity — you rarely pick
+        them by hand.
       </Text>
-      <MenuList items={items} selected={selected} focused={focused} />
 
       <Box marginTop={1} flexDirection="column">
-        <Text bold>Live</Text>
-        {liveLines.length === 0 ? (
-          <Text dimColor>
-            No active run. Live reviewer status appears when a task is running.
-          </Text>
-        ) : (
-          liveLines.slice(0, 8).map((line) => <Text key={line}>{line}</Text>)
-        )}
+        <Text>
+          Strategy{" "}
+          <Text color="green">{config.routing.reviewStrategy}</Text>
+          {" · "}
+          Routing {config.routing.strategy}
+        </Text>
       </Box>
 
-      {dialog === "review-plan" && plan ? (
-        <Dialog title="Review Plan">
-          <Text dimColor>
-            Based on: {planTaskPreview.slice(0, 80) || "(sample / defaults)"}
-          </Text>
+      {plan ? (
+        <Box marginTop={1} flexDirection="column">
+          <Text dimColor>LAST PLAN</Text>
           <Text>
-            Score: <Text color="cyan">{plan.score}</Text>
-            {" · "}
-            Risk:{" "}
+            Score {plan.score}/100 · risk{" "}
             <Badge
               label={plan.risk}
               tone={
@@ -68,18 +54,35 @@ export function ReviewScreen({
                     : "ok"
               }
             />
+            {" · "}
+            depth {plan.evidenceDepth}
           </Text>
           <Text>
-            Reviewers: {plan.recommendedCount} · Roles:{" "}
+            Recommended ({plan.recommendedCount}):{" "}
             {plan.recommendedRoles.join(", ")}
           </Text>
-          <Text>
-            Evidence depth: <Text color="green">{plan.evidenceDepth}</Text>
+          {plan.signals.slice(0, 4).map((s) => (
+            <Text key={s} dimColor>
+              • {s}
+            </Text>
+          ))}
+        </Box>
+      ) : (
+        <Box marginTop={1}>
+          <Text dimColor>
+            No plan yet. Press <Text color="cyan">p</Text> or select Open review
+            plan.
           </Text>
-          <Text dimColor>Signals: {plan.signals.join(", ") || "none"}</Text>
-          <Text dimColor>Esc to close</Text>
-        </Dialog>
-      ) : null}
+        </Box>
+      )}
+
+      <Box marginTop={1}>
+        <MenuList
+          items={REVIEW_ACTIONS.map((a) => a.label)}
+          selected={selected}
+          focused={focused}
+        />
+      </Box>
     </Box>
   );
 }

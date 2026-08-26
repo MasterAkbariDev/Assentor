@@ -4,5 +4,15 @@ export {
   mapKeyToAction,
   reduceUi,
   NAV_SCREENS,
+  filterPaletteCommands,
+  PALETTE_COMMANDS,
+  footerHints,
 } from "./keymap.js";
-export type { ScreenId, UiState, UiAction, KeyEvent } from "./keymap.js";
+export type {
+  ScreenId,
+  UiState,
+  UiAction,
+  KeyEvent,
+  ConfigSection,
+  DialogKind,
+} from "./keymap.js";
