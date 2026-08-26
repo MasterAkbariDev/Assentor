@@ -263,6 +263,85 @@ describe("CursorExecutor", () => {
     expect(statuses.some((s) => s.startsWith("reading:"))).toBe(true);
   });
 
+  it("kills Cursor after a result event if the process never exits", async () => {
+    const kill = vi.fn((signal?: NodeJS.Signals) => {
+      if (signal === "SIGTERM") {
+        finish({
+          code: null,
+          stdout: resultLine,
+          stderr: "",
+          signal: "SIGTERM",
+        });
+      }
+      return true;
+    });
+    const resultLine = `${JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: "Wrote the hang fix",
+      session_id: "stuck-1",
+    })}\n`;
+    let finish!: (result: {
+      code: number | null;
+      stdout: string;
+      stderr: string;
+      signal?: NodeJS.Signals | null;
+    }) => void;
+
+    const executor = new CursorExecutor({
+      spawnFn: async (request) => {
+        request.onSpawn?.({ kill });
+        request.onOutput?.(resultLine, "stdout");
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      },
+      binary: "agent",
+      resultGraceMs: 25,
+    });
+
+    const runPromise = executor.run({
+      taskId: "t-hang",
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("goal"),
+      prompt: "goal",
+    });
+
+    const result = await runPromise;
+    expect(kill).toHaveBeenCalledWith("SIGTERM");
+    expect(result.status).toBe("completed");
+    expect(result.summary).toBe("Wrote the hang fix");
+    expect(result.sessionId).toBe("stuck-1");
+  });
+
+  it("does not kill Cursor when the process exits right after the result", async () => {
+    const kill = vi.fn();
+    const resultLine = `${JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: "Exited cleanly",
+    })}\n`;
+    const executor = new CursorExecutor({
+      spawnFn: async (request) => {
+        request.onSpawn?.({ kill });
+        request.onOutput?.(resultLine, "stdout");
+        return { code: 0, stdout: resultLine, stderr: "" };
+      },
+      binary: "agent",
+      resultGraceMs: 200,
+    });
+
+    const result = await executor.run({
+      taskId: "t-clean",
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("goal"),
+      prompt: "goal",
+    });
+
+    expect(result.status).toBe("completed");
+    expect(kill).not.toHaveBeenCalled();
+  });
+
   it("sets CURSOR_API_KEY when provided", async () => {
     const spawnFn = vi.fn(async (request: CursorSpawnRequest) => {
       expect(request.env.CURSOR_API_KEY).toBe("test-key");

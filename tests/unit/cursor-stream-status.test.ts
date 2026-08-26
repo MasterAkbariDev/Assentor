@@ -81,8 +81,24 @@ describe("Cursor stream-json status", () => {
 
     expect(parser.getSessionId()).toBe("abc");
     expect(parser.getResultText()).toBe("All good");
+    expect(parser.hasFinalResult()).toBe(true);
     expect(statuses[0]).toContain("starting");
     expect(statuses.some((s) => s.startsWith("editing:"))).toBe(true);
+  });
+
+  it("treats a result object without a trailing newline as final", () => {
+    const parser = new CursorStreamStatusParser();
+    const updates = parser.push(
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: "No newline",
+        session_id: "nl",
+      }),
+    );
+    expect(parser.hasFinalResult()).toBe(true);
+    expect(parser.getResultText()).toBe("No newline");
+    expect(updates[0]?.isFinal).toBe(true);
   });
 
   it("maps thinking events to a waiting-on-model detail", () => {

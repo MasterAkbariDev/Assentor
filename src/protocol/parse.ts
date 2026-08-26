@@ -151,6 +151,73 @@ export function normalizeReviewConfidence(value: unknown): number | unknown {
   return confidence;
 }
 
+function coerceStringList(value: unknown): string[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => {
+      if (typeof item === "string") {
+        return item.trim() ? [item] : [];
+      }
+      if (item && typeof item === "object") {
+        const rec = item as Record<string, unknown>;
+        const text = [rec.description, rec.path, rec.text, rec.evidence]
+          .find((part) => typeof part === "string" && part.trim());
+        return typeof text === "string" ? [text] : [];
+      }
+      if (item == null) {
+        return [];
+      }
+      return [String(item)];
+    });
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  return [String(value)];
+}
+
+function wrapAsArray(value: unknown): unknown[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  return Array.isArray(value) ? value : [value];
+}
+
+function normalizeIssue(issue: unknown, index: number): unknown {
+  if (typeof issue === "string") {
+    const trimmed = issue.trim();
+    return {
+      id: `ISSUE-${index + 1}`,
+      severity: "minor",
+      description: trimmed || `Issue ${index + 1}`,
+      evidence: [],
+      affectedFiles: [],
+    };
+  }
+  if (issue === null || typeof issue !== "object" || Array.isArray(issue)) {
+    return issue;
+  }
+  const rec = { ...(issue as Record<string, unknown>) };
+  if (typeof rec.id !== "string" || !rec.id.trim()) {
+    rec.id = `ISSUE-${index + 1}`;
+  }
+  if (typeof rec.severity === "string") {
+    rec.severity = rec.severity.toLowerCase();
+  } else if (rec.severity == null) {
+    rec.severity = "minor";
+  }
+  rec.evidence = coerceStringList(rec.evidence);
+  rec.affectedFiles = coerceStringList(rec.affectedFiles);
+  if (typeof rec.description !== "string" || !rec.description.trim()) {
+    rec.description =
+      (typeof rec.summary === "string" && rec.summary.trim()) || rec.id;
+  }
+  return rec;
+}
+
 function normalizeReviewCandidate(data: unknown): unknown {
   if (data === null || typeof data !== "object" || Array.isArray(data)) {
     return data;
@@ -159,6 +226,20 @@ function normalizeReviewCandidate(data: unknown): unknown {
   const record = { ...(data as Record<string, unknown>) };
   if ("confidence" in record) {
     record.confidence = normalizeReviewConfidence(record.confidence);
+  }
+  if ("requiredChanges" in record) {
+    record.requiredChanges = coerceStringList(record.requiredChanges);
+  }
+  if ("optionalChanges" in record) {
+    record.optionalChanges = coerceStringList(record.optionalChanges);
+  }
+  if ("issues" in record) {
+    record.issues = wrapAsArray(record.issues).map((issue, index) =>
+      normalizeIssue(issue, index),
+    );
+  }
+  if ("evidenceRequests" in record && !Array.isArray(record.evidenceRequests)) {
+    record.evidenceRequests = wrapAsArray(record.evidenceRequests);
   }
   return record;
 }

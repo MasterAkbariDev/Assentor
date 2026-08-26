@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.8] — 2026-08-26
+
+### Fixed
+
+- Cursor no longer sits on “waiting, finishing up” after the agent has already emitted its result. Assentor waits a short grace period, then closes the stuck CLI process and continues the run.
+- Gemini (and other reviewers) can send `issues[].evidence` as a single string; Assentor now coerces it to an array instead of failing the whole task with `Invalid review result`.
+
 ## [0.3.7] — 2026-08-26
 
 ### Fixed
@@ -140,7 +147,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logical agents, diagnostics, and resumable task state under `.assentor/tasks/`
 - One-line install scripts for macOS/Linux and Windows
 
-[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.7...HEAD
+[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.8...HEAD
+[0.3.8]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.4...v0.3.5

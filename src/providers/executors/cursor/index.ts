@@ -68,6 +68,12 @@ export interface CursorExecutorOptions {
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   /** Parsed live status from stream-json events. */
   onStatus?: (status: AgentStatusUpdate) => void;
+  /**
+   * After Cursor emits a stream-json `result` event, wait this long for the
+   * process to exit, then SIGTERM it. Default 10s.
+   * The CLI often hangs on "finishing up" after the result is already written.
+   */
+  resultGraceMs?: number;
 }
 
 const DEFAULT_CAPABILITIES: ExecutorCapabilities = {
@@ -97,6 +103,7 @@ export class CursorExecutor implements Executor {
   private readonly spawnFn: CursorSpawnFn;
   private readonly onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   private readonly onStatus?: (status: AgentStatusUpdate) => void;
+  private readonly resultGraceMs: number;
   private readonly cancelled = new Set<string>();
   private activeChild?: { kill: (signal?: NodeJS.Signals) => boolean };
   private sessionId = createId();
@@ -122,6 +129,8 @@ export class CursorExecutor implements Executor {
     this.spawnFn = options.spawnFn ?? defaultSpawn;
     this.onOutput = options.onOutput;
     this.onStatus = options.onStatus;
+    this.resultGraceMs =
+      options.resultGraceMs ?? envResultGraceMs() ?? 10_000;
   }
 
   capabilities(): ExecutorCapabilities {
@@ -198,6 +207,39 @@ export class CursorExecutor implements Executor {
         ? new CursorStreamStatusParser()
         : undefined;
 
+    let resultGrace: ReturnType<typeof setTimeout> | undefined;
+    let killAfterResult: ReturnType<typeof setTimeout> | undefined;
+    const closeStuckProcess = () => {
+      this.onStatus?.({
+        activity: "waiting",
+        detail: "closing stuck Cursor process",
+      });
+      try {
+        this.activeChild?.kill("SIGTERM");
+      } catch {
+        // already exited
+      }
+      killAfterResult = setTimeout(() => {
+        try {
+          this.activeChild?.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+      }, 2000);
+      killAfterResult.unref?.();
+    };
+    const scheduleResultGrace = () => {
+      if (resultGrace || this.resultGraceMs <= 0) {
+        return;
+      }
+      this.onStatus?.({
+        activity: "waiting",
+        detail: "result received — waiting for process to exit",
+      });
+      resultGrace = setTimeout(closeStuckProcess, this.resultGraceMs);
+      resultGrace.unref?.();
+    };
+
     let result: CursorSpawnResult;
     try {
       result = await this.spawnFn({
@@ -214,6 +256,9 @@ export class CursorExecutor implements Executor {
           if (stream === "stdout" && streamParser) {
             for (const update of streamParser.push(chunk)) {
               this.onStatus?.(update);
+              if (update.isFinal) {
+                scheduleResultGrace();
+              }
             }
           }
         },
@@ -221,6 +266,9 @@ export class CursorExecutor implements Executor {
       if (streamParser) {
         for (const update of streamParser.flush()) {
           this.onStatus?.(update);
+          if (update.isFinal) {
+            scheduleResultGrace();
+          }
         }
       }
     } catch (error) {
@@ -235,6 +283,13 @@ export class CursorExecutor implements Executor {
         error: message + hint,
         sessionId: this.sessionId,
       };
+    } finally {
+      if (resultGrace) {
+        clearTimeout(resultGrace);
+      }
+      if (killAfterResult) {
+        clearTimeout(killAfterResult);
+      }
     }
     this.activeChild = undefined;
 
@@ -250,7 +305,7 @@ export class CursorExecutor implements Executor {
       };
     }
 
-    if (result.timedOut) {
+    if (result.timedOut && !streamParser?.hasFinalResult()) {
       return {
         status: "timeout",
         summary: `Cursor agent timed out after ${this.timeoutMs}ms`,
@@ -289,7 +344,23 @@ export class CursorExecutor implements Executor {
       this.sessionId = parsedSession;
     }
 
-    if (result.code !== 0) {
+    const completedViaResult = Boolean(streamParser?.hasFinalResult());
+    if (streamParser?.isResultError()) {
+      const summary =
+        streamParser.getResultText() ||
+        result.stderr ||
+        result.stdout ||
+        "Cursor agent reported an error";
+      return {
+        status: "failed",
+        summary,
+        error: summary,
+        sessionId: this.sessionId,
+        rawOutput: result.stdout,
+      };
+    }
+
+    if (result.code !== 0 && !completedViaResult) {
       return {
         status: "failed",
         summary: `Cursor agent exited with code ${result.code}`,
@@ -351,6 +422,13 @@ function envTimeoutMs(): number | undefined {
   if (!raw) return undefined;
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function envResultGraceMs(): number | undefined {
+  const raw = process.env.ASSENTOR_CURSOR_RESULT_GRACE_MS;
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
 function formatDuration(ms: number): string {

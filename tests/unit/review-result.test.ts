@@ -95,6 +95,43 @@ describe("review result", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("coerces issue evidence from a string to an array", () => {
+    const result = parseReviewResult({
+      status: ReviewStatus.NeedsWork,
+      confidence: 90,
+      summary: "Hang not addressed",
+      issues: [
+        {
+          id: "HANG-1",
+          severity: "MAJOR",
+          description: "Cursor process never exits after result",
+          evidence: "src/providers/executors/cursor/index.ts",
+          affectedFiles: "src/providers/executors/cursor/index.ts",
+        },
+        {
+          description: "Missing stream parser coverage",
+          evidence: "src/providers/executors/cursor/stream-status.ts",
+        },
+      ],
+      requiredChanges: "Kill the process after the result event",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.issues[0]?.evidence).toEqual([
+        "src/providers/executors/cursor/index.ts",
+      ]);
+      expect(result.data.issues[0]?.affectedFiles).toEqual([
+        "src/providers/executors/cursor/index.ts",
+      ]);
+      expect(result.data.issues[0]?.severity).toBe(Severity.Major);
+      expect(result.data.issues[1]?.id).toBe("ISSUE-2");
+      expect(result.data.requiredChanges).toEqual([
+        "Kill the process after the result event",
+      ]);
+    }
+  });
+
   it("does not throw on garbage review output", () => {
     expect(parseReviewResult("totally broken").ok).toBe(false);
     expect(parseReviewResult({ status: "PASS" }).ok).toBe(false);

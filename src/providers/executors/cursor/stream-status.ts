@@ -20,6 +20,10 @@ export interface AgentStatusUpdate {
   sessionId?: string;
   /** Final assistant result text when type=result */
   resultText?: string;
+  /** True when Cursor emitted the terminal stream-json `result` event. */
+  isFinal?: boolean;
+  /** True when that result event reports failure. */
+  resultFailed?: boolean;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -31,6 +35,8 @@ export class CursorStreamStatusParser {
   private buffer = "";
   private lastResultText = "";
   private sessionId?: string;
+  private sawFinal = false;
+  private resultFailed = false;
 
   push(chunk: string): AgentStatusUpdate[] {
     this.buffer += chunk;
@@ -45,17 +51,20 @@ export class CursorStreamStatusParser {
       if (!line) {
         continue;
       }
-      const update = parseStreamLine(line);
-      if (!update) {
-        continue;
+      const update = this.record(parseStreamLine(line));
+      if (update) {
+        updates.push(update);
       }
-      if (update.sessionId) {
-        this.sessionId = update.sessionId;
+    }
+
+    // Cursor sometimes emits the final result object without a trailing newline.
+    const trailing = this.buffer.trim();
+    if (trailing.startsWith("{") && trailing.endsWith("}")) {
+      const update = this.record(parseStreamLine(trailing));
+      if (update) {
+        this.buffer = "";
+        updates.push(update);
       }
-      if (update.resultText) {
-        this.lastResultText = update.resultText;
-      }
-      updates.push(update);
     }
 
     return updates;
@@ -68,7 +77,7 @@ export class CursorStreamStatusParser {
     if (!line) {
       return [];
     }
-    const update = parseStreamLine(line);
+    const update = this.record(parseStreamLine(line));
     return update ? [update] : [];
   }
 
@@ -78,6 +87,31 @@ export class CursorStreamStatusParser {
 
   getResultText(): string {
     return this.lastResultText;
+  }
+
+  hasFinalResult(): boolean {
+    return this.sawFinal;
+  }
+
+  isResultError(): boolean {
+    return this.resultFailed;
+  }
+
+  private record(update: AgentStatusUpdate | undefined): AgentStatusUpdate | undefined {
+    if (!update) {
+      return undefined;
+    }
+    if (update.sessionId) {
+      this.sessionId = update.sessionId;
+    }
+    if (update.resultText) {
+      this.lastResultText = update.resultText;
+    }
+    if (update.isFinal) {
+      this.sawFinal = true;
+      this.resultFailed = Boolean(update.resultFailed);
+    }
+    return update;
   }
 }
 
@@ -149,11 +183,20 @@ export function parseStreamLine(line: string): AgentStatusUpdate | undefined {
         : typeof event.message === "string"
           ? event.message
           : "";
+    const subtype = String(event.subtype ?? "").toLowerCase();
+    const resultFailed =
+      subtype === "error" ||
+      event.is_error === true ||
+      event.isError === true;
     return {
       activity: "waiting",
-      detail: "finishing up",
+      detail: resultFailed
+        ? "result received with errors"
+        : "result received — waiting for process to exit",
       sessionId,
       resultText: result,
+      isFinal: true,
+      resultFailed,
     };
   }
 

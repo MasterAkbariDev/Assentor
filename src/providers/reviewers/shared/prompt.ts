@@ -96,6 +96,8 @@ export function buildReviewPrompt(input: {
       2,
     ),
     "Rules: confidence MUST be a float between 0 and 1 inclusive (e.g. 0.85). Do NOT use 0–100 percentages.",
+    "issues[].evidence and issues[].affectedFiles MUST be JSON arrays of strings, never a single string.",
+    "requiredChanges and optionalChanges MUST be JSON arrays of strings.",
     "",
     input.specialtyAddendum ? `${input.specialtyAddendum}\n` : "",
     `Round: ${input.round}`,
