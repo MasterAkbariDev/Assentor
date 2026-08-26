@@ -245,7 +245,16 @@ export class Supervisor {
   }
 
   private restoreFromSnapshot(snapshot: TaskSnapshot): void {
-    this.state = normalizeTaskState(snapshot.status);
+    let state = normalizeTaskState(snapshot.status);
+    // Retryable failures (timeout / auth / blocked) pick up in EXECUTING.
+    if (
+      state === TaskState.Failed ||
+      state === TaskState.Timeout ||
+      state === TaskState.HumanRequired
+    ) {
+      state = TaskState.Executing;
+    }
+    this.state = state;
     this.round = snapshot.currentRound;
     this.budgets = snapshot.budgets;
     this.sessionId = snapshot.executorSessionId;
@@ -454,6 +463,7 @@ export class Supervisor {
     this.emit("executor.completed", {
       status: result.status,
       summary: result.summary,
+      rawOutput: result.rawOutput,
     });
     return result;
   }

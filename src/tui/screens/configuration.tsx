@@ -5,13 +5,18 @@ import type { StoredApiKey } from "../../keys/index.js";
 import type { ExecutorRow } from "./executors.js";
 import { Badge } from "../components/badge.js";
 import { MenuList } from "./shared.js";
+import {
+  buildAdvancedRows,
+  buildAiRows,
+  buildReviewRows,
+} from "./settings.js";
 import type { ConfigSection } from "../keymap.js";
 
 export const CONFIG_MENU = [
-  { id: "ai" as const, label: "AI defaults (executor / reviewer / models)" },
+  { id: "ai" as const, label: "AI defaults (executor, reviewer, models)" },
   { id: "keys" as const, label: "API keys" },
   { id: "executors" as const, label: "Executors (install / detect)" },
-  { id: "review" as const, label: "Review strategy" },
+  { id: "review" as const, label: "Reviewers (how many, how deep)" },
   { id: "advanced" as const, label: "Advanced routing & budgets" },
   { id: "system" as const, label: "Update / Uninstall" },
 ];
@@ -51,42 +56,34 @@ export function ConfigurationScreen({
   }
 
   if (section === "ai" || section === "review" || section === "advanced") {
+    const rows =
+      section === "ai"
+        ? buildAiRows(config)
+        : section === "review"
+          ? buildReviewRows(config)
+          : buildAdvancedRows(config);
+    const title =
+      section === "ai"
+        ? "AI defaults"
+        : section === "review"
+          ? "Reviewers"
+          : "Advanced";
+    const hint =
+      section === "review"
+        ? "Auto picks how many reviewers from the task. You do not pick them by hand."
+        : section === "ai"
+          ? "Who writes code, who reviews it, and which model. ← → changes the highlighted row."
+          : "Routing and budgets. Leave Balanced unless you have a reason.";
     return (
       <Box flexDirection="column">
-        <Text bold>
-          {section === "ai"
-            ? "AI defaults"
-            : section === "review"
-              ? "Review"
-              : "Advanced"}
-        </Text>
-        <Text>
-          Executor <Text color="green">{config.executor.provider}</Text>
-        </Text>
-        <Text>
-          Reviewer{" "}
-          <Text color="green">{config.reviewers[0]?.provider ?? "mock"}</Text>
-          {" · "}
-          transport {config.reviewers[0]?.transport ?? "api"}
-        </Text>
-        <Text>
-          Review strategy{" "}
-          <Text color="green">{config.routing.reviewStrategy}</Text>
-        </Text>
-        <Text>
-          Routing <Text color="green">{config.routing.strategy}</Text>
-        </Text>
-        <Text>
-          Models default={config.models.default} gemini={config.models.gemini}{" "}
-          openai={config.models.openai}
-        </Text>
-        <Text>
-          Budgets rounds={config.limits.maxRounds} messages=
-          {config.limits.maxMessages}
-        </Text>
+        <Text bold>{title}</Text>
+        <Text dimColor>{hint}</Text>
+        <Box marginTop={1}>
+          <MenuList items={rows} selected={selected} focused={focused} />
+        </Box>
         <Box marginTop={1}>
           <Text dimColor>
-            Enter opens the defaults editor · Esc back to Configure menu
+            ← → change · Enter same as → · s save · Esc back
           </Text>
         </Box>
       </Box>

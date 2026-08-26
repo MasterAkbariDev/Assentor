@@ -14,7 +14,7 @@ import {
 } from "../core/task-contract.js";
 import { Supervisor } from "../orchestrator/supervisor.js";
 import { isTerminalState, TaskState } from "../orchestrator/state-machine.js";
-import { TaskStore, loadTaskForResume } from "../persistence/index.js";
+import { TaskStore, loadTaskForResume, findLatestResumableTask } from "../persistence/index.js";
 import { CursorExecutor } from "../providers/executors/cursor/index.js";
 import { MockExecutor } from "../providers/executors/mock/index.js";
 import type { Executor } from "../providers/executors/types.js";
@@ -59,6 +59,7 @@ export async function createExecutor(
       activity: string;
       detail: string;
     }) => void;
+    timeoutMs?: number;
   } = {},
 ): Promise<Executor> {
   const { withAssentorGitignore } = await import(
@@ -71,6 +72,7 @@ export async function createExecutor(
       executor = new CursorExecutor({
         onOutput: options.onOutput,
         onStatus: options.onStatus,
+        timeoutMs: options.timeoutMs,
       });
       break;
     case "mock":
@@ -273,6 +275,7 @@ export async function runAssentorTask(input: RunAssentorInput) {
 
   const executor = await createExecutor(executorProvider, projectPath, {
     onStatus: (status) => reporter.onExecutorStatus(status),
+    timeoutMs: config.limits.maxRuntimeMinutes * 60_000,
   });
   const resolvedKey = reviewerNeedsApiKey(reviewerProvider, reviewerTransport)
     ? await resolveProviderApiKey(reviewerProvider, projectPath)
@@ -421,13 +424,20 @@ export async function runAssentorTask(input: RunAssentorInput) {
 
 export async function resumeAssentorTask(input: {
   projectPath: string;
-  taskId: string;
+  taskId?: string;
   verbose?: boolean;
 }) {
   const projectPath = path.resolve(input.projectPath);
-  const resume = await loadTaskForResume(projectPath, input.taskId);
-  if (!resume.resumable) {
-    throw new Error(resume.reason ?? `Task ${input.taskId} is not resumable`);
+  const resume = input.taskId
+    ? await loadTaskForResume(projectPath, input.taskId)
+    : await findLatestResumableTask(projectPath);
+  if (!resume || !resume.resumable) {
+    throw new Error(
+      resume?.reason ??
+        (input.taskId
+          ? `Task ${input.taskId} is not resumable`
+          : "No resumable task in this project. Start one with: assentor run \"…\""),
+    );
   }
 
   const config = await loadAssentorConfig(projectPath);
@@ -452,8 +462,13 @@ export async function resumeAssentorTask(input: {
     reviewerName: reviewerProvider,
   });
 
+  reporter.note(
+    `Resuming ${resume.snapshot.taskId} (${resume.snapshot.status}) · ${resume.snapshot.contract.goal}`,
+  );
+
   const executor = await createExecutor(executorProvider, projectPath, {
     onStatus: (status) => reporter.onExecutorStatus(status),
+    timeoutMs: config.limits.maxRuntimeMinutes * 60_000,
   });
   const resumeKey = reviewerNeedsApiKey(reviewerProvider, reviewerTransport)
     ? await resolveProviderApiKey(reviewerProvider, projectPath)

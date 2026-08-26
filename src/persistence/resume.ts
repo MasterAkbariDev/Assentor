@@ -1,4 +1,7 @@
-import { isTerminalState, type TaskState } from "../orchestrator/state-machine.js";
+import {
+  isRetryableState,
+  type TaskState,
+} from "../orchestrator/state-machine.js";
 import type { TaskSnapshot } from "./store.js";
 import { TaskStore } from "./store.js";
 
@@ -17,23 +20,50 @@ export interface ResumeInfo {
 }
 
 /**
+ * Resolve a full or prefix task id under `.assentor/tasks/`.
+ */
+export async function resolveTaskId(
+  projectPath: string,
+  query: string,
+): Promise<string> {
+  const trimmed = query.trim();
+  const ids = await TaskStore.list(projectPath);
+  if (ids.includes(trimmed)) {
+    return trimmed;
+  }
+  const matches = ids.filter(
+    (id) => id.startsWith(trimmed) || id.replace(/-/g, "").startsWith(trimmed),
+  );
+  if (matches.length === 1) {
+    return matches[0]!;
+  }
+  if (matches.length > 1) {
+    throw new ResumeError(
+      `Ambiguous task id "${trimmed}". Matches: ${matches.join(", ")}`,
+    );
+  }
+  throw new ResumeError(`Task not found: ${trimmed}`);
+}
+
+/**
  * Loads a persisted task for `assentor resume`.
- * Terminal tasks are reported as not resumable.
+ * Successful/cancelled/budget tasks stay closed; timeout/auth/fail can retry.
  */
 export async function loadTaskForResume(
   projectPath: string,
   taskId: string,
 ): Promise<ResumeInfo> {
-  const store = await TaskStore.open(projectPath, taskId);
+  const resolved = await resolveTaskId(projectPath, taskId);
+  const store = await TaskStore.open(projectPath, resolved);
   const snapshot = await store.loadSnapshot();
   const status = snapshot.status as TaskState;
 
-  if (isTerminalState(status)) {
+  if (!isRetryableState(status)) {
     return {
       store,
       snapshot,
       resumable: false,
-      reason: `Task ${taskId} is already terminal (${status})`,
+      reason: `Task ${resolved} cannot be resumed (${status}). Start a new task, or pick a failed/timed-out/in-progress id.`,
     };
   }
 

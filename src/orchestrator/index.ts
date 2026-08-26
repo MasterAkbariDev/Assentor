@@ -3,6 +3,7 @@ export {
   FSM_VERSION,
   TRANSITIONS,
   isTerminalState,
+  isRetryableState,
   canTransition,
   transition,
   allowedTransitions,

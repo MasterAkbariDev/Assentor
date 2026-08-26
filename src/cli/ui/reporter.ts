@@ -105,8 +105,17 @@ export class RunReporter {
         : event.type === "executor.failed"
           ? "failed"
           : "done";
+      const raw = event.data?.rawOutput ? String(event.data.rawOutput) : "";
       const ok = event.type === "executor.completed";
-      this.finishStatus(ok, truncate(summary, 100));
+      this.finishStatus(ok, ok ? "done" : truncate(summary, 80));
+      const body = preferPlainExecutorText(summary, raw);
+      if (body) {
+        console.log(`\n  ${c.bold}Executor response${c.reset}`);
+        for (const line of wrapMultiline(body, 88)) {
+          console.log(`  ${line}`);
+        }
+        console.log("");
+      }
       this.debug(event);
       return;
     }
@@ -610,6 +619,32 @@ function wrapText(text: string, width: number): string[] {
     lines.push(current);
   }
   return lines;
+}
+
+function wrapMultiline(text: string, width: number): string[] {
+  const lines: string[] = [];
+  for (const paragraph of text.split(/\n/)) {
+    if (!paragraph.trim()) {
+      lines.push("");
+      continue;
+    }
+    lines.push(...wrapText(paragraph, width));
+  }
+  return lines;
+}
+
+/** Prefer the agent's summary; skip huge stream-json blobs. */
+function preferPlainExecutorText(summary: string, raw: string): string {
+  const s = summary.trim();
+  if (s && !s.startsWith("{") && s.length > 12) {
+    return s;
+  }
+  const r = raw.trim();
+  if (!r) return s;
+  if (r.startsWith("{") || r.includes('"type":"tool_call"')) {
+    return s;
+  }
+  return r;
 }
 
 function labelEvent(type: string): string {

@@ -26,12 +26,21 @@ export {
 } from "./specialty-prompts.js";
 export {
   TaskComplexityAnalyzer,
+  explainReviewPlan,
   type ComplexityAnalysis,
   type ComplexityRisk,
   type EvidenceDepth,
   type ProjectOverviewSignals,
   type TaskComplexityAnalyzerInput,
+  type ReviewPlanExplanation,
 } from "./complexity.js";
+export {
+  explainSignals,
+  explainStrategy,
+  explainRisk,
+  explainEvidenceDepth,
+  formatReviewPlanExplanation,
+} from "./plan-explain.js";
 export {
   ReviewCoordinator,
   PanelReviewer,

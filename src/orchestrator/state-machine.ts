@@ -103,6 +103,19 @@ export function isTerminalState(state: TaskState): boolean {
   return TERMINAL_STATES.has(state);
 }
 
+/**
+ * Tasks that finished unsuccessfully but can be retried with `assentor resume`.
+ * DONE / CANCELLED / BUDGET_EXCEEDED stay closed.
+ */
+export function isRetryableState(state: TaskState): boolean {
+  return (
+    !isTerminalState(state) ||
+    state === TaskState.Failed ||
+    state === TaskState.Timeout ||
+    state === TaskState.HumanRequired
+  );
+}
+
 export function canTransition(from: TaskState, to: TaskState): boolean {
   const allowed = TRANSITIONS[from];
   return allowed.includes(to);

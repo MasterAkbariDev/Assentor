@@ -103,12 +103,12 @@ describe("CursorExecutor", () => {
     expect(result.error).toContain("auth required");
   });
 
-  it("maps timed out spawns to timeout", async () => {
+  it("maps timed out spawns to timeout even if output mentions auth", async () => {
     const executor = new CursorExecutor({
       spawnFn: async () => ({
         code: null,
         stdout: "partial",
-        stderr: "",
+        stderr: "Authentication required",
         timedOut: true,
       }),
     });
@@ -121,6 +121,7 @@ describe("CursorExecutor", () => {
     });
 
     expect(result.status).toBe("timeout");
+    expect(result.error).toMatch(/timed out|stopped it|Resume/i);
   });
 
   it("honors cancel before spawn returns", async () => {

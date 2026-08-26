@@ -33,7 +33,22 @@ program
   .option("-p, --project <path>", "Project directory", ".")
   .action(async (options: { project: string }) => {
     const { startTui } = await import("../tui/index.js");
-    await startTui(path.resolve(options.project));
+    const handoff = await startTui(path.resolve(options.project));
+    if (handoff.kind === "run") {
+      const { result } = await runAssentorTask({
+        projectPath: handoff.projectPath,
+        prompt: handoff.prompt,
+      });
+      console.log(`Task ${result.taskId} finished: ${result.status}`);
+      if (result.status !== "DONE") process.exitCode = 1;
+    } else if (handoff.kind === "resume") {
+      const result = await resumeAssentorTask({
+        projectPath: handoff.projectPath,
+        taskId: handoff.taskId,
+      });
+      console.log(`Task ${result.taskId} finished: ${result.status}`);
+      if (result.status !== "DONE") process.exitCode = 1;
+    }
   });
 
 program
@@ -98,11 +113,11 @@ program
 
 program
   .command("resume")
-  .description("Resume a previously interrupted task")
-  .argument("<task-id>", "Task id")
+  .description("Resume a previously interrupted, failed, or timed-out task")
+  .argument("[task-id]", "Task id (omit to resume the latest in this project)")
   .option("-p, --project <path>", "Project directory", ".")
   .option("-v, --verbose", "Verbose event logging", false)
-  .action(async (taskId: string, options: { project: string; verbose?: boolean }) => {
+  .action(async (taskId: string | undefined, options: { project: string; verbose?: boolean }) => {
     const result = await resumeAssentorTask({
       projectPath: options.project,
       taskId,

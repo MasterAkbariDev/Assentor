@@ -34,7 +34,7 @@ export function HelpScreen() {
         </Text>
         <Text dimColor>assentor run &quot;goal&quot;</Text>
         <Text dimColor>assentor review &quot;goal&quot;</Text>
-        <Text dimColor>assentor resume &lt;task-id&gt;</Text>
+        <Text dimColor>assentor resume [task-id]</Text>
         <Text dimColor>assentor diagnostics · assentor keys · assentor reviewers</Text>
       </Box>
     </Box>

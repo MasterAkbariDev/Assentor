@@ -69,7 +69,7 @@ export function TasksScreen({
         </Box>
         <Box marginTop={1}>
           <Text dimColor>
-            Resume: assentor resume {detail.taskId.slice(0, 12)}…
+            Resume this task with Enter, or CLI: assentor resume {detail.taskId.slice(0, 12)}
           </Text>
         </Box>
         <Box marginTop={1}>

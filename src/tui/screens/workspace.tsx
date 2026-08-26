@@ -9,8 +9,8 @@ import { MenuList } from "./shared.js";
 
 export const WORKSPACE_ACTIONS = [
   { id: "start", label: "Start a new task" },
-  { id: "continue", label: "Continue latest resumable task" },
-  { id: "review", label: "Review plan for a goal" },
+  { id: "continue", label: "Continue latest task" },
+  { id: "review", label: "Explain reviewers for a goal" },
   { id: "diagnostics", label: "Run diagnostics" },
 ] as const;
 
@@ -32,7 +32,7 @@ export function WorkspaceScreen({
   keyTotal: number;
 }) {
   const latest = tasks[0];
-  const labels = WORKSPACE_ACTIONS.map((a, i) => {
+  const labels = WORKSPACE_ACTIONS.map((a) => {
     if (a.id === "continue" && latest) {
       return `Continue "${truncate(latest.contract.goal, 36)}" (${latest.status})`;
     }
@@ -52,6 +52,9 @@ export function WorkspaceScreen({
       <Box marginTop={1} flexDirection="column">
         <Text dimColor>CURRENT</Text>
         <Text dimColor>────────────────────────────────────────</Text>
+        <Text>
+          Folder <Text color="cyan">{shortPath(services.projectPath)}</Text>
+        </Text>
         {latest ? (
           <>
             <Text>
@@ -70,15 +73,13 @@ export function WorkspaceScreen({
           </>
         ) : (
           <Text dimColor>
-            No tasks in this project yet. Start one to see live status here.
+            No tasks in this folder yet. Start one to see live status here.
           </Text>
         )}
       </Box>
 
       <Box marginTop={1} flexDirection="column">
         <Text dimColor>
-          Project <Text color="cyan">{shortPath(services.projectPath)}</Text>
-          {" · "}
           Defaults {config.executor.provider} /{" "}
           {config.reviewers[0]?.provider ?? "mock"} /{" "}
           {config.routing.reviewStrategy}
@@ -98,7 +99,7 @@ function statusTone(
   status: string,
 ): "ok" | "warn" | "error" | "info" | "neutral" {
   if (status === "DONE") return "ok";
-  if (status.includes("FAIL") || status.includes("BLOCK") || status.includes("HUMAN"))
+  if (status.includes("FAIL") || status.includes("BLOCK") || status.includes("HUMAN") || status.includes("TIMEOUT"))
     return "error";
   if (status.includes("REVIEW") || status.includes("EXECUT")) return "warn";
   return "info";

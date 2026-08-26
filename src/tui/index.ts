@@ -1,4 +1,5 @@
 export { startTui } from "./app.js";
+export type { TuiHandoff } from "./app.js";
 export {
   createInitialUiState,
   mapKeyToAction,

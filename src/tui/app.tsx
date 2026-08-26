@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Box, Text, useApp, useInput, render } from "ink";
+import { useApp, useInput, render } from "ink";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import {
   analyzeReviewPlan,
   checkAllApiKeys,
@@ -18,11 +20,17 @@ import {
   type DiagnosticItem,
 } from "../services/app.js";
 import { loadAssentorConfig, type AssentorConfig } from "../config/load.js";
+import { explainReviewPlan } from "../review/complexity.js";
 import type { UpdateCheckResult } from "../self/index.js";
 import type { TaskSnapshot } from "../persistence/store.js";
 import type { ComplexityAnalysis } from "../review/complexity.js";
 import { Dialog } from "./components/dialog.js";
-import { CommandPalette, HelpOverlay } from "./components/overlays.js";
+import {
+  CommandPalette,
+  HelpOverlay,
+  ReviewPlanDialog,
+  StartTaskDialog,
+} from "./components/overlays.js";
 import { Shell } from "./layout/shell.js";
 import {
   createInitialUiState,
@@ -38,12 +46,15 @@ import {
 } from "./keymap.js";
 import {
   AgentsScreen,
-  buildDefaultRows,
+  buildAdvancedRows,
+  buildAiRows,
+  buildReviewRows,
   CONFIG_MENU,
   ConfigurationScreen,
-  cycle,
+  cycleAiField,
+  cycleAdvancedField,
+  cycleReviewField,
   DiagnosticsScreen,
-  EXECUTOR_OPTIONS,
   type ExecutorRow,
   HelpScreen,
   KEY_PROVIDERS,
@@ -51,22 +62,33 @@ import {
   KeysScreen,
   MenuList,
   REVIEW_ACTIONS,
-  REVIEWER_OPTIONS,
-  REVIEW_STRATEGY_OPTIONS,
   ReviewScreen,
-  ROUND_OPTIONS,
-  ROUTING_OPTIONS,
   TasksScreen,
   WORKSPACE_ACTIONS,
   WorkspaceScreen,
 } from "./screens/index.js";
 
+export type TuiHandoff =
+  | { kind: "exit" }
+  | { kind: "run"; projectPath: string; prompt: string }
+  | { kind: "resume"; projectPath: string; taskId: string };
+
+function isRetryableTaskStatus(status: string): boolean {
+  return (
+    status !== "DONE" &&
+    status !== "CANCELLED" &&
+    status !== "BUDGET_EXCEEDED"
+  );
+}
+
 function App({
   services,
   initialConfig,
+  onHandoff,
 }: {
   services: AssentorServices;
   initialConfig: AssentorConfig;
+  onHandoff: (handoff: TuiHandoff) => void;
 }) {
   const { exit } = useApp();
   const localVersion = useMemo(() => getLocalVersionSync(), []);
@@ -86,6 +108,12 @@ function App({
   const [addName, setAddName] = useState("Personal");
   const [addSecret, setAddSecret] = useState("");
   const [taskPrompt, setTaskPrompt] = useState("");
+  const [startTaskPath, setStartTaskPath] = useState(services.projectPath);
+  const [startTaskStep, setStartTaskStep] = useState<"path" | "goal" | "confirm">(
+    "path",
+  );
+  const [planGoal, setPlanGoal] = useState("");
+  const [planCapturing, setPlanCapturing] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
 
   const keys = useMemo(() => {
@@ -118,7 +146,6 @@ function App({
       return addStep === "provider" ? KEY_PROVIDERS.length : 1;
     }
     if (ui.dialog === "confirm-uninstall") return 2;
-    if (ui.dialog === "ai-defaults") return buildDefaultRows(config).length;
     if (ui.dialog === "review-plan" || ui.dialog === "help") return 1;
     if (ui.dialog === "start-task") return 1;
 
@@ -141,6 +168,10 @@ function App({
           );
         }
         if (ui.configSection === "system") return 3;
+        if (ui.configSection === "ai") return buildAiRows(config).length;
+        if (ui.configSection === "review") return buildReviewRows(config).length;
+        if (ui.configSection === "advanced")
+          return buildAdvancedRows(config).length;
         return 1;
       case "diagnostics":
         return Math.max(diagItems.length, 1);
@@ -239,18 +270,25 @@ function App({
   }
 
   async function openReviewPlan(goal?: string) {
-    patchUi({ busy: true, dialog: "review-plan" });
-    setMessage("Analyzing complexity…");
+    const text = (goal ?? planGoal).trim();
+    if (!text) {
+      setPlanGoal("");
+      setPlanCapturing(true);
+      patchUi({
+        dialog: "review-plan",
+        capturingText: true,
+        focus: "dialog",
+      });
+      return;
+    }
+    setPlanCapturing(false);
+    patchUi({ busy: true, dialog: "review-plan", capturingText: false });
+    setMessage("Figuring out reviewers…");
     try {
-      const plan = analyzeReviewPlan(
-        goal ??
-          tasks[0]?.contract.goal ??
-          "Review current project changes",
-      );
+      const plan = analyzeReviewPlan(text);
       setReviewPlan(plan);
-      setMessage(
-        `Score ${plan.score} · ${plan.recommendedCount} reviewers · ${plan.evidenceDepth}`,
-      );
+      const explained = explainReviewPlan(plan);
+      setMessage(explained.headline);
     } finally {
       patchUi({ busy: false });
     }
@@ -265,6 +303,8 @@ function App({
     setPaletteQuery("");
     if (cmd.dialog === "start-task") {
       setTaskPrompt("");
+      setStartTaskPath(services.projectPath);
+      setStartTaskStep("path");
       patchUi({
         dialog: "start-task",
         capturingText: true,
@@ -274,14 +314,15 @@ function App({
       return;
     }
     if (cmd.dialog === "review-plan") {
-      void openReviewPlan();
+      setPlanGoal("");
+      void openReviewPlan("");
       return;
     }
     if (cmd.dialog === "ai-defaults") {
       goScreen("configuration", {
         configSection: "ai",
-        dialog: "ai-defaults",
-        focus: "dialog",
+        dialog: "none",
+        focus: "main",
       });
       return;
     }
@@ -299,27 +340,93 @@ function App({
     }
   }
 
+  async function saveConfigDefaults() {
+    await saveGlobalDefaults(services, config);
+    setMessage("Saved defaults to ~/.assentor/config.yaml");
+  }
+
+  function applyConfigCycle(dir: 1 | -1) {
+    const idx = ui.mainIndex;
+    if (ui.configSection === "ai") {
+      const rows = buildAiRows(config);
+      if (idx >= rows.length - 1) return;
+      setConfig((c) => cycleAiField(c, idx, dir, modelChoices));
+      return;
+    }
+    if (ui.configSection === "review") {
+      const rows = buildReviewRows(config);
+      if (idx >= rows.length - 1) return;
+      setConfig((c) => cycleReviewField(c, idx, dir));
+      return;
+    }
+    if (ui.configSection === "advanced") {
+      const rows = buildAdvancedRows(config);
+      if (idx >= rows.length - 1) return;
+      setConfig((c) => cycleAdvancedField(c, idx, dir));
+    }
+  }
+
+  async function advanceStartTask() {
+    if (startTaskStep === "path") {
+      const folder = path.resolve(startTaskPath.trim() || services.projectPath);
+      try {
+        await fs.access(folder);
+      } catch {
+        setMessage(`Folder not found: ${folder}`);
+        return;
+      }
+      setStartTaskPath(folder);
+      setStartTaskStep("goal");
+      patchUi({ capturingText: true });
+      return;
+    }
+    if (startTaskStep === "goal") {
+      const prompt = taskPrompt.trim();
+      if (!prompt) {
+        setMessage("Type a goal first");
+        return;
+      }
+      setStartTaskStep("confirm");
+      patchUi({ capturingText: false });
+      const plan = analyzeReviewPlan(prompt);
+      setReviewPlan(plan);
+      return;
+    }
+    onHandoff({
+      kind: "run",
+      projectPath: path.resolve(startTaskPath),
+      prompt: taskPrompt.trim(),
+    });
+    exit();
+  }
+
   async function handleActivate() {
     if (ui.dialog === "palette") {
       applyPalette(ui.mainIndex);
       return;
     }
 
-    if (ui.dialog === "help" || ui.dialog === "review-plan") {
+    if (ui.dialog === "help") {
       patchUi({ dialog: "none", focus: "main" });
       return;
     }
 
-    if (ui.dialog === "start-task") {
-      const prompt = taskPrompt.trim();
-      patchUi({ dialog: "none", capturingText: false, focus: "main" });
-      if (!prompt) {
-        setMessage("Cancelled — empty goal");
+    if (ui.dialog === "review-plan") {
+      if (planCapturing) {
+        const text = planGoal.trim();
+        if (!text) {
+          setMessage("Type a goal first");
+          return;
+        }
+        void openReviewPlan(text);
         return;
       }
-      setMessage(
-        `Start via CLI:\nassentor run --project ${services.projectPath} ${JSON.stringify(prompt)}`,
-      );
+      patchUi({ dialog: "none", capturingText: false, focus: "main" });
+      return;
+    }
+
+    if (ui.dialog === "start-task") {
+      await advanceStartTask();
       return;
     }
 
@@ -336,15 +443,7 @@ function App({
     }
 
     if (ui.dialog === "ai-defaults") {
-      const rows = buildDefaultRows(config);
-      const idx = ui.mainIndex;
-      if (idx === rows.length - 1) {
-        await saveGlobalDefaults(services, config);
-        setMessage("Saved defaults to ~/.assentor/config.yaml");
-        patchUi({ dialog: "none", focus: "main" });
-        return;
-      }
-      setConfig((c) => cycleDefaultField(c, idx, 1, modelChoices));
+      patchUi({ dialog: "none", focus: "main" });
       return;
     }
 
@@ -385,28 +484,28 @@ function App({
       const action = WORKSPACE_ACTIONS[ui.mainIndex];
       if (action?.id === "start") {
         setTaskPrompt("");
+        setStartTaskPath(services.projectPath);
+        setStartTaskStep("path");
         patchUi({
           dialog: "start-task",
           capturingText: true,
           focus: "dialog",
         });
       } else if (action?.id === "continue") {
-        const latest = tasks.find(
-          (t) =>
-            t.status !== "DONE" &&
-            t.status !== "FAILED" &&
-            t.status !== "CANCELLED",
-        );
+        const latest = tasks.find((t) => isRetryableTaskStatus(t.status));
         if (latest) {
-          setMessage(
-            `Resume: assentor resume ${latest.taskId} --project ${services.projectPath}`,
-          );
-          goScreen("tasks", { selectedTaskId: latest.taskId });
+          onHandoff({
+            kind: "resume",
+            projectPath: services.projectPath,
+            taskId: latest.taskId,
+          });
+          exit();
         } else {
           setMessage("No resumable task — start a new one");
         }
       } else if (action?.id === "review") {
-        void openReviewPlan();
+        setPlanGoal("");
+        void openReviewPlan("");
       } else if (action?.id === "diagnostics") {
         goScreen("diagnostics");
         void runDiagnostics();
@@ -415,7 +514,15 @@ function App({
     }
 
     if (ui.screen === "tasks") {
-      if (ui.selectedTaskId) return;
+      if (ui.selectedTaskId) {
+        onHandoff({
+          kind: "resume",
+          projectPath: services.projectPath,
+          taskId: ui.selectedTaskId,
+        });
+        exit();
+        return;
+      }
       const task = tasks[ui.mainIndex];
       if (task) {
         patchUi({ selectedTaskId: task.taskId });
@@ -425,15 +532,15 @@ function App({
 
     if (ui.screen === "review") {
       const action = REVIEW_ACTIONS[ui.mainIndex];
-      if (action?.id === "plan") void openReviewPlan();
-      if (action?.id === "cli") {
-        setMessage('CLI: assentor review "your goal here"');
+      if (action?.id === "plan") {
+        setPlanGoal("");
+        void openReviewPlan("");
       }
       if (action?.id === "strategy") {
         goScreen("configuration", {
           configSection: "review",
-          dialog: "ai-defaults",
-          focus: "dialog",
+          dialog: "none",
+          focus: "main",
         });
       }
       return;
@@ -446,14 +553,32 @@ function App({
         if (item.id === "ai" || item.id === "review" || item.id === "advanced") {
           patchUi({
             configSection: item.id,
-            dialog: "ai-defaults",
-            focus: "dialog",
+            dialog: "none",
+            focus: "main",
             mainIndex: 0,
           });
         } else {
           patchUi({ configSection: item.id as ConfigSection, mainIndex: 0 });
           if (item.id === "executors") void refreshExecutors();
         }
+        return;
+      }
+      if (
+        ui.configSection === "ai" ||
+        ui.configSection === "review" ||
+        ui.configSection === "advanced"
+      ) {
+        const rows =
+          ui.configSection === "ai"
+            ? buildAiRows(config)
+            : ui.configSection === "review"
+              ? buildReviewRows(config)
+              : buildAdvancedRows(config);
+        if (ui.mainIndex === rows.length - 1) {
+          await saveConfigDefaults();
+          return;
+        }
+        applyConfigCycle(1);
         return;
       }
       if (ui.configSection === "keys") {
@@ -541,6 +666,7 @@ function App({
     if (ui.capturingText && ui.dialog === "start-task") {
       if (key.escape) {
         setTaskPrompt("");
+        setStartTaskStep("path");
         setUi((s) => reduceUi(s, { type: "escape" }));
         return;
       }
@@ -549,11 +675,38 @@ function App({
         return;
       }
       if (key.backspace || key.delete) {
-        setTaskPrompt((t) => t.slice(0, -1));
+        if (startTaskStep === "path") {
+          setStartTaskPath((t) => t.slice(0, -1));
+        } else {
+          setTaskPrompt((t) => t.slice(0, -1));
+        }
         return;
       }
       if (input && !key.ctrl && !key.meta) {
-        setTaskPrompt((t) => t + input);
+        if (startTaskStep === "path") setStartTaskPath((t) => t + input);
+        else setTaskPrompt((t) => t + input);
+        return;
+      }
+      return;
+    }
+
+    if (ui.capturingText && ui.dialog === "review-plan") {
+      if (key.escape) {
+        setPlanGoal("");
+        setPlanCapturing(false);
+        setUi((s) => reduceUi(s, { type: "escape" }));
+        return;
+      }
+      if (key.return) {
+        void handleActivate();
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setPlanGoal((t) => t.slice(0, -1));
+        return;
+      }
+      if (input && !key.ctrl && !key.meta) {
+        setPlanGoal((t) => t + input);
         return;
       }
       return;
@@ -617,12 +770,15 @@ function App({
 
     if (action.type === "start_task") {
       setTaskPrompt("");
+      setStartTaskPath(services.projectPath);
+      setStartTaskStep("path");
       setUi((s) => reduceUi(s, action));
       return;
     }
 
     if (action.type === "review_plan") {
-      void openReviewPlan();
+      setPlanGoal("");
+      void openReviewPlan("");
       return;
     }
 
@@ -697,16 +853,14 @@ function App({
     }
 
     if (action.type === "cycle_left" || action.type === "cycle_right") {
-      if (ui.dialog === "ai-defaults") {
-        const dir = action.type === "cycle_right" ? 1 : -1;
-        setConfig((c) =>
-          cycleDefaultField(c, ui.mainIndex, dir as 1 | -1, modelChoices),
-        );
-      }
-      if (ui.dialog === "add-key" && addStep === "provider") {
-        // arrows already move mainIndex via reduce
-      }
+      const dir = action.type === "cycle_right" ? 1 : -1;
+      applyConfigCycle(dir as 1 | -1);
       setUi((s) => reduceUi(s, action));
+      return;
+    }
+
+    if (action.type === "save_defaults") {
+      void saveConfigDefaults();
       return;
     }
 
@@ -769,50 +923,24 @@ function App({
       {ui.dialog === "help" ? <HelpOverlay screenLabel={screenLabel} /> : null}
 
       {ui.dialog === "start-task" ? (
-        <Dialog title="Start a task" hint="Describe the goal">
-          <Text>
-            {taskPrompt || " "}
-            <Text color="green">▌</Text>
-          </Text>
-          <Text dimColor>
-            Enter prints the assentor run command (TUI does not spawn agents
-            yet).
-          </Text>
-        </Dialog>
+        <StartTaskDialog
+          step={startTaskStep}
+          projectPath={startTaskPath}
+          goal={taskPrompt}
+          explanation={
+            reviewPlan && startTaskStep === "confirm"
+              ? explainReviewPlan(reviewPlan)
+              : null
+          }
+        />
       ) : null}
 
       {ui.dialog === "review-plan" ? (
-        <Dialog title="Review plan" hint="Enter close">
-          {reviewPlan ? (
-            <Box flexDirection="column">
-              <Text>
-                Score {reviewPlan.score}/100 · risk {reviewPlan.risk} · depth{" "}
-                {reviewPlan.evidenceDepth}
-              </Text>
-              <Text>
-                Assentor recommends {reviewPlan.recommendedCount} reviewers:{" "}
-                {reviewPlan.recommendedRoles.join(", ")}
-              </Text>
-              {reviewPlan.signals.slice(0, 6).map((s) => (
-                <Text key={s} dimColor>
-                  • {s}
-                </Text>
-              ))}
-              <Text dimColor>
-                Accept via routing.reviewStrategy=
-                {config.routing.reviewStrategy} on assentor run
-              </Text>
-            </Box>
-          ) : (
-            <Text dimColor>Analyzing…</Text>
-          )}
-        </Dialog>
-      ) : null}
-
-      {ui.dialog === "ai-defaults" ? (
-        <Dialog title="AI defaults" hint="←→ cycle · Enter save on last row">
-          <MenuList items={buildDefaultRows(config)} selected={ui.mainIndex} />
-        </Dialog>
+        <ReviewPlanDialog
+          capturing={planCapturing}
+          goal={planGoal}
+          explanation={reviewPlan ? explainReviewPlan(reviewPlan) : null}
+        />
       ) : null}
 
       {ui.dialog === "confirm-uninstall" ? (
@@ -898,92 +1026,25 @@ function App({
   );
 }
 
-function cycleDefaultField(
-  config: AssentorConfig,
-  idx: number,
-  dir: 1 | -1,
-  modelChoices: string[],
-): AssentorConfig {
-  const next = { ...config };
-  switch (idx) {
-    case 0:
-      next.executor = {
-        ...next.executor,
-        provider: cycle(EXECUTOR_OPTIONS, next.executor.provider, dir),
-      };
-      break;
-    case 1: {
-      const provider = cycle(
-        REVIEWER_OPTIONS,
-        (next.reviewers[0]?.provider ?? "mock") as (typeof REVIEWER_OPTIONS)[number],
-        dir,
-      );
-      next.reviewers = [
-        {
-          provider,
-          role: next.reviewers[0]?.role ?? "general",
-          transport: next.reviewers[0]?.transport ?? "api",
-        },
-      ];
-      break;
-    }
-    case 2:
-      next.routing = {
-        ...next.routing,
-        strategy: cycle(ROUTING_OPTIONS, next.routing.strategy, dir),
-      };
-      break;
-    case 3:
-      next.routing = {
-        ...next.routing,
-        reviewStrategy: cycle(
-          REVIEW_STRATEGY_OPTIONS,
-          next.routing.reviewStrategy,
-          dir,
-        ),
-      };
-      break;
-    case 4:
-      next.models = {
-        ...next.models,
-        default: cycle(modelChoices, next.models.default, dir),
-      };
-      break;
-    case 5:
-      next.models = {
-        ...next.models,
-        gemini: cycle(modelChoices, next.models.gemini, dir),
-      };
-      break;
-    case 6:
-      next.models = {
-        ...next.models,
-        openai: cycle(modelChoices, next.models.openai, dir),
-      };
-      break;
-    case 7:
-      next.limits = {
-        ...next.limits,
-        maxRounds: cycle(ROUND_OPTIONS, next.limits.maxRounds as (typeof ROUND_OPTIONS)[number], dir),
-      };
-      break;
-    default:
-      break;
-  }
-  return next;
-}
-
 function shortPath(p: string): string {
   const home = process.env.HOME;
   if (home && p.startsWith(home)) return `~${p.slice(home.length)}`;
   return p;
 }
 
-export async function startTui(projectPath: string): Promise<void> {
+export async function startTui(projectPath: string): Promise<TuiHandoff> {
   const services = await createAssentorServices(projectPath);
   const initialConfig = await loadAssentorConfig(projectPath);
+  let handoff: TuiHandoff = { kind: "exit" };
   const instance = render(
-    <App services={services} initialConfig={initialConfig} />,
+    <App
+      services={services}
+      initialConfig={initialConfig}
+      onHandoff={(next) => {
+        handoff = next;
+      }}
+    />,
   );
   await instance.waitUntilExit();
+  return handoff;
 }

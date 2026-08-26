@@ -5,6 +5,7 @@ import {
   FSM_VERSION,
   InvalidTransitionError,
   isTerminalState,
+  isRetryableState,
   normalizeTaskState,
   TaskState,
   TRANSITIONS,
@@ -34,6 +35,15 @@ describe("state machine", () => {
     expect(isTerminalState(TaskState.HumanRequired)).toBe(true);
     expect(isTerminalState(TaskState.Executing)).toBe(false);
     expect(allowedTransitions(TaskState.Done)).toEqual([]);
+  });
+
+  it("allows retrying timeout and failed tasks", () => {
+    expect(isRetryableState(TaskState.Timeout)).toBe(true);
+    expect(isRetryableState(TaskState.Failed)).toBe(true);
+    expect(isRetryableState(TaskState.HumanRequired)).toBe(true);
+    expect(isRetryableState(TaskState.Done)).toBe(false);
+    expect(isRetryableState(TaskState.Cancelled)).toBe(false);
+    expect(isRetryableState(TaskState.Executing)).toBe(true);
   });
 
   it("allows the happy-path startup chain", () => {

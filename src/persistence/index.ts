@@ -25,6 +25,7 @@ export {
 export {
   loadTaskForResume,
   findLatestResumableTask,
+  resolveTaskId,
   ResumeError,
   type ResumeInfo,
 } from "./resume.js";

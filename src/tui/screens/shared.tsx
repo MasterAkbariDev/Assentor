@@ -42,7 +42,8 @@ export function maskPreview(secret: string): string {
 }
 
 export function cycle<T>(values: readonly T[], current: T, dir: 1 | -1): T {
-  const idx = Math.max(0, values.indexOf(current));
-  const next = (idx + dir + values.length) % values.length;
+  const idx = values.indexOf(current);
+  const from = idx < 0 ? 0 : idx;
+  const next = (from + dir + values.length) % values.length;
   return values[next]!;
 }

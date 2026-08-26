@@ -1,4 +1,9 @@
 import type { ReviewerSpecialty } from "../agents/index.js";
+import {
+  explainEvidenceDepth,
+  explainRisk,
+  explainSignals,
+} from "./plan-explain.js";
 
 export type EvidenceDepth = "QUICK" | "STANDARD" | "DEEP";
 
@@ -204,4 +209,46 @@ export class TaskComplexityAnalyzer {
       signals,
     };
   }
+}
+
+const ROLE_LABEL: Record<string, string> = {
+  architecture: "Architecture",
+  code: "Code quality",
+  testing: "Testing",
+  security: "Security",
+  performance: "Performance",
+  ui: "UI",
+  general: "General",
+  adjudicator: "Adjudicator",
+};
+
+export interface ReviewPlanExplanation {
+  headline: string;
+  reviewers: string[];
+  reasons: string[];
+  depthLabel: string;
+  riskLabel: string;
+}
+
+/** Plain-language explanation of a complexity analysis for the TUI/CLI. */
+export function explainReviewPlan(plan: ComplexityAnalysis): ReviewPlanExplanation {
+  const reviewers = plan.recommendedRoles.map(
+    (role) => ROLE_LABEL[role] ?? role,
+  );
+  const reasons = explainSignals(plan.signals);
+  const count = plan.recommendedCount;
+  const headline =
+    count === 1
+      ? "Assentor recommends 1 reviewer for this goal."
+      : `Assentor recommends ${count} reviewers for this goal.`;
+
+  return {
+    headline,
+    reviewers,
+    reasons: reasons.length
+      ? reasons
+      : ["the goal is small — a lighter review is enough"],
+    depthLabel: explainEvidenceDepth(plan.evidenceDepth),
+    riskLabel: explainRisk(plan.risk),
+  };
 }

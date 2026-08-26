@@ -108,10 +108,25 @@ describe("TUI keyboard map (§44 + UX rewrite)", () => {
     );
   });
 
-  it("left arrow from main focuses nav", () => {
+  it("left arrow on main does not jump to nav", () => {
     const state = createInitialUiState({ focus: "main" });
     expect(mapKeyToAction(state, { input: "", leftArrow: true }).type).toBe(
-      "focus_nav",
+      "noop",
     );
+  });
+
+  it("left/right cycle values on configuration editors", () => {
+    const state = createInitialUiState({
+      focus: "main",
+      screen: "configuration",
+      configSection: "ai",
+    });
+    expect(mapKeyToAction(state, { input: "", leftArrow: true }).type).toBe(
+      "cycle_left",
+    );
+    expect(mapKeyToAction(state, { input: "", rightArrow: true }).type).toBe(
+      "cycle_right",
+    );
+    expect(mapKeyToAction(state, { input: "s" }).type).toBe("save_defaults");
   });
 });

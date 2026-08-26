@@ -92,6 +92,7 @@ export type UiAction =
   | { type: "keys_delete" }
   | { type: "executors_detect" }
   | { type: "executors_install" }
+  | { type: "save_defaults" }
   | { type: "noop" };
 
 export function createInitialUiState(
@@ -168,13 +169,23 @@ export function mapKeyToAction(state: UiState, key: KeyEvent): UiAction {
     return { type: "noop" };
   }
 
-  // main focus
-  if (key.leftArrow) return { type: "focus_nav" };
+  // main focus — arrows stay on this screen (Tab/Esc for nav).
   if (key.upArrow || key.input === "k") return { type: "main_up" };
   if (key.downArrow || key.input === "j") return { type: "main_down" };
   if (key.return) return { type: "activate" };
   if (key.input === " ") return { type: "space" };
   if (key.input === "q") return { type: "focus_nav" };
+
+  const editingConfig =
+    state.screen === "configuration" &&
+    (state.configSection === "ai" ||
+      state.configSection === "review" ||
+      state.configSection === "advanced");
+  if (editingConfig) {
+    if (key.leftArrow) return { type: "cycle_left" };
+    if (key.rightArrow) return { type: "cycle_right" };
+    if (key.input === "s") return { type: "save_defaults" };
+  }
 
   // Contextual shortcuts
   if (state.screen === "workspace") {
@@ -236,7 +247,7 @@ export function reduceUi(state: UiState, action: UiAction): UiState {
     case "focus_nav":
       return { ...state, focus: "nav" };
     case "focus_main":
-      return { ...state, focus: "main", mainIndex: 0 };
+      return { ...state, focus: "main" };
     case "select_nav": {
       const screen = screenAt(state.navIndex);
       return {
@@ -299,6 +310,7 @@ export function reduceUi(state: UiState, action: UiAction): UiState {
     case "space":
     case "cycle_left":
     case "cycle_right":
+    case "save_defaults":
     case "keys_check":
     case "keys_check_all":
     case "keys_delete":
@@ -320,7 +332,7 @@ export function footerHints(state: UiState): string {
     return "Esc Close · / Commands · ? This help";
   }
   if (state.dialog === "start-task") {
-    return "Type goal · Enter Start (CLI) · Esc Cancel";
+    return "Type · Enter Next · Esc Cancel";
   }
   if (state.dialog === "add-key") {
     return "↑↓ Provider · Enter Next · Esc Cancel";
@@ -335,20 +347,20 @@ export function footerHints(state: UiState): string {
     return "↑↓ · Enter Confirm · Esc Cancel";
   }
   if (state.focus === "nav") {
-    return "↑↓ Navigate · Enter/→ Open · / Commands · ? Help · q Quit";
+    return "↑↓ Highlight · Enter Open · Tab Main · / Commands · ? Help · q Quit";
   }
 
   switch (state.screen) {
     case "workspace":
-      return "↑↓ Actions · Enter · n New task · r Review · / Commands · ← Nav";
+      return "↑↓ Actions · Enter · n New task · Tab Nav · / Commands";
     case "tasks":
       return state.selectedTaskId
-        ? "Enter Details · Esc Back to list · / Commands"
-        : "↑↓ Select · Enter Open · n New task · Esc Nav";
+        ? "Enter Resume · Esc Back to list · / Commands"
+        : "↑↓ Select · Enter Open · n New task · Tab Nav";
     case "agents":
-      return "↑↓ Select · Enter Inspect · Esc Nav";
+      return "↑↓ Select · Enter Inspect · Tab Nav";
     case "review":
-      return "↑↓ · Enter · p Review plan · Esc Nav";
+      return "↑↓ · Enter · p Explain reviewers · Tab Nav";
     case "configuration":
       if (state.configSection === "keys") {
         return "a Add · c Check · C Check all · d Delete · Esc Back";
@@ -357,9 +369,9 @@ export function footerHints(state: UiState): string {
         return "r Detect · i Install plan · Enter Check · Esc Back";
       }
       if (state.configSection === "menu") {
-        return "↑↓ Section · Enter Open · Esc Nav";
+        return "↑↓ Section · Enter Open · Tab Nav";
       }
-      return "↑↓ · ←→ Cycle · Enter · Esc Back";
+      return "↑↓ Field · ←→ Change value · s Save · Esc Back";
     case "diagnostics":
       return "Enter Refresh · Esc Nav · / Commands";
     case "help":
@@ -396,8 +408,8 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
   },
   {
     id: "review-plan",
-    label: "Review plan (complexity)",
-    keywords: ["review", "plan", "current", "changes"],
+    label: "Explain reviewers for a goal",
+    keywords: ["review", "plan", "why", "reviewers"],
     dialog: "review-plan",
   },
   {

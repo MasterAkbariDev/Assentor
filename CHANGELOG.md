@@ -7,9 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-08-26
+
 ### Changed
 
 - **TUI UX rewrite** — Workspace-first navigation (Tasks / Agents / Review / Configure / Diagnostics / Help); removed root Providers/Models/Logs/System destinations; command palette (`/` / Ctrl+K); contextual help (`?`); status bar; progressive configuration
+- Start-task wizard uses the current folder (editable) and actually launches `assentor run`
+- Reviewer explanation is plain language (who + why), not internal complexity codes
+- Defaults/reviewer settings edit inline with ← → (left arrow no longer jumps tabs)
+- Executor response is printed in full after each round
+- `assentor resume` (optional id / prefix) retries timed-out, failed, and blocked tasks
+- Cursor executor timeout defaults to 60 minutes (or `limits.maxRuntimeMinutes`); a kill is no longer reported as “authentication required”
 
 ## [0.3.1] — 2026-08-26
 
@@ -85,7 +93,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logical agents, diagnostics, and resumable task state under `.assentor/tasks/`
 - One-line install scripts for macOS/Linux and Windows
 
-[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/MasterAkbariDev/Assentor/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/MasterAkbariDev/Assentor/compare/v0.2.1...v0.2.2

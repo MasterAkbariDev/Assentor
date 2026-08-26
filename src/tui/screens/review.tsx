@@ -2,13 +2,13 @@ import React from "react";
 import { Box, Text } from "ink";
 import type { AssentorConfig } from "../../config/load.js";
 import type { ComplexityAnalysis } from "../../review/complexity.js";
+import { explainReviewPlan } from "../../review/complexity.js";
 import { Badge } from "../components/badge.js";
 import { MenuList } from "./shared.js";
 
 export const REVIEW_ACTIONS = [
-  { id: "plan", label: "Open review plan (complexity → reviewers)" },
-  { id: "cli", label: "Show CLI: assentor review \"…\"" },
-  { id: "strategy", label: "Change review strategy (defaults)" },
+  { id: "plan", label: "Explain reviewers for a goal" },
+  { id: "strategy", label: "Change how reviewers are chosen" },
 ] as const;
 
 export function ReviewScreen({
@@ -22,56 +22,47 @@ export function ReviewScreen({
   focused: boolean;
   plan: ComplexityAnalysis | null;
 }) {
+  const explained = plan ? explainReviewPlan(plan) : null;
+
   return (
     <Box flexDirection="column">
       <Text bold>Review</Text>
       <Text dimColor>
-        Assentor recommends reviewers from task complexity — you rarely pick
-        them by hand.
+        Reviewers inspect the executor&apos;s work. Assentor chooses how many
+        from the task — you usually leave this on Auto.
       </Text>
 
       <Box marginTop={1} flexDirection="column">
         <Text>
-          Strategy{" "}
-          <Text color="green">{config.routing.reviewStrategy}</Text>
-          {" · "}
-          Routing {config.routing.strategy}
+          Mode{" "}
+          <Text color="green">
+            {config.routing.reviewStrategy === "ADAPTIVE"
+              ? "Auto — pick by task"
+              : config.routing.reviewStrategy}
+          </Text>
         </Text>
       </Box>
 
-      {plan ? (
+      {explained ? (
         <Box marginTop={1} flexDirection="column">
-          <Text dimColor>LAST PLAN</Text>
+          <Text bold>{explained.headline}</Text>
           <Text>
-            Score {plan.score}/100 · risk{" "}
-            <Badge
-              label={plan.risk}
-              tone={
-                plan.risk === "critical" || plan.risk === "high"
-                  ? "error"
-                  : plan.risk === "medium"
-                    ? "warn"
-                    : "ok"
-              }
-            />
-            {" · "}
-            depth {plan.evidenceDepth}
+            {explained.reviewers.join(" · ")}
+            {"  "}
+            <Badge label={explained.riskLabel} tone={riskTone(plan!.risk)} />
           </Text>
-          <Text>
-            Recommended ({plan.recommendedCount}):{" "}
-            {plan.recommendedRoles.join(", ")}
-          </Text>
-          {plan.signals.slice(0, 4).map((s) => (
-            <Text key={s} dimColor>
-              • {s}
+          <Text dimColor>Evidence: {explained.depthLabel}</Text>
+          {explained.reasons.map((reason) => (
+            <Text key={reason} dimColor>
+              • {reason}
             </Text>
           ))}
         </Box>
       ) : (
         <Box marginTop={1}>
           <Text dimColor>
-            No plan yet. Press <Text color="cyan">p</Text> or select Open review
-            plan.
+            Press <Text color="cyan">p</Text> and type a goal to see who would
+            review it and why.
           </Text>
         </Box>
       )}
@@ -85,4 +76,10 @@ export function ReviewScreen({
       </Box>
     </Box>
   );
+}
+
+function riskTone(risk: string): "ok" | "warn" | "error" | "info" {
+  if (risk === "critical" || risk === "high") return "error";
+  if (risk === "medium") return "warn";
+  return "ok";
 }

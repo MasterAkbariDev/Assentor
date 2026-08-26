@@ -122,7 +122,7 @@ describe("TaskStore persistence", () => {
 
     const resume = await loadTaskForResume(projectPath, taskId);
     expect(resume.resumable).toBe(false);
-    expect(resume.reason).toContain("terminal");
+    expect(resume.reason).toMatch(/cannot be resumed|DONE/);
   });
 
   it("can resume a non-terminal interrupted task", async () => {
@@ -183,5 +183,61 @@ describe("TaskStore persistence", () => {
 
     const finalSnap = await store.loadSnapshot();
     expect(finalSnap.status).toBe(TaskState.Done);
+  });
+
+  it("can resume a timed-out or failed task", async () => {
+    const projectPath = await makeProject();
+    const taskId = createTaskId();
+    const conversationId = createTaskId();
+    const contract = createEmptyContract("Retry me");
+    const budgets = createBudgets({ maxRounds: 5, maxMessages: 40 });
+
+    const store = await TaskStore.create({
+      projectPath,
+      taskId,
+      conversationId,
+      contract,
+      budgets,
+      executor: "mock",
+      reviewers: ["mock"],
+    });
+
+    await store.saveSnapshot({
+      taskId,
+      conversationId,
+      projectPath,
+      status: TaskState.Timeout,
+      currentRound: 1,
+      maxRounds: 5,
+      executor: "mock",
+      reviewers: ["mock"],
+      contract,
+      budgets: {
+        limits: budgets.limits,
+        usage: { rounds: 1, messages: 4, toolCalls: 0, runtimeMs: 0 },
+      },
+      executorSessionId: "sess-timeout",
+      reason: "Executor timed out",
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      communicationCount: 4,
+    });
+
+    const prefix = await loadTaskForResume(projectPath, taskId.slice(0, 8));
+    expect(prefix.resumable).toBe(true);
+
+    const result = await new Supervisor({
+      projectPath,
+      contract,
+      store,
+      resumeFrom: prefix.snapshot,
+      executor: new MockExecutor({
+        steps: [{ type: "complete", summary: "finished after timeout" }],
+        autoRespondToEvidence: false,
+      }),
+      reviewer: new MockReviewer({ steps: [{ type: "pass" }] }),
+    }).run();
+
+    expect(result.status).toBe(TaskState.Done);
   });
 });

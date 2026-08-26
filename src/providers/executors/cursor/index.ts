@@ -46,7 +46,7 @@ export interface CursorExecutorOptions {
    * ASSENTOR_CURSOR_BINARY → `cursor` → `agent` → macOS Cursor.app path.
    */
   binary?: string;
-  /** Kill the process after this many ms. Default: 10 minutes. */
+  /** Kill the process after this many ms. Default: 60 minutes. */
   timeoutMs?: number;
   /** Pass `--force` / `--yolo` so the agent can edit files. Default: true */
   force?: boolean;
@@ -108,7 +108,10 @@ export class CursorExecutor implements Executor {
     this.name = options.name ?? "cursor";
     this.binary = options.binary ?? resolveCursorBinary();
     this.usesCursorSubcommand = isCursorAppBinary(this.binary);
-    this.timeoutMs = options.timeoutMs ?? 10 * 60 * 1000;
+    this.timeoutMs =
+      options.timeoutMs ??
+      envTimeoutMs() ??
+      60 * 60 * 1000;
     this.force = options.force ?? true;
     this.trust = options.trust ?? true;
     this.outputFormat =
@@ -220,22 +223,26 @@ export class CursorExecutor implements Executor {
     }
 
     const combined = `${result.stdout}\n${result.stderr}`;
-    if (/Authentication required/i.test(combined)) {
-      return {
-        status: "failed",
-        summary: "Cursor authentication required",
-        error:
-          "Cursor authentication required. Run `agent login` or `cursor agent login`, or set CURSOR_API_KEY.",
-        sessionId: this.sessionId,
-        rawOutput: result.stdout,
-      };
-    }
 
     if (result.timedOut) {
       return {
         status: "timeout",
         summary: `Cursor agent timed out after ${this.timeoutMs}ms`,
-        error: result.stderr || "timeout",
+        error:
+          `Cursor was still working when Assentor stopped it after ${formatDuration(this.timeoutMs)}. ` +
+          `Resume with: assentor resume ${taskId}`,
+        sessionId: this.sessionId,
+        rawOutput: result.stdout,
+      };
+    }
+
+    if (/Authentication required/i.test(combined)) {
+      return {
+        status: "failed",
+        summary: "Cursor authentication required",
+        error:
+          "Cursor authentication required. Run `agent login` or `cursor agent login`, or set CURSOR_API_KEY. " +
+          `Then: assentor resume ${taskId}`,
         sessionId: this.sessionId,
         rawOutput: result.stdout,
       };
@@ -311,6 +318,20 @@ export class CursorExecutor implements Executor {
     args.push(prompt);
     return args;
   }
+}
+
+function envTimeoutMs(): number | undefined {
+  const raw = process.env.ASSENTOR_CURSOR_TIMEOUT_MS;
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function formatDuration(ms: number): string {
+  const sec = Math.round(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.round(sec / 60);
+  return `${min}m`;
 }
 
 /** Exported for doctor / tests. */
@@ -402,13 +423,13 @@ function summarizeOutput(stdout: string): string {
       text?: string;
     };
     if (typeof parsed.result === "string") {
-      return parsed.result.slice(0, 500);
+      return parsed.result;
     }
     if (typeof parsed.message === "string") {
-      return parsed.message.slice(0, 500);
+      return parsed.message;
     }
     if (typeof parsed.text === "string") {
-      return parsed.text.slice(0, 500);
+      return parsed.text;
     }
   } catch {
     // plain text
@@ -416,7 +437,7 @@ function summarizeOutput(stdout: string): string {
 
   const lines = trimmed.split("\n").filter((line) => line.trim());
   const last = lines.at(-1) ?? trimmed;
-  return last.slice(0, 500);
+  return last;
 }
 
 function extractSessionId(stdout: string): string | undefined {
