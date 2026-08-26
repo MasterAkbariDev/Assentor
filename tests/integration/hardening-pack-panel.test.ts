@@ -144,7 +144,6 @@ describe("pack → multi-review → PASS hardening (§14)", () => {
       reviewer: panel,
       budgets: createBudgets({ maxRounds: 3, maxMessages: 40 }),
       evidenceDepth: analysis.evidenceDepth,
-      collectExecutorExplanation: true,
     }).run();
 
     expect(result.status).toBe(TaskState.Done);

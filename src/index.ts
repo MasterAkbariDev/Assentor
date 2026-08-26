@@ -33,9 +33,15 @@ export {
   type MockExecutorStep,
 } from "./providers/executors/mock/index.js";
 export {
+  killAllTrackedProcesses,
+  trackChildProcess,
+  trackedProcessCount,
+} from "./process/tracker.js";
+export { killProcessTree } from "./process/kill-tree.js";
+export { runShellCommand } from "./process/run-shell.js";
+export {
   CursorExecutor,
   defaultSpawn,
-  killProcessTree,
   resolveCursorBinary,
   isCursorAppBinary,
   type CursorExecutorOptions,

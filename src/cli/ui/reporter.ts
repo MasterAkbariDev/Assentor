@@ -226,7 +226,7 @@ export class RunReporter {
 
   /** Live structured status from Cursor stream-json (preferred). */
   onExecutorStatus(status: { activity: string; detail: string }): void {
-    if (!this.statusActive) {
+    if (!this.statusActive || this.statusLabel === "Evidence") {
       return;
     }
     const next = normalizeActivity(status.activity);
@@ -338,7 +338,11 @@ export class RunReporter {
         break;
       case "COLLECTING_EVIDENCE":
         this.section("Evidence");
-        this.startStatus("Evidence", "collecting", "reading project files + git");
+        this.startStatus(
+          "Evidence",
+          "collecting",
+          "gathering files, git, and project context locally",
+        );
         break;
       case "REVIEWING":
         // review.started owns the UI

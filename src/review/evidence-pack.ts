@@ -172,3 +172,18 @@ export function emptyEvidencePack(
     depth: options.depth ?? "STANDARD",
   });
 }
+
+export const MAX_CHANGED_FILES_LIST = 48;
+
+export function formatChangedFilesList(
+  files: string[],
+  max = MAX_CHANGED_FILES_LIST,
+): string {
+  if (files.length === 0) {
+    return "(none)";
+  }
+  if (files.length <= max) {
+    return files.join(", ");
+  }
+  return `${files.slice(0, max).join(", ")}, … and ${files.length - max} more (request specific paths via evidenceRequests)`;
+}

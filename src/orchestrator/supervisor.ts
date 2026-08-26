@@ -26,7 +26,7 @@ import type { GitCheckpoint } from "../git/types.js";
 import { LocalGitService } from "../git/local.js";
 import {
   EvidencePackBuilder,
-  EXPLANATION_PROMPT,
+  parseArchitectureSummary,
   parseExecutorExplanation,
   type ProjectReviewEvidencePack,
 } from "../review/index.js";
@@ -82,8 +82,6 @@ export interface SupervisorConfig {
   evidenceDepth?: ProjectReviewEvidencePack["depth"];
   /** Cap evidence-request loops within a round. Default 3. */
   maxEvidenceIterations?: number;
-  /** When true, ask executor for architecture/explanation before review. Default true. */
-  collectExecutorExplanation?: boolean;
   /** Called for observability; must not throw. */
   onEvent?: (event: SupervisorEvent) => void;
 }
@@ -498,7 +496,9 @@ export class Supervisor {
   }
 
   private async collectBasicArtifacts(result: ExecutorResult): Promise<void> {
-    const explanation = await this.requestExecutorExplanation();
+    const executorText = result.rawOutput ?? result.summary ?? "";
+    const explanation = parseExecutorExplanation(executorText);
+    const architectureSummary = parseArchitectureSummary(executorText);
 
     const builder = new EvidencePackBuilder({
       projectPath: this.config.projectPath,
@@ -510,9 +510,9 @@ export class Supervisor {
       gitBaselineHead: this.lastCheckpoint?.head,
     });
 
-    const architecture = explanation.architectureSummary
+    const architecture = architectureSummary
       ? {
-          summary: explanation.architectureSummary,
+          summary: architectureSummary,
           modules: [] as string[],
           boundaries: [] as string[],
           abstractions: [] as string[],
@@ -522,7 +522,7 @@ export class Supervisor {
 
     this.evidencePack = await builder.build({
       executorResult: result,
-      executorExplanation: explanation.explanation,
+      executorExplanation: explanation,
       architecture,
     });
 
@@ -550,79 +550,6 @@ export class Supervisor {
       files: this.evidencePack.relevantFiles.map((f) => f.path),
       packRound: this.round,
     });
-  }
-
-  /**
-   * Pre-review executor turn: architecture + implementation explanation only.
-   */
-  private async requestExecutorExplanation(): Promise<{
-    explanation: ProjectReviewEvidencePack["executorExplanation"];
-    architectureSummary?: string;
-  }> {
-    if (
-      this.config.collectExecutorExplanation === false ||
-      !this.taskStarted
-    ) {
-      return {
-        explanation: {
-          assumptions: [],
-          risks: [],
-          limitations: [],
-          source: "missing",
-        },
-      };
-    }
-
-    try {
-      const result = await this.config.executor.continue({
-        taskId: this.taskId,
-        projectPath: this.config.projectPath,
-        contract: this.config.contract,
-        messages: [
-          createProtocolMessage({
-            conversationId: this.conversationId,
-            round: this.round,
-            from: SUPERVISOR_ID,
-            to: EXECUTOR_ID,
-            type: MessageType.Question,
-            content: {
-              question: EXPLANATION_PROMPT,
-              context: "purpose:evidence_pack_explanation",
-            },
-          }),
-        ],
-        sessionId: this.sessionId,
-      });
-
-      if (result.sessionId) {
-        this.sessionId = result.sessionId;
-      }
-
-      const text = result.rawOutput ?? result.summary ?? "";
-      const explanation = parseExecutorExplanation(text);
-      let architectureSummary: string | undefined;
-      try {
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
-          if (parsed.architectureSummary) {
-            architectureSummary = String(parsed.architectureSummary);
-          }
-        }
-      } catch {
-        // ignore
-      }
-      return { explanation, architectureSummary };
-    } catch {
-      return {
-        explanation: {
-          assumptions: [],
-          risks: [],
-          limitations: [],
-          source: "missing",
-        },
-      };
-    }
   }
 
   private async runReviewer(
@@ -793,7 +720,7 @@ export class Supervisor {
   }
 
   /**
-   * Fulfill evidence locally first; escalate remaining requests to executor.
+   * Fulfill reviewer evidence requests locally. Never re-invokes the executor.
    * @returns false if the task became terminal
    */
   private async handleCommunication(
@@ -820,14 +747,27 @@ export class Supervisor {
     }
 
     const pending = this.extractPendingEvidenceRequests();
-    if (pending.length > 0 && this.evidencePack) {
+    if (pending.length > 0) {
+      if (!this.evidencePack) {
+        const bootstrap = new EvidencePackBuilder({
+          projectPath: this.config.projectPath,
+          taskId: this.taskId,
+          round: this.round,
+          depth: this.config.evidenceDepth ?? "STANDARD",
+          contract: this.config.contract,
+          runCommands: false,
+          gitBaselineHead: this.lastCheckpoint?.head,
+        });
+        this.evidencePack = await bootstrap.build({});
+      }
+
       const builder = new EvidencePackBuilder({
         projectPath: this.config.projectPath,
         taskId: this.taskId,
         round: this.round,
         depth: this.config.evidenceDepth ?? "STANDARD",
         contract: this.config.contract,
-        runCommands: false,
+        runCommands: true,
         gitBaselineHead: this.lastCheckpoint?.head,
       });
       const merged = await builder.mergeRequests(this.evidencePack, pending);
@@ -848,11 +788,10 @@ export class Supervisor {
         fulfilled: merged.fulfilled,
         skipped: merged.skipped,
         errors: merged.errors,
-        remaining: merged.remaining.length,
+        unfulfilled: merged.unfulfilled.length,
       });
 
-      // Publish evidence response so reviewer sees it
-      if (merged.fulfilled > 0 && (await this.spendMessage())) {
+      if (await this.spendMessage()) {
         const responseArtifacts = builder
           .getCollector()
           .toReviewRefs()
@@ -864,6 +803,15 @@ export class Supervisor {
             content: ref.content?.slice(0, 8_000),
             description: ref.description,
           }));
+        const notes = [
+          merged.errors.length > 0 ? merged.errors.join("; ") : "",
+          merged.unfulfilled.length > 0
+            ? `${merged.unfulfilled.length} request(s) could not be fulfilled locally`
+            : "",
+          `fulfilled=${merged.fulfilled} skipped=${merged.skipped}`,
+        ]
+          .filter(Boolean)
+          .join("; ");
         await this.publishMessage(
           createProtocolMessage({
             conversationId,
@@ -879,40 +827,17 @@ export class Supervisor {
                       {
                         kind: "file" as const,
                         path: "evidence/fulfilled",
-                        content: `fulfilled=${merged.fulfilled}`,
+                        content: notes || "Assentor local evidence fulfillment",
                         description: "Assentor local evidence fulfillment",
                       },
                     ],
-              notes:
-                merged.errors.length > 0
-                  ? merged.errors.join("; ")
-                  : `fulfilled=${merged.fulfilled} skipped=${merged.skipped}`,
+              notes,
             },
           }),
         );
       }
 
-      // Only escalate hard probes to executor
-      if (merged.remaining.length === 0) {
-        return true;
-      }
-
-      // Re-queue remaining for executor
-      if (await this.spendMessage()) {
-        await this.publishMessage(
-          createProtocolMessage({
-            conversationId,
-            round: this.round,
-            from: REVIEWER_ID,
-            to: EXECUTOR_ID,
-            type: MessageType.EvidenceRequest,
-            content: {
-              requests: merged.remaining,
-              reason: "Assentor could not fulfill locally",
-            },
-          }),
-        );
-      }
+      return true;
     }
 
     this.moveTo(TaskState.Executing);
@@ -922,21 +847,7 @@ export class Supervisor {
     }
 
     this.moveTo(TaskState.CollectingEvidence);
-    // Merge executor response into pack without full rebuild of explanation
-    if (this.evidencePack) {
-      this.artifacts.push({
-        id: `evidence-exec-round-${this.round}-i${this.evidenceIterations}`,
-        type: "executor_summary",
-        description: "Executor evidence response",
-        content: execResult.rawOutput ?? execResult.summary,
-      });
-      this.evidencePack.notes.push(
-        `Executor evidence turn: ${execResult.summary}`,
-      );
-      this.evidencePack.updatedAt = new Date().toISOString();
-    } else {
-      await this.collectBasicArtifacts(execResult);
-    }
+    await this.collectBasicArtifacts(execResult);
     return true;
   }
 

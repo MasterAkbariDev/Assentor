@@ -14,6 +14,7 @@ export {
 } from "./persist.js";
 export {
   EvidencePackBuilder,
+  parseArchitectureSummary,
   parseExecutorExplanation,
   extractClaimedSourcePaths,
   EXPLANATION_PROMPT,

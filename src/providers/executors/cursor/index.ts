@@ -13,8 +13,13 @@ import {
   summarizeStreamJson,
   type AgentStatusUpdate,
 } from "./stream-status.js";
-import { spawn, type ChildProcess } from "node:child_process";
 import { locateBinary, spawnCliProcess } from "../../../executors/cli-locator.js";
+import { killProcessTree } from "../../../process/kill-tree.js";
+import {
+  killAllTrackedProcesses,
+  trackChildProcess,
+  untrackChildProcess,
+} from "../../../process/tracker.js";
 
 export type CursorOutputFormat = "text" | "json" | "stream-json";
 export type { AgentStatusUpdate };
@@ -176,6 +181,7 @@ export class CursorExecutor implements Executor {
     this.cancelled.add(taskId);
     this.activeChild?.abandon?.();
     killProcessTree(this.activeChild);
+    killAllTrackedProcesses();
     this.forceComplete?.();
   }
 
@@ -573,17 +579,19 @@ export async function defaultSpawn(
   request: CursorSpawnRequest,
 ): Promise<CursorSpawnResult> {
   return new Promise((resolve, reject) => {
-    const child = spawnCliProcess(request.command, request.args, {
-      cwd: request.cwd,
-      env: {
-        ...request.env,
-        // Headless: don't let Cursor's own TTY UI paint over Assentor's spinner.
-        CI: request.env.CI ?? "1",
-        NO_UPDATE_NOTIFIER: "1",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
+    const child = trackChildProcess(
+      spawnCliProcess(request.command, request.args, {
+        cwd: request.cwd,
+        env: {
+          ...request.env,
+          // Headless: don't let Cursor's own TTY UI paint over Assentor's spinner.
+          CI: request.env.CI ?? "1",
+          NO_UPDATE_NOTIFIER: "1",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      }),
+    );
 
     const parser = new CursorStreamStatusParser();
     let stdout = "";
@@ -600,12 +608,13 @@ export async function defaultSpawn(
       if (resultGrace) {
         clearTimeout(resultGrace);
       }
-      detachChild(child);
+      untrackChildProcess(child);
       resolve(result);
     };
 
     const abandon = () => {
       killProcessTree(child);
+      killAllTrackedProcesses();
       finish({
         code: parser.hasFinalResult() ? 0 : null,
         stdout,
@@ -665,7 +674,8 @@ export async function defaultSpawn(
       clearTimeout(timer);
       if (!settled) {
         settled = true;
-        detachChild(child);
+        clearTimeout(timer);
+        untrackChildProcess(child);
         reject(error);
       }
     });
@@ -678,47 +688,5 @@ export async function defaultSpawn(
   });
 }
 
-/**
- * Kill a CLI process and any children (Windows cmd.exe / agent.cmd trees included).
- */
-export function killProcessTree(
-  child: { pid?: number; kill?: (signal?: NodeJS.Signals) => boolean } | undefined,
-): void {
-  if (!child) {
-    return;
-  }
-  const pid = child.pid;
-  if (process.platform === "win32" && typeof pid === "number" && pid > 0) {
-    try {
-      spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
-        stdio: "ignore",
-        windowsHide: true,
-      }).unref();
-    } catch {
-      // fall through to kill()
-    }
-  }
-  try {
-    child.kill?.("SIGKILL");
-  } catch {
-    // already exited
-  }
-}
-
-function detachChild(child: ChildProcess): void {
-  try {
-    child.stdout?.destroy();
-  } catch {
-    // ignore
-  }
-  try {
-    child.stderr?.destroy();
-  } catch {
-    // ignore
-  }
-  try {
-    child.unref();
-  } catch {
-    // ignore
-  }
-}
+export { killProcessTree } from "../../../process/kill-tree.js";
+export { killAllTrackedProcesses } from "../../../process/tracker.js";

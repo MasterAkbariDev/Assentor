@@ -281,7 +281,6 @@ export async function handleGetUser(id: string) {
       executor,
       reviewer: panel,
       budgets: createBudgets({ maxRounds: 4, maxMessages: 40 }),
-      collectExecutorExplanation: true,
       evidenceDepth: "STANDARD",
     });
 

@@ -288,7 +288,6 @@ describe("TaskStore persistence", () => {
       conversationId: (await store.loadSnapshot()).conversationId,
       budgets,
       store,
-      collectExecutorExplanation: false,
       executor: {
         name: "hang",
         capabilities: () => ({

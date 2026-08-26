@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.11] — 2026-08-26
+
+### Fixed
+
+- The Evidence step is local-only: Assentor reads files, git, and runs safe reviewer-requested commands itself. It no longer starts a second Cursor session during evidence collection, and reviewer evidence requests are never escalated back to the executor.
+- Large uncommitted changes no longer flood the reviewer: changed-file lists are capped in the evidence summary, diffs and inline file bodies stay bounded, and changed paths are prioritized over alphabetically sorted unrelated files.
+- Ctrl+C / interrupt now kills tracked Cursor and shell child processes (`taskkill /T` on Windows, `pkill -P` on Unix) instead of leaving hundreds of orphaned node/python processes running.
+
 ## [0.3.10] — 2026-08-26
 
 ### Fixed
@@ -159,7 +167,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logical agents, diagnostics, and resumable task state under `.assentor/tasks/`
 - One-line install scripts for macOS/Linux and Windows
 
-[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.10...HEAD
+[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.11...HEAD
+[0.3.11]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.10...v0.3.11
 [0.3.10]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.9...v0.3.10
 [0.3.9]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.7...v0.3.8

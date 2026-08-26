@@ -18,6 +18,8 @@ export interface EvidenceFulfillment {
   fulfilled: number;
   skipped: number;
   errors: string[];
+  /** Requests Assentor could not satisfy locally (never escalated to the executor). */
+  unfulfilled: EvidenceRequestItem[];
 }
 
 export interface EvidenceCollectorDeps {
@@ -41,6 +43,7 @@ export async function fulfillEvidenceRequests(
   let fulfilled = 0;
   let skipped = 0;
   const errors: string[] = [];
+  const unfulfilled: EvidenceRequestItem[] = [];
 
   for (const request of requests) {
     try {
@@ -49,14 +52,16 @@ export async function fulfillEvidenceRequests(
         fulfilled += 1;
       } else {
         skipped += 1;
+        unfulfilled.push(request);
       }
     } catch (error) {
       skipped += 1;
+      unfulfilled.push(request);
       errors.push(error instanceof Error ? error.message : String(error));
     }
   }
 
-  return { fulfilled, skipped, errors };
+  return { fulfilled, skipped, errors, unfulfilled };
 }
 
 async function fulfillOne(

@@ -21,6 +21,7 @@ import type { EvidenceRequestItem } from "../protocol/messages.js";
 import { fulfillEvidenceRequests } from "../artifacts/evidence.js";
 import type { ExecutorResult } from "../providers/executors/types.js";
 import type { TaskContract } from "../core/task-contract.js";
+import { runShellCommand } from "../process/run-shell.js";
 
 const MAX_FILE_BYTES = 80_000;
 const MAX_FILES = 24;
@@ -147,7 +148,7 @@ export class EvidencePackBuilder {
     fulfilled: number;
     skipped: number;
     errors: string[];
-    remaining: EvidenceRequestItem[];
+    unfulfilled: EvidenceRequestItem[];
   }> {
     const git = new LocalGitService({ cwd: this.projectPath });
     const result = await fulfillEvidenceRequests(requests, {
@@ -157,23 +158,9 @@ export class EvidencePackBuilder {
       runCommand: runShellCommand,
     });
 
-    const remaining: EvidenceRequestItem[] = [];
-    let idx = 0;
-    for (const request of requests) {
-      // Rough: if we had errors or skips, keep architecture/runtime for executor
-      const needsExecutor =
-        request.kind === "architecture" ||
-        request.kind === "runtime_information" ||
-        request.kind === "screenshot" ||
-        request.kind === "environment" ||
-        request.kind === "scene_hierarchy" ||
-        request.kind === "mcp_inspection";
-      if (needsExecutor) {
-        remaining.push(request);
-      }
-      idx += 1;
+    for (const request of result.unfulfilled) {
+      pack.notes.push(formatUnfulfilledEvidenceNote(request));
     }
-    void idx;
 
     // Fold newly collected file artifacts into pack
     for (const artifact of this.collector.list({ type: "file" })) {
@@ -204,7 +191,7 @@ export class EvidencePackBuilder {
       fulfilled: result.fulfilled,
       skipped: result.skipped,
       errors: result.errors,
-      remaining,
+      unfulfilled: result.unfulfilled,
     };
   }
 
@@ -543,7 +530,12 @@ export class EvidencePackBuilder {
     const changedRefs: EvidenceFileRef[] = [];
     const unchangedRefs: EvidenceFileRef[] = [];
 
-    for (const relative of [...candidates].sort()) {
+    const orderedCandidates = [
+      ...changed.filter((file) => candidates.has(file)),
+      ...[...candidates].filter((file) => !changedSet.has(file)).sort(),
+    ];
+
+    for (const relative of orderedCandidates) {
       if (isNoisePath(relative)) continue;
       if (changedRefs.length + unchangedRefs.length >= MAX_FILES) break;
       const ref = await this.readFileRef(
@@ -628,6 +620,26 @@ export class EvidencePackBuilder {
   }
 }
 
+export function parseArchitectureSummary(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  try {
+    const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+      const summary = parsed.architectureSummary ?? parsed.architecture_summary;
+      if (typeof summary === "string" && summary.trim()) {
+        return summary.trim();
+      }
+    }
+  } catch {
+    // fall through
+  }
+  return undefined;
+}
+
 export function parseExecutorExplanation(
   text: string,
 ): ProjectReviewEvidencePack["executorExplanation"] {
@@ -683,6 +695,18 @@ export const EXPLANATION_PROMPT = [
     2,
   ),
 ].join("\n");
+
+function formatUnfulfilledEvidenceNote(request: EvidenceRequestItem): string {
+  const target =
+    "path" in request && request.path
+      ? request.path
+      : "command" in request && request.command
+        ? request.command
+        : "query" in request && request.query
+          ? request.query
+          : request.kind;
+  return `Unfulfilled evidence (${request.kind}): ${target} — not available locally`;
+}
 
 function resolveImport(fromFile: string, spec: string): string | null {
   const dir = path.dirname(fromFile);
@@ -757,7 +781,7 @@ function joinNotes(existing: string | undefined, extra: string): string {
 
 async function runGit(cwd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn("git", args, { cwd });
+    const child = spawn("git", args, { cwd, windowsHide: true });
     let out = "";
     let err = "";
     child.stdout.on("data", (c) => (out += c.toString()));
@@ -766,29 +790,6 @@ async function runGit(cwd: string, args: string[]): Promise<string> {
     child.on("close", (code) => {
       if (code === 0) resolve(out.trim());
       else reject(new Error(err || `git failed`));
-    });
-  });
-}
-
-async function runShellCommand(
-  command: string,
-  cwd: string,
-): Promise<{ stdout: string; stderr: string; code: number }> {
-  return new Promise((resolve) => {
-    const child = spawn(command, {
-      cwd,
-      shell: true,
-      env: process.env,
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (c) => (stdout += c.toString()));
-    child.stderr.on("data", (c) => (stderr += c.toString()));
-    child.on("error", (error) => {
-      resolve({ stdout, stderr: error.message, code: 1 });
-    });
-    child.on("close", (code) => {
-      resolve({ stdout, stderr, code: code ?? 1 });
     });
   });
 }

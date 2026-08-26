@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import {
   ProjectReviewEvidencePackSchema,
+  formatChangedFilesList,
   type ProjectReviewEvidencePack,
 } from "./evidence-pack.js";
 
@@ -109,7 +110,7 @@ export function evidencePackToMarkdown(pack: ProjectReviewEvidencePack): string 
     `- Commit: ${pack.git.commit ?? "n/a"}`,
     `- Baseline (task start): ${pack.git.baselineCommit ?? "n/a"}`,
     `- Working tree: ${pack.git.workingTreeClean ? "clean" : "dirty"}`,
-    `- Changed since task start: ${pack.git.changedFiles.join(", ") || "(none)"}`,
+    `- Changed since task start (${pack.git.changedFiles.length}): ${formatChangedFilesList(pack.git.changedFiles)}`,
     pack.git.note ? `- Note: ${pack.git.note}` : "",
     ``,
     `## H. Tests / Build`,

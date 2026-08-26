@@ -15,7 +15,7 @@ import {
 import { Supervisor } from "../orchestrator/supervisor.js";
 import { isTerminalState, TaskState } from "../orchestrator/state-machine.js";
 import { TaskStore, loadTaskForResume, findLatestResumableTask } from "../persistence/index.js";
-import { CursorExecutor } from "../providers/executors/cursor/index.js";
+import { CursorExecutor, killAllTrackedProcesses } from "../providers/executors/cursor/index.js";
 import { MockExecutor } from "../providers/executors/mock/index.js";
 import type { Executor } from "../providers/executors/types.js";
 import {
@@ -496,7 +496,6 @@ async function runAssentorTaskBody(
     conversationId,
     store,
     evidenceDepth: complexity.evidenceDepth,
-    collectExecutorExplanation: true,
     onEvent: (event) => {
       reporter.onEvent(event);
     },
@@ -700,6 +699,7 @@ function attachRunInterrupt(input: {
     if (executor && taskId) {
       void executor.cancel(taskId);
     }
+    killAllTrackedProcesses();
     if (supervisor) {
       supervisor.requestCancel();
       setTimeout(() => process.exit(130), 8_000).unref?.();
@@ -710,6 +710,7 @@ function attachRunInterrupt(input: {
   process.on("SIGINT", onInterrupt);
   process.on("SIGTERM", onInterrupt);
   return () => {
+    killAllTrackedProcesses();
     process.off("SIGINT", onInterrupt);
     process.off("SIGTERM", onInterrupt);
   };
