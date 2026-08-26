@@ -2,6 +2,8 @@ export {
   resolvePackageRoot,
   defaultBinDir,
   defaultInstallHome,
+  lifecycleScriptName,
+  lifecycleProcessArgs,
   updateAssentor,
   uninstallAssentor,
   runScript,
