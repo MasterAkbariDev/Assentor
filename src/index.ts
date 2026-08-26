@@ -55,6 +55,7 @@ export {
   type ProjectMutatingExecutorOptions,
   type ProjectMutationFn,
 } from "./providers/executors/project-mutating/index.js";
+export { withAssentorGitignore } from "./providers/executors/with-gitignore.js";
 
 export type {
   Reviewer,

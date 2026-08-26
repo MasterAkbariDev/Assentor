@@ -1,8 +1,10 @@
 export {
   ASSENTOR_DIR,
+  ASSENTOR_GITIGNORE_ENTRY,
   assentorRoot,
   taskPaths,
   ensureTaskLayout,
+  ensureAssentorGitignored,
   writeJsonAtomic,
   readJsonFile,
   appendJsonl,

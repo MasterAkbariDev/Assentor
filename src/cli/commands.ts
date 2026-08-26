@@ -61,19 +61,28 @@ export async function createExecutor(
     }) => void;
   } = {},
 ): Promise<Executor> {
+  const { withAssentorGitignore } = await import(
+    "../providers/executors/with-gitignore.js"
+  );
+
+  let executor: Executor;
   switch (provider) {
     case "cursor":
-      return new CursorExecutor({
+      executor = new CursorExecutor({
         onOutput: options.onOutput,
         onStatus: options.onStatus,
       });
+      break;
     case "mock":
-      return new MockExecutor();
+      executor = new MockExecutor();
+      break;
     default:
       throw new Error(
         `Unknown executor provider "${provider}". Supported: mock, cursor`,
       );
   }
+
+  return withAssentorGitignore(executor);
 }
 
 export interface CreateReviewerOptions {
@@ -504,6 +513,8 @@ export async function statusAssentorTask(projectPath: string, taskId: string) {
 export async function initAssentorProject(projectPath: string): Promise<string> {
   const { parseAssentorConfig, saveAssentorConfig, assentorConfigPath } =
     await import("../config/load.js");
+  const { ensureAssentorGitignored } = await import("../persistence/paths.js");
+  await ensureAssentorGitignored(projectPath);
   const configPath = assentorConfigPath(projectPath);
   try {
     await fs.access(configPath);

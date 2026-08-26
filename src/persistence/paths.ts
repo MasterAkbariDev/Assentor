@@ -4,6 +4,11 @@ import { z } from "zod";
 
 export const ASSENTOR_DIR = ".assentor";
 
+/** Canonical gitignore entry for project-local Assentor state. */
+export const ASSENTOR_GITIGNORE_ENTRY = ".assentor/";
+
+const ASSENTOR_GITIGNORE_PATTERN = /^\s*\.assentor\/?\s*(?:#.*)?$/m;
+
 export interface TaskPaths {
   root: string;
   taskDir: string;
@@ -20,6 +25,47 @@ export interface TaskPaths {
 
 export function assentorRoot(projectPath: string): string {
   return path.join(path.resolve(projectPath), ASSENTOR_DIR);
+}
+
+/**
+ * Ensure the project's `.gitignore` ignores `.assentor/`.
+ * Creates `.gitignore` when missing. Idempotent and safe if the path is not writable.
+ * @returns true when the file was created or updated
+ */
+export async function ensureAssentorGitignored(
+  projectPath: string,
+): Promise<boolean> {
+  const root = path.resolve(projectPath);
+  const gitignorePath = path.join(root, ".gitignore");
+
+  try {
+    let existing = "";
+    try {
+      existing = await fs.readFile(gitignorePath, "utf8");
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code !== "ENOENT") {
+        throw error;
+      }
+    }
+
+    if (ASSENTOR_GITIGNORE_PATTERN.test(existing)) {
+      return false;
+    }
+
+    const needsNewline =
+      existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+    const block =
+      existing.length === 0
+        ? `${ASSENTOR_GITIGNORE_ENTRY}\n`
+        : `${needsNewline}\n# Assentor local task/state data\n${ASSENTOR_GITIGNORE_ENTRY}\n`;
+
+    await fs.writeFile(gitignorePath, `${existing}${block}`, "utf8");
+    return true;
+  } catch {
+    // Never fail the executor/run because gitignore could not be updated.
+    return false;
+  }
 }
 
 export function taskPaths(projectPath: string, taskId: string): TaskPaths {
@@ -58,6 +104,7 @@ export async function ensureTaskLayout(
   await fs.mkdir(paths.historyDir, { recursive: true });
   await fs.mkdir(paths.reportsDir, { recursive: true });
   await fs.mkdir(paths.checkpointsDir, { recursive: true });
+  await ensureAssentorGitignored(projectPath);
   return paths;
 }
 
