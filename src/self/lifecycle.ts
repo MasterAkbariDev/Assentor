@@ -120,6 +120,14 @@ export async function updateAssentor(): Promise<{ code: number; output: string }
   } catch {
     result = await runScript("install");
   }
+  // Windows PowerShell 5.1 can fail to parse a stale update.ps1;
+  // install.ps1 already refreshes a managed ~/.assentor clone.
+  if (result.code !== 0 && process.platform === "win32") {
+    const fallback = await runScript("install");
+    if (fallback.code === 0) {
+      result = fallback;
+    }
+  }
   // Drop stale "local ahead" snapshots after a successful update/rebuild.
   if (result.code === 0) {
     const { clearUpdateCheckCache } = await import("./version.js");

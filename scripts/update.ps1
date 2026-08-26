@@ -1,10 +1,12 @@
 # Update Assentor to the latest main (or rebuild the current checkout).
 # Prefer the installer when this is a managed %USERPROFILE%\.assentor clone.
+# Keep this file ASCII-only. Windows PowerShell 5.1 misparses UTF-8 without BOM.
 $ErrorActionPreference = "Stop"
 
 $InstallDir = if ($env:ASSENTOR_HOME) { $env:ASSENTOR_HOME } else { Join-Path $env:USERPROFILE ".assentor" }
 $BinDir = if ($env:ASSENTOR_BIN) { $env:ASSENTOR_BIN } else { Join-Path $env:USERPROFILE ".local\bin" }
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$Binary = Join-Path $BinDir "assentor.cmd"
 
 Write-Host "==> Assentor update"
 
@@ -20,7 +22,7 @@ if (Test-Path (Join-Path $Root ".git")) {
   Write-Host "==> Pulling latest"
   git -C $Root pull --ff-only
   if ($LASTEXITCODE -ne 0) {
-    Write-Host "Warning: git pull failed — rebuilding current checkout" -ForegroundColor Yellow
+    Write-Host "Warning: git pull failed - rebuilding current checkout" -ForegroundColor Yellow
   }
 }
 
@@ -43,9 +45,12 @@ try {
 
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 $cliJs = Join-Path $Root "dist\cli\index.js"
-$shim = "@echo off`r`nnode `"$cliJs`" %*"
-Set-Content -Path (Join-Path $BinDir "assentor.cmd") -Value $shim -Encoding ASCII
+$shim = @"
+@echo off
+node "$cliJs" %*
+"@
+Set-Content -Path $Binary -Value $shim -Encoding ASCII
 
 Write-Host ""
 Write-Host "Assentor updated"
-Write-Host "  binary: $(Join-Path $BinDir 'assentor.cmd')"
+Write-Host "  binary: $Binary"

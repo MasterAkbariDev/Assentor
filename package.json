@@ -1,6 +1,6 @@
 {
   "name": "assentor",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "description": "Local supervisor CLI that coordinates AI coding agents with evidence-based review",
   "type": "module",
   "bin": {

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.9] — 2026-08-26
+
+### Fixed
+
+- Windows `assentor update` no longer dies in PowerShell 5.1 with “The string is missing the terminator”. `update.ps1` is ASCII-only (an em dash was being read as a stray quote), and a failed update falls back to `install.ps1`.
+
 ## [0.3.8] — 2026-08-26
 
 ### Fixed
@@ -147,7 +153,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logical agents, diagnostics, and resumable task state under `.assentor/tasks/`
 - One-line install scripts for macOS/Linux and Windows
 
-[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.8...HEAD
+[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.9...HEAD
+[0.3.9]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.5...v0.3.6

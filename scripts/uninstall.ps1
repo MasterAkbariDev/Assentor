@@ -15,7 +15,7 @@ foreach ($arg in $args) {
     "^--purge$" { $Purge = $true }
     "^(-h|--help)$" {
       Write-Host "Usage: uninstall.ps1 [--purge]"
-      Write-Host "  Removes $(Join-Path $BinDir 'assentor.cmd')"
+      Write-Host "  Removes $BinDir\assentor.cmd"
       Write-Host "  --purge also removes $InstallDir (managed install only)"
       exit 0
     }
