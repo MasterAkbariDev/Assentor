@@ -15,6 +15,7 @@ export {
 export {
   EvidencePackBuilder,
   parseExecutorExplanation,
+  extractClaimedSourcePaths,
   EXPLANATION_PROMPT,
   type EvidencePackBuilderOptions,
 } from "./pack-builder.js";

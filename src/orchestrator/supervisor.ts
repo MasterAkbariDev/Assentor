@@ -22,6 +22,8 @@ import type {
   ReviewerTurnResult,
 } from "../providers/reviewers/types.js";
 import type { TaskSnapshot, TaskStore } from "../persistence/store.js";
+import type { GitCheckpoint } from "../git/types.js";
+import { LocalGitService } from "../git/local.js";
 import {
   EvidencePackBuilder,
   EXPLANATION_PROMPT,
@@ -129,6 +131,7 @@ export class Supervisor {
   private taskId: string;
   private conversationId: string;
   private startedAt: string;
+  private lastCheckpoint?: GitCheckpoint;
   private evidencePack?: ProjectReviewEvidencePack;
   private evidenceIterations = 0;
   private readonly maxEvidenceIterations: number;
@@ -170,6 +173,7 @@ export class Supervisor {
       if (this.state === TaskState.Initializing) {
         this.moveTo(TaskState.CheckingProject);
         this.moveTo(TaskState.CreatingCheckpoint);
+        await this.captureGitCheckpoint();
         this.moveTo(TaskState.Contracting);
         this.moveTo(TaskState.Executing);
         await this.flushPersist();
@@ -267,6 +271,22 @@ export class Supervisor {
     this.lastReason = snapshot.reason;
     this.taskStarted =
       Boolean(snapshot.executorSessionId) || snapshot.currentRound > 0;
+    this.lastCheckpoint = snapshot.lastCheckpoint;
+  }
+
+  private async captureGitCheckpoint(): Promise<void> {
+    if (this.lastCheckpoint?.head) {
+      return;
+    }
+    try {
+      const git = new LocalGitService({ cwd: this.config.projectPath });
+      if (!(await git.isRepo())) {
+        return;
+      }
+      this.lastCheckpoint = await git.createCheckpoint("task-start");
+    } catch {
+      // Git is optional; review still has executor-named files as a fallback.
+    }
   }
 
   private beginRound(): boolean {
@@ -487,6 +507,7 @@ export class Supervisor {
       depth: this.config.evidenceDepth ?? "STANDARD",
       contract: this.config.contract,
       runCommands: false,
+      gitBaselineHead: this.lastCheckpoint?.head,
     });
 
     const architecture = explanation.architectureSummary
@@ -807,6 +828,7 @@ export class Supervisor {
         depth: this.config.evidenceDepth ?? "STANDARD",
         contract: this.config.contract,
         runCommands: false,
+        gitBaselineHead: this.lastCheckpoint?.head,
       });
       const merged = await builder.mergeRequests(this.evidencePack, pending);
       this.evidencePack = merged.pack;
@@ -972,6 +994,7 @@ export class Supervisor {
         contract: this.config.contract,
         budgets: this.budgets,
         executorSessionId: this.sessionId,
+        lastCheckpoint: this.lastCheckpoint,
         finalReview: this.finalReview,
         reason: this.lastReason,
         startedAt: this.startedAt,

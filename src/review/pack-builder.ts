@@ -35,6 +35,8 @@ export interface EvidencePackBuilderOptions {
   /** When false, skip running test/lint/typecheck (record NOT_RUN). Default true for STANDARD/DEEP. */
   runCommands?: boolean;
   collector?: ArtifactCollector;
+  /** Git HEAD at task start so committed executor work still shows as changed. */
+  gitBaselineHead?: string | null;
 }
 
 /**
@@ -73,7 +75,26 @@ export class EvidencePackBuilder {
     pack.dependencies = await this.collectDependencies();
     pack.configuration = await this.collectConfigHints();
 
-    const changed = pack.git.changedFiles;
+    const claimed: string[] = [];
+    for (const relative of claimedPathsFromExecutor(extras)) {
+      try {
+        await fs.access(path.join(this.projectPath, relative));
+        claimed.push(relative);
+      } catch {
+        // named but not on disk
+      }
+    }
+    const changed = uniquePaths([...pack.git.changedFiles, ...claimed]);
+    if (claimed.length > 0 && pack.git.changedFiles.length === 0) {
+      pack.git.changedFiles = changed;
+      pack.git.note = joinNotes(
+        pack.git.note,
+        "Working tree had no dirty files; included paths named in the executor response.",
+      );
+    } else if (claimed.some((p) => !pack.git.changedFiles.includes(p))) {
+      pack.git.changedFiles = changed;
+    }
+
     const relevant = await this.selectRelevantFiles(changed);
     pack.relevantFiles = relevant.changed;
     pack.unchangedImportant = relevant.unchanged;
@@ -351,22 +372,34 @@ export class EvidencePackBuilder {
       gitInfo.branch = status.branch ?? undefined;
       gitInfo.commit = status.head ?? undefined;
       gitInfo.status = status.porcelain;
-      const changed = (await git.changedFiles()).filter(
-        (f) => !isNoisePath(f),
-      );
+      gitInfo.workingTreeClean = !status.dirty;
+      const baseline = this.options.gitBaselineHead?.trim() || undefined;
+      if (baseline) {
+        gitInfo.baselineCommit = baseline;
+      }
+
+      const since = await git.changesSince(baseline);
+      const changed = since.files.filter((f) => !isNoisePath(f));
       gitInfo.changedFiles = changed;
-      let diff = await git.diff();
+      let diff = since.diff;
       if (diff.length > MAX_DIFF_CHARS) {
         diff = `${diff.slice(0, MAX_DIFF_CHARS)}\n…[truncated]`;
       }
       gitInfo.diff = redactSecrets(diff).text;
+
+      if (baseline && gitInfo.workingTreeClean && changed.length > 0) {
+        gitInfo.note =
+          "Working tree is clean; files listed changed in commits since task start. That is valid evidence — do not ask to git add/commit.";
+      } else if (gitInfo.workingTreeClean && changed.length === 0) {
+        gitInfo.note =
+          "No git diff since task start (working tree clean). Check file contents and executor claims before assuming nothing changed.";
+      }
+
       try {
-        const log = await runGit(this.projectPath, [
-          "log",
-          "-n",
-          "8",
-          "--oneline",
-        ]);
+        const logArgs = baseline
+          ? ["log", "-n", "8", "--oneline", `${baseline}..HEAD`]
+          : ["log", "-n", "8", "--oneline"];
+        const log = await runGit(this.projectPath, logArgs);
         gitInfo.recentLog = log;
       } catch {
         // optional
@@ -676,6 +709,50 @@ function isNoisePath(relative: string): boolean {
       (d) => normalized === d || normalized.startsWith(`${d}/`),
     )
   );
+}
+
+/** Paths like `src/ai/minimax.js` mentioned in executor text. */
+export function extractClaimedSourcePaths(text: string): string[] {
+  const found = new Set<string>();
+  const re =
+    /(?:^|[\s`'"(])((?:[\w.@-]+\/)+[\w.@-]+\.[A-Za-z][A-Za-z0-9]*)/g;
+  for (const match of text.matchAll(re)) {
+    const p = (match[1] ?? "").replace(/\\/g, "/").replace(/^\.\//, "");
+    if (p && !isNoisePath(p)) {
+      found.add(p);
+    }
+  }
+  return [...found];
+}
+
+function claimedPathsFromExecutor(extras: {
+  executorResult?: ExecutorResult;
+  executorExplanation?: ProjectReviewEvidencePack["executorExplanation"];
+}): string[] {
+  const blobs = [
+    extras.executorResult?.summary,
+    extras.executorResult?.rawOutput,
+    extras.executorExplanation?.whatChanged,
+    extras.executorExplanation?.raw,
+  ];
+  const found = new Set<string>();
+  for (const blob of blobs) {
+    if (!blob) {
+      continue;
+    }
+    for (const p of extractClaimedSourcePaths(blob)) {
+      found.add(p);
+    }
+  }
+  return [...found];
+}
+
+function uniquePaths(paths: string[]): string[] {
+  return [...new Set(paths.filter(Boolean))];
+}
+
+function joinNotes(existing: string | undefined, extra: string): string {
+  return existing ? `${existing} ${extra}` : extra;
 }
 
 async function runGit(cwd: string, args: string[]): Promise<string> {

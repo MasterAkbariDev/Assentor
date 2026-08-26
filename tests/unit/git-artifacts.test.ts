@@ -72,6 +72,23 @@ describe("LocalGitService", () => {
 
     await expect(git.rollback(checkpoint)).rejects.toBeInstanceOf(GitError);
   });
+
+  it("changesSince includes files committed after the baseline", async () => {
+    const dir = await makeTempRepo();
+    tempDirs.push(dir);
+    const git = new LocalGitService({ cwd: dir });
+    const before = await git.createCheckpoint("start");
+
+    await fs.mkdir(path.join(dir, "src"), { recursive: true });
+    await fs.writeFile(path.join(dir, "src", "main.js"), "export const n = 1;\n");
+    await execFileAsync("git", ["add", "src/main.js"], { cwd: dir });
+    await execFileAsync("git", ["commit", "-m", "speed up ai"], { cwd: dir });
+
+    expect(await git.changedFiles()).toEqual([]);
+    const since = await git.changesSince(before.head);
+    expect(since.files).toContain("src/main.js");
+    expect(since.diff).toContain("export const n = 1");
+  });
 });
 
 describe("artifacts + evidence", () => {

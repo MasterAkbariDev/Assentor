@@ -161,6 +161,45 @@ export class LocalGitService implements GitService {
     return [...files].sort();
   }
 
+  async changesSince(
+    baseline?: string | null,
+  ): Promise<{ files: string[]; diff: string }> {
+    const files = new Set<string>(await this.changedFiles());
+    const ref = baseline?.trim() || undefined;
+
+    if (ref) {
+      await this.addNameOnly(files, ["diff", "--name-only", ref]);
+      await this.addNameOnly(files, ["diff", "--name-only", "--cached", ref]);
+      const diff = await git(this.cwd, ["diff", ref]).catch(() => ({
+        stdout: "",
+        stderr: "",
+      }));
+      return { files: [...files].sort(), diff: diff.stdout };
+    }
+
+    const unstaged = await this.diff();
+    const staged = await this.diff({ staged: true });
+    const parts = [unstaged, staged].filter((part) => part.trim());
+    return { files: [...files].sort(), diff: parts.join("\n") };
+  }
+
+  private async addNameOnly(
+    files: Set<string>,
+    args: string[],
+  ): Promise<void> {
+    try {
+      const result = await git(this.cwd, args);
+      for (const line of result.stdout.split("\n")) {
+        const name = line.trim();
+        if (name) {
+          files.add(name);
+        }
+      }
+    } catch {
+      // baseline may be missing in a brand-new repo
+    }
+  }
+
   async createCheckpoint(label?: string): Promise<GitCheckpoint> {
     const status = await this.status();
     const checkpoint: GitCheckpoint = {

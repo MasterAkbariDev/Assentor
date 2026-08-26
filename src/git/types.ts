@@ -24,6 +24,11 @@ export interface GitService {
   status(): Promise<GitStatusSummary>;
   diff(options?: { staged?: boolean }): Promise<string>;
   changedFiles(): Promise<string[]>;
+  /**
+   * Files + combined diff since a baseline commit (task start).
+   * Includes later commits, staged, unstaged, and untracked — not just a dirty tree.
+   */
+  changesSince(baseline?: string | null): Promise<{ files: string[]; diff: string }>;
   createCheckpoint(label?: string): Promise<GitCheckpoint>;
   /**
    * Restores working tree to a checkpoint when safe.

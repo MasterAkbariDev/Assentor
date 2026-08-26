@@ -73,10 +73,14 @@ export const GitInfoSchema = z.object({
   isRepo: z.boolean().default(false),
   branch: z.string().optional(),
   commit: z.string().optional(),
+  /** HEAD recorded at task start — diffs are computed against this. */
+  baselineCommit: z.string().optional(),
   status: z.string().optional(),
+  workingTreeClean: z.boolean().optional(),
   changedFiles: z.array(z.string()).default([]),
   diff: z.string().optional(),
   recentLog: z.string().optional(),
+  note: z.string().optional(),
 });
 
 export const CommandRunSchema = z.object({

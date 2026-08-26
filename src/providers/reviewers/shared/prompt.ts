@@ -51,6 +51,12 @@ export function buildReviewPrompt(input: {
     "Evaluate only against the task contract and provided evidence.",
     "Every issue must cite evidence (file path, diff hunk, command output, or pack section).",
     "",
+    "Git / evidence rules:",
+    "- Section G lists files changed since TASK START (later commits + uncommitted). A clean working tree with a non-empty changed list means the executor already committed — that is valid evidence.",
+    "- Do NOT require git add, git commit, or staging unless the task contract explicitly asks for a commit.",
+    "- If claimed files appear in the pack with contents (Section D / File contents), review those files. Only evidenceRequest a file that is still missing.",
+    "- NOT_RUN for tests/build/lint is not by itself NEEDS_WORK unless the contract requires that verification.",
+    "",
     "Return ONLY valid JSON matching this schema:",
     JSON.stringify(
       {

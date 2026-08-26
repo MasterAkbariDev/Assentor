@@ -89,6 +89,8 @@ export const SPECIALTY_PROMPT_ADDENDA: Record<SpecialtyPromptKey, string> = {
     "Evidence rules:",
     "- No PASS when required evidence is missing or executor claims are unverified.",
     "- Issues must cite pack sections or artifact ids — no vague 'looks incomplete'.",
+    "- A clean git working tree is not a defect if Section G lists files changed since task start, or those files are inlined in the pack.",
+    "- Never require the executor to git add/commit unless the contract says so.",
   ].join("\n"),
 };
 
