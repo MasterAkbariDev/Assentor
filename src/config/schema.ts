@@ -64,6 +64,16 @@ export const AssentorConfigSchema = z.object({
       maxToolCalls: z.number().int().positive().default(200),
     })
     .default({}),
+  binaries: z
+    .object({
+      cursor: z.string().optional(),
+      claude: z.string().optional(),
+      gemini: z.string().optional(),
+      codex: z.string().optional(),
+      qwen: z.string().optional(),
+      opencode: z.string().optional(),
+    })
+    .default({}),
   git: z
     .object({
       checkpoints: z.boolean().default(true),

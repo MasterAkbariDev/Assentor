@@ -1,6 +1,6 @@
+import { locateBinary } from "./cli-locator.js";
 import {
   CursorExecutor,
-  resolveCursorBinary,
   type CursorExecutorOptions,
 } from "../providers/executors/cursor/index.js";
 import type {
@@ -30,10 +30,18 @@ export class CursorExecutorAdapter implements ExecutorAdapter {
   }
 
   async detect(): Promise<DetectionResult> {
-    const binary = resolveCursorBinary();
+    const binary = locateBinary("cursor");
+    if (!binary) {
+      return {
+        installed: false,
+        available: false,
+        error:
+          "Cursor CLI not found. Install Cursor / cursor-agent, or set ASSENTOR_CURSOR_BINARY.",
+      };
+    }
     return {
-      installed: Boolean(binary),
-      available: Boolean(binary),
+      installed: true,
+      available: true,
       path: binary,
       version: "cli",
       authenticated: Boolean(process.env.CURSOR_API_KEY),
@@ -72,6 +80,7 @@ export class ClaudeCodeExecutorAdapter extends CliExecutorAdapter {
   readonly id = "claude-code";
   readonly name = "Claude Code";
   readonly binaryNames = ["claude"];
+  override readonly binaryTool = "claude" as const;
 
   installPlan(): InstallPlan {
     return {
@@ -88,6 +97,7 @@ export class CodexExecutorAdapter extends CliExecutorAdapter {
   readonly id = "codex";
   readonly name = "Codex";
   readonly binaryNames = ["codex"];
+  override readonly binaryTool = "codex" as const;
 
   installPlan(): InstallPlan {
     return {
@@ -104,6 +114,7 @@ export class GeminiCliExecutorAdapter extends CliExecutorAdapter {
   readonly id = "gemini-cli";
   readonly name = "Gemini CLI";
   readonly binaryNames = ["gemini"];
+  override readonly binaryTool = "gemini" as const;
 
   installPlan(): InstallPlan {
     return {
@@ -119,6 +130,7 @@ export class QwenExecutorAdapter extends CliExecutorAdapter {
   readonly id = "qwen";
   readonly name = "Qwen Code";
   readonly binaryNames = ["qwen", "qwen-code"];
+  override readonly binaryTool = "qwen" as const;
 
   installPlan(): InstallPlan {
     return {
@@ -135,6 +147,7 @@ export class OpenCodeExecutorAdapter extends CliExecutorAdapter {
   readonly id = "opencode";
   readonly name = "OpenCode";
   readonly binaryNames = ["opencode"];
+  override readonly binaryTool = "opencode" as const;
 
   installPlan(): InstallPlan {
     return {

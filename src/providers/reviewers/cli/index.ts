@@ -1,5 +1,8 @@
-import { spawn } from "node:child_process";
-import { findOnPath } from "../../../executors/registry.js";
+import {
+  findOnPath,
+  locateBinary,
+  spawnCliProcess,
+} from "../../../executors/cli-locator.js";
 import {
   asReviewInput,
   buildReviewPrompt,
@@ -303,16 +306,9 @@ export function resolveCliAdapter(
 
 export function resolveCliBinary(adapter: Exclude<CliReviewerAdapter, "mock">): string {
   if (adapter === "claude") {
-    if (process.env.ASSENTOR_CLAUDE_BINARY) {
-      return process.env.ASSENTOR_CLAUDE_BINARY;
-    }
-    return findOnPath("claude") ?? "claude";
+    return locateBinary("claude") ?? findOnPath("claude") ?? "claude";
   }
-
-  if (process.env.ASSENTOR_GEMINI_CLI_BINARY) {
-    return process.env.ASSENTOR_GEMINI_CLI_BINARY;
-  }
-  return findOnPath("gemini") ?? "gemini";
+  return locateBinary("gemini") ?? findOnPath("gemini") ?? "gemini";
 }
 
 function buildCliArgs(
@@ -332,7 +328,7 @@ export async function defaultCliSpawn(
   request: CliSpawnRequest,
 ): Promise<CliSpawnResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(request.command, request.args, {
+    const child = spawnCliProcess(request.command, request.args, {
       cwd: request.cwd,
       env: request.env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -362,12 +358,12 @@ export async function defaultCliSpawn(
       resolve(result);
     };
 
-    child.stdout.on("data", (chunk: Buffer | string) => {
+    child.stdout?.on("data", (chunk: Buffer | string) => {
       const text = chunk.toString();
       stdout += text;
       request.onOutput?.(text, "stdout");
     });
-    child.stderr.on("data", (chunk: Buffer | string) => {
+    child.stderr?.on("data", (chunk: Buffer | string) => {
       const text = chunk.toString();
       stderr += text;
       request.onOutput?.(text, "stderr");

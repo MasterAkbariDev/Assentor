@@ -1,15 +1,10 @@
-import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import path from "node:path";
 import {
   isCursorAppBinary,
   resolveCursorBinary,
 } from "../providers/executors/cursor/index.js";
-import {
-  resolveCliAdapter,
-  resolveCliBinary,
-} from "../providers/reviewers/cli/index.js";
-import { findOnPath } from "../executors/registry.js";
+import { resolveCliAdapter } from "../providers/reviewers/cli/index.js";
+import { locateBinary, spawnCliProcess } from "../executors/cli-locator.js";
 import { resolveProviderApiKey } from "../keys/resolve.js";
 
 export interface PreflightCheck {
@@ -132,10 +127,8 @@ function checkReviewerCli(provider: string): PreflightCheck {
         detail: "mock CLI reviewer",
       };
     }
-    const binary = resolveCliBinary(adapter);
-    const resolved = existsSync(binary)
-      ? binary
-      : findOnPath(path.basename(binary));
+    const tool = adapter === "claude" ? "claude" : "gemini";
+    const resolved = locateBinary(tool);
     if (resolved) {
       return {
         name: `reviewer:${provider}`,
@@ -150,7 +143,7 @@ function checkReviewerCli(provider: string): PreflightCheck {
     return {
       name: `reviewer:${provider}`,
       ok: false,
-      detail: `${binary} not found on PATH — ${hint}`,
+      detail: `${tool} not found on PATH or default install locations — ${hint}`,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -194,10 +187,8 @@ async function checkReviewerKey(
 }
 
 function checkCursorBinary(): PreflightCheck {
-  const binary = resolveCursorBinary();
-  const resolved =
-    existsSync(binary) || findOnPath(path.basename(binary)) ? binary : undefined;
-  if (resolved) {
+  const binary = locateBinary("cursor");
+  if (binary) {
     return {
       name: "executor:cursor",
       ok: true,
@@ -208,7 +199,7 @@ function checkCursorBinary(): PreflightCheck {
     name: "executor:cursor",
     ok: false,
     detail:
-      "Cursor CLI not found. Install Cursor, put `agent`/`cursor` on PATH, or set ASSENTOR_CURSOR_BINARY.",
+      "Cursor CLI not found. Install Cursor, put `agent`/`cursor` on PATH, or set ASSENTOR_CURSOR_BINARY. Windows: %LOCALAPPDATA%\\cursor-agent\\agent.cmd",
   };
 }
 
@@ -294,7 +285,7 @@ function spawnCapture(
   timedOut?: boolean;
 }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawnCliProcess(command, args, {
       cwd,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -323,10 +314,10 @@ function spawnCapture(
       resolve(result);
     };
 
-    child.stdout.on("data", (chunk: Buffer | string) => {
+    child.stdout?.on("data", (chunk: Buffer | string) => {
       stdout += chunk.toString();
     });
-    child.stderr.on("data", (chunk: Buffer | string) => {
+    child.stderr?.on("data", (chunk: Buffer | string) => {
       stderr += chunk.toString();
     });
     child.on("error", (error) => {

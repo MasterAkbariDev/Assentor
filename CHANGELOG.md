@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] — 2026-08-26
+
+### Fixed
+
+- CLI discovery no longer hardcodes macOS Cursor paths. Assentor searches PATH (including Windows `.cmd`/`.exe`), then well-known install folders such as `%LOCALAPPDATA%\cursor-agent\agent.cmd`, and stores the resolved path in `~/.assentor/config.yaml` under `binaries`.
+- Windows `.cmd` CLIs (Cursor, Claude, Gemini, Codex, Qwen, OpenCode) are spawned via `cmd.exe` so they actually run.
+
 ## [0.3.5] — 2026-08-26
 
 ### Added
@@ -127,7 +134,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logical agents, diagnostics, and resumable task state under `.assentor/tasks/`
 - One-line install scripts for macOS/Linux and Windows
 
-[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.2...v0.3.3

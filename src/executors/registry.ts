@@ -1,5 +1,9 @@
 import { accessSync, constants as fsConstants } from "node:fs";
-import path from "node:path";
+import {
+  findOnPath as findOnPathSmart,
+  locateBinary,
+  type BinaryTool,
+} from "./cli-locator.js";
 import type {
   Executor,
   ExecutorCapabilities,
@@ -62,24 +66,15 @@ export class ExecutorRegistry {
 }
 
 export function findOnPath(command: string): string | undefined {
-  const pathEnv = process.env.PATH ?? "";
-  for (const dir of pathEnv.split(path.delimiter)) {
-    if (!dir) continue;
-    const full = path.join(dir, command);
-    try {
-      accessSync(full, fsConstants.X_OK);
-      return full;
-    } catch {
-      // continue
-    }
-  }
-  return undefined;
+  return findOnPathSmart(command);
 }
 
 export abstract class CliExecutorAdapter implements ExecutorAdapter {
   abstract readonly id: string;
   abstract readonly name: string;
   abstract readonly binaryNames: string[];
+  /** When set, detection uses PATH + well-known install locations. */
+  readonly binaryTool?: BinaryTool;
 
   capabilities(): ExecutorCapabilities {
     return {
@@ -91,6 +86,18 @@ export abstract class CliExecutorAdapter implements ExecutorAdapter {
   }
 
   async detect(): Promise<DetectionResult> {
+    if (this.binaryTool) {
+      const resolved = locateBinary(this.binaryTool);
+      if (resolved) {
+        return {
+          installed: true,
+          available: true,
+          path: resolved,
+          version: "cli",
+          capabilities: this.capabilities(),
+        };
+      }
+    }
     for (const bin of this.binaryNames) {
       const resolved =
         bin.includes("/") || bin.includes("\\")
@@ -109,7 +116,7 @@ export abstract class CliExecutorAdapter implements ExecutorAdapter {
     return {
       installed: false,
       available: false,
-      error: `Not found on PATH (tried: ${this.binaryNames.join(", ")})`,
+      error: `Not found on PATH or default install locations (tried: ${this.binaryNames.join(", ")})`,
     };
   }
 

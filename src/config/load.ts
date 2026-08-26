@@ -151,6 +151,7 @@ function toSerializable(config: AssentorConfig) {
     git: config.git,
     security: config.security,
     artifacts: config.artifacts,
+    binaries: config.binaries,
   };
 }
 

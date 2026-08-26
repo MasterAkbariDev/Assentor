@@ -1,5 +1,3 @@
-import { spawn } from "node:child_process";
-import { accessSync, constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { createId } from "../../../core/ids.js";
 import { MessageType, type ProtocolMessage } from "../../../protocol/messages.js";
@@ -15,6 +13,7 @@ import {
   summarizeStreamJson,
   type AgentStatusUpdate,
 } from "./stream-status.js";
+import { locateBinary, spawnCliProcess } from "../../../executors/cli-locator.js";
 
 export type CursorOutputFormat = "text" | "json" | "stream-json";
 export type { AgentStatusUpdate };
@@ -45,7 +44,7 @@ export type CursorSpawnFn = (
 export interface CursorExecutorOptions {
   /**
    * CLI binary. Defaults to auto-detect:
-   * ASSENTOR_CURSOR_BINARY → `cursor` → `agent` → macOS Cursor.app path.
+   * env → cached config path → PATH (with Windows PATHEXT) → well-known install dirs.
    */
   binary?: string;
   /** Kill the process after this many ms. Default: 60 minutes. */
@@ -77,9 +76,6 @@ const DEFAULT_CAPABILITIES: ExecutorCapabilities = {
   canContinueSession: true,
   supportsScreenshots: false,
 };
-
-const MAC_CURSOR_BIN =
-  "/Applications/Cursor.app/Contents/Resources/app/bin/cursor";
 
 /**
  * Cursor CLI executor adapter.
@@ -231,7 +227,7 @@ export class CursorExecutor implements Executor {
       this.activeChild = undefined;
       const message = error instanceof Error ? error.message : String(error);
       const hint = /ENOENT/i.test(message)
-        ? " Cursor CLI not found. Install Cursor, ensure `cursor`/`agent` is on PATH, or set ASSENTOR_CURSOR_BINARY."
+        ? " Cursor CLI not found. Install Cursor, ensure `cursor`/`agent` is on PATH, or set ASSENTOR_CURSOR_BINARY. On Windows the standalone CLI is usually %LOCALAPPDATA%\\cursor-agent\\agent.cmd."
         : "";
       return {
         status: "failed",
@@ -366,60 +362,15 @@ function formatDuration(ms: number): string {
 
 /** Exported for doctor / tests. */
 export function resolveCursorBinary(): string {
-  if (process.env.ASSENTOR_CURSOR_BINARY) {
-    return process.env.ASSENTOR_CURSOR_BINARY;
-  }
-
-  const candidates = [
-    process.env.HOME ? `${process.env.HOME}/.local/bin/agent` : "",
-    process.env.HOME ? `${process.env.HOME}/.local/bin/cursor-agent` : "",
-    "agent",
-    "cursor",
-    MAC_CURSOR_BIN,
-  ].filter(Boolean);
-
-  for (const candidate of candidates) {
-    if (candidate.includes("/") || candidate.includes("\\")) {
-      if (isExecutable(candidate)) {
-        return candidate;
-      }
-      continue;
-    }
-    const fromPath = findOnPath(candidate);
-    if (fromPath) {
-      return fromPath;
-    }
-  }
-
-  return "cursor";
+  return locateBinary("cursor") ?? "cursor";
 }
 
 export function isCursorAppBinary(binary: string): boolean {
-  const base = path.basename(binary).toLowerCase();
-  return base === "cursor" || base === "cursor.exe";
-}
-
-function findOnPath(command: string): string | undefined {
-  const pathEnv = process.env.PATH ?? "";
-  for (const dir of pathEnv.split(path.delimiter)) {
-    if (!dir) {
-      continue;
-    }
-    const full = path.join(dir, command);
-    if (isExecutable(full)) {
-      return full;
-    }
-  }
-  return undefined;
-}
-
-function isExecutable(filePath: string): boolean {
-  try {
-    accessSync(filePath, fsConstants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
+  const base = path
+    .basename(binary)
+    .toLowerCase()
+    .replace(/\.(exe|cmd|bat)$/i, "");
+  return base === "cursor";
 }
 
 function buildContinuationPrompt(messages: ProtocolMessage[]): string {
@@ -530,7 +481,7 @@ export async function defaultSpawn(
   request: CursorSpawnRequest,
 ): Promise<CursorSpawnResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(request.command, request.args, {
+    const child = spawnCliProcess(request.command, request.args, {
       cwd: request.cwd,
       env: {
         ...request.env,
@@ -567,12 +518,12 @@ export async function defaultSpawn(
       resolve(result);
     };
 
-    child.stdout.on("data", (chunk: Buffer | string) => {
+    child.stdout?.on("data", (chunk: Buffer | string) => {
       const text = chunk.toString();
       stdout += text;
       request.onOutput?.(text, "stdout");
     });
-    child.stderr.on("data", (chunk: Buffer | string) => {
+    child.stderr?.on("data", (chunk: Buffer | string) => {
       const text = chunk.toString();
       stderr += text;
       request.onOutput?.(text, "stderr");
