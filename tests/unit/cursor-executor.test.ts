@@ -143,6 +143,46 @@ describe("CursorExecutor", () => {
     expect(result.status).toBe("cancelled");
   });
 
+  it("SIGTERMs the live child on cancel", async () => {
+    const kill = vi.fn();
+    let started = false;
+    let finish!: (result: {
+      code: number | null;
+      stdout: string;
+      stderr: string;
+    }) => void;
+
+    const executor = new CursorExecutor({
+      spawnFn: async (request) => {
+        request.onSpawn?.({ kill });
+        started = true;
+        return new Promise((resolve) => {
+          finish = resolve;
+        });
+      },
+      binary: "agent",
+    });
+
+    const runPromise = executor.run({
+      taskId: "t-cancel",
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("goal"),
+      prompt: "goal",
+    });
+
+    for (let i = 0; i < 50 && !started; i += 1) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(started).toBe(true);
+
+    await executor.cancel("t-cancel");
+    expect(kill).toHaveBeenCalledWith("SIGTERM");
+    finish({ code: 1, stdout: "", stderr: "killed" });
+
+    const result = await runPromise;
+    expect(result.status).toBe("cancelled");
+  });
+
   it("acks evidence requests with a protocol response", async () => {
     const executor = new CursorExecutor({
       spawnFn: async () => ({

@@ -181,6 +181,7 @@ program
           },
         ],
         projectPath: options.project,
+        probeCursor: true,
       });
       printPreflight(result);
       if (!result.ok) {

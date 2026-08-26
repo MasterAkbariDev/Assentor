@@ -259,4 +259,69 @@ describe("TaskStore persistence", () => {
       code: "ENOENT",
     });
   });
+
+  it("persists EXECUTING before the executor returns", async () => {
+    const projectPath = await makeProject();
+    const taskId = createTaskId();
+    const contract = createEmptyContract("Persist executing");
+    const budgets = createBudgets({ maxRounds: 3, maxMessages: 20 });
+    const store = await TaskStore.create({
+      projectPath,
+      taskId,
+      conversationId: createTaskId(),
+      contract,
+      budgets,
+      executor: "mock",
+      reviewers: ["mock"],
+    });
+    expect((await store.loadSnapshot()).status).toBe(TaskState.Initializing);
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const hanging = new Supervisor({
+      projectPath,
+      contract,
+      taskId,
+      conversationId: (await store.loadSnapshot()).conversationId,
+      budgets,
+      store,
+      collectExecutorExplanation: false,
+      executor: {
+        name: "hang",
+        capabilities: () => ({
+          canEditFiles: true,
+          canRunCommands: true,
+          canContinueSession: true,
+          supportsScreenshots: false,
+        }),
+        async run() {
+          await gate;
+          return { status: "completed", summary: "ok", sessionId: "s" };
+        },
+        async continue() {
+          return { status: "completed", summary: "ok", sessionId: "s" };
+        },
+        async cancel() {},
+      },
+      reviewer: new MockReviewer({ steps: [{ type: "pass" }] }),
+    });
+
+    const pending = hanging.run();
+    let seenExecuting = false;
+    for (let i = 0; i < 80; i += 1) {
+      const snapshot = await store.loadSnapshot();
+      if (snapshot.status === TaskState.Executing) {
+        seenExecuting = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 15));
+    }
+    expect(seenExecuting).toBe(true);
+    release();
+    const result = await pending;
+    expect(result.status).toBe(TaskState.Done);
+  });
 });

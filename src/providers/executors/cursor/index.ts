@@ -26,6 +26,8 @@ export interface CursorSpawnRequest {
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
+  /** Live child so Ctrl+C can SIGTERM the Cursor process. */
+  onSpawn?: (child: { kill: (signal?: NodeJS.Signals) => boolean }) => void;
 }
 
 export interface CursorSpawnResult {
@@ -100,6 +102,7 @@ export class CursorExecutor implements Executor {
   private readonly onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   private readonly onStatus?: (status: AgentStatusUpdate) => void;
   private readonly cancelled = new Set<string>();
+  private activeChild?: { kill: (signal?: NodeJS.Signals) => boolean };
   private sessionId = createId();
   callCount = 0;
   lastCommand?: { command: string; args: string[]; cwd: string };
@@ -155,6 +158,18 @@ export class CursorExecutor implements Executor {
 
   async cancel(taskId: string): Promise<void> {
     this.cancelled.add(taskId);
+    try {
+      this.activeChild?.kill("SIGTERM");
+    } catch {
+      // already exited
+    }
+    setTimeout(() => {
+      try {
+        this.activeChild?.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+    }, 1500).unref?.();
   }
 
   private async execute(
@@ -195,6 +210,9 @@ export class CursorExecutor implements Executor {
         cwd: projectPath,
         env,
         timeoutMs: this.timeoutMs,
+        onSpawn: (child) => {
+          this.activeChild = child;
+        },
         onOutput: (chunk, stream) => {
           this.onOutput?.(chunk, stream);
           if (stream === "stdout" && streamParser) {
@@ -210,6 +228,7 @@ export class CursorExecutor implements Executor {
         }
       }
     } catch (error) {
+      this.activeChild = undefined;
       const message = error instanceof Error ? error.message : String(error);
       const hint = /ENOENT/i.test(message)
         ? " Cursor CLI not found. Install Cursor, ensure `cursor`/`agent` is on PATH, or set ASSENTOR_CURSOR_BINARY."
@@ -221,8 +240,19 @@ export class CursorExecutor implements Executor {
         sessionId: this.sessionId,
       };
     }
+    this.activeChild = undefined;
 
     const combined = `${result.stdout}\n${result.stderr}`;
+
+    if (this.cancelled.has(taskId)) {
+      return {
+        status: "cancelled",
+        summary: "Interrupted (Ctrl+C)",
+        error: "Interrupted (Ctrl+C). Resume with: assentor resume",
+        sessionId: this.sessionId,
+        rawOutput: result.stdout,
+      };
+    }
 
     if (result.timedOut) {
       return {
@@ -502,9 +532,16 @@ export async function defaultSpawn(
   return new Promise((resolve, reject) => {
     const child = spawn(request.command, request.args, {
       cwd: request.cwd,
-      env: request.env,
+      env: {
+        ...request.env,
+        // Headless: don't let Cursor's own TTY UI paint over Assentor's spinner.
+        CI: request.env.CI ?? "1",
+        NO_UPDATE_NOTIFIER: "1",
+      },
       stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
     });
+    request.onSpawn?.(child);
 
     let stdout = "";
     let stderr = "";

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-08-26
+
+### Fixed
+
+- `assentor run` / Continue show a loading spinner before the executor starts (no more blank screen)
+- Start task from the TUI no longer hangs on a 45s Cursor probe; the terminal is restored after the menu exits
+- Ctrl+C stops Cursor, saves the task as FAILED (resumable), and no longer leaves status stuck on INITIALIZING
+- Long Cursor “reasoning” stretches keep the last tool/file line instead of looking frozen
+
 ## [0.3.3] — 2026-08-26
 
 ### Added
@@ -108,7 +117,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logical agents, diagnostics, and resumable task state under `.assentor/tasks/`
 - One-line install scripts for macOS/Linux and Windows
 
-[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.0...v0.3.1

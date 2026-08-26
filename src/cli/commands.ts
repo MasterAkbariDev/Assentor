@@ -343,6 +343,51 @@ export function buildContract(
 
 export async function runAssentorTask(input: RunAssentorInput) {
   const projectPath = path.resolve(input.projectPath);
+  const reporter = new RunReporter({
+    verbose: input.verbose,
+    executorName: input.executor ?? "executor",
+    reviewerName: input.reviewer ?? "reviewer",
+  });
+  reporter.preparing("loading config…");
+
+  let executor: Executor | undefined;
+  let supervisor: Supervisor | undefined;
+  let taskId: string | undefined;
+  const detachInterrupt = attachRunInterrupt({
+    reporter,
+    getExecutor: () => executor,
+    getTaskId: () => taskId,
+    getSupervisor: () => supervisor,
+  });
+
+  try {
+    return await runAssentorTaskBody(input, projectPath, reporter, {
+      setExecutor: (value) => {
+        executor = value;
+      },
+      setSupervisor: (value) => {
+        supervisor = value;
+      },
+      setTaskId: (value) => {
+        taskId = value;
+      },
+    });
+  } finally {
+    detachInterrupt();
+    reporter.dispose();
+  }
+}
+
+async function runAssentorTaskBody(
+  input: RunAssentorInput,
+  projectPath: string,
+  reporter: RunReporter,
+  slots: {
+    setExecutor: (executor: Executor) => void;
+    setSupervisor: (supervisor: Supervisor) => void;
+    setTaskId: (taskId: string) => void;
+  },
+) {
   const config = await loadAssentorConfig(projectPath, {
     executor: input.executor,
     reviewer: input.reviewer,
@@ -363,6 +408,7 @@ export async function runAssentorTask(input: RunAssentorInput) {
   }
 
   if (!input.skipPreflight) {
+    reporter.updatePreparing("checking environment…");
     const preflight = await runPreflight({
       executor: executorProvider,
       reviewers: backends.map((b) => ({
@@ -371,8 +417,9 @@ export async function runAssentorTask(input: RunAssentorInput) {
       })),
       projectPath,
     });
-    printPreflight(preflight);
     if (!preflight.ok) {
+      reporter.updatePreparing("preflight failed");
+      printPreflight(preflight);
       throw new Error(
         "Preflight failed. Fix the issues above, then re-run.\n" +
           "Cursor: `agent login` or set CURSOR_API_KEY\n" +
@@ -382,16 +429,13 @@ export async function runAssentorTask(input: RunAssentorInput) {
     }
   }
 
-  const reporter = new RunReporter({
-    verbose: input.verbose,
-    executorName: executorProvider,
-    reviewerName: reviewerLabel,
-  });
+  reporter.updatePreparing("starting executor and reviewers…");
 
   const executor = await createExecutor(executorProvider, projectPath, {
     onStatus: (status) => reporter.onExecutorStatus(status),
     timeoutMs: config.limits.maxRuntimeMinutes * 60_000,
   });
+  slots.setExecutor(executor);
 
   const { members: memberReviewers, complexity, reviewStrategy } =
     await createMembersFromBackends({
@@ -423,6 +467,7 @@ export async function runAssentorTask(input: RunAssentorInput) {
   });
 
   const taskId = createTaskId();
+  slots.setTaskId(taskId);
   const conversationId = createConversationId();
   const store = await TaskStore.create({
     projectPath,
@@ -456,30 +501,28 @@ export async function runAssentorTask(input: RunAssentorInput) {
       reporter.onEvent(event);
     },
   });
+  slots.setSupervisor(supervisor);
 
+  reporter.ready();
   printBanner({
     task: contract.goal,
     round: `0 / ${budgets.limits.maxRounds}`,
     executor: executor.name,
     reviewer: reviewer.name,
-    status: TaskState.Initializing,
+    status: TaskState.Executing,
   });
 
-  try {
-    const result = await supervisor.run();
+  const result = await supervisor.run();
 
-    printBanner({
-      task: contract.goal,
-      round: `${result.round} / ${budgets.limits.maxRounds}`,
-      executor: executor.name,
-      reviewer: reviewer.name,
-      status: result.status,
-    });
+  printBanner({
+    task: contract.goal,
+    round: `${result.round} / ${budgets.limits.maxRounds}`,
+    executor: executor.name,
+    reviewer: reviewer.name,
+    status: result.status,
+  });
 
-    return { result, config, store };
-  } finally {
-    reporter.dispose();
-  }
+  return { result, config, store };
 }
 
 export async function resumeAssentorTask(input: {
@@ -488,73 +531,89 @@ export async function resumeAssentorTask(input: {
   verbose?: boolean;
 }) {
   const projectPath = path.resolve(input.projectPath);
-  const resume = input.taskId
-    ? await loadTaskForResume(projectPath, input.taskId)
-    : await findLatestResumableTask(projectPath);
-  if (!resume || !resume.resumable) {
-    throw new Error(
-      resume?.reason ??
-        (input.taskId
-          ? `Task ${input.taskId} is not resumable`
-          : "No resumable task in this project. Start one with: assentor run \"…\""),
-    );
-  }
-
-  const config = await loadAssentorConfig(projectPath);
-  const executorProvider = config.executor.provider;
-  const backends = selectReviewerBackends(config);
-  const reviewerLabel =
-    backends.map((b) => `${b.provider}/${b.transport ?? "api"}`).join(", ") ||
-    "none";
-
-  const preflight = await runPreflight({
-    executor: executorProvider,
-    reviewers: backends.map((b) => ({
-      provider: b.provider,
-      transport: b.transport ?? "api",
-    })),
-    projectPath,
-  });
-  printPreflight(preflight);
-  if (!preflight.ok) {
-    throw new Error("Preflight failed. Fix the issues above, then re-run.");
-  }
-
   const reporter = new RunReporter({
     verbose: input.verbose,
-    executorName: executorProvider,
-    reviewerName: reviewerLabel,
+    executorName: "executor",
+    reviewerName: "reviewer",
   });
+  reporter.preparing("loading task to continue…");
 
-  reporter.note(
-    `Resuming ${resume.snapshot.taskId} (${resume.snapshot.status}) · ${resume.snapshot.contract.goal}`,
-  );
-
-  const executor = await createExecutor(executorProvider, projectPath, {
-    onStatus: (status) => reporter.onExecutorStatus(status),
-    timeoutMs: config.limits.maxRuntimeMinutes * 60_000,
+  let executor: Executor | undefined;
+  let supervisor: Supervisor | undefined;
+  let taskId: string | undefined;
+  const detachInterrupt = attachRunInterrupt({
+    reporter,
+    getExecutor: () => executor,
+    getTaskId: () => taskId,
+    getSupervisor: () => supervisor,
   });
-
-  const { members: memberReviewers, reviewStrategy } =
-    await createMembersFromBackends({
-      config,
-      projectPath,
-      prompt: resume.snapshot.contract.goal,
-      onStatus: (message) => reporter.onReviewerStatus(message),
-    });
-
-  const reviewer: Reviewer =
-    reviewStrategy === "SINGLE" || memberReviewers.length <= 1
-      ? memberReviewers[0]!
-      : new PanelReviewer({
-          name: `panel:${reviewStrategy.toLowerCase()}`,
-          reviewers: memberReviewers,
-          goal: resume.snapshot.contract.goal,
-          acceptanceCriteria: resume.snapshot.contract.acceptanceCriteria ?? [],
-        });
 
   try {
-    const supervisor = new Supervisor({
+    const resume = input.taskId
+      ? await loadTaskForResume(projectPath, input.taskId)
+      : await findLatestResumableTask(projectPath);
+    if (!resume || !resume.resumable) {
+      throw new Error(
+        resume?.reason ??
+          (input.taskId
+            ? `Task ${input.taskId} is not resumable`
+            : "No resumable task in this project. Start one with: assentor run \"…\""),
+      );
+    }
+    taskId = resume.snapshot.taskId;
+
+    reporter.updatePreparing("loading config…");
+    const config = await loadAssentorConfig(projectPath);
+    const executorProvider = config.executor.provider;
+    const backends = selectReviewerBackends(config);
+
+    reporter.updatePreparing("checking environment…");
+    const preflight = await runPreflight({
+      executor: executorProvider,
+      reviewers: backends.map((b) => ({
+        provider: b.provider,
+        transport: b.transport ?? "api",
+      })),
+      projectPath,
+    });
+    if (!preflight.ok) {
+      reporter.updatePreparing("preflight failed");
+      printPreflight(preflight);
+      throw new Error("Preflight failed. Fix the issues above, then re-run.");
+    }
+
+    reporter.updatePreparing(
+      `resuming ${resume.snapshot.taskId.slice(0, 8)}…`,
+    );
+    reporter.note(
+      `Resuming ${resume.snapshot.taskId} (${resume.snapshot.status}) · ${resume.snapshot.contract.goal}`,
+    );
+
+    executor = await createExecutor(executorProvider, projectPath, {
+      onStatus: (status) => reporter.onExecutorStatus(status),
+      timeoutMs: config.limits.maxRuntimeMinutes * 60_000,
+    });
+
+    const { members: memberReviewers, reviewStrategy } =
+      await createMembersFromBackends({
+        config,
+        projectPath,
+        prompt: resume.snapshot.contract.goal,
+        onStatus: (message) => reporter.onReviewerStatus(message),
+      });
+
+    const reviewer: Reviewer =
+      reviewStrategy === "SINGLE" || memberReviewers.length <= 1
+        ? memberReviewers[0]!
+        : new PanelReviewer({
+            name: `panel:${reviewStrategy.toLowerCase()}`,
+            reviewers: memberReviewers,
+            goal: resume.snapshot.contract.goal,
+            acceptanceCriteria:
+              resume.snapshot.contract.acceptanceCriteria ?? [],
+          });
+
+    supervisor = new Supervisor({
       projectPath,
       contract: resume.snapshot.contract,
       executor,
@@ -566,6 +625,7 @@ export async function resumeAssentorTask(input: {
 
     return await supervisor.run();
   } finally {
+    detachInterrupt();
     reporter.dispose();
   }
 }
@@ -619,6 +679,39 @@ export async function doctorAssentor(): Promise<string[]> {
   );
 
   return lines;
+}
+
+function attachRunInterrupt(input: {
+  reporter: RunReporter;
+  getExecutor: () => Executor | undefined;
+  getTaskId: () => string | undefined;
+  getSupervisor: () => Supervisor | undefined;
+}): () => void {
+  let stopping = false;
+  const onInterrupt = () => {
+    if (stopping) {
+      process.exit(130);
+    }
+    stopping = true;
+    input.reporter.updatePreparing("Ctrl+C — stopping Cursor and saving…");
+    const executor = input.getExecutor();
+    const taskId = input.getTaskId();
+    const supervisor = input.getSupervisor();
+    if (executor && taskId) {
+      void executor.cancel(taskId);
+    }
+    if (supervisor) {
+      supervisor.requestCancel();
+      return;
+    }
+    process.exit(130);
+  };
+  process.on("SIGINT", onInterrupt);
+  process.on("SIGTERM", onInterrupt);
+  return () => {
+    process.off("SIGINT", onInterrupt);
+    process.off("SIGTERM", onInterrupt);
+  };
 }
 
 function printBanner(input: {

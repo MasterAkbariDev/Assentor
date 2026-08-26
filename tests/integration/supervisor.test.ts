@@ -371,4 +371,27 @@ describe("supervisor", () => {
     expect(result.status).toBe(TaskState.Failed);
     expect(reviewer.calls).toBe(0);
   });
+
+  it("maps executor cancel (Ctrl+C) to FAILED so the task can be resumed", async () => {
+    const executor = mockExecutor(async () => ({
+      status: "cancelled",
+      summary: "Interrupted (Ctrl+C)",
+      error: "Interrupted (Ctrl+C). Resume with: assentor resume",
+    }));
+
+    const reviewer = mockReviewer(() => {
+      throw new Error("reviewer should not be called");
+    });
+
+    const result = await new Supervisor({
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("goal"),
+      executor,
+      reviewer,
+      collectExecutorExplanation: false,
+    }).run();
+
+    expect(result.status).toBe(TaskState.Failed);
+    expect(result.reason).toMatch(/Ctrl\+C|Interrupted/i);
+  });
 });

@@ -38,6 +38,11 @@ export async function runPreflight(input: {
   reviewers?: PreflightReviewer[];
   /** Target project directory for Cursor workspace trust / probe cwd. */
   projectPath?: string;
+  /**
+   * When true, spawn a live Cursor `PONG` probe (slow). Default false — run/resume
+   * only check that the binary exists so startup is not a blank screen.
+   */
+  probeCursor?: boolean;
 }): Promise<PreflightResult> {
   const checks: PreflightCheck[] = [];
   const projectPath = path.resolve(input.projectPath ?? process.cwd());
@@ -49,7 +54,11 @@ export async function runPreflight(input: {
   });
 
   if (input.executor === "cursor") {
-    checks.push(await checkCursor(projectPath));
+    checks.push(
+      input.probeCursor
+        ? await checkCursor(projectPath)
+        : checkCursorBinary(),
+    );
   } else if (input.executor === "mock") {
     checks.push({
       name: "executor:mock",
@@ -181,6 +190,25 @@ async function checkReviewerKey(
     name: `reviewer:${provider}`,
     ok: false,
     detail: `no API key in env or ~/.assentor — ${hint}`,
+  };
+}
+
+function checkCursorBinary(): PreflightCheck {
+  const binary = resolveCursorBinary();
+  const resolved =
+    existsSync(binary) || findOnPath(path.basename(binary)) ? binary : undefined;
+  if (resolved) {
+    return {
+      name: "executor:cursor",
+      ok: true,
+      detail: `found ${binary}`,
+    };
+  }
+  return {
+    name: "executor:cursor",
+    ok: false,
+    detail:
+      "Cursor CLI not found. Install Cursor, put `agent`/`cursor` on PATH, or set ASSENTOR_CURSOR_BINARY.",
   };
 }
 

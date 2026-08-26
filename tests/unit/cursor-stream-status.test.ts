@@ -85,6 +85,20 @@ describe("Cursor stream-json status", () => {
     expect(statuses.some((s) => s.startsWith("editing:"))).toBe(true);
   });
 
+  it("maps thinking events to a waiting-on-model detail", () => {
+    const empty = parseStreamLine(JSON.stringify({ type: "thinking" }));
+    expect(empty).toMatchObject({
+      activity: "thinking",
+      detail: "model thinking — this can take a few minutes",
+    });
+
+    const withText = parseStreamLine(
+      JSON.stringify({ type: "thinking", text: "Considering the test layout" }),
+    );
+    expect(withText?.activity).toBe("thinking");
+    expect(withText?.detail).toContain("Considering the test layout");
+  });
+
   it("summarizes stream-json stdout", () => {
     const stdout = [
       JSON.stringify({ type: "system", session_id: "x1" }),

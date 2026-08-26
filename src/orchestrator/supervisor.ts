@@ -123,6 +123,7 @@ export class Supervisor {
   private sessionId?: string;
   private finalReview?: ReviewResult;
   private cancelRequested = false;
+  private persistQueue: Promise<void> = Promise.resolve();
   private lastReason?: string;
   private taskStarted = false;
   private taskId: string;
@@ -171,6 +172,7 @@ export class Supervisor {
         this.moveTo(TaskState.CreatingCheckpoint);
         this.moveTo(TaskState.Contracting);
         this.moveTo(TaskState.Executing);
+        await this.flushPersist();
       } else if (
         this.state === TaskState.CollectingEvidence ||
         this.state === TaskState.Communicating ||
@@ -180,12 +182,15 @@ export class Supervisor {
       ) {
         // Normalize interrupted mid-bootstrap / mid-cycle states.
         this.state = TaskState.Executing;
-        await this.persistSnapshot();
+        await this.flushPersist();
       }
 
       while (!isTerminalState(this.state)) {
         if (this.cancelRequested) {
-          this.tryMove(TaskState.Cancelled);
+          this.tryMove(
+            TaskState.Failed,
+            "Interrupted (Ctrl+C). Resume with: assentor resume",
+          );
           break;
         }
 
@@ -229,7 +234,7 @@ export class Supervisor {
       this.emit("task.failed", { reason });
     }
 
-    await this.persistSnapshot();
+    await this.flushPersist();
     await this.persistRoundHistory();
 
     return {
@@ -292,7 +297,10 @@ export class Supervisor {
       return true;
     }
     if (result.status === "cancelled") {
-      this.moveTo(TaskState.Cancelled);
+      this.moveTo(
+        TaskState.Failed,
+        result.error ?? "Interrupted (Ctrl+C). Resume with: assentor resume",
+      );
       return true;
     }
     return false;
@@ -338,7 +346,7 @@ export class Supervisor {
 
       await this.publishChangeRequest(conversationId, outcome.review);
       this.emit("round.completed", { round: this.round, state: this.state });
-      await this.persistSnapshot();
+      await this.flushPersist();
       await this.persistRoundHistory();
       this.moveTo(TaskState.Executing);
       return false;
@@ -361,6 +369,7 @@ export class Supervisor {
       this.lastReason = reason;
     }
     this.emit("state.changed", { from: previous, to: next, reason });
+    this.enqueuePersist();
   }
 
   private tryMove(next: TaskState, reason?: string): void {
@@ -929,6 +938,18 @@ export class Supervisor {
     } catch {
       // Persistence failures must not crash the supervisor loop.
     }
+  }
+
+  private enqueuePersist(): void {
+    this.persistQueue = this.persistQueue.then(
+      () => this.persistSnapshot(),
+      () => this.persistSnapshot(),
+    );
+  }
+
+  private async flushPersist(): Promise<void> {
+    this.enqueuePersist();
+    await this.persistQueue;
   }
 
   private async persistSnapshot(): Promise<void> {

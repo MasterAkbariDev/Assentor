@@ -98,7 +98,7 @@ export function StartTaskDialog({
           ? "This is the folder Assentor will work in"
           : step === "goal"
             ? "What should the executor do?"
-            : "Enter starts the run in this folder"
+            : "Enter starts the run — you'll see a loading spinner next"
       }
     >
       {step === "path" ? (

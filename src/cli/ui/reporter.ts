@@ -49,6 +49,7 @@ export class RunReporter {
   private lastSection = "";
   private round = 0;
   private lastNonTtySec = -1;
+  private lastToolDetail = "";
 
   constructor(
     private readonly options: {
@@ -58,6 +59,26 @@ export class RunReporter {
     },
   ) {}
 
+  /** Immediate spinner so run/resume is never a blank screen. */
+  preparing(detail: string): void {
+    this.section("Setup");
+    this.startStatus("Assentor", "starting", detail);
+  }
+
+  updatePreparing(detail: string): void {
+    if (!this.statusActive) {
+      this.preparing(detail);
+      return;
+    }
+    this.activityDetail = truncate(detail, 72);
+    this.paint(true);
+  }
+
+  /** Drop the startup spinner so the task banner can print. */
+  ready(): void {
+    this.endStatus();
+  }
+
   header(lines: string[]): void {
     this.endStatus();
     for (const line of lines) {
@@ -66,8 +87,7 @@ export class RunReporter {
   }
 
   note(message: string): void {
-    this.endStatus();
-    console.log(`  ${c.dim}${message}${c.reset}`);
+    this.writeln(`  ${c.dim}${message}${c.reset}`);
   }
 
   onEvent(event: SupervisorEvent): void {
@@ -209,8 +229,45 @@ export class RunReporter {
     if (!this.statusActive) {
       return;
     }
-    this.activity = normalizeActivity(status.activity);
-    this.activityDetail = truncate(status.detail || status.activity, 56);
+    const next = normalizeActivity(status.activity);
+    const detail = (status.detail || status.activity).trim();
+    // Keep the last tool/file line while the model is "reasoning" so it
+    // doesn't look frozen on the word "reasoning" for minutes.
+    if (
+      (next === "thinking" || /reason/i.test(detail)) &&
+      this.lastToolDetail &&
+      (this.activity === "editing" ||
+        this.activity === "writing" ||
+        this.activity === "reading" ||
+        this.activity === "running" ||
+        this.activity === "searching" ||
+        this.activity === "exploring")
+    ) {
+      this.activity = "thinking";
+      this.activityDetail = truncate(
+        `still working · last: ${this.lastToolDetail}`,
+        56,
+      );
+      this.paint(true);
+      return;
+    }
+    this.activity = next;
+    this.activityDetail = truncate(
+      next === "thinking" && (!detail || /^(reasoning|planning)/i.test(detail))
+        ? "model thinking — this can take a few minutes"
+        : detail || next,
+      56,
+    );
+    if (
+      next === "editing" ||
+      next === "writing" ||
+      next === "reading" ||
+      next === "running" ||
+      next === "searching" ||
+      next === "exploring"
+    ) {
+      this.lastToolDetail = this.activityDetail;
+    }
     this.paint(true);
   }
 
@@ -305,6 +362,16 @@ export class RunReporter {
     }
   }
 
+  private writeln(text: string): void {
+    if (this.statusActive && this.isTty) {
+      this.clearLine();
+      process.stdout.write(`${text}\n`);
+      this.paint(true);
+      return;
+    }
+    console.log(text);
+  }
+
   private section(title: string): void {
     this.endStatus();
     if (title === this.lastSection) {
@@ -327,6 +394,9 @@ export class RunReporter {
     this.statusLabel = label;
     this.activity = activity;
     this.activityDetail = detail;
+    if (activity !== "thinking") {
+      this.lastToolDetail = "";
+    }
     this.phaseStartedAt = Date.now();
     this.spinnerIndex = 0;
     this.lastNonTtySec = -1;

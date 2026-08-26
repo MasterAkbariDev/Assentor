@@ -84,9 +84,16 @@ describe("state machine", () => {
       TaskState.Executing,
       TaskState.Reviewing,
       TaskState.Communicating,
+      TaskState.CollectingEvidence,
     ] as const) {
       expect(canTransition(from, TaskState.Failed)).toBe(true);
       expect(canTransition(from, TaskState.Cancelled)).toBe(true);
+    }
+    for (const from of [
+      TaskState.Executing,
+      TaskState.Reviewing,
+      TaskState.Communicating,
+    ] as const) {
       expect(canTransition(from, TaskState.BudgetExceeded)).toBe(true);
       expect(canTransition(from, TaskState.Timeout)).toBe(true);
     }

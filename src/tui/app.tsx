@@ -483,11 +483,12 @@ function App({
         return;
       }
       setStartTaskStep("confirm");
-      patchUi({ capturingText: false });
+      patchUi({ capturingText: true, focus: "dialog" });
       const plan = analyzeReviewPlan(prompt);
       setReviewPlan(plan);
       return;
     }
+    setMessage("Starting task…");
     onHandoff({
       kind: "run",
       projectPath: path.resolve(startTaskPath),
@@ -845,6 +846,9 @@ function App({
       }
       if (key.return) {
         void handleActivate();
+        return;
+      }
+      if (startTaskStep === "confirm") {
         return;
       }
       if (key.backspace || key.delete) {
@@ -1302,9 +1306,37 @@ export async function startTui(projectPath: string): Promise<TuiHandoff> {
       initialConfig={initialConfig}
       onHandoff={(next) => {
         handoff = next;
+        queueMicrotask(() => {
+          try {
+            instance.unmount();
+          } catch {
+            // already unmounted
+          }
+        });
       }}
     />,
+    { patchConsole: false },
   );
-  await instance.waitUntilExit();
+  try {
+    await instance.waitUntilExit();
+  } finally {
+    try {
+      instance.unmount();
+    } catch {
+      // already unmounted
+    }
+    restoreTerminal();
+  }
   return handoff;
+}
+
+function restoreTerminal(): void {
+  try {
+    if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
+      process.stdin.setRawMode(false);
+    }
+  } catch {
+    // ignore
+  }
+  process.stdout.write("\x1b[?25h\x1b[0m");
 }

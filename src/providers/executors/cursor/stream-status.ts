@@ -158,9 +158,15 @@ export function parseStreamLine(line: string): AgentStatusUpdate | undefined {
   }
 
   if (type === "thinking") {
+    const text =
+      extractAssistantText(event) ||
+      (typeof event.text === "string" ? event.text : "") ||
+      (typeof event.delta === "string" ? event.delta : "");
     return {
       activity: "thinking",
-      detail: "reasoning",
+      detail: text
+        ? truncate(text.replace(/\s+/g, " "), 56)
+        : "model thinking — this can take a few minutes",
       sessionId,
     };
   }

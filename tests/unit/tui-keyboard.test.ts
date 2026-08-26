@@ -106,9 +106,15 @@ describe("TUI keyboard map (§44 + UX rewrite)", () => {
     expect(mapKeyToAction(main, { input: "q" }).type).toBe("focus_nav");
   });
 
-  it("space activates on main", () => {
-    const state = createInitialUiState({ focus: "main" });
-    expect(mapKeyToAction(state, { input: " " }).type).toBe("space");
+  it("enter on start-task confirm still activates", () => {
+    const state = createInitialUiState({
+      dialog: "start-task",
+      focus: "dialog",
+      capturingText: true,
+    });
+    expect(mapKeyToAction(state, { input: "", return: true }).type).toBe(
+      "activate",
+    );
   });
 
   it("enter selects nav item", () => {

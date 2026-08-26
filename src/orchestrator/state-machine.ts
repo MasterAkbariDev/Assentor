@@ -71,7 +71,11 @@ export const TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
     TaskState.BudgetExceeded,
     TaskState.Timeout,
   ],
-  [TaskState.CollectingEvidence]: [TaskState.Reviewing],
+  [TaskState.CollectingEvidence]: [
+    TaskState.Reviewing,
+    TaskState.Failed,
+    TaskState.Cancelled,
+  ],
   [TaskState.Reviewing]: [
     TaskState.Done,
     TaskState.Executing,
