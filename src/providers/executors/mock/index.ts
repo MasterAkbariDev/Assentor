@@ -102,6 +102,24 @@ export class MockExecutor implements Executor {
     taskId: string,
     messages: ProtocolMessage[],
   ): Promise<ExecutorResult> {
+    // Explanation-only turns must not consume scripted steps.
+    if (isExplanationRequest(messages)) {
+      return {
+        status: "completed",
+        summary: "Mock executor explanation",
+        sessionId: this.sessionId,
+        rawOutput: JSON.stringify({
+          architectureSummary: "Mock modules: src/ → public API",
+          whatChanged: "Mock implementation changes",
+          why: "Satisfy task contract",
+          assumptions: [],
+          unchanged: "Unrelated modules left intact",
+          risks: [],
+          limitations: [],
+        }),
+      };
+    }
+
     this.callCount += 1;
 
     if (this.delayMs > 0) {
@@ -245,5 +263,22 @@ export class MockExecutor implements Executor {
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
+  });
+}
+
+function isExplanationRequest(messages: ProtocolMessage[]): boolean {
+  return messages.some((message) => {
+    if (message.type !== MessageType.Question) return false;
+    const content = message.content as {
+      purpose?: string;
+      context?: string;
+      question?: string;
+    };
+    return (
+      content.purpose === "evidence_pack_explanation" ||
+      content.context === "purpose:evidence_pack_explanation" ||
+      (typeof content.question === "string" &&
+        content.question.includes("architecture summary"))
+    );
   });
 }

@@ -13,6 +13,8 @@ import {
   type ProtocolMessage,
 } from "../protocol/index.js";
 import type { ReviewResult } from "../protocol/review-result.js";
+import { makeReviewResult } from "../protocol/review-result.js";
+import type { EvidenceRequestItem } from "../protocol/messages.js";
 import type { Executor, ExecutorResult } from "../providers/executors/types.js";
 import type {
   ReviewArtifactRef,
@@ -20,13 +22,23 @@ import type {
   ReviewerTurnResult,
 } from "../providers/reviewers/types.js";
 import type { TaskSnapshot, TaskStore } from "../persistence/store.js";
+import {
+  EvidencePackBuilder,
+  EXPLANATION_PROMPT,
+  parseExecutorExplanation,
+  type ProjectReviewEvidencePack,
+} from "../review/index.js";
 import { LoopDetector } from "./loop-detector.js";
 import {
   canTransition,
   isTerminalState,
+  normalizeTaskState,
+  FSM_VERSION,
   TaskState,
   transition,
 } from "./state-machine.js";
+
+const MAX_EVIDENCE_ITERATIONS = 3;
 
 export type SupervisorEventType =
   | "state.changed"
@@ -38,6 +50,7 @@ export type SupervisorEventType =
   | "review.started"
   | "review.completed"
   | "evidence.requested"
+  | "evidence.fulfilled"
   | "change.requested"
   | "loop.detected"
   | "budget.exceeded"
@@ -63,6 +76,12 @@ export interface SupervisorConfig {
   store?: TaskStore;
   /** Resume from a previously persisted snapshot. */
   resumeFrom?: TaskSnapshot;
+  /** Evidence pack depth. Default STANDARD. */
+  evidenceDepth?: ProjectReviewEvidencePack["depth"];
+  /** Cap evidence-request loops within a round. Default 3. */
+  maxEvidenceIterations?: number;
+  /** When true, ask executor for architecture/explanation before review. Default true. */
+  collectExecutorExplanation?: boolean;
   /** Called for observability; must not throw. */
   onEvent?: (event: SupervisorEvent) => void;
 }
@@ -109,6 +128,9 @@ export class Supervisor {
   private taskId: string;
   private conversationId: string;
   private startedAt: string;
+  private evidencePack?: ProjectReviewEvidencePack;
+  private evidenceIterations = 0;
+  private readonly maxEvidenceIterations: number;
 
   constructor(private readonly config: SupervisorConfig) {
     this.budgets = config.budgets ?? createBudgets();
@@ -119,6 +141,8 @@ export class Supervisor {
       createConversationId();
     this.startedAt =
       config.resumeFrom?.startedAt ?? new Date().toISOString();
+    this.maxEvidenceIterations =
+      config.maxEvidenceIterations ?? MAX_EVIDENCE_ITERATIONS;
 
     if (config.resumeFrom) {
       this.restoreFromSnapshot(config.resumeFrom);
@@ -221,7 +245,7 @@ export class Supervisor {
   }
 
   private restoreFromSnapshot(snapshot: TaskSnapshot): void {
-    this.state = snapshot.status as TaskState;
+    this.state = normalizeTaskState(snapshot.status);
     this.round = snapshot.currentRound;
     this.budgets = snapshot.budgets;
     this.sessionId = snapshot.executorSessionId;
@@ -243,6 +267,7 @@ export class Supervisor {
     }
 
     this.round += 1;
+    this.evidenceIterations = 0;
     this.budgets = spend(this.budgets, BudgetKind.Round);
     this.emit("round.started", { round: this.round });
     return true;
@@ -434,112 +459,130 @@ export class Supervisor {
   }
 
   private async collectBasicArtifacts(result: ExecutorResult): Promise<void> {
-    // Keep prior executor summaries; refresh file evidence each round.
+    const explanation = await this.requestExecutorExplanation();
+
+    const builder = new EvidencePackBuilder({
+      projectPath: this.config.projectPath,
+      taskId: this.taskId,
+      round: this.round,
+      depth: this.config.evidenceDepth ?? "STANDARD",
+      contract: this.config.contract,
+      runCommands: false,
+    });
+
+    const architecture = explanation.architectureSummary
+      ? {
+          summary: explanation.architectureSummary,
+          modules: [] as string[],
+          boundaries: [] as string[],
+          abstractions: [] as string[],
+          source: "executor" as const,
+        }
+      : undefined;
+
+    this.evidencePack = await builder.build({
+      executorResult: result,
+      executorExplanation: explanation.explanation,
+      architecture,
+    });
+
+    try {
+      await builder.persist(this.evidencePack, this.taskId);
+    } catch {
+      // Persistence optional for pack
+    }
+
     const kept = this.artifacts.filter(
       (artifact) => artifact.type === "executor_summary",
     );
     this.artifacts.length = 0;
     this.artifacts.push(...kept);
-
     this.artifacts.push({
       id: `executor-summary-round-${this.round}`,
       type: "executor_summary",
       description: "Executor summary for this round",
       content: result.rawOutput ?? result.summary,
     });
+    this.artifacts.push(...builder.getCollector().toReviewRefs());
 
-    const projectFiles = await this.collectProjectFileEvidence();
-    this.emit("evidence.requested", {
+    this.emit("evidence.fulfilled", {
       count: this.artifacts.length,
-      files: projectFiles,
+      files: this.evidencePack.relevantFiles.map((f) => f.path),
+      packRound: this.round,
     });
   }
 
   /**
-   * Prefer real source file contents over noisy git status of `.assentor/`.
+   * Pre-review executor turn: architecture + implementation explanation only.
    */
-  private async collectProjectFileEvidence(): Promise<string[]> {
-    const { promises: fs } = await import("node:fs");
-    const path = await import("node:path");
-    const { LocalGitService } = await import("../git/local.js");
-
-    const root = this.config.projectPath;
-    const candidates = new Set<string>();
-
-    const textBlobs = [
-      this.config.contract.goal,
-      ...this.config.contract.requirements,
-      ...this.config.contract.acceptanceCriteria,
-      ...this.config.contract.verificationPlan,
-    ];
-    for (const text of textBlobs) {
-      const matches = text.match(
-        /([A-Za-z0-9_./-]+\.(?:html|css|js|ts|tsx|jsx|json|md|py|go|rs|java))/g,
-      );
-      for (const match of matches ?? []) {
-        candidates.add(match.replace(/^\.\//, ""));
-      }
-    }
-
-    for (const name of [
-      "index.html",
-      "styles.css",
-      "style.css",
-      "app.js",
-      "main.js",
-      "package.json",
-      "README.md",
-    ]) {
-      candidates.add(name);
+  private async requestExecutorExplanation(): Promise<{
+    explanation: ProjectReviewEvidencePack["executorExplanation"];
+    architectureSummary?: string;
+  }> {
+    if (
+      this.config.collectExecutorExplanation === false ||
+      !this.taskStarted
+    ) {
+      return {
+        explanation: {
+          assumptions: [],
+          risks: [],
+          limitations: [],
+          source: "missing",
+        },
+      };
     }
 
     try {
-      const git = new LocalGitService({ cwd: root });
-      if (await git.isRepo()) {
-        const changed = (await git.changedFiles()).filter(
-          (file) => !isNoisePath(file),
-        );
-        for (const file of changed) {
-          candidates.add(file);
-        }
+      const result = await this.config.executor.continue({
+        taskId: this.taskId,
+        projectPath: this.config.projectPath,
+        contract: this.config.contract,
+        messages: [
+          createProtocolMessage({
+            conversationId: this.conversationId,
+            round: this.round,
+            from: SUPERVISOR_ID,
+            to: EXECUTOR_ID,
+            type: MessageType.Question,
+            content: {
+              question: EXPLANATION_PROMPT,
+              context: "purpose:evidence_pack_explanation",
+            },
+          }),
+        ],
+        sessionId: this.sessionId,
+      });
 
-        this.artifacts.push({
-          id: `git-changed-round-${this.round}`,
-          type: "changed_files",
-          description: "Changed project files (excluding .assentor/)",
-          content: changed.length > 0 ? changed.join("\n") : "(none)",
-        });
+      if (result.sessionId) {
+        this.sessionId = result.sessionId;
       }
-    } catch {
-      // Git optional — still try reading candidate files.
-    }
 
-    const included: string[] = [];
-    for (const relative of [...candidates].sort()) {
-      if (isNoisePath(relative)) {
-        continue;
-      }
-      const absolute = path.join(root, relative);
+      const text = result.rawOutput ?? result.summary ?? "";
+      const explanation = parseExecutorExplanation(text);
+      let architectureSummary: string | undefined;
       try {
-        const stat = await fs.stat(absolute);
-        if (!stat.isFile() || stat.size > 200_000) {
-          continue;
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+          if (parsed.architectureSummary) {
+            architectureSummary = String(parsed.architectureSummary);
+          }
         }
-        const content = await fs.readFile(absolute, "utf8");
-        this.artifacts.push({
-          id: `file-round-${this.round}-${relative.replace(/[^\w.-]+/g, "_")}`,
-          type: "file",
-          path: relative,
-          description: `Full contents of ${relative}`,
-          content: content.slice(0, 100_000),
-        });
-        included.push(relative);
       } catch {
-        // File may not exist yet.
+        // ignore
       }
+      return { explanation, architectureSummary };
+    } catch {
+      return {
+        explanation: {
+          assumptions: [],
+          risks: [],
+          limitations: [],
+          source: "missing",
+        },
+      };
     }
-
-    return included;
   }
 
   private async runReviewer(
@@ -559,12 +602,13 @@ export class Supervisor {
         round: this.round,
         artifacts: [...this.artifacts],
         messages: inbound,
+        evidencePack: this.evidencePack,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return {
         kind: "failed",
-        review: {
+        review: makeReviewResult({
           status: ReviewStatus.Failed,
           confidence: 1,
           summary: message,
@@ -572,7 +616,7 @@ export class Supervisor {
           requiredChanges: [],
           optionalChanges: [],
           evidenceRequests: [],
-        },
+        }),
       };
     }
 
@@ -602,7 +646,7 @@ export class Supervisor {
     if (!turn.result) {
       return {
         kind: "failed",
-        review: {
+        review: makeReviewResult({
           status: ReviewStatus.Failed,
           confidence: 1,
           summary: turn.error ?? "Reviewer returned no structured result",
@@ -610,7 +654,7 @@ export class Supervisor {
           requiredChanges: [],
           optionalChanges: [],
           evidenceRequests: [],
-        },
+        }),
       };
     }
 
@@ -625,7 +669,7 @@ export class Supervisor {
     });
 
     if (
-      turn.result.evidenceRequests.length > 0 &&
+      (turn.result.evidenceRequests?.length ?? 0) > 0 &&
       turn.result.status === ReviewStatus.NeedsWork
     ) {
       const evidenceMessage = createProtocolMessage({
@@ -635,7 +679,7 @@ export class Supervisor {
         to: EXECUTOR_ID,
         type: MessageType.EvidenceRequest,
         content: {
-          requests: turn.result.evidenceRequests,
+          requests: turn.result.evidenceRequests ?? [],
           reason: turn.result.summary,
         },
       });
@@ -643,7 +687,7 @@ export class Supervisor {
         await this.publishMessage(evidenceMessage);
       }
       this.emit("evidence.requested", {
-        count: turn.result.evidenceRequests.length,
+        count: turn.result.evidenceRequests?.length ?? 0,
       });
       return { kind: "communicating", messages: [evidenceMessage] };
     }
@@ -667,7 +711,7 @@ export class Supervisor {
   private noteLoop(review: ReviewResult): boolean {
     const { signal, looping } = this.loopDetector.check(this.round, {
       requiredChanges: review.requiredChanges,
-      issueIds: review.issues.map((issue) => issue.id),
+      issueIds: (review.issues ?? []).map((issue) => issue.id),
       summary: review.summary,
     });
 
@@ -694,9 +738,9 @@ export class Supervisor {
       type: MessageType.ChangeRequest,
       content: {
         summary: review.summary,
-        requiredChanges: review.requiredChanges,
-        optionalChanges: review.optionalChanges,
-        issueIds: review.issues.map((issue) => issue.id),
+        requiredChanges: review.requiredChanges ?? [],
+        optionalChanges: review.optionalChanges ?? [],
+        issueIds: (review.issues ?? []).map((issue) => issue.id),
       },
     });
 
@@ -709,23 +753,163 @@ export class Supervisor {
   }
 
   /**
-   * Ask the executor to satisfy evidence/questions, then prepare for re-review.
+   * Fulfill evidence locally first; escalate remaining requests to executor.
    * @returns false if the task became terminal
    */
   private async handleCommunication(
     taskId: string,
     conversationId: string,
   ): Promise<boolean> {
-    this.moveTo(TaskState.Executing);
+    this.evidenceIterations += 1;
+    if (this.evidenceIterations > this.maxEvidenceIterations) {
+      this.finalReview = makeReviewResult({
+        status: ReviewStatus.Blocked,
+        confidence: 1,
+        summary: `Stuck requesting evidence after ${this.maxEvidenceIterations} iterations`,
+        issues: [],
+        requiredChanges: [],
+        optionalChanges: [],
+        evidenceRequests: [],
+      });
+      this.moveTo(
+        TaskState.HumanRequired,
+        "Evidence request loop exceeded cap",
+      );
+      this.emit("task.blocked", { reason: "evidence_iteration_cap" });
+      return false;
+    }
 
+    const pending = this.extractPendingEvidenceRequests();
+    if (pending.length > 0 && this.evidencePack) {
+      const builder = new EvidencePackBuilder({
+        projectPath: this.config.projectPath,
+        taskId: this.taskId,
+        round: this.round,
+        depth: this.config.evidenceDepth ?? "STANDARD",
+        contract: this.config.contract,
+        runCommands: false,
+      });
+      const merged = await builder.mergeRequests(this.evidencePack, pending);
+      this.evidencePack = merged.pack;
+      try {
+        await builder.persist(this.evidencePack, this.taskId);
+      } catch {
+        // ignore
+      }
+
+      for (const ref of builder.getCollector().toReviewRefs()) {
+        if (!this.artifacts.some((a) => a.id === ref.id && a.type === ref.type)) {
+          this.artifacts.push(ref);
+        }
+      }
+
+      this.emit("evidence.fulfilled", {
+        fulfilled: merged.fulfilled,
+        skipped: merged.skipped,
+        errors: merged.errors,
+        remaining: merged.remaining.length,
+      });
+
+      // Publish evidence response so reviewer sees it
+      if (merged.fulfilled > 0 && (await this.spendMessage())) {
+        const responseArtifacts = builder
+          .getCollector()
+          .toReviewRefs()
+          .filter((ref) => ref.content || ref.path)
+          .slice(0, 20)
+          .map((ref) => ({
+            kind: "file" as const,
+            path: ref.path ?? ref.id,
+            content: ref.content?.slice(0, 8_000),
+            description: ref.description,
+          }));
+        await this.publishMessage(
+          createProtocolMessage({
+            conversationId,
+            round: this.round,
+            from: SUPERVISOR_ID,
+            to: REVIEWER_ID,
+            type: MessageType.EvidenceResponse,
+            content: {
+              artifacts:
+                responseArtifacts.length > 0
+                  ? responseArtifacts
+                  : [
+                      {
+                        kind: "file" as const,
+                        path: "evidence/fulfilled",
+                        content: `fulfilled=${merged.fulfilled}`,
+                        description: "Assentor local evidence fulfillment",
+                      },
+                    ],
+              notes:
+                merged.errors.length > 0
+                  ? merged.errors.join("; ")
+                  : `fulfilled=${merged.fulfilled} skipped=${merged.skipped}`,
+            },
+          }),
+        );
+      }
+
+      // Only escalate hard probes to executor
+      if (merged.remaining.length === 0) {
+        return true;
+      }
+
+      // Re-queue remaining for executor
+      if (await this.spendMessage()) {
+        await this.publishMessage(
+          createProtocolMessage({
+            conversationId,
+            round: this.round,
+            from: REVIEWER_ID,
+            to: EXECUTOR_ID,
+            type: MessageType.EvidenceRequest,
+            content: {
+              requests: merged.remaining,
+              reason: "Assentor could not fulfill locally",
+            },
+          }),
+        );
+      }
+    }
+
+    this.moveTo(TaskState.Executing);
     const execResult = await this.runExecutor(taskId, conversationId);
     if (this.handleExecutorTerminal(execResult)) {
       return false;
     }
 
     this.moveTo(TaskState.CollectingEvidence);
-    await this.collectBasicArtifacts(execResult);
+    // Merge executor response into pack without full rebuild of explanation
+    if (this.evidencePack) {
+      this.artifacts.push({
+        id: `evidence-exec-round-${this.round}-i${this.evidenceIterations}`,
+        type: "executor_summary",
+        description: "Executor evidence response",
+        content: execResult.rawOutput ?? execResult.summary,
+      });
+      this.evidencePack.notes.push(
+        `Executor evidence turn: ${execResult.summary}`,
+      );
+      this.evidencePack.updatedAt = new Date().toISOString();
+    } else {
+      await this.collectBasicArtifacts(execResult);
+    }
     return true;
+  }
+
+  private extractPendingEvidenceRequests(): EvidenceRequestItem[] {
+    const history = this.bus.getHistory({ round: this.round });
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+      const message = history[i];
+      if (message?.type !== MessageType.EvidenceRequest) continue;
+      const content = message.content as { requests?: EvidenceRequestItem[] };
+      if (Array.isArray(content.requests)) {
+        return content.requests;
+      }
+    }
+    return this.finalReview?.evidenceRequests ?? [];
   }
 
   private async publishMessage(message: ProtocolMessage): Promise<void> {
@@ -749,6 +933,7 @@ export class Supervisor {
         conversationId: this.conversationId,
         projectPath: this.config.projectPath,
         status: this.state,
+        fsmVersion: FSM_VERSION,
         currentRound: this.round,
         maxRounds: this.budgets.limits.maxRounds,
         executor: this.config.executor.name,
@@ -799,15 +984,4 @@ export class Supervisor {
     }
     void this.config.store?.appendEvent(event).catch(() => undefined);
   }
-}
-
-function isNoisePath(relative: string): boolean {
-  const normalized = relative.replace(/\\/g, "/");
-  return (
-    normalized === ".assentor" ||
-    normalized.startsWith(".assentor/") ||
-    normalized.startsWith("node_modules/") ||
-    normalized.startsWith(".git/") ||
-    normalized.endsWith(".map")
-  );
 }

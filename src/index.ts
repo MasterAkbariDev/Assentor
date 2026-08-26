@@ -79,6 +79,28 @@ export {
   type GeminiReviewerOptions,
 } from "./providers/reviewers/gemini/index.js";
 export {
+  CliReviewer,
+  MockCliTransport,
+  ProcessCliTransport,
+  defaultCliSpawn,
+  resolveCliAdapter,
+  resolveCliBinary,
+  type CliReviewerAdapter,
+  type CliReviewerOptions,
+  type CliTransport,
+  type CliSpawnFn,
+  type CliSpawnRequest,
+  type CliSpawnResult,
+  type MockCliTransportOptions,
+  type MockCliTransportStep,
+  type ProcessCliTransportOptions,
+} from "./providers/reviewers/cli/index.js";
+export {
+  FallbackReviewer,
+  isTransportFailure,
+  type FallbackReviewerOptions,
+} from "./providers/reviewers/fallback.js";
+export {
   buildReviewPrompt,
   reviewResultFromModelText,
 } from "./providers/reviewers/shared/prompt.js";
@@ -89,6 +111,7 @@ export * from "./keys/index.js";
 export * from "./routing/index.js";
 export * from "./executors/index.js";
 export * from "./agents/index.js";
+export * from "./review/index.js";
 export {
   createAssentorServices,
   runFullDiagnostics,

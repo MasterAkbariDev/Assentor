@@ -1,5 +1,10 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import {
+  DEFAULT_AGENT_PROFILES,
+  selectReviewers,
+  type ReviewStrategy,
+} from "../agents/index.js";
 import { createBudgets } from "../core/budgets.js";
 import { createConversationId, createTaskId } from "../core/ids.js";
 import {
@@ -13,10 +18,21 @@ import { TaskStore, loadTaskForResume } from "../persistence/index.js";
 import { CursorExecutor } from "../providers/executors/cursor/index.js";
 import { MockExecutor } from "../providers/executors/mock/index.js";
 import type { Executor } from "../providers/executors/types.js";
+import {
+  CliReviewer,
+  resolveCliAdapter,
+  type CliTransport,
+} from "../providers/reviewers/cli/index.js";
+import { FallbackReviewer } from "../providers/reviewers/fallback.js";
 import { GeminiReviewer } from "../providers/reviewers/gemini/index.js";
 import { MockReviewer } from "../providers/reviewers/mock/index.js";
 import { OpenAICompatibleReviewer } from "../providers/reviewers/openai/index.js";
 import type { Reviewer } from "../providers/reviewers/types.js";
+import {
+  PanelReviewer,
+  TaskComplexityAnalyzer,
+  specialtyAddendum,
+} from "../review/index.js";
 import { loadAssentorConfig, type AssentorConfig } from "../config/load.js";
 import { printPreflight, runPreflight } from "./preflight.js";
 import { RunReporter } from "./ui/reporter.js";
@@ -60,33 +76,111 @@ export async function createExecutor(
   }
 }
 
-export async function createReviewer(
-  provider: string,
-  options: {
-    onStatus?: (message: string) => void;
+export interface CreateReviewerOptions {
+  onStatus?: (message: string) => void;
+  model?: string;
+  apiKey?: string;
+  /** Logical agent id preserved across transport switches. */
+  name?: string;
+  transport?: "api" | "cli";
+  specialtyAddendum?: string;
+  fallback?: {
+    transport?: "api" | "cli";
+    provider?: string;
     model?: string;
     apiKey?: string;
-  } = {},
+  };
+  /** Injectable CLI transport for tests. */
+  cliTransport?: CliTransport;
+}
+
+export async function createReviewer(
+  provider: string,
+  options: CreateReviewerOptions = {},
 ): Promise<Reviewer> {
+  const logicalName = options.name ?? provider;
+  const transport = options.transport ?? "api";
+
+  const primary = await createReviewerTransport(provider, {
+    ...options,
+    name: logicalName,
+    transport,
+  });
+
+  if (!options.fallback) {
+    return primary;
+  }
+
+  const fallbackProvider = options.fallback.provider ?? provider;
+  const fallbackTransport = options.fallback.transport ?? "api";
+  const fallback = await createReviewerTransport(fallbackProvider, {
+    onStatus: options.onStatus,
+    model: options.fallback.model ?? options.model,
+    apiKey: options.fallback.apiKey ?? options.apiKey,
+    name: logicalName,
+    transport: fallbackTransport,
+    cliTransport: options.cliTransport,
+  });
+
+  return new FallbackReviewer({
+    name: logicalName,
+    primary,
+    fallback,
+    onStatus: options.onStatus,
+  });
+}
+
+async function createReviewerTransport(
+  provider: string,
+  options: CreateReviewerOptions & { transport: "api" | "cli"; name: string },
+): Promise<Reviewer> {
+  if (options.transport === "cli") {
+    const adapter = resolveCliAdapter(provider);
+    return new CliReviewer({
+      name: options.name,
+      adapter,
+      transport: options.cliTransport,
+      onStatus: options.onStatus,
+      specialtyAddendum: options.specialtyAddendum,
+    });
+  }
+
   const model =
     options.model && options.model !== "AUTO" ? options.model : undefined;
+
   switch (provider) {
     case "mock":
-      return new MockReviewer({ steps: [{ type: "pass" }] });
+      return new MockReviewer({
+        name: options.name,
+        steps: [{ type: "pass" }],
+      });
     case "openai":
       return new OpenAICompatibleReviewer({
+        name: options.name,
         ...(model ? { model } : {}),
         ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+        ...(options.specialtyAddendum
+          ? { specialtyAddendum: options.specialtyAddendum }
+          : {}),
       });
     case "gemini":
       return new GeminiReviewer({
+        name: options.name,
         onStatus: options.onStatus,
         ...(model ? { model } : {}),
         ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+        ...(options.specialtyAddendum
+          ? { specialtyAddendum: options.specialtyAddendum }
+          : {}),
       });
+    case "claude":
+    case "gemini-cli":
+      throw new Error(
+        `Provider "${provider}" requires transport: "cli". Set reviewers[].transport to "cli".`,
+      );
     default:
       throw new Error(
-        `Unknown reviewer provider "${provider}". Supported: mock, openai, gemini`,
+        `Unknown reviewer provider "${provider}". Supported: mock, openai, gemini, claude, gemini-cli`,
       );
   }
 }
@@ -95,7 +189,7 @@ function resolveReviewerModel(
   config: AssentorConfig,
   provider: string,
 ): string | undefined {
-  if (provider === "gemini") {
+  if (provider === "gemini" || provider === "gemini-cli") {
     return config.models.gemini !== "AUTO"
       ? config.models.gemini
       : config.models.default;
@@ -106,6 +200,16 @@ function resolveReviewerModel(
       : config.models.default;
   }
   return config.models.default;
+}
+
+function reviewerNeedsApiKey(
+  provider: string,
+  transport: "api" | "cli",
+): boolean {
+  if (transport === "cli" || provider === "mock") {
+    return false;
+  }
+  return provider === "openai" || provider === "gemini";
 }
 
 export function buildContract(
@@ -126,7 +230,9 @@ export async function runAssentorTask(input: RunAssentorInput) {
   });
 
   const executorProvider = config.executor.provider;
-  const reviewerProvider = config.reviewers[0]?.provider ?? "mock";
+  const reviewerConfig = config.reviewers[0];
+  const reviewerProvider = reviewerConfig?.provider ?? "mock";
+  const reviewerTransport = reviewerConfig?.transport ?? "api";
 
   if (executorProvider === "project-mutating") {
     throw new Error(
@@ -159,20 +265,83 @@ export async function runAssentorTask(input: RunAssentorInput) {
   const executor = await createExecutor(executorProvider, projectPath, {
     onStatus: (status) => reporter.onExecutorStatus(status),
   });
-  const resolvedKey =
-    reviewerProvider === "mock"
-      ? undefined
-      : await resolveProviderApiKey(reviewerProvider, projectPath);
-  const reviewer = await createReviewer(reviewerProvider, {
-    onStatus: (message) => reporter.onReviewerStatus(message),
-    model: resolveReviewerModel(config, reviewerProvider),
-    apiKey: resolvedKey?.secret,
+  const resolvedKey = reviewerNeedsApiKey(reviewerProvider, reviewerTransport)
+    ? await resolveProviderApiKey(reviewerProvider, projectPath)
+    : undefined;
+  const fallbackProvider = reviewerConfig?.fallback?.provider;
+  const fallbackTransport = reviewerConfig?.fallback?.transport ?? "api";
+  const fallbackKey =
+    fallbackProvider &&
+    reviewerNeedsApiKey(fallbackProvider, fallbackTransport)
+      ? await resolveProviderApiKey(fallbackProvider, projectPath)
+      : undefined;
+
+  const complexity = new TaskComplexityAnalyzer().analyze({
+    taskText: input.prompt,
   });
+  const reviewStrategy = config.routing.reviewStrategy as ReviewStrategy;
+  const selectedProfiles = selectReviewers(
+    DEFAULT_AGENT_PROFILES,
+    reviewStrategy,
+    input.prompt,
+    {
+      min: 1,
+      max:
+        reviewStrategy === "FULL"
+          ? 7
+          : Math.max(4, complexity.recommendedCount),
+    },
+    complexity,
+  );
+
+  const fallbackOpts = reviewerConfig?.fallback
+    ? {
+        fallback: {
+          transport: reviewerConfig.fallback.transport,
+          provider: reviewerConfig.fallback.provider,
+          model:
+            reviewerConfig.fallback.model ??
+            (fallbackProvider
+              ? resolveReviewerModel(config, fallbackProvider)
+              : undefined),
+          apiKey: fallbackKey?.secret,
+        },
+      }
+    : {};
+
+  const memberReviewers: Reviewer[] = [];
+  for (const profile of selectedProfiles) {
+    const member = await createReviewer(reviewerProvider, {
+      onStatus: (message) =>
+        reporter.onReviewerStatus(`[${profile.id}] ${message}`),
+      model: resolveReviewerModel(config, reviewerProvider),
+      apiKey: resolvedKey?.secret,
+      name: profile.id,
+      transport: reviewerTransport,
+      specialtyAddendum: specialtyAddendum(profile.specialty),
+      ...fallbackOpts,
+    });
+    memberReviewers.push(member);
+  }
+
+  const reviewer: Reviewer =
+    reviewStrategy === "SINGLE" || memberReviewers.length <= 1
+      ? memberReviewers[0]!
+      : new PanelReviewer({
+          name: `panel:${reviewStrategy.toLowerCase()}`,
+          reviewers: memberReviewers,
+          goal: input.prompt,
+          acceptanceCriteria: input.acceptanceCriteria ?? [],
+        });
+
   if (resolvedKey) {
     reporter.note(
       `reviewer key: ${resolvedKey.source}${resolvedKey.masked ? ` (${resolvedKey.masked})` : ""}`,
     );
   }
+  reporter.note(
+    `review strategy: ${reviewStrategy} · reviewers: ${memberReviewers.map((r) => r.name).join(", ")} · complexity=${complexity.score}/${complexity.risk} · evidence=${complexity.evidenceDepth}`,
+  );
   const contract = buildContract(input.prompt, input.acceptanceCriteria);
   const budgets = createBudgets({
     maxRounds: config.limits.maxRounds,
@@ -190,13 +359,13 @@ export async function runAssentorTask(input: RunAssentorInput) {
     contract,
     budgets,
     executor: executor.name,
-    reviewers: [reviewer.name],
+    reviewers: memberReviewers.map((r) => r.name),
   });
 
   reporter.note(`task id: ${taskId}`);
   reporter.note(`project: ${projectPath}`);
   reporter.note(
-    `defaults: ${executorProvider} + ${reviewerProvider} · routing=${config.routing.strategy}`,
+    `defaults: ${executorProvider} + ${reviewerProvider}/${reviewerTransport} · routing=${config.routing.strategy}`,
   );
   reporter.note(`state dir: ${store.paths.taskDir}`);
 
@@ -209,6 +378,8 @@ export async function runAssentorTask(input: RunAssentorInput) {
     taskId,
     conversationId,
     store,
+    evidenceDepth: complexity.evidenceDepth,
+    collectExecutorExplanation: true,
     onEvent: (event) => {
       reporter.onEvent(event);
     },
@@ -252,7 +423,9 @@ export async function resumeAssentorTask(input: {
 
   const config = await loadAssentorConfig(projectPath);
   const executorProvider = config.executor.provider;
-  const reviewerProvider = config.reviewers[0]?.provider ?? "mock";
+  const reviewerConfig = config.reviewers[0];
+  const reviewerProvider = reviewerConfig?.provider ?? "mock";
+  const reviewerTransport = reviewerConfig?.transport ?? "api";
 
   const preflight = await runPreflight({
     executor: executorProvider,
@@ -273,14 +446,37 @@ export async function resumeAssentorTask(input: {
   const executor = await createExecutor(executorProvider, projectPath, {
     onStatus: (status) => reporter.onExecutorStatus(status),
   });
-  const resumeKey =
-    reviewerProvider === "mock"
-      ? undefined
-      : await resolveProviderApiKey(reviewerProvider, projectPath);
+  const resumeKey = reviewerNeedsApiKey(reviewerProvider, reviewerTransport)
+    ? await resolveProviderApiKey(reviewerProvider, projectPath)
+    : undefined;
+  const fallbackProvider = reviewerConfig?.fallback?.provider;
+  const fallbackTransport = reviewerConfig?.fallback?.transport ?? "api";
+  const fallbackKey =
+    fallbackProvider &&
+    reviewerNeedsApiKey(fallbackProvider, fallbackTransport)
+      ? await resolveProviderApiKey(fallbackProvider, projectPath)
+      : undefined;
+
   const reviewer = await createReviewer(reviewerProvider, {
     onStatus: (message) => reporter.onReviewerStatus(message),
     model: resolveReviewerModel(config, reviewerProvider),
     apiKey: resumeKey?.secret,
+    name: reviewerConfig?.name ?? reviewerProvider,
+    transport: reviewerTransport,
+    ...(reviewerConfig?.fallback
+      ? {
+          fallback: {
+            transport: reviewerConfig.fallback.transport,
+            provider: reviewerConfig.fallback.provider,
+            model:
+              reviewerConfig.fallback.model ??
+              (fallbackProvider
+                ? resolveReviewerModel(config, fallbackProvider)
+                : undefined),
+            apiKey: fallbackKey?.secret,
+          },
+        }
+      : {}),
   });
 
   try {

@@ -15,6 +15,14 @@ export type ReviewerSpecialty =
   | "general"
   | "adjudicator";
 
+export type ReviewerTransport = "api" | "cli";
+
+export interface ReviewerFallbackConfig {
+  transport?: ReviewerTransport;
+  provider?: string;
+  model?: string;
+}
+
 export interface LogicalAgentProfile {
   id: string;
   name: string;
@@ -28,6 +36,13 @@ export interface LogicalAgentProfile {
   enabled: boolean;
   /** Executor adapter id when kind=executor */
   executorId?: string;
+  /**
+   * How this logical reviewer is reached. Identity (id/name/memory) is
+   * independent of transport — CLI vs API can swap without losing context.
+   */
+  transport?: ReviewerTransport;
+  /** Optional fallback transport/provider/model if primary fails. */
+  fallback?: ReviewerFallbackConfig;
 }
 
 export interface AgentMemory {
@@ -61,7 +76,8 @@ export const DEFAULT_AGENT_PROFILES: LogicalAgentProfile[] = [
     kind: "reviewer",
     specialty: "architecture",
     role: "Review architecture and module boundaries",
-    instructions: "Focus on structure, coupling, and design consistency.",
+    instructions:
+      "Focus on structure, coupling, and design consistency. Cite interfaces, callers, and unchanged boundaries — no vague architecture opinions.",
     provider: "AUTO",
     model: "AUTO",
     routing: "BEST",
@@ -73,7 +89,8 @@ export const DEFAULT_AGENT_PROFILES: LogicalAgentProfile[] = [
     kind: "reviewer",
     specialty: "code",
     role: "Review code quality and correctness",
-    instructions: "Focus on bugs, readability, and maintainability.",
+    instructions:
+      "Focus on bugs, readability, and maintainability. Every issue must cite file/diff evidence from the pack.",
     provider: "AUTO",
     model: "AUTO",
     routing: "BALANCED",
@@ -85,7 +102,8 @@ export const DEFAULT_AGENT_PROFILES: LogicalAgentProfile[] = [
     kind: "reviewer",
     specialty: "testing",
     role: "Review test coverage and verification",
-    instructions: "Ensure acceptance criteria are verifiable with tests/evidence.",
+    instructions:
+      "Ensure acceptance criteria are verifiable with tests/evidence. Do not PASS when required verification is NOT_RUN.",
     provider: "AUTO",
     model: "AUTO",
     routing: "BALANCED",
@@ -97,7 +115,8 @@ export const DEFAULT_AGENT_PROFILES: LogicalAgentProfile[] = [
     kind: "reviewer",
     specialty: "security",
     role: "Review security posture",
-    instructions: "Look for auth, injection, secret leakage, and unsafe defaults.",
+    instructions:
+      "Look for auth, injection, secret leakage, and unsafe defaults. Blocker/major security findings must cite concrete evidence.",
     provider: "AUTO",
     model: "AUTO",
     routing: "BEST",
@@ -109,7 +128,8 @@ export const DEFAULT_AGENT_PROFILES: LogicalAgentProfile[] = [
     kind: "reviewer",
     specialty: "performance",
     role: "Review performance risks",
-    instructions: "Flag hotspots, N+1 patterns, and unbounded work.",
+    instructions:
+      "Flag hotspots, N+1 patterns, and unbounded work with call-site evidence — never invent benchmarks.",
     provider: "AUTO",
     model: "AUTO",
     routing: "BALANCED",
@@ -121,7 +141,8 @@ export const DEFAULT_AGENT_PROFILES: LogicalAgentProfile[] = [
     kind: "reviewer",
     specialty: "ui",
     role: "Review UI/UX quality",
-    instructions: "Check accessibility, layout, and interaction clarity.",
+    instructions:
+      "Check accessibility, layout, and interaction clarity. Cite component paths; request screenshots when visuals are unverifiable.",
     provider: "AUTO",
     model: "AUTO",
     routing: "BALANCED",
@@ -133,7 +154,8 @@ export const DEFAULT_AGENT_PROFILES: LogicalAgentProfile[] = [
     kind: "reviewer",
     specialty: "general",
     role: "General quality gate",
-    instructions: "Evaluate overall acceptance criteria satisfaction.",
+    instructions:
+      "Evaluate overall acceptance criteria satisfaction against the evidence pack — verify executor claims.",
     provider: "AUTO",
     model: "AUTO",
     routing: "BALANCED",
@@ -146,7 +168,7 @@ export const DEFAULT_AGENT_PROFILES: LogicalAgentProfile[] = [
     specialty: "adjudicator",
     role: "Resolve reviewer disagreements without editing the project",
     instructions:
-      "Decide PASS, NEEDS_WORK, MORE_EVIDENCE, or BLOCKED based on evidence and arguments.",
+      "Decide PASS, NEEDS_WORK, MORE_EVIDENCE, or BLOCKED based on evidence and arguments. Security blockers may veto majority PASS.",
     provider: "AUTO",
     model: "AUTO",
     routing: "BEST",
@@ -329,11 +351,18 @@ export function selectReviewers(
   strategy: ReviewStrategy,
   taskText: string,
   limits: { min: number; max: number },
+  analysis?: {
+    recommendedCount?: number;
+    recommendedRoles?: ReviewerSpecialty[];
+  },
 ): LogicalAgentProfile[] {
   const reviewers = profiles.filter(
     (p) => p.kind === "reviewer" && p.enabled && p.specialty !== "adjudicator",
   );
-  const specialties = inferSpecialties(taskText);
+  const specialties =
+    analysis?.recommendedRoles && analysis.recommendedRoles.length > 0
+      ? analysis.recommendedRoles
+      : inferSpecialties(taskText);
 
   let selected: LogicalAgentProfile[] = [];
   if (strategy === "FULL") {
@@ -351,15 +380,18 @@ export function selectReviewers(
     }
   } else {
     // ADAPTIVE
-    const complexity = estimateComplexity(taskText);
     const count =
-      complexity === "simple"
-        ? 1
-        : complexity === "medium"
-          ? 2
-          : complexity === "hard"
-            ? 4
-            : 6;
+      analysis?.recommendedCount ??
+      (() => {
+        const complexity = estimateComplexity(taskText);
+        return complexity === "simple"
+          ? 1
+          : complexity === "medium"
+            ? 2
+            : complexity === "hard"
+              ? 4
+              : 6;
+      })();
     const preferred = reviewers.filter((r) =>
       specialties.includes(r.specialty as ReviewerSpecialty),
     );

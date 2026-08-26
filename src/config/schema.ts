@@ -14,12 +14,28 @@ export const AssentorConfigSchema = z.object({
   reviewers: z
     .array(
       z.object({
-        provider: z.enum(["mock", "openai", "gemini"]).default("mock"),
+        /** Logical/provider id used for the primary transport. */
+        provider: z
+          .enum(["mock", "openai", "gemini", "claude", "gemini-cli"])
+          .default("mock"),
         role: z.string().default("general"),
         name: z.string().optional(),
+        /** How Assentor reaches the reviewer — identity stays separate. */
+        transport: z.enum(["api", "cli"]).default("api"),
+        model: z.string().optional(),
+        /** Optional fallback transport/provider if primary fails. */
+        fallback: z
+          .object({
+            transport: z.enum(["api", "cli"]).optional(),
+            provider: z
+              .enum(["mock", "openai", "gemini", "claude", "gemini-cli"])
+              .optional(),
+            model: z.string().optional(),
+          })
+          .optional(),
       }),
     )
-    .default([{ provider: "mock", role: "general" }]),
+    .default([{ provider: "mock", role: "general", transport: "api" }]),
   routing: z
     .object({
       strategy: z

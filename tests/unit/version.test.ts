@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   checkForUpdate,
+  getLocalVersionSync,
   isRemoteNewer,
   isUpdateCacheReusable,
   parseSemver,
@@ -107,15 +108,17 @@ describe("checkForUpdate", () => {
     );
 
     let fetches = 0;
+    const installed = getLocalVersionSync();
     const result = await checkForUpdate({
       force: false,
       fetchFn: async () => {
         fetches += 1;
-        return "0.2.1";
+        // Match installed package.json so finalize says "Up to date"
+        return installed;
       },
     });
     expect(fetches).toBe(1);
-    expect(result.latest).toBe("0.2.1");
+    expect(result.latest).toBe(installed);
     expect(result.updateAvailable).toBe(false);
     expect(result.message).toMatch(/Up to date/i);
   });

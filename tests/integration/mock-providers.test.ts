@@ -74,7 +74,9 @@ describe("supervisor with MockExecutor + MockReviewer", () => {
 
     expect(result.status).toBe(TaskState.Done);
     expect(result.round).toBe(1);
-    expect(executor.callCount).toBe(2);
+    // Assentor fulfills file evidence locally; MockExecutor explanations
+    // do not increment callCount.
+    expect(executor.callCount).toBe(1);
     expect(reviewer.callCount).toBe(2);
   });
 });

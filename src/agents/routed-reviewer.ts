@@ -14,6 +14,7 @@ import type { LogicalAgentProfile } from "../agents/index.js";
 import type { AgentMemoryStore } from "../agents/index.js";
 import { ReviewStatus } from "../core/types.js";
 import type { ReviewResult } from "../protocol/review-result.js";
+import { specialtyAddendum } from "../review/specialty-prompts.js";
 
 /**
  * Reviewer bound to a logical agent identity + routing engine.
@@ -46,7 +47,11 @@ export class RoutedReviewer implements Reviewer {
   ): Promise<ReviewerTurnResult> {
     this.callCount += 1;
     const mem = await this.memory.load(this.profile.id);
-    const basePrompt = buildReviewPrompt(asReviewInput(input));
+    const reviewInput = asReviewInput(input);
+    const basePrompt = buildReviewPrompt({
+      ...reviewInput,
+      specialtyAddendum: specialtyAddendum(this.profile.specialty),
+    });
     const context = this.memory.buildContextPack({
       memory: mem,
       contractGoal: this.projectGoal,
@@ -59,6 +64,7 @@ export class RoutedReviewer implements Reviewer {
     const prompt = [
       `You are logical agent "${this.profile.name}" (${this.profile.role}).`,
       this.profile.instructions,
+      specialtyAddendum(this.profile.specialty),
       "",
       "Assentor-owned context (survives model/provider/key changes):",
       context,
@@ -88,8 +94,8 @@ export class RoutedReviewer implements Reviewer {
       if (parsed.result) {
         mem.findings.push(parsed.result.summary);
         mem.unresolvedIssues = [
-          ...parsed.result.issues.map((i) => i.description),
-          ...parsed.result.requiredChanges,
+          ...(parsed.result.issues ?? []).map((i) => i.description),
+          ...(parsed.result.requiredChanges ?? []),
         ];
         await this.memory.save(mem);
       }
@@ -127,7 +133,7 @@ export async function adjudicate(input: {
   const debate = input.findings
     .map(
       (f) =>
-        `- ${f.agentId}: ${f.result.status} — ${f.result.summary}\n  issues: ${f.result.issues.map((i) => i.description).join("; ") || "(none)"}\n  required: ${f.result.requiredChanges.join("; ") || "(none)"}`,
+        `- ${f.agentId}: ${f.result.status} — ${f.result.summary}\n  issues: ${(f.result.issues ?? []).map((i) => i.description).join("; ") || "(none)"}\n  required: ${(f.result.requiredChanges ?? []).join("; ") || "(none)"}`,
     )
     .join("\n");
 
@@ -164,7 +170,7 @@ export async function adjudicate(input: {
 
   if (
     parsed.result.status === ReviewStatus.NeedsWork &&
-    parsed.result.evidenceRequests.length > 0
+    (parsed.result.evidenceRequests?.length ?? 0) > 0
   ) {
     return {
       decision: "MORE_EVIDENCE",

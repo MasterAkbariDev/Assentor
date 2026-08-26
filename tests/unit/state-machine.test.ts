@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   allowedTransitions,
   canTransition,
+  FSM_VERSION,
   InvalidTransitionError,
   isTerminalState,
+  normalizeTaskState,
   TaskState,
   TRANSITIONS,
   transition,
@@ -15,6 +17,12 @@ describe("state machine", () => {
       expect(TRANSITIONS[state]).toBeDefined();
       expect(Array.isArray(TRANSITIONS[state])).toBe(true);
     }
+  });
+
+  it("normalizes unknown future phases for resume compatibility", () => {
+    expect(FSM_VERSION).toBeGreaterThanOrEqual(1);
+    expect(normalizeTaskState("TASK_ANALYSIS")).toBe(TaskState.Executing);
+    expect(normalizeTaskState(TaskState.Reviewing)).toBe(TaskState.Reviewing);
   });
 
   it("marks terminal states correctly", () => {

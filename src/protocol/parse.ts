@@ -10,6 +10,7 @@ import {
 import {
   ReviewResultSchema,
   type ReviewResult,
+  type ReviewResultParsed,
 } from "./review-result.js";
 
 export type ParseSuccess<T> = {
@@ -98,7 +99,7 @@ export function parseProtocolMessage(
   return { ok: true, data: result.data };
 }
 
-export function parseReviewResult(input: unknown): ParseResult<ReviewResult> {
+export function parseReviewResult(input: unknown): ParseResult<ReviewResultParsed> {
   const extracted = extractJsonCandidate(input);
   if (!extracted.ok) {
     return extracted;

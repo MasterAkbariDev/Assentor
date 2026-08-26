@@ -1,6 +1,9 @@
 import { ReviewStatus, Severity } from "../../../core/types.js";
 import { MessageType, type ProtocolMessage } from "../../../protocol/messages.js";
-import type { ReviewResult } from "../../../protocol/review-result.js";
+import {
+  makeReviewResult,
+  type ReviewResult,
+} from "../../../protocol/review-result.js";
 import type {
   ReviewContinuation,
   Reviewer,
@@ -131,7 +134,7 @@ export class MockReviewer implements Reviewer {
         };
       case "needs_work":
         return {
-          result: {
+          result: makeReviewResult({
             status: ReviewStatus.NeedsWork,
             confidence: step.confidence ?? 0.9,
             summary: step.summary ?? "Mock reviewer NEEDS_WORK",
@@ -146,11 +149,11 @@ export class MockReviewer implements Reviewer {
             requiredChanges: step.requiredChanges ?? ["Address mock findings"],
             optionalChanges: [],
             evidenceRequests: [],
-          },
+          }),
         };
       case "evidence":
         return {
-          result: {
+          result: makeReviewResult({
             status: ReviewStatus.NeedsWork,
             confidence: step.confidence ?? 0.5,
             summary: step.summary ?? "Need more evidence",
@@ -164,11 +167,11 @@ export class MockReviewer implements Reviewer {
                 description: "Mock evidence request",
               },
             ],
-          },
+          }),
         };
       case "blocked":
         return {
-          result: {
+          result: makeReviewResult({
             status: ReviewStatus.Blocked,
             confidence: step.confidence ?? 0.8,
             summary: step.summary ?? "Mock reviewer BLOCKED",
@@ -176,11 +179,11 @@ export class MockReviewer implements Reviewer {
             requiredChanges: [],
             optionalChanges: [],
             evidenceRequests: [],
-          },
+          }),
         };
       case "failed":
         return {
-          result: {
+          result: makeReviewResult({
             status: ReviewStatus.Failed,
             confidence: step.confidence ?? 1,
             summary: step.summary ?? "Mock reviewer FAILED",
@@ -188,7 +191,7 @@ export class MockReviewer implements Reviewer {
             requiredChanges: [],
             optionalChanges: [],
             evidenceRequests: [],
-          },
+          }),
         };
       case "custom":
         return {
@@ -205,7 +208,7 @@ export class MockReviewer implements Reviewer {
 }
 
 function passResult(summary: string, confidence = 0.95): ReviewResult {
-  return {
+  return makeReviewResult({
     status: ReviewStatus.Pass,
     confidence,
     summary,
@@ -213,7 +216,7 @@ function passResult(summary: string, confidence = 0.95): ReviewResult {
     requiredChanges: [],
     optionalChanges: [],
     evidenceRequests: [],
-  };
+  });
 }
 
 /** Convenience factory used by tests and future CLI `--reviewer mock`. */

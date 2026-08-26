@@ -18,22 +18,7 @@ import {
   type TaskPaths,
 } from "./paths.js";
 
-const TaskStateSchema = z.enum([
-  TaskState.Initializing,
-  TaskState.CheckingProject,
-  TaskState.CreatingCheckpoint,
-  TaskState.Contracting,
-  TaskState.Executing,
-  TaskState.CollectingEvidence,
-  TaskState.Reviewing,
-  TaskState.Communicating,
-  TaskState.Done,
-  TaskState.Failed,
-  TaskState.Cancelled,
-  TaskState.BudgetExceeded,
-  TaskState.Timeout,
-  TaskState.HumanRequired,
-]);
+const TaskStateSchema = z.string().min(1);
 
 export const PersistedBudgetsSchema = z.object({
   limits: z.object({
@@ -65,6 +50,8 @@ export const TaskSnapshotSchema = z.object({
   conversationId: z.string().min(1),
   projectPath: z.string().min(1),
   status: TaskStateSchema,
+  /** Optional FSM schema version; unknown future states normalize on resume. */
+  fsmVersion: z.number().int().positive().optional(),
   currentRound: z.number().int().nonnegative(),
   maxRounds: z.number().int().positive(),
   executor: z.string().min(1),

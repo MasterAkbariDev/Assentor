@@ -15,8 +15,12 @@ export {
 export {
   ReviewIssueSchema,
   ReviewResultSchema,
+  makeReviewResult,
+  IssueCategory,
   type ReviewIssue,
   type ReviewResult,
+  type ReviewResultParsed,
+  type IssueCategory as IssueCategoryType,
 } from "./review-result.js";
 
 export {

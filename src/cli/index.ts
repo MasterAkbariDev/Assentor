@@ -255,6 +255,154 @@ keysCmd
     },
   );
 
+keysCmd
+  .command("delete")
+  .argument("<key-id>", "Key id (prefix match ok)")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(async (keyId: string, options: { project: string }) => {
+    const services = await createAssentorServices(path.resolve(options.project));
+    const key =
+      services.vault.get(keyId) ??
+      services.vault.list().find((k) => k.id.startsWith(keyId));
+    if (!key) {
+      console.error("Key not found");
+      process.exitCode = 1;
+      return;
+    }
+    const removed = await services.vault.remove(key.id);
+    console.log(removed ? `Deleted ${key.name}` : "Nothing deleted");
+  });
+
+keysCmd
+  .command("providers")
+  .description("List key providers Assentor knows about")
+  .action(() => {
+    for (const id of ["gemini", "openai", "openrouter", "qwen"]) {
+      console.log(id);
+    }
+  });
+
+program
+  .command("reviewers")
+  .description("List configured / logical reviewers and review strategy")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(async (options: { project: string }) => {
+    const projectPath = path.resolve(options.project);
+    const { loadAssentorConfig } = await import("../config/load.js");
+    const { DEFAULT_AGENT_PROFILES } = await import("../agents/index.js");
+    const config = await loadAssentorConfig(projectPath);
+    console.log(`reviewStrategy: ${config.routing.reviewStrategy}`);
+    console.log(`routing: ${config.routing.strategy}`);
+    console.log("");
+    console.log("Configured transports:");
+    for (const reviewer of config.reviewers) {
+      console.log(
+        `  - ${reviewer.provider}  role=${reviewer.role}  transport=${reviewer.transport ?? "api"}${reviewer.fallback ? `  fallback=${reviewer.fallback.provider}/${reviewer.fallback.transport ?? "api"}` : ""}`,
+      );
+    }
+    console.log("");
+    console.log("Logical reviewer profiles:");
+    for (const agent of DEFAULT_AGENT_PROFILES.filter(
+      (a) => a.kind === "reviewer" || a.kind === "adjudicator",
+    )) {
+      console.log(
+        `  ${agent.id.padEnd(24)} ${(agent.specialty ?? "-").padEnd(14)} ${agent.enabled ? "on" : "off"}  transport=${agent.transport ?? "api"}`,
+      );
+    }
+  });
+
+program
+  .command("review")
+  .description("Analyze a task for review plan (complexity, roles, evidence depth)")
+  .argument("[prompt...]", "Task prompt to analyze")
+  .option("-p, --project <path>", "Project directory", ".")
+  .option("--json", "Emit JSON", false)
+  .action(
+    async (
+      promptParts: string[],
+      options: { project: string; json?: boolean },
+    ) => {
+      const prompt = promptParts.join(" ").trim();
+      if (!prompt) {
+        console.error(
+          'Provide a task prompt, e.g. assentor review "Refactor auth module"',
+        );
+        process.exitCode = 1;
+        return;
+      }
+      const projectPath = path.resolve(options.project);
+      const { loadAssentorConfig } = await import("../config/load.js");
+      const { TaskComplexityAnalyzer, EvidencePackBuilder } = await import(
+        "../review/index.js"
+      );
+      const { selectReviewers, DEFAULT_AGENT_PROFILES } = await import(
+        "../agents/index.js"
+      );
+      const config = await loadAssentorConfig(projectPath);
+      let overview;
+      try {
+        const pack = await new EvidencePackBuilder({
+          projectPath,
+          depth: "QUICK",
+          runCommands: false,
+        }).build();
+        overview = {
+          projectType: pack.overview.projectType,
+          framework: pack.overview.framework,
+          packageManager: pack.overview.packageManager,
+          hasTests: Boolean(pack.overview.testFramework),
+        };
+      } catch {
+        overview = undefined;
+      }
+      const analysis = new TaskComplexityAnalyzer().analyze({
+        taskText: prompt,
+        projectOverview: overview,
+      });
+      const selected = selectReviewers(
+        DEFAULT_AGENT_PROFILES,
+        config.routing.reviewStrategy,
+        prompt,
+        { min: 1, max: analysis.recommendedCount },
+      );
+      if (options.json) {
+        console.log(
+          JSON.stringify(
+            {
+              prompt,
+              strategy: config.routing.reviewStrategy,
+              analysis,
+              selectedReviewers: selected.map((s) => ({
+                id: s.id,
+                specialty: s.specialty,
+              })),
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+      console.log(`Task: ${prompt}`);
+      console.log(
+        `Complexity: ${analysis.score}/100 · risk=${analysis.risk} · depth=${analysis.evidenceDepth}`,
+      );
+      console.log(`Strategy: ${config.routing.reviewStrategy}`);
+      console.log(
+        `Recommended roles (${analysis.recommendedCount}): ${analysis.recommendedRoles.join(", ")}`,
+      );
+      console.log(
+        `Selected: ${selected.map((s) => s.id).join(", ") || "(none)"}`,
+      );
+      if (analysis.signals.length) {
+        console.log("Signals:");
+        for (const signal of analysis.signals.slice(0, 12)) {
+          console.log(`  - ${signal}`);
+        }
+      }
+    },
+  );
+
 program
   .command("executors")
   .description("Detect installed coding-agent CLIs")

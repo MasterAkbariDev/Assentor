@@ -1,6 +1,7 @@
 import type { TaskContract } from "../../core/task-contract.js";
 import type { ProtocolMessage } from "../../protocol/messages.js";
 import type { ReviewResult } from "../../protocol/review-result.js";
+import type { ProjectReviewEvidencePack } from "../../review/evidence-pack.js";
 
 export interface ReviewInput {
   taskId: string;
@@ -9,6 +10,8 @@ export interface ReviewInput {
   round: number;
   artifacts: ReviewArtifactRef[];
   messages?: ProtocolMessage[];
+  /** Structured evidence pack (preferred over raw artifacts alone). */
+  evidencePack?: ProjectReviewEvidencePack;
 }
 
 export interface ReviewContinuation {
@@ -18,6 +21,7 @@ export interface ReviewContinuation {
   round: number;
   messages: ProtocolMessage[];
   artifacts: ReviewArtifactRef[];
+  evidencePack?: ProjectReviewEvidencePack;
 }
 
 export interface ReviewArtifactRef {

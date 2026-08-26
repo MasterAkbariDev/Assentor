@@ -43,6 +43,36 @@ function mockExecutor(
       return handler({ mode: "run", task, call: state.calls });
     },
     async continue(cont) {
+      const isExplanation = (cont.messages ?? []).some((message) => {
+        if (message.type !== MessageType.Question) return false;
+        const content = message.content as {
+          purpose?: string;
+          context?: string;
+          question?: string;
+        };
+        return (
+          content.purpose === "evidence_pack_explanation" ||
+          content.context === "purpose:evidence_pack_explanation" ||
+          (typeof content.question === "string" &&
+            content.question.includes("architecture summary"))
+        );
+      });
+      if (isExplanation) {
+        return {
+          status: "completed",
+          summary: "explanation",
+          sessionId: cont.sessionId ?? "sess-1",
+          rawOutput: JSON.stringify({
+            architectureSummary: "test architecture",
+            whatChanged: "test changes",
+            why: "tests",
+            assumptions: [],
+            unchanged: "n/a",
+            risks: [],
+            limitations: [],
+          }),
+        };
+      }
       state.calls += 1;
       return handler({ mode: "continue", cont, call: state.calls });
     },
@@ -169,40 +199,26 @@ describe("supervisor", () => {
   });
 
   it("handles evidence request communication without consuming an extra round", async () => {
-    const executor = mockExecutor(async ({ call, cont }) => {
-      if (call === 1) {
-        return { status: "completed", summary: "impl", sessionId: "s1" };
-      }
-      const hasEvidence = (cont?.messages ?? []).some(
-        (message) => message.type === MessageType.EvidenceRequest,
-      );
-      expect(hasEvidence).toBe(true);
-      return {
-        status: "completed",
-        summary: "provided evidence",
-        sessionId: "s1",
-        messages: [
-          createProtocolMessage({
-            conversationId: "c",
-            round: 1,
-            from: "executor",
-            to: "reviewer",
-            type: MessageType.EvidenceResponse,
-            content: {
-              artifacts: [
-                {
-                  kind: EvidenceKind.File,
-                  path: "src/avg.ts",
-                  content: "export const avg = () => 0",
-                },
-              ],
-            },
-          }),
-        ],
-      };
-    });
+    const { promises: fs } = await import("node:fs");
+    const path = await import("node:path");
+    const os = await import("node:os");
+    const projectPath = await fs.mkdtemp(
+      path.join(os.tmpdir(), "assentor-evidence-"),
+    );
+    await fs.mkdir(path.join(projectPath, "src"), { recursive: true });
+    await fs.writeFile(
+      path.join(projectPath, "src", "avg.ts"),
+      "export const avg = () => 0;\n",
+      "utf8",
+    );
 
-    const reviewer = mockReviewer((_input, call) => {
+    const executor = mockExecutor(async () => ({
+      status: "completed",
+      summary: "impl",
+      sessionId: "s1",
+    }));
+
+    const reviewer = mockReviewer((input, call) => {
       if (call === 1) {
         return {
           result: {
@@ -219,6 +235,11 @@ describe("supervisor", () => {
         };
       }
 
+      const hasFile = input.artifacts.some(
+        (a) => a.path === "src/avg.ts" || a.content?.includes("avg"),
+      );
+      expect(hasFile || Boolean(input.evidencePack)).toBe(true);
+
       return {
         result: {
           status: ReviewStatus.Pass,
@@ -233,7 +254,7 @@ describe("supervisor", () => {
     });
 
     const result = await new Supervisor({
-      projectPath: "/tmp/project",
+      projectPath,
       contract: createEmptyContract("Implement average()"),
       executor,
       reviewer,
@@ -242,8 +263,11 @@ describe("supervisor", () => {
 
     expect(result.status).toBe(TaskState.Done);
     expect(result.round).toBe(1);
-    expect(executor.calls).toBe(2);
+    expect(executor.calls).toBe(1);
     expect(reviewer.calls).toBe(2);
+    expect(
+      result.events.some((event) => event.type === "evidence.fulfilled"),
+    ).toBe(true);
   });
 
   it("stops on budget exhaustion", async () => {

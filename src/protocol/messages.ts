@@ -46,17 +46,32 @@ export const MessageTypeSchema = z.enum([
 
 export const EvidenceKind = {
   File: "file",
+  Files: "files",
   Directory: "directory",
+  DirectoryTree: "directory_tree",
   GitDiff: "git_diff",
+  GitLog: "git_log",
   Command: "command",
   Test: "test",
   Build: "build",
+  Lint: "lint",
+  Typecheck: "typecheck",
   Screenshot: "screenshot",
   Log: "log",
+  Logs: "logs",
   Environment: "environment",
+  Config: "config",
   ProjectStructure: "project_structure",
   SceneHierarchy: "scene_hierarchy",
   McpInspection: "mcp_inspection",
+  Symbol: "symbol",
+  Callers: "callers",
+  Implementations: "implementations",
+  Dependencies: "dependencies",
+  Search: "search",
+  Architecture: "architecture",
+  RuntimeInformation: "runtime_information",
+  CommandOutput: "command_output",
 } as const;
 
 export type EvidenceKind = (typeof EvidenceKind)[keyof typeof EvidenceKind];
@@ -68,8 +83,18 @@ export const EvidenceRequestItemSchema = z.discriminatedUnion("kind", [
     description: z.string().optional(),
   }),
   z.object({
+    kind: z.literal(EvidenceKind.Files),
+    paths: z.array(z.string().min(1)).min(1),
+    description: z.string().optional(),
+  }),
+  z.object({
     kind: z.literal(EvidenceKind.Directory),
     path: z.string().min(1),
+    description: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal(EvidenceKind.DirectoryTree),
+    path: z.string().optional(),
     description: z.string().optional(),
   }),
   z.object({
@@ -77,7 +102,17 @@ export const EvidenceRequestItemSchema = z.discriminatedUnion("kind", [
     description: z.string().optional(),
   }),
   z.object({
+    kind: z.literal(EvidenceKind.GitLog),
+    description: z.string().optional(),
+    limit: z.number().int().positive().optional(),
+  }),
+  z.object({
     kind: z.literal(EvidenceKind.Command),
+    command: z.string().min(1),
+    description: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal(EvidenceKind.CommandOutput),
     command: z.string().min(1),
     description: z.string().optional(),
   }),
@@ -92,6 +127,16 @@ export const EvidenceRequestItemSchema = z.discriminatedUnion("kind", [
     description: z.string().optional(),
   }),
   z.object({
+    kind: z.literal(EvidenceKind.Lint),
+    command: z.string().min(1).optional(),
+    description: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal(EvidenceKind.Typecheck),
+    command: z.string().min(1).optional(),
+    description: z.string().optional(),
+  }),
+  z.object({
     kind: z.literal(EvidenceKind.Screenshot),
     description: z.string().min(1),
   }),
@@ -101,7 +146,17 @@ export const EvidenceRequestItemSchema = z.discriminatedUnion("kind", [
     description: z.string().optional(),
   }),
   z.object({
+    kind: z.literal(EvidenceKind.Logs),
+    path: z.string().optional(),
+    description: z.string().optional(),
+  }),
+  z.object({
     kind: z.literal(EvidenceKind.Environment),
+    description: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal(EvidenceKind.Config),
+    path: z.string().optional(),
     description: z.string().optional(),
   }),
   z.object({
@@ -117,6 +172,39 @@ export const EvidenceRequestItemSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal(EvidenceKind.McpInspection),
     description: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal(EvidenceKind.Symbol),
+    symbol: z.string().min(1),
+    description: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal(EvidenceKind.Callers),
+    symbol: z.string().min(1),
+    description: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal(EvidenceKind.Implementations),
+    symbol: z.string().min(1),
+    description: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal(EvidenceKind.Dependencies),
+    path: z.string().optional(),
+    description: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal(EvidenceKind.Search),
+    query: z.string().min(1),
+    description: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal(EvidenceKind.Architecture),
+    description: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal(EvidenceKind.RuntimeInformation),
+    description: z.string().optional(),
   }),
 ]);
 

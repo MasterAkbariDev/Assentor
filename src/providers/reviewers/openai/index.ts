@@ -29,6 +29,7 @@ export interface OpenAICompatibleReviewerOptions {
   timeoutMs?: number;
   provider?: AIProvider;
   keyId?: string;
+  specialtyAddendum?: string;
 }
 
 /**
@@ -42,6 +43,7 @@ export class OpenAICompatibleReviewer implements Reviewer {
   private readonly timeoutMs: number;
   private readonly provider: AIProvider;
   private readonly keyId: string;
+  private readonly specialtyAddendum?: string;
   callCount = 0;
 
   constructor(options: OpenAICompatibleReviewerOptions = {}) {
@@ -62,6 +64,7 @@ export class OpenAICompatibleReviewer implements Reviewer {
         fetchFn: options.fetchFn,
       });
     this.keyId = options.keyId ?? "env-openai";
+    this.specialtyAddendum = options.specialtyAddendum;
   }
 
   async review(input: ReviewInput): Promise<ReviewerTurnResult> {
@@ -83,7 +86,10 @@ export class OpenAICompatibleReviewer implements Reviewer {
       };
     }
 
-    const prompt = buildReviewPrompt(asReviewInput(input));
+    const prompt = buildReviewPrompt({
+      ...asReviewInput(input),
+      specialtyAddendum: this.specialtyAddendum,
+    });
     const key: ApiKeyRef = {
       id: this.keyId,
       provider: this.provider.id,

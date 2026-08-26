@@ -7,9 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned
+## [0.3.0] — 2026-08-26
 
-- Broader multi-reviewer debate wiring into the default `run` path
+### Added
+
+- **Evidence packs** — structured Project Review Evidence Pack (sections A–K) built locally, persisted under `.assentor/tasks/<id>/evidence/`
+- Iterative evidence-request loop: Assentor fulfills file/git/search/test locally first; executor only for hard probes
+- Pack-aware reviewer prompts (“do not guess”; executor claims vs evidence)
+- Pre-review executor explanation turn (architecture + implementation summary)
+- **Multi-reviewer path** — complexity analyzer, specialty prompts, `PanelReviewer` / correlate / adjudicate / security veto
+- CLI reviewer transport (`transport: cli`) with API fallback (`FallbackReviewer`)
+- Lazygit-style Ink TUI: sidebar + main pane + screens (Dashboard, Review, Keys, Executors, …)
+- CLI: `assentor reviewers`, `assentor review`, `assentor keys delete`
+
+### Changed
+
+- Default `assentor run` uses evidence packs + optional panel reviewers from `routing.reviewStrategy`
+- ReviewResult schema supports categories, affectedFiles, architecture/requirements assessment, verification
 
 ## [0.2.2] — 2026-08-25
 
@@ -61,7 +75,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logical agents, diagnostics, and resumable task state under `.assentor/tasks/`
 - One-line install scripts for macOS/Linux and Windows
 
-[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/MasterAkbariDev/Assentor/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/MasterAkbariDev/Assentor/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/MasterAkbariDev/Assentor/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/MasterAkbariDev/Assentor/compare/v0.1.0...v0.2.0

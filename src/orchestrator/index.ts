@@ -1,10 +1,12 @@
 export {
   TaskState,
+  FSM_VERSION,
   TRANSITIONS,
   isTerminalState,
   canTransition,
   transition,
   allowedTransitions,
+  normalizeTaskState,
 } from "./state-machine.js";
 
 export {

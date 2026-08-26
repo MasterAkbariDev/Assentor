@@ -101,6 +101,7 @@ export async function loadAssentorConfig(
         provider:
           overrides.reviewer as AssentorConfig["reviewers"][number]["provider"],
         role: "general",
+        transport: "api",
       },
     ];
   }
@@ -124,7 +125,10 @@ function toSerializable(config: AssentorConfig) {
     reviewers: config.reviewers.map((r) => ({
       provider: r.provider,
       role: r.role,
+      transport: r.transport,
       ...(r.name ? { name: r.name } : {}),
+      ...(r.model ? { model: r.model } : {}),
+      ...(r.fallback ? { fallback: r.fallback } : {}),
     })),
     routing: {
       strategy: config.routing.strategy,

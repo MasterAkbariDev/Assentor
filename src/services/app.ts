@@ -1,14 +1,34 @@
 import { AgentRegistry } from "../agents/index.js";
+import type { AssentorConfig } from "../config/load.js";
+import { saveAssentorConfig } from "../config/load.js";
 import { userAssentorProjectRoot } from "../config/paths.js";
-import { buildExecutorRegistry } from "../executors/index.js";
-import { KeyVault } from "../keys/index.js";
+import {
+  buildExecutorRegistry,
+  type DetectionResult,
+  type InstallPlan,
+} from "../executors/index.js";
+import { KeyVault, type StoredApiKey } from "../keys/index.js";
+import type { KeyStatus } from "../providers/ai/types.js";
 import { createSeededModelRegistry } from "../models/index.js";
+import { TaskStore, type TaskSnapshot } from "../persistence/store.js";
 import {
   createDefaultProviderRegistry,
   type AIProvider,
 } from "../providers/ai/index.js";
+import {
+  TaskComplexityAnalyzer,
+  type ComplexityAnalysis,
+  type ProjectOverviewSignals,
+} from "../review/complexity.js";
 import { RoutingEngine } from "../routing/index.js";
-import { AuditLog } from "./audit.js";
+import {
+  checkForUpdate,
+  getLocalVersionSync,
+  uninstallAssentor,
+  updateAssentor,
+  type UpdateCheckResult,
+} from "../self/index.js";
+import { AuditLog, type AuditEvent } from "./audit.js";
 import path from "node:path";
 
 export interface AssentorServices {
@@ -176,3 +196,159 @@ export async function runFullDiagnostics(
 
   return items;
 }
+
+export async function checkApiKey(
+  services: AssentorServices,
+  keyId: string,
+): Promise<{ key: StoredApiKey; status: KeyStatus }> {
+  const providerId = services.vault.get(keyId)?.provider;
+  if (!providerId) {
+    throw new Error(`Key not found: ${keyId}`);
+  }
+  const provider = services.providers.get(providerId);
+  if (!provider) {
+    throw new Error(`Unknown provider: ${providerId}`);
+  }
+  const result = await services.vault.checkKey(keyId, provider);
+  await services.audit.append(
+    "key.checked",
+    `${result.key.name}: ${result.status.message}`,
+    { keyId, valid: result.status.valid },
+  );
+  return result;
+}
+
+export async function checkAllApiKeys(
+  services: AssentorServices,
+): Promise<Array<{ key: StoredApiKey; status: KeyStatus }>> {
+  const results = await services.vault.checkAll((id) =>
+    services.providers.get(id),
+  );
+  for (const r of results) {
+    await services.audit.append(
+      "key.checked",
+      `${r.key.name}: ${r.status.message}`,
+      { keyId: r.key.id, valid: r.status.valid },
+    );
+  }
+  return results;
+}
+
+export async function detectExecutors(
+  services: AssentorServices,
+): Promise<
+  Array<{ id: string; name: string; detection: DetectionResult }>
+> {
+  return services.executors.detectAll();
+}
+
+export function getExecutorInstallPlan(
+  services: AssentorServices,
+  executorId: string,
+): InstallPlan | undefined {
+  return services.executors.get(executorId)?.installPlan?.();
+}
+
+export async function detectExecutor(
+  services: AssentorServices,
+  executorId: string,
+): Promise<{
+  id: string;
+  name: string;
+  detection: DetectionResult;
+  installPlan?: InstallPlan;
+}> {
+  const adapter = services.executors.get(executorId);
+  if (!adapter) {
+    throw new Error(`Unknown executor: ${executorId}`);
+  }
+  const detection = await adapter.detect();
+  return {
+    id: adapter.id,
+    name: adapter.name,
+    detection,
+    installPlan: adapter.installPlan?.(),
+  };
+}
+
+export function analyzeReviewPlan(
+  taskText: string,
+  projectOverview?: ProjectOverviewSignals,
+): ComplexityAnalysis {
+  return new TaskComplexityAnalyzer().analyze({
+    taskText,
+    projectOverview,
+  });
+}
+
+export async function listProjectTasks(
+  projectPath: string,
+): Promise<TaskSnapshot[]> {
+  const ids = await TaskStore.list(projectPath);
+  const snaps: TaskSnapshot[] = [];
+  for (const id of ids) {
+    try {
+      const store = await TaskStore.open(projectPath, id);
+      snaps.push(await store.loadSnapshot());
+    } catch {
+      // skip corrupt / partial task dirs
+    }
+  }
+  snaps.sort(
+    (a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt),
+  );
+  return snaps;
+}
+
+export async function loadAuditEvents(
+  services: AssentorServices,
+  limit = 40,
+): Promise<AuditEvent[]> {
+  return services.audit.list(limit);
+}
+
+export async function saveGlobalDefaults(
+  services: AssentorServices,
+  config: AssentorConfig,
+): Promise<string> {
+  const saved = await saveAssentorConfig(services.projectPath, config, {
+    scope: "user",
+  });
+  await services.audit.append(
+    "agent.updated",
+    "Updated global run defaults from TUI",
+    {
+      executor: config.executor.provider,
+      reviewer: config.reviewers[0]?.provider,
+      routing: config.routing.strategy,
+    },
+  );
+  return saved;
+}
+
+export async function performUpdateCheck(
+  force = false,
+): Promise<UpdateCheckResult> {
+  return checkForUpdate({ force });
+}
+
+export async function performUpdate(): Promise<{
+  code: number;
+  output: string;
+  localVersion: string;
+}> {
+  const result = await updateAssentor();
+  return {
+    code: result.code,
+    output: result.output,
+    localVersion: getLocalVersionSync(),
+  };
+}
+
+export async function performUninstall(options?: {
+  purge?: boolean;
+}): Promise<{ code: number; output: string }> {
+  return uninstallAssentor({ purge: Boolean(options?.purge) });
+}
+
+export { getLocalVersionSync };

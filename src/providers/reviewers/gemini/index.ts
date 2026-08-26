@@ -28,6 +28,7 @@ export interface GeminiReviewerOptions {
   onStatus?: (message: string) => void;
   provider?: GeminiProvider;
   keyId?: string;
+  specialtyAddendum?: string;
 }
 
 const DEFAULT_MODELS = [
@@ -50,6 +51,7 @@ export class GeminiReviewer implements Reviewer {
   private readonly onStatus?: (message: string) => void;
   private readonly provider: GeminiProvider;
   private readonly keyId: string;
+  private readonly specialtyAddendum?: string;
   callCount = 0;
   lastModelUsed?: string;
 
@@ -84,6 +86,7 @@ export class GeminiReviewer implements Reviewer {
         timeoutMs: options.timeoutMs,
       });
     this.keyId = options.keyId ?? "env-gemini";
+    this.specialtyAddendum = options.specialtyAddendum;
   }
 
   async review(input: ReviewInput): Promise<ReviewerTurnResult> {
@@ -105,7 +108,10 @@ export class GeminiReviewer implements Reviewer {
       };
     }
 
-    const prompt = buildReviewPrompt(asReviewInput(input));
+    const prompt = buildReviewPrompt({
+      ...asReviewInput(input),
+      specialtyAddendum: this.specialtyAddendum,
+    });
     const key: ApiKeyRef = {
       id: this.keyId,
       provider: "gemini",

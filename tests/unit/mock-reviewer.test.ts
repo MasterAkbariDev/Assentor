@@ -70,7 +70,7 @@ describe("MockReviewer", () => {
     });
 
     expect(result.result?.status).toBe(ReviewStatus.NeedsWork);
-    expect(result.result?.evidenceRequests[0]).toMatchObject({
+    expect(result.result?.evidenceRequests?.[0]).toMatchObject({
       kind: "file",
       path: "src/avg.ts",
     });

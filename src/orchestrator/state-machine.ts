@@ -3,7 +3,14 @@ import { InvalidTransitionError } from "../core/errors.js";
 /**
  * Explicit task FSM states for the Assentor supervisor.
  * Pure transition table only — no I/O or orchestration side effects.
+ *
+ * FSM_VERSION tracks schema evolution. Planned analysis phases
+ * (TaskAnalysis → ComplexityScoring → ReviewerSelection → … → FinalVerification)
+ * may be added in a later version; unknown persisted states MUST fall back via
+ * {@link normalizeTaskState} so old task resumes keep working.
  */
+export const FSM_VERSION = 1;
+
 export const TaskState = {
   Initializing: "INITIALIZING",
   CheckingProject: "CHECKING_PROJECT",
@@ -22,6 +29,22 @@ export const TaskState = {
 } as const;
 
 export type TaskState = (typeof TaskState)[keyof typeof TaskState];
+
+const KNOWN_STATES = new Set<string>(Object.values(TaskState));
+
+/**
+ * Map unknown/future persisted phases to a safe resumable state.
+ * Keeps resume backward compatible when FSM_VERSION advances.
+ */
+export function normalizeTaskState(
+  state: string | undefined | null,
+  fallback: TaskState = TaskState.Executing,
+): TaskState {
+  if (state && KNOWN_STATES.has(state)) {
+    return state as TaskState;
+  }
+  return fallback;
+}
 
 const TERMINAL_STATES: ReadonlySet<TaskState> = new Set([
   TaskState.Done,
