@@ -13,6 +13,7 @@ import {
   summarizeStreamJson,
   type AgentStatusUpdate,
 } from "./stream-status.js";
+import { spawn, type ChildProcess } from "node:child_process";
 import { locateBinary, spawnCliProcess } from "../../../executors/cli-locator.js";
 
 export type CursorOutputFormat = "text" | "json" | "stream-json";
@@ -25,8 +26,17 @@ export interface CursorSpawnRequest {
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
-  /** Live child so Ctrl+C can SIGTERM the Cursor process. */
-  onSpawn?: (child: { kill: (signal?: NodeJS.Signals) => boolean }) => void;
+  /** After a stream-json `result` event, stop waiting for process exit. */
+  resultGraceMs?: number;
+  /** Live child so Ctrl+C can stop the Cursor process. */
+  onSpawn?: (child: CursorChildHandle) => void;
+}
+
+export interface CursorChildHandle {
+  pid?: number;
+  kill: (signal?: NodeJS.Signals) => boolean;
+  /** Resolve spawn without waiting for the OS process to exit. */
+  abandon?: () => void;
 }
 
 export interface CursorSpawnResult {
@@ -105,7 +115,8 @@ export class CursorExecutor implements Executor {
   private readonly onStatus?: (status: AgentStatusUpdate) => void;
   private readonly resultGraceMs: number;
   private readonly cancelled = new Set<string>();
-  private activeChild?: { kill: (signal?: NodeJS.Signals) => boolean };
+  private activeChild?: CursorChildHandle;
+  private forceComplete?: () => void;
   private sessionId = createId();
   callCount = 0;
   lastCommand?: { command: string; args: string[]; cwd: string };
@@ -163,18 +174,9 @@ export class CursorExecutor implements Executor {
 
   async cancel(taskId: string): Promise<void> {
     this.cancelled.add(taskId);
-    try {
-      this.activeChild?.kill("SIGTERM");
-    } catch {
-      // already exited
-    }
-    setTimeout(() => {
-      try {
-        this.activeChild?.kill("SIGKILL");
-      } catch {
-        // ignore
-      }
-    }, 1500).unref?.();
+    this.activeChild?.abandon?.();
+    killProcessTree(this.activeChild);
+    this.forceComplete?.();
   }
 
   private async execute(
@@ -208,28 +210,36 @@ export class CursorExecutor implements Executor {
         : undefined;
 
     let resultGrace: ReturnType<typeof setTimeout> | undefined;
-    let killAfterResult: ReturnType<typeof setTimeout> | undefined;
+    let capturedStdout = "";
+    let capturedStderr = "";
+    let forcedResult: CursorSpawnResult | undefined;
+    const forcedExit = new Promise<CursorSpawnResult>((resolve) => {
+      this.forceComplete = () => {
+        if (forcedResult) {
+          return;
+        }
+        forcedResult = {
+          code: this.cancelled.has(taskId) ? null : 0,
+          stdout: capturedStdout,
+          stderr: capturedStderr,
+          signal: "SIGTERM",
+        };
+        resolve(forcedResult);
+      };
+    });
+
     const closeStuckProcess = () => {
       this.onStatus?.({
         activity: "waiting",
         detail: "closing stuck Cursor process",
       });
-      try {
-        this.activeChild?.kill("SIGTERM");
-      } catch {
-        // already exited
-      }
-      killAfterResult = setTimeout(() => {
-        try {
-          this.activeChild?.kill("SIGKILL");
-        } catch {
-          // ignore
-        }
-      }, 2000);
-      killAfterResult.unref?.();
+      this.activeChild?.abandon?.();
+      killProcessTree(this.activeChild);
+      this.forceComplete?.();
     };
     const scheduleResultGrace = () => {
       if (resultGrace || this.resultGraceMs <= 0) {
+        closeStuckProcess();
         return;
       }
       this.onStatus?.({
@@ -242,33 +252,39 @@ export class CursorExecutor implements Executor {
 
     let result: CursorSpawnResult;
     try {
-      result = await this.spawnFn({
-        command: this.binary,
-        args,
-        cwd: projectPath,
-        env,
-        timeoutMs: this.timeoutMs,
-        onSpawn: (child) => {
-          this.activeChild = child;
-        },
-        onOutput: (chunk, stream) => {
-          this.onOutput?.(chunk, stream);
-          if (stream === "stdout" && streamParser) {
-            for (const update of streamParser.push(chunk)) {
-              this.onStatus?.(update);
-              if (update.isFinal) {
-                scheduleResultGrace();
+      result = await Promise.race([
+        this.spawnFn({
+          command: this.binary,
+          args,
+          cwd: projectPath,
+          env,
+          timeoutMs: this.timeoutMs,
+          resultGraceMs: this.resultGraceMs,
+          onSpawn: (child) => {
+            this.activeChild = child;
+          },
+          onOutput: (chunk, stream) => {
+            if (stream === "stdout") {
+              capturedStdout += chunk;
+            } else {
+              capturedStderr += chunk;
+            }
+            this.onOutput?.(chunk, stream);
+            if (stream === "stdout" && streamParser) {
+              for (const update of streamParser.push(chunk)) {
+                this.onStatus?.(update);
+                if (update.isFinal) {
+                  scheduleResultGrace();
+                }
               }
             }
-          }
-        },
-      });
+          },
+        }),
+        forcedExit,
+      ]);
       if (streamParser) {
         for (const update of streamParser.flush()) {
           this.onStatus?.(update);
-          if (update.isFinal) {
-            scheduleResultGrace();
-          }
         }
       }
     } catch (error) {
@@ -287,9 +303,7 @@ export class CursorExecutor implements Executor {
       if (resultGrace) {
         clearTimeout(resultGrace);
       }
-      if (killAfterResult) {
-        clearTimeout(killAfterResult);
-      }
+      this.forceComplete = undefined;
     }
     this.activeChild = undefined;
 
@@ -570,14 +584,54 @@ export async function defaultSpawn(
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
-    request.onSpawn?.(child);
 
+    const parser = new CursorStreamStatusParser();
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let resultGrace: ReturnType<typeof setTimeout> | undefined;
+
+    const finish = (result: CursorSpawnResult) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      if (resultGrace) {
+        clearTimeout(resultGrace);
+      }
+      detachChild(child);
+      resolve(result);
+    };
+
+    const abandon = () => {
+      killProcessTree(child);
+      finish({
+        code: parser.hasFinalResult() ? 0 : null,
+        stdout,
+        stderr,
+        signal: "SIGTERM",
+      });
+    };
+
+    request.onSpawn?.({
+      pid: child.pid,
+      kill: (signal) => {
+        if (signal === "SIGKILL") {
+          killProcessTree(child);
+          return true;
+        }
+        try {
+          return child.kill(signal);
+        } catch {
+          return false;
+        }
+      },
+      abandon,
+    });
+
     const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 2000).unref?.();
+      killProcessTree(child);
       finish({
         code: null,
         stdout,
@@ -587,19 +641,17 @@ export async function defaultSpawn(
       });
     }, request.timeoutMs);
 
-    const finish = (result: CursorSpawnResult) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      resolve(result);
-    };
-
     child.stdout?.on("data", (chunk: Buffer | string) => {
       const text = chunk.toString();
       stdout += text;
       request.onOutput?.(text, "stdout");
+      for (const update of parser.push(text)) {
+        if (update.isFinal && !resultGrace) {
+          const grace = request.resultGraceMs ?? 10_000;
+          resultGrace = setTimeout(abandon, grace);
+          resultGrace.unref?.();
+        }
+      }
     });
     child.stderr?.on("data", (chunk: Buffer | string) => {
       const text = chunk.toString();
@@ -607,14 +659,66 @@ export async function defaultSpawn(
       request.onOutput?.(text, "stderr");
     });
     child.on("error", (error) => {
+      if (resultGrace) {
+        clearTimeout(resultGrace);
+      }
       clearTimeout(timer);
       if (!settled) {
         settled = true;
+        detachChild(child);
         reject(error);
       }
+    });
+    child.on("exit", (code, signal) => {
+      finish({ code, stdout, stderr, signal });
     });
     child.on("close", (code, signal) => {
       finish({ code, stdout, stderr, signal });
     });
   });
+}
+
+/**
+ * Kill a CLI process and any children (Windows cmd.exe / agent.cmd trees included).
+ */
+export function killProcessTree(
+  child: { pid?: number; kill?: (signal?: NodeJS.Signals) => boolean } | undefined,
+): void {
+  if (!child) {
+    return;
+  }
+  const pid = child.pid;
+  if (process.platform === "win32" && typeof pid === "number" && pid > 0) {
+    try {
+      spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      }).unref();
+    } catch {
+      // fall through to kill()
+    }
+  }
+  try {
+    child.kill?.("SIGKILL");
+  } catch {
+    // already exited
+  }
+}
+
+function detachChild(child: ChildProcess): void {
+  try {
+    child.stdout?.destroy();
+  } catch {
+    // ignore
+  }
+  try {
+    child.stderr?.destroy();
+  } catch {
+    // ignore
+  }
+  try {
+    child.unref();
+  } catch {
+    // ignore
+  }
 }

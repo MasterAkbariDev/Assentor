@@ -146,18 +146,13 @@ describe("CursorExecutor", () => {
   it("SIGTERMs the live child on cancel", async () => {
     const kill = vi.fn();
     let started = false;
-    let finish!: (result: {
-      code: number | null;
-      stdout: string;
-      stderr: string;
-    }) => void;
 
     const executor = new CursorExecutor({
       spawnFn: async (request) => {
         request.onSpawn?.({ kill });
         started = true;
-        return new Promise((resolve) => {
-          finish = resolve;
+        return new Promise(() => {
+          // never exits — Windows cmd.exe / agent.cmd often never emit "close"
         });
       },
       binary: "agent",
@@ -176,10 +171,14 @@ describe("CursorExecutor", () => {
     expect(started).toBe(true);
 
     await executor.cancel("t-cancel");
-    expect(kill).toHaveBeenCalledWith("SIGTERM");
-    finish({ code: 1, stdout: "", stderr: "killed" });
+    expect(kill).toHaveBeenCalled();
 
-    const result = await runPromise;
+    const result = await Promise.race([
+      runPromise,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("cancel hung waiting for spawn")), 1000),
+      ),
+    ]);
     expect(result.status).toBe("cancelled");
   });
 
@@ -264,36 +263,29 @@ describe("CursorExecutor", () => {
   });
 
   it("kills Cursor after a result event if the process never exits", async () => {
-    const kill = vi.fn((signal?: NodeJS.Signals) => {
-      if (signal === "SIGTERM") {
-        finish({
-          code: null,
-          stdout: resultLine,
-          stderr: "",
-          signal: "SIGTERM",
-        });
-      }
-      return true;
-    });
+    const kill = vi.fn(() => true);
     const resultLine = `${JSON.stringify({
       type: "result",
       subtype: "success",
       result: "Wrote the hang fix",
       session_id: "stuck-1",
     })}\n`;
-    let finish!: (result: {
-      code: number | null;
-      stdout: string;
-      stderr: string;
-      signal?: NodeJS.Signals | null;
-    }) => void;
 
     const executor = new CursorExecutor({
       spawnFn: async (request) => {
         request.onSpawn?.({ kill });
         request.onOutput?.(resultLine, "stdout");
         return new Promise((resolve) => {
-          finish = resolve;
+          // Resolves only if kill() cooperates — production Windows often does not.
+          kill.mockImplementation(() => {
+            resolve({
+              code: null,
+              stdout: resultLine,
+              stderr: "",
+              signal: "SIGTERM",
+            });
+            return true;
+          });
         });
       },
       binary: "agent",
@@ -308,10 +300,49 @@ describe("CursorExecutor", () => {
     });
 
     const result = await runPromise;
-    expect(kill).toHaveBeenCalledWith("SIGTERM");
+    expect(kill).toHaveBeenCalled();
     expect(result.status).toBe("completed");
     expect(result.summary).toBe("Wrote the hang fix");
     expect(result.sessionId).toBe("stuck-1");
+  });
+
+  it("finishes after a result even if kill does not exit the process", async () => {
+    const resultLine = `${JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: "Process still holding stdout",
+      session_id: "zombie-1",
+    })}\n`;
+    const executor = new CursorExecutor({
+      spawnFn: async (request) => {
+        request.onSpawn?.({ kill: () => true });
+        request.onOutput?.(resultLine, "stdout");
+        return new Promise(() => {
+          // never resolves — the real Windows hang
+        });
+      },
+      binary: "agent",
+      resultGraceMs: 20,
+    });
+
+    const result = await Promise.race([
+      executor.run({
+        taskId: "t-zombie",
+        projectPath: "/tmp/project",
+        contract: createEmptyContract("goal"),
+        prompt: "goal",
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("still hung after result grace")),
+          1000,
+        ),
+      ),
+    ]);
+
+    expect(result.status).toBe("completed");
+    expect(result.summary).toBe("Process still holding stdout");
+    expect(result.sessionId).toBe("zombie-1");
   });
 
   it("does not kill Cursor when the process exits right after the result", async () => {

@@ -702,6 +702,7 @@ function attachRunInterrupt(input: {
     }
     if (supervisor) {
       supervisor.requestCancel();
+      setTimeout(() => process.exit(130), 8_000).unref?.();
       return;
     }
     process.exit(130);

@@ -35,12 +35,14 @@ export {
 export {
   CursorExecutor,
   defaultSpawn,
+  killProcessTree,
   resolveCursorBinary,
   isCursorAppBinary,
   type CursorExecutorOptions,
   type CursorSpawnFn,
   type CursorSpawnRequest,
   type CursorSpawnResult,
+  type CursorChildHandle,
   type CursorOutputFormat,
   type AgentStatusUpdate,
 } from "./providers/executors/cursor/index.js";

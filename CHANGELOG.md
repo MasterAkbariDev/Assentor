@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.10] — 2026-08-26
+
+### Fixed
+
+- Cursor runs no longer hang on “closing stuck Cursor process” or “saving” after Ctrl+C. Assentor stops waiting for the CLI process to exit (Windows `cmd.exe` often keeps stdout open), kills the process tree, and continues with the result it already has.
+
 ## [0.3.9] — 2026-08-26
 
 ### Fixed
@@ -153,7 +159,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logical agents, diagnostics, and resumable task state under `.assentor/tasks/`
 - One-line install scripts for macOS/Linux and Windows
 
-[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.9...HEAD
+[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.10...HEAD
+[0.3.10]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.9...v0.3.10
 [0.3.9]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.6...v0.3.7
