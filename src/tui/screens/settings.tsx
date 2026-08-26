@@ -1,8 +1,9 @@
 import type { AssentorConfig } from "../../config/load.js";
+import { formatReviewerBackend } from "../../review/backends.js";
 import { cycle } from "./shared.js";
 
 export const EXECUTOR_OPTIONS = ["mock", "cursor"] as const;
-export const REVIEWER_OPTIONS = ["mock", "gemini", "openai"] as const;
+export const REVIEWER_OPTIONS = ["mock", "gemini", "openai", "claude"] as const;
 export const TRANSPORT_OPTIONS = ["api", "cli"] as const;
 export const ROUTING_OPTIONS = [
   "FREE_FIRST",
@@ -20,10 +21,10 @@ export const REVIEW_STRATEGY_OPTIONS = [
 export const ROUND_OPTIONS = [4, 6, 8, 10, 12, 16] as const;
 
 const REVIEW_STRATEGY_LABEL: Record<(typeof REVIEW_STRATEGY_OPTIONS)[number], string> = {
-  SINGLE: "One reviewer",
-  ADAPTIVE: "Auto — pick by task",
-  PANEL: "Small panel (3–4)",
-  FULL: "All specialists",
+  SINGLE: "One reviewer (first in the list)",
+  ADAPTIVE: "All you added",
+  PANEL: "All you added",
+  FULL: "All you added",
 };
 
 const ROUTING_LABEL: Record<(typeof ROUTING_OPTIONS)[number], string> = {
@@ -37,8 +38,6 @@ const ROUTING_LABEL: Record<(typeof ROUTING_OPTIONS)[number], string> = {
 export function buildAiRows(config: AssentorConfig): string[] {
   return [
     `Executor             ${config.executor.provider}`,
-    `Reviewer             ${config.reviewers[0]?.provider ?? "mock"}`,
-    `Reviewer runs via    ${config.reviewers[0]?.transport ?? "api"}`,
     `Default model        ${config.models.default}`,
     `Gemini model         ${config.models.gemini}`,
     `OpenAI model         ${config.models.openai}`,
@@ -46,13 +45,36 @@ export function buildAiRows(config: AssentorConfig): string[] {
   ];
 }
 
-export function buildReviewRows(config: AssentorConfig): string[] {
+export type ReviewMenuRow =
+  | { kind: "add"; label: string }
+  | { kind: "member"; index: number; label: string }
+  | { kind: "strategy"; label: string }
+  | { kind: "rounds"; label: string }
+  | { kind: "save"; label: string };
+
+export function buildReviewMenu(config: AssentorConfig): ReviewMenuRow[] {
   const strategy = config.routing.reviewStrategy;
   return [
-    `Reviewers            ${REVIEW_STRATEGY_LABEL[strategy] ?? strategy}`,
-    `Max rounds           ${config.limits.maxRounds}`,
-    "Save these defaults",
+    { kind: "add", label: "+ Add reviewer" },
+    ...config.reviewers.map((entry, index) => ({
+      kind: "member" as const,
+      index,
+      label: formatReviewerBackend(entry),
+    })),
+    {
+      kind: "strategy",
+      label: `How many              ${REVIEW_STRATEGY_LABEL[strategy] ?? strategy}`,
+    },
+    {
+      kind: "rounds",
+      label: `Max rounds           ${config.limits.maxRounds}`,
+    },
+    { kind: "save", label: "Save these reviewers" },
   ];
+}
+
+export function buildReviewRows(config: AssentorConfig): string[] {
+  return buildReviewMenu(config).map((row) => row.label);
 }
 
 export function buildAdvancedRows(config: AssentorConfig): string[] {
@@ -66,7 +88,11 @@ export function buildAdvancedRows(config: AssentorConfig): string[] {
 
 /** Combined list used by the overlay fallback. */
 export function buildDefaultRows(config: AssentorConfig): string[] {
-  return [...buildAiRows(config).slice(0, -1), ...buildReviewRows(config).slice(0, -1), "Save defaults"];
+  return [
+    ...buildAiRows(config).slice(0, -1),
+    ...buildReviewRows(config).slice(0, -1),
+    "Save defaults",
+  ];
 }
 
 export function cycleAiField(
@@ -88,46 +114,13 @@ export function cycleAiField(
         dir,
       );
       break;
-    case 1: {
-      const provider = cycle(
-        REVIEWER_OPTIONS,
-        (REVIEWER_OPTIONS.includes(
-          (next.reviewers[0]?.provider ?? "mock") as (typeof REVIEWER_OPTIONS)[number],
-        )
-          ? next.reviewers[0]?.provider
-          : "mock") as (typeof REVIEWER_OPTIONS)[number],
-        dir,
-      );
-      next.reviewers = [
-        {
-          provider,
-          role: next.reviewers[0]?.role ?? "general",
-          transport: next.reviewers[0]?.transport ?? "api",
-        },
-      ];
-      break;
-    }
-    case 2: {
-      const transport = cycle(
-        TRANSPORT_OPTIONS,
-        (next.reviewers[0]?.transport ?? "api") as (typeof TRANSPORT_OPTIONS)[number],
-        dir,
-      );
-      next.reviewers = [
-        {
-          ...(next.reviewers[0] ?? { provider: "mock", role: "general" }),
-          transport,
-        },
-      ];
-      break;
-    }
-    case 3:
+    case 1:
       next.models.default = cycle(modelChoices, next.models.default, dir);
       break;
-    case 4:
+    case 2:
       next.models.gemini = cycle(modelChoices, next.models.gemini, dir);
       break;
-    case 5:
+    case 3:
       next.models.openai = cycle(modelChoices, next.models.openai, dir);
       break;
     default:
@@ -141,17 +134,23 @@ export function cycleReviewField(
   idx: number,
   dir: 1 | -1,
 ): AssentorConfig {
+  const row = buildReviewMenu(config)[idx];
+  if (!row) {
+    return config;
+  }
   const next = structuredClone(config);
-  if (idx === 0) {
+  if (row.kind === "strategy") {
     next.routing.reviewStrategy = cycle(
       REVIEW_STRATEGY_OPTIONS,
       next.routing.reviewStrategy,
       dir,
     );
-  } else if (idx === 1) {
+  } else if (row.kind === "rounds") {
     next.limits.maxRounds = cycle(
       ROUND_OPTIONS,
-      (ROUND_OPTIONS.includes(next.limits.maxRounds as (typeof ROUND_OPTIONS)[number])
+      (ROUND_OPTIONS.includes(
+        next.limits.maxRounds as (typeof ROUND_OPTIONS)[number],
+      )
         ? next.limits.maxRounds
         : 8) as (typeof ROUND_OPTIONS)[number],
       dir,
@@ -173,5 +172,17 @@ export function cycleAdvancedField(
       dir,
     );
   }
+  return next;
+}
+
+export function removeReviewerAt(
+  config: AssentorConfig,
+  index: number,
+): AssentorConfig {
+  const next = structuredClone(config);
+  if (index < 0 || index >= next.reviewers.length) {
+    return next;
+  }
+  next.reviewers.splice(index, 1);
   return next;
 }

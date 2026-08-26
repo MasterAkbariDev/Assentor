@@ -169,9 +169,17 @@ program
       }
       console.log("");
       const { printPreflight, runPreflight } = await import("./preflight.js");
+      const { defaultTransportForProvider } = await import(
+        "../review/backends.js"
+      );
       const result = await runPreflight({
         executor: options.executor,
-        reviewer: options.reviewer,
+        reviewers: [
+          {
+            provider: options.reviewer,
+            transport: defaultTransportForProvider(options.reviewer),
+          },
+        ],
         projectPath: options.project,
       });
       printPreflight(result);

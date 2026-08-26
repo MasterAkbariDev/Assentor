@@ -155,6 +155,26 @@ export async function readJsonl<T = unknown>(filePath: string): Promise<T[]> {
   }
 }
 
+/**
+ * Delete a task directory. Refuses paths outside `.assentor/tasks/`.
+ */
+export async function removeTaskDir(
+  projectPath: string,
+  taskId: string,
+): Promise<void> {
+  if (!taskId || taskId.includes("..") || taskId.includes("/") || taskId.includes("\\")) {
+    throw new Error("Invalid task id");
+  }
+  const paths = taskPaths(projectPath, taskId);
+  const tasksRoot = path.resolve(assentorRoot(projectPath), "tasks");
+  const resolved = path.resolve(paths.taskDir);
+  const prefix = tasksRoot.endsWith(path.sep) ? tasksRoot : `${tasksRoot}${path.sep}`;
+  if (resolved !== tasksRoot && !resolved.startsWith(prefix)) {
+    throw new Error("Refusing to delete a path outside .assentor/tasks");
+  }
+  await fs.rm(resolved, { recursive: true, force: true });
+}
+
 export async function listTaskIds(projectPath: string): Promise<string[]> {
   const root = path.join(assentorRoot(projectPath), "tasks");
   try {

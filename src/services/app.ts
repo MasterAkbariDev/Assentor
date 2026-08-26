@@ -8,6 +8,10 @@ import {
   type InstallPlan,
 } from "../executors/index.js";
 import { KeyVault, type StoredApiKey } from "../keys/index.js";
+import {
+  AUTO_SEEDED_KEY_NAMES,
+  listEnvKeyPresence,
+} from "../keys/resolve.js";
 import type { KeyStatus } from "../providers/ai/types.js";
 import { createSeededModelRegistry } from "../models/index.js";
 import { TaskStore, type TaskSnapshot } from "../persistence/store.js";
@@ -60,7 +64,7 @@ export async function createAssentorServices(
   const models = createSeededModelRegistry({ providers });
   const vault = new KeyVault(userRoot);
   await vault.load();
-  await seedEnvKeys(vault);
+  await pruneAutoSeededEnvKeys(vault);
 
   const agents = new AgentRegistry(userRoot);
   await agents.load();
@@ -91,43 +95,11 @@ export async function createAssentorServices(
   };
 }
 
-async function seedEnvKeys(vault: KeyVault): Promise<void> {
-  if (vault.list().length > 0) {
-    return;
-  }
-  const seeds: Array<{ provider: string; name: string; secret?: string }> = [
-    {
-      provider: "gemini",
-      name: "Env Gemini",
-      secret:
-        process.env.ASSENTOR_GEMINI_API_KEY ||
-        process.env.GEMINI_API_KEY ||
-        process.env.GOOGLE_API_KEY,
-    },
-    {
-      provider: "openai",
-      name: "Env OpenAI",
-      secret: process.env.ASSENTOR_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
-    },
-    {
-      provider: "openrouter",
-      name: "Env OpenRouter",
-      secret:
-        process.env.OPENROUTER_API_KEY || process.env.ASSENTOR_OPENROUTER_API_KEY,
-    },
-    {
-      provider: "qwen",
-      name: "Env Qwen",
-      secret: process.env.DASHSCOPE_API_KEY || process.env.ASSENTOR_QWEN_API_KEY,
-    },
-  ];
-  for (const seed of seeds) {
-    if (seed.secret) {
-      await vault.add({
-        provider: seed.provider,
-        name: seed.name,
-        secret: seed.secret,
-      });
+async function pruneAutoSeededEnvKeys(vault: KeyVault): Promise<void> {
+  const names = new Set<string>(AUTO_SEEDED_KEY_NAMES);
+  for (const key of vault.list()) {
+    if (names.has(key.name)) {
+      await vault.remove(key.id);
     }
   }
 }
@@ -143,14 +115,25 @@ export async function runFullDiagnostics(
 ): Promise<DiagnosticItem[]> {
   const items: DiagnosticItem[] = [];
 
+  const envHints = listEnvKeyPresence();
+
   for (const provider of services.providers.values()) {
     const keys = services.vault.list(provider.id).filter((k) => k.enabled);
+    const env = envHints.find((e) => e.provider === provider.id);
     if (keys.length === 0) {
-      items.push({
-        name: `provider:${provider.id}`,
-        ok: false,
-        detail: "No API keys configured (user vault ~/.assentor)",
-      });
+      if (env) {
+        items.push({
+          name: `provider:${provider.id}`,
+          ok: true,
+          detail: `from $${env.envName} (not stored in vault)`,
+        });
+      } else {
+        items.push({
+          name: `provider:${provider.id}`,
+          ok: false,
+          detail: "No API keys configured (user vault ~/.assentor)",
+        });
+      }
       continue;
     }
     items.push({
@@ -300,6 +283,13 @@ export async function listProjectTasks(
   return snaps;
 }
 
+export async function deleteProjectTask(
+  projectPath: string,
+  taskId: string,
+): Promise<void> {
+  await TaskStore.remove(projectPath, taskId);
+}
+
 export async function loadAuditEvents(
   services: AssentorServices,
   limit = 40,
@@ -319,7 +309,9 @@ export async function saveGlobalDefaults(
     "Updated global run defaults from TUI",
     {
       executor: config.executor.provider,
-      reviewer: config.reviewers[0]?.provider,
+      reviewer: config.reviewers
+        .map((r) => `${r.provider}/${r.transport}`)
+        .join(", "),
       routing: config.routing.strategy,
     },
   );

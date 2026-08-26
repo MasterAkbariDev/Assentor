@@ -32,6 +32,8 @@ import {
   PanelReviewer,
   TaskComplexityAnalyzer,
   specialtyAddendum,
+  selectReviewerBackends,
+  type ReviewerBackend,
 } from "../review/index.js";
 import { loadAssentorConfig, type AssentorConfig } from "../config/load.js";
 import { printPreflight, runPreflight } from "./preflight.js";
@@ -223,6 +225,114 @@ function reviewerNeedsApiKey(
   return provider === "openai" || provider === "gemini";
 }
 
+async function createMembersFromBackends(input: {
+  config: AssentorConfig;
+  projectPath: string;
+  prompt: string;
+  onStatus?: (message: string) => void;
+}): Promise<{
+  members: Reviewer[];
+  complexity: ReturnType<TaskComplexityAnalyzer["analyze"]>;
+  reviewStrategy: ReviewStrategy;
+}> {
+  const complexity = new TaskComplexityAnalyzer().analyze({
+    taskText: input.prompt,
+  });
+  const reviewStrategy = input.config.routing.reviewStrategy as ReviewStrategy;
+  const backends = selectReviewerBackends(input.config);
+  if (backends.length === 0) {
+    throw new Error(
+      "No reviewers configured. Add Gemini (API) or Claude (CLI) in Configure → Reviewers.",
+    );
+  }
+
+  const selectedProfiles = selectReviewers(
+    DEFAULT_AGENT_PROFILES,
+    reviewStrategy,
+    input.prompt,
+    {
+      min: 1,
+      max:
+        reviewStrategy === "FULL"
+          ? 7
+          : Math.max(backends.length, complexity.recommendedCount),
+    },
+    complexity,
+  );
+  const profiles =
+    selectedProfiles.length > 0
+      ? selectedProfiles
+      : DEFAULT_AGENT_PROFILES.filter((p) => p.kind === "reviewer");
+
+  const members: Reviewer[] = [];
+  for (let i = 0; i < backends.length; i++) {
+    const backend = backends[i]!;
+    const profile = profiles[i % profiles.length];
+    members.push(
+      await instantiateBackend(backend, input.config, input.projectPath, {
+        onStatus: (message) =>
+          input.onStatus?.(
+            `[${backend.name ?? backend.provider}${profile ? `/${profile.id}` : ""}] ${message}`,
+          ),
+        specialtyAddendum: profile
+          ? specialtyAddendum(profile.specialty)
+          : undefined,
+        logicalName: backend.name ?? profile?.id ?? backend.provider,
+      }),
+    );
+  }
+
+  return { members, complexity, reviewStrategy };
+}
+
+async function instantiateBackend(
+  backend: ReviewerBackend,
+  config: AssentorConfig,
+  projectPath: string,
+  extras: {
+    onStatus?: (message: string) => void;
+    specialtyAddendum?: string;
+    logicalName: string;
+  },
+): Promise<Reviewer> {
+  const transport = backend.transport ?? "api";
+  const resolvedKey = reviewerNeedsApiKey(backend.provider, transport)
+    ? await resolveProviderApiKey(backend.provider, projectPath, {
+        keyId: backend.keyId,
+      })
+    : undefined;
+  const fallbackProvider = backend.fallback?.provider;
+  const fallbackTransport = backend.fallback?.transport ?? "api";
+  const fallbackKey =
+    fallbackProvider &&
+    reviewerNeedsApiKey(fallbackProvider, fallbackTransport)
+      ? await resolveProviderApiKey(fallbackProvider, projectPath)
+      : undefined;
+
+  return createReviewer(backend.provider, {
+    onStatus: extras.onStatus,
+    model: backend.model ?? resolveReviewerModel(config, backend.provider),
+    apiKey: resolvedKey?.secret,
+    name: extras.logicalName,
+    transport,
+    specialtyAddendum: extras.specialtyAddendum,
+    ...(backend.fallback
+      ? {
+          fallback: {
+            transport: backend.fallback.transport,
+            provider: backend.fallback.provider,
+            model:
+              backend.fallback.model ??
+              (fallbackProvider
+                ? resolveReviewerModel(config, fallbackProvider)
+                : undefined),
+            apiKey: fallbackKey?.secret,
+          },
+        }
+      : {}),
+  });
+}
+
 export function buildContract(
   prompt: string,
   acceptanceCriteria: string[] = [],
@@ -241,9 +351,10 @@ export async function runAssentorTask(input: RunAssentorInput) {
   });
 
   const executorProvider = config.executor.provider;
-  const reviewerConfig = config.reviewers[0];
-  const reviewerProvider = reviewerConfig?.provider ?? "mock";
-  const reviewerTransport = reviewerConfig?.transport ?? "api";
+  const backends = selectReviewerBackends(config);
+  const reviewerLabel =
+    backends.map((b) => `${b.provider}/${b.transport ?? "api"}`).join(", ") ||
+    "none";
 
   if (executorProvider === "project-mutating") {
     throw new Error(
@@ -254,7 +365,10 @@ export async function runAssentorTask(input: RunAssentorInput) {
   if (!input.skipPreflight) {
     const preflight = await runPreflight({
       executor: executorProvider,
-      reviewer: reviewerProvider,
+      reviewers: backends.map((b) => ({
+        provider: b.provider,
+        transport: b.transport ?? "api",
+      })),
       projectPath,
     });
     printPreflight(preflight);
@@ -262,7 +376,8 @@ export async function runAssentorTask(input: RunAssentorInput) {
       throw new Error(
         "Preflight failed. Fix the issues above, then re-run.\n" +
           "Cursor: `agent login` or set CURSOR_API_KEY\n" +
-          "Gemini/OpenAI: assentor → API Keys (global ~/.assentor), or export GEMINI_API_KEY / OPENAI_API_KEY",
+          "Gemini/OpenAI: assentor → API Keys (global ~/.assentor), or export GEMINI_API_KEY / OPENAI_API_KEY\n" +
+          "Claude CLI: install `claude` and run `claude` once to log in",
       );
     }
   }
@@ -270,71 +385,21 @@ export async function runAssentorTask(input: RunAssentorInput) {
   const reporter = new RunReporter({
     verbose: input.verbose,
     executorName: executorProvider,
-    reviewerName: reviewerProvider,
+    reviewerName: reviewerLabel,
   });
 
   const executor = await createExecutor(executorProvider, projectPath, {
     onStatus: (status) => reporter.onExecutorStatus(status),
     timeoutMs: config.limits.maxRuntimeMinutes * 60_000,
   });
-  const resolvedKey = reviewerNeedsApiKey(reviewerProvider, reviewerTransport)
-    ? await resolveProviderApiKey(reviewerProvider, projectPath)
-    : undefined;
-  const fallbackProvider = reviewerConfig?.fallback?.provider;
-  const fallbackTransport = reviewerConfig?.fallback?.transport ?? "api";
-  const fallbackKey =
-    fallbackProvider &&
-    reviewerNeedsApiKey(fallbackProvider, fallbackTransport)
-      ? await resolveProviderApiKey(fallbackProvider, projectPath)
-      : undefined;
 
-  const complexity = new TaskComplexityAnalyzer().analyze({
-    taskText: input.prompt,
-  });
-  const reviewStrategy = config.routing.reviewStrategy as ReviewStrategy;
-  const selectedProfiles = selectReviewers(
-    DEFAULT_AGENT_PROFILES,
-    reviewStrategy,
-    input.prompt,
-    {
-      min: 1,
-      max:
-        reviewStrategy === "FULL"
-          ? 7
-          : Math.max(4, complexity.recommendedCount),
-    },
-    complexity,
-  );
-
-  const fallbackOpts = reviewerConfig?.fallback
-    ? {
-        fallback: {
-          transport: reviewerConfig.fallback.transport,
-          provider: reviewerConfig.fallback.provider,
-          model:
-            reviewerConfig.fallback.model ??
-            (fallbackProvider
-              ? resolveReviewerModel(config, fallbackProvider)
-              : undefined),
-          apiKey: fallbackKey?.secret,
-        },
-      }
-    : {};
-
-  const memberReviewers: Reviewer[] = [];
-  for (const profile of selectedProfiles) {
-    const member = await createReviewer(reviewerProvider, {
-      onStatus: (message) =>
-        reporter.onReviewerStatus(`[${profile.id}] ${message}`),
-      model: resolveReviewerModel(config, reviewerProvider),
-      apiKey: resolvedKey?.secret,
-      name: profile.id,
-      transport: reviewerTransport,
-      specialtyAddendum: specialtyAddendum(profile.specialty),
-      ...fallbackOpts,
+  const { members: memberReviewers, complexity, reviewStrategy } =
+    await createMembersFromBackends({
+      config,
+      projectPath,
+      prompt: input.prompt,
+      onStatus: (message) => reporter.onReviewerStatus(message),
     });
-    memberReviewers.push(member);
-  }
 
   const reviewer: Reviewer =
     reviewStrategy === "SINGLE" || memberReviewers.length <= 1
@@ -346,11 +411,6 @@ export async function runAssentorTask(input: RunAssentorInput) {
           acceptanceCriteria: input.acceptanceCriteria ?? [],
         });
 
-  if (resolvedKey) {
-    reporter.note(
-      `reviewer key: ${resolvedKey.source}${resolvedKey.masked ? ` (${resolvedKey.masked})` : ""}`,
-    );
-  }
   reporter.note(
     `review strategy: ${reviewStrategy} · reviewers: ${memberReviewers.map((r) => r.name).join(", ")} · complexity=${complexity.score}/${complexity.risk} · evidence=${complexity.evidenceDepth}`,
   );
@@ -377,7 +437,7 @@ export async function runAssentorTask(input: RunAssentorInput) {
   reporter.note(`task id: ${taskId}`);
   reporter.note(`project: ${projectPath}`);
   reporter.note(
-    `defaults: ${executorProvider} + ${reviewerProvider}/${reviewerTransport} · routing=${config.routing.strategy}`,
+    `defaults: ${executorProvider} + ${reviewerLabel} · routing=${config.routing.strategy}`,
   );
   reporter.note(`state dir: ${store.paths.taskDir}`);
 
@@ -442,13 +502,17 @@ export async function resumeAssentorTask(input: {
 
   const config = await loadAssentorConfig(projectPath);
   const executorProvider = config.executor.provider;
-  const reviewerConfig = config.reviewers[0];
-  const reviewerProvider = reviewerConfig?.provider ?? "mock";
-  const reviewerTransport = reviewerConfig?.transport ?? "api";
+  const backends = selectReviewerBackends(config);
+  const reviewerLabel =
+    backends.map((b) => `${b.provider}/${b.transport ?? "api"}`).join(", ") ||
+    "none";
 
   const preflight = await runPreflight({
     executor: executorProvider,
-    reviewer: reviewerProvider,
+    reviewers: backends.map((b) => ({
+      provider: b.provider,
+      transport: b.transport ?? "api",
+    })),
     projectPath,
   });
   printPreflight(preflight);
@@ -459,7 +523,7 @@ export async function resumeAssentorTask(input: {
   const reporter = new RunReporter({
     verbose: input.verbose,
     executorName: executorProvider,
-    reviewerName: reviewerProvider,
+    reviewerName: reviewerLabel,
   });
 
   reporter.note(
@@ -470,38 +534,24 @@ export async function resumeAssentorTask(input: {
     onStatus: (status) => reporter.onExecutorStatus(status),
     timeoutMs: config.limits.maxRuntimeMinutes * 60_000,
   });
-  const resumeKey = reviewerNeedsApiKey(reviewerProvider, reviewerTransport)
-    ? await resolveProviderApiKey(reviewerProvider, projectPath)
-    : undefined;
-  const fallbackProvider = reviewerConfig?.fallback?.provider;
-  const fallbackTransport = reviewerConfig?.fallback?.transport ?? "api";
-  const fallbackKey =
-    fallbackProvider &&
-    reviewerNeedsApiKey(fallbackProvider, fallbackTransport)
-      ? await resolveProviderApiKey(fallbackProvider, projectPath)
-      : undefined;
 
-  const reviewer = await createReviewer(reviewerProvider, {
-    onStatus: (message) => reporter.onReviewerStatus(message),
-    model: resolveReviewerModel(config, reviewerProvider),
-    apiKey: resumeKey?.secret,
-    name: reviewerConfig?.name ?? reviewerProvider,
-    transport: reviewerTransport,
-    ...(reviewerConfig?.fallback
-      ? {
-          fallback: {
-            transport: reviewerConfig.fallback.transport,
-            provider: reviewerConfig.fallback.provider,
-            model:
-              reviewerConfig.fallback.model ??
-              (fallbackProvider
-                ? resolveReviewerModel(config, fallbackProvider)
-                : undefined),
-            apiKey: fallbackKey?.secret,
-          },
-        }
-      : {}),
-  });
+  const { members: memberReviewers, reviewStrategy } =
+    await createMembersFromBackends({
+      config,
+      projectPath,
+      prompt: resume.snapshot.contract.goal,
+      onStatus: (message) => reporter.onReviewerStatus(message),
+    });
+
+  const reviewer: Reviewer =
+    reviewStrategy === "SINGLE" || memberReviewers.length <= 1
+      ? memberReviewers[0]!
+      : new PanelReviewer({
+          name: `panel:${reviewStrategy.toLowerCase()}`,
+          reviewers: memberReviewers,
+          goal: resume.snapshot.contract.goal,
+          acceptanceCriteria: resume.snapshot.contract.acceptanceCriteria ?? [],
+        });
 
   try {
     const supervisor = new Supervisor({

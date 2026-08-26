@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { parseAssentorConfig, type AssentorConfig } from "./schema.js";
+import { defaultTransportForProvider } from "../review/backends.js";
 import {
   assentorConfigPath,
   projectConfigPath,
@@ -96,12 +97,13 @@ export async function loadAssentorConfig(
       overrides.executor as AssentorConfig["executor"]["provider"];
   }
   if (overrides.reviewer) {
+    const provider =
+      overrides.reviewer as AssentorConfig["reviewers"][number]["provider"];
     parsed.reviewers = [
       {
-        provider:
-          overrides.reviewer as AssentorConfig["reviewers"][number]["provider"],
+        provider,
         role: "general",
-        transport: "api",
+        transport: defaultTransportForProvider(provider),
       },
     ];
   }
@@ -128,6 +130,7 @@ function toSerializable(config: AssentorConfig) {
       transport: r.transport,
       ...(r.name ? { name: r.name } : {}),
       ...(r.model ? { model: r.model } : {}),
+      ...(r.keyId ? { keyId: r.keyId } : {}),
       ...(r.fallback ? { fallback: r.fallback } : {}),
     })),
     routing: {

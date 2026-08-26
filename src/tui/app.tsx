@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useApp, useInput, render } from "ink";
+import { useApp, useInput, render, Box, Text } from "ink";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import {
@@ -11,6 +11,7 @@ import {
   detectExecutors,
   getLocalVersionSync,
   listProjectTasks,
+  deleteProjectTask,
   performUninstall,
   performUpdate,
   performUpdateCheck,
@@ -21,6 +22,13 @@ import {
 } from "../services/app.js";
 import { loadAssentorConfig, type AssentorConfig } from "../config/load.js";
 import { explainReviewPlan } from "../review/complexity.js";
+import {
+  REVIEWER_ADD_PROVIDERS,
+  defaultTransportForProvider,
+  transportsForProvider,
+} from "../review/backends.js";
+import { listEnvKeyPresence } from "../keys/resolve.js";
+import { isFailedResumeStatus } from "../orchestrator/state-machine.js";
 import type { UpdateCheckResult } from "../self/index.js";
 import type { TaskSnapshot } from "../persistence/store.js";
 import type { ComplexityAnalysis } from "../review/complexity.js";
@@ -30,7 +38,9 @@ import {
   HelpOverlay,
   ReviewPlanDialog,
   StartTaskDialog,
+  AddReviewerDialog,
 } from "./components/overlays.js";
+import type { AddReviewerStep } from "./components/overlays.js";
 import { Shell } from "./layout/shell.js";
 import {
   createInitialUiState,
@@ -49,11 +59,13 @@ import {
   buildAdvancedRows,
   buildAiRows,
   buildReviewRows,
+  buildReviewMenu,
   CONFIG_MENU,
   ConfigurationScreen,
   cycleAiField,
   cycleAdvancedField,
   cycleReviewField,
+  removeReviewerAt,
   DiagnosticsScreen,
   type ExecutorRow,
   HelpScreen,
@@ -115,6 +127,15 @@ function App({
   const [planGoal, setPlanGoal] = useState("");
   const [planCapturing, setPlanCapturing] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
+  const [addReviewerStep, setAddReviewerStep] =
+    useState<AddReviewerStep>("provider");
+  const [addReviewerProviderIdx, setAddReviewerProviderIdx] = useState(0);
+  const [addReviewerTransportIdx, setAddReviewerTransportIdx] = useState(0);
+  const [pendingDeleteTaskId, setPendingDeleteTaskId] = useState<string | null>(
+    null,
+  );
+
+  const envHints = useMemo(() => listEnvKeyPresence(), [keysVersion]);
 
   const keys = useMemo(() => {
     void keysVersion;
@@ -135,6 +156,21 @@ function App({
     return [...new Set(ids)];
   }, [models]);
 
+  const addReviewerProvider =
+    REVIEWER_ADD_PROVIDERS[addReviewerProviderIdx] ?? "gemini";
+  const addReviewerTransports = transportsForProvider(addReviewerProvider);
+  const addReviewerKeyChoices = useMemo(() => {
+    const providerKeys = keys.filter((k) => k.provider === addReviewerProvider);
+    return [
+      ...providerKeys.map((k) => ({
+        id: k.id,
+        name: k.name,
+        label: `${k.name}  ${k.masked}`,
+      })),
+      { id: undefined as string | undefined, name: undefined, label: "Use environment / resolve at run time" },
+    ];
+  }, [keys, addReviewerProvider]);
+
   const paletteCommands = useMemo(
     () => filterPaletteCommands(paletteQuery),
     [paletteQuery],
@@ -145,7 +181,14 @@ function App({
     if (ui.dialog === "add-key") {
       return addStep === "provider" ? KEY_PROVIDERS.length : 1;
     }
-    if (ui.dialog === "confirm-uninstall") return 2;
+    if (ui.dialog === "add-reviewer") {
+      if (addReviewerStep === "provider") return REVIEWER_ADD_PROVIDERS.length;
+      if (addReviewerStep === "transport")
+        return Math.max(addReviewerTransports.length, 1);
+      return Math.max(addReviewerKeyChoices.length, 1);
+    }
+    if (ui.dialog === "confirm-uninstall" || ui.dialog === "confirm-delete-task")
+      return 2;
     if (ui.dialog === "review-plan" || ui.dialog === "help") return 1;
     if (ui.dialog === "start-task") return 1;
 
@@ -186,6 +229,9 @@ function App({
     ui.selectedTaskId,
     ui.configSection,
     addStep,
+    addReviewerStep,
+    addReviewerTransports.length,
+    addReviewerKeyChoices.length,
     config,
     tasks.length,
     agents.length,
@@ -345,6 +391,56 @@ function App({
     setMessage("Saved defaults to ~/.assentor/config.yaml");
   }
 
+  function resetAddReviewer() {
+    setAddReviewerStep("provider");
+    setAddReviewerProviderIdx(0);
+    setAddReviewerTransportIdx(0);
+  }
+
+  function openAddReviewer() {
+    resetAddReviewer();
+    patchUi({
+      dialog: "add-reviewer",
+      focus: "dialog",
+      mainIndex: 0,
+      capturingText: false,
+    });
+  }
+
+  function commitReviewer(entry: {
+    provider: (typeof REVIEWER_ADD_PROVIDERS)[number];
+    transport: "api" | "cli";
+    keyId?: string;
+    name?: string;
+  }) {
+    setConfig((c) => {
+      const next = structuredClone(c);
+      next.reviewers = [
+        ...next.reviewers,
+        {
+          provider: entry.provider,
+          role: "general",
+          transport: entry.transport,
+          ...(entry.keyId ? { keyId: entry.keyId } : {}),
+          ...(entry.name ? { name: entry.name } : {}),
+        },
+      ];
+      return next;
+    });
+    resetAddReviewer();
+    patchUi({ dialog: "none", focus: "main", configSection: "review" });
+    setMessage(
+      `Added ${entry.provider} (${entry.transport}) — press s to save`,
+    );
+  }
+
+  function currentTaskForAction(): TaskSnapshot | undefined {
+    if (ui.selectedTaskId) {
+      return tasks.find((t) => t.taskId === ui.selectedTaskId);
+    }
+    return tasks[ui.mainIndex];
+  }
+
   function applyConfigCycle(dir: 1 | -1) {
     const idx = ui.mainIndex;
     if (ui.configSection === "ai") {
@@ -427,6 +523,80 @@ function App({
 
     if (ui.dialog === "start-task") {
       await advanceStartTask();
+      return;
+    }
+
+    if (ui.dialog === "add-reviewer") {
+      if (addReviewerStep === "provider") {
+        const idx = ui.mainIndex;
+        const provider = REVIEWER_ADD_PROVIDERS[idx] ?? "mock";
+        setAddReviewerProviderIdx(idx);
+        setAddReviewerTransportIdx(0);
+        const transports = transportsForProvider(provider);
+        if (transports.length <= 1) {
+          const transport = transports[0] ?? defaultTransportForProvider(provider);
+          if (transport === "cli" || provider === "mock") {
+            commitReviewer({ provider, transport });
+            return;
+          }
+          setAddReviewerStep("key");
+          patchUi({ mainIndex: 0 });
+          return;
+        }
+        setAddReviewerStep("transport");
+        patchUi({ mainIndex: 0 });
+        return;
+      }
+      if (addReviewerStep === "transport") {
+        const transport =
+          addReviewerTransports[ui.mainIndex] ??
+          defaultTransportForProvider(addReviewerProvider);
+        setAddReviewerTransportIdx(ui.mainIndex);
+        if (transport === "cli" || addReviewerProvider === "mock") {
+          commitReviewer({ provider: addReviewerProvider, transport });
+          return;
+        }
+        setAddReviewerStep("key");
+        patchUi({ mainIndex: 0 });
+        return;
+      }
+      const choice = addReviewerKeyChoices[ui.mainIndex];
+      const transport =
+        addReviewerTransports[addReviewerTransportIdx] ??
+        defaultTransportForProvider(addReviewerProvider);
+      commitReviewer({
+        provider: addReviewerProvider,
+        transport,
+        keyId: choice?.id,
+        name: choice?.name,
+      });
+      return;
+    }
+
+    if (ui.dialog === "confirm-delete-task") {
+      if (ui.mainIndex === 0 && pendingDeleteTaskId) {
+        try {
+          await deleteProjectTask(services.projectPath, pendingDeleteTaskId);
+          const next = await listProjectTasks(services.projectPath);
+          setTasks(next);
+          setPendingDeleteTaskId(null);
+          patchUi({
+            dialog: "none",
+            selectedTaskId: null,
+            focus: "main",
+            mainIndex: 0,
+          });
+          setMessage("Task deleted");
+        } catch (error) {
+          setMessage(
+            error instanceof Error ? error.message : "Could not delete task",
+          );
+          patchUi({ dialog: "none", focus: "main" });
+        }
+      } else {
+        setPendingDeleteTaskId(null);
+        patchUi({ dialog: "none", focus: "main" });
+      }
       return;
     }
 
@@ -515,12 +685,6 @@ function App({
 
     if (ui.screen === "tasks") {
       if (ui.selectedTaskId) {
-        onHandoff({
-          kind: "resume",
-          projectPath: services.projectPath,
-          taskId: ui.selectedTaskId,
-        });
-        exit();
         return;
       }
       const task = tasks[ui.mainIndex];
@@ -563,17 +727,26 @@ function App({
         }
         return;
       }
-      if (
-        ui.configSection === "ai" ||
-        ui.configSection === "review" ||
-        ui.configSection === "advanced"
-      ) {
+      if (ui.configSection === "review") {
+        const row = buildReviewMenu(config)[ui.mainIndex];
+        if (row?.kind === "add") {
+          openAddReviewer();
+          return;
+        }
+        if (row?.kind === "save") {
+          await saveConfigDefaults();
+          return;
+        }
+        if (row?.kind === "strategy" || row?.kind === "rounds") {
+          applyConfigCycle(1);
+        }
+        return;
+      }
+      if (ui.configSection === "ai" || ui.configSection === "advanced") {
         const rows =
           ui.configSection === "ai"
             ? buildAiRows(config)
-            : ui.configSection === "review"
-              ? buildReviewRows(config)
-              : buildAdvancedRows(config);
+            : buildAdvancedRows(config);
         if (ui.mainIndex === rows.length - 1) {
           await saveConfigDefaults();
           return;
@@ -782,6 +955,57 @@ function App({
       return;
     }
 
+    if (action.type === "reviewers_add") {
+      openAddReviewer();
+      setUi((s) => reduceUi(s, action));
+      return;
+    }
+
+    if (action.type === "reviewers_delete") {
+      const row = buildReviewMenu(config)[ui.mainIndex];
+      if (row?.kind !== "member") {
+        setMessage("Select a reviewer row to delete");
+        return;
+      }
+      setConfig((c) => removeReviewerAt(c, row.index));
+      setMessage("Removed reviewer — press s to save");
+      return;
+    }
+
+    if (action.type === "task_resume") {
+      const task = currentTaskForAction();
+      if (!task) {
+        setMessage("Select a task first");
+        return;
+      }
+      if (!isFailedResumeStatus(task.status)) {
+        setMessage("Resume is for FAILED or TIMEOUT tasks only");
+        return;
+      }
+      onHandoff({
+        kind: "resume",
+        projectPath: services.projectPath,
+        taskId: task.taskId,
+      });
+      exit();
+      return;
+    }
+
+    if (action.type === "task_delete") {
+      const task = currentTaskForAction();
+      if (!task) {
+        setMessage("Select a task first");
+        return;
+      }
+      setPendingDeleteTaskId(task.taskId);
+      patchUi({
+        dialog: "confirm-delete-task",
+        focus: "dialog",
+        mainIndex: 1,
+      });
+      return;
+    }
+
     if (action.type === "keys_add") {
       setAddStep("provider");
       setUi((s) => reduceUi(s, action));
@@ -929,7 +1153,7 @@ function App({
           goal={taskPrompt}
           explanation={
             reviewPlan && startTaskStep === "confirm"
-              ? explainReviewPlan(reviewPlan)
+              ? explainReviewPlan(reviewPlan, config.reviewers)
               : null
           }
         />
@@ -939,7 +1163,7 @@ function App({
         <ReviewPlanDialog
           capturing={planCapturing}
           goal={planGoal}
-          explanation={reviewPlan ? explainReviewPlan(reviewPlan) : null}
+          explanation={reviewPlan ? explainReviewPlan(reviewPlan, config.reviewers) : null}
         />
       ) : null}
 
@@ -950,6 +1174,41 @@ function App({
             selected={ui.mainIndex}
           />
         </Dialog>
+      ) : null}
+
+      {ui.dialog === "confirm-delete-task" ? (
+        <Dialog title="Delete this task?">
+          <Box flexDirection="column">
+            <Text dimColor>
+              Removes .assentor/tasks/{pendingDeleteTaskId?.slice(0, 12)}… This
+              cannot be undone.
+            </Text>
+            <MenuList
+              items={["Yes, delete task", "Cancel"]}
+              selected={ui.mainIndex}
+            />
+          </Box>
+        </Dialog>
+      ) : null}
+
+      {ui.dialog === "add-reviewer" ? (
+        <AddReviewerDialog
+          step={addReviewerStep}
+          providers={[...REVIEWER_ADD_PROVIDERS]}
+          providerIdx={
+            addReviewerStep === "provider"
+              ? ui.mainIndex
+              : addReviewerProviderIdx
+          }
+          transports={addReviewerTransports}
+          transportIdx={
+            addReviewerStep === "transport"
+              ? ui.mainIndex
+              : addReviewerTransportIdx
+          }
+          keyLabels={addReviewerKeyChoices.map((c) => c.label)}
+          keyIdx={addReviewerStep === "key" ? ui.mainIndex : 0}
+        />
       ) : null}
 
       {ui.dialog === "add-key" ? (
@@ -1009,6 +1268,7 @@ function App({
               config={config}
               keys={keys}
               executorRows={executorRows}
+              envHints={envHints}
             />
           ) : null}
           {ui.screen === "diagnostics" ? (

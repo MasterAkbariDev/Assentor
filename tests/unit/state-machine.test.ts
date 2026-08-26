@@ -6,6 +6,7 @@ import {
   InvalidTransitionError,
   isTerminalState,
   isRetryableState,
+  isFailedResumeStatus,
   normalizeTaskState,
   TaskState,
   TRANSITIONS,
@@ -44,6 +45,10 @@ describe("state machine", () => {
     expect(isRetryableState(TaskState.Done)).toBe(false);
     expect(isRetryableState(TaskState.Cancelled)).toBe(false);
     expect(isRetryableState(TaskState.Executing)).toBe(true);
+    expect(isFailedResumeStatus(TaskState.Failed)).toBe(true);
+    expect(isFailedResumeStatus(TaskState.Timeout)).toBe(true);
+    expect(isFailedResumeStatus(TaskState.HumanRequired)).toBe(false);
+    expect(isFailedResumeStatus(TaskState.Executing)).toBe(false);
   });
 
   it("allows the happy-path startup chain", () => {

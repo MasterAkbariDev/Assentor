@@ -27,8 +27,11 @@ export function AgentsScreen({
           and reviewers that inspect evidence.
         </Text>
         <Text dimColor>
-          Defaults load automatically on first run. Use Configuration → AI to
-          change providers.
+          These are specialty roles (architecture, security, testing) — not the
+          Gemini/Claude backends you add. Browse only.
+        </Text>
+        <Text dimColor>
+          Add who actually reviews under Configuration → Reviewers.
         </Text>
       </Box>
     );
@@ -48,7 +51,8 @@ export function AgentsScreen({
   return (
     <Box flexDirection="column">
       <Text dimColor>
-        Executors implement. Reviewers inspect. Select for details.
+        Specialty roles Assentor can assign. Add Gemini/Claude under Configure →
+        Reviewers — this list is view-only.
       </Text>
       <Box marginTop={1}>
         <MenuList items={labels} selected={selected} focused={focused} />

@@ -222,16 +222,29 @@ const ROLE_LABEL: Record<string, string> = {
   adjudicator: "Adjudicator",
 };
 
+export interface ReviewPlanBackend {
+  provider: string;
+  transport?: string;
+  name?: string;
+}
+
 export interface ReviewPlanExplanation {
   headline: string;
   reviewers: string[];
   reasons: string[];
   depthLabel: string;
   riskLabel: string;
+  /** Configured backends (Gemini via API, Claude via CLI, …). */
+  backends: string[];
+  /** Shown when the user has not added any reviewers yet. */
+  backendHint?: string;
 }
 
 /** Plain-language explanation of a complexity analysis for the TUI/CLI. */
-export function explainReviewPlan(plan: ComplexityAnalysis): ReviewPlanExplanation {
+export function explainReviewPlan(
+  plan: ComplexityAnalysis,
+  backends?: ReviewPlanBackend[],
+): ReviewPlanExplanation {
   const reviewers = plan.recommendedRoles.map(
     (role) => ROLE_LABEL[role] ?? role,
   );
@@ -239,8 +252,31 @@ export function explainReviewPlan(plan: ComplexityAnalysis): ReviewPlanExplanati
   const count = plan.recommendedCount;
   const headline =
     count === 1
-      ? "Assentor recommends 1 reviewer for this goal."
-      : `Assentor recommends ${count} reviewers for this goal.`;
+      ? "Assentor recommends 1 reviewer specialty for this goal."
+      : `Assentor recommends ${count} reviewer specialties for this goal.`;
+
+  const backendLabels = (backends ?? []).map((entry) => {
+    const via = entry.transport === "cli" ? "CLI" : "API";
+    const provider =
+      entry.provider === "gemini"
+        ? "Gemini"
+        : entry.provider === "openai"
+          ? "OpenAI"
+          : entry.provider === "claude"
+            ? "Claude"
+            : entry.provider === "gemini-cli"
+              ? "Gemini CLI"
+              : entry.provider === "mock"
+                ? "Mock"
+                : entry.provider;
+    const name = entry.name?.trim();
+    return name ? `${provider} via ${via} (${name})` : `${provider} via ${via}`;
+  });
+
+  const backendHint =
+    backends && backends.length === 0
+      ? "Add reviewers in Configure → Reviewers (Gemini via a key, Claude via CLI, …)."
+      : undefined;
 
   return {
     headline,
@@ -250,5 +286,7 @@ export function explainReviewPlan(plan: ComplexityAnalysis): ReviewPlanExplanati
       : ["the goal is small — a lighter review is enough"],
     depthLabel: explainEvidenceDepth(plan.evidenceDepth),
     riskLabel: explainRisk(plan.risk),
+    backends: backendLabels,
+    backendHint,
   };
 }

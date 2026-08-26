@@ -240,4 +240,23 @@ describe("TaskStore persistence", () => {
 
     expect(result.status).toBe(TaskState.Done);
   });
+
+  it("deletes a task directory", async () => {
+    const projectPath = await makeProject();
+    const taskId = createTaskId();
+    const store = await TaskStore.create({
+      projectPath,
+      taskId,
+      conversationId: createTaskId(),
+      contract: createEmptyContract("Delete me"),
+      budgets: createBudgets({ maxRounds: 2, maxMessages: 10 }),
+      executor: "mock",
+      reviewers: ["mock"],
+    });
+    expect(await fs.stat(store.paths.taskDir)).toBeTruthy();
+    await TaskStore.remove(projectPath, taskId);
+    await expect(fs.stat(store.paths.taskDir)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
 });

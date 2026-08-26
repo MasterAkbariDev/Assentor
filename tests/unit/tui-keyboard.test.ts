@@ -61,10 +61,20 @@ describe("TUI keyboard map (§44 + UX rewrite)", () => {
     expect(state.focus).toBe("nav");
   });
 
-  it("workspace shortcuts n and r", () => {
-    const state = createInitialUiState({ screen: "workspace", focus: "main" });
-    expect(mapKeyToAction(state, { input: "n" }).type).toBe("start_task");
-    expect(mapKeyToAction(state, { input: "r" }).type).toBe("review_plan");
+  it("tasks r resumes and d deletes", () => {
+    const state = createInitialUiState({ screen: "tasks", focus: "main" });
+    expect(mapKeyToAction(state, { input: "r" }).type).toBe("task_resume");
+    expect(mapKeyToAction(state, { input: "d" }).type).toBe("task_delete");
+  });
+
+  it("reviewers a/d on configure review", () => {
+    const state = createInitialUiState({
+      screen: "configuration",
+      configSection: "review",
+      focus: "main",
+    });
+    expect(mapKeyToAction(state, { input: "a" }).type).toBe("reviewers_add");
+    expect(mapKeyToAction(state, { input: "d" }).type).toBe("reviewers_delete");
   });
 
   it("tab toggles nav/main", () => {

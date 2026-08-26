@@ -15,6 +15,7 @@ import {
   readJsonl,
   taskPaths,
   writeJsonAtomic,
+  removeTaskDir,
   type TaskPaths,
 } from "./paths.js";
 
@@ -154,6 +155,10 @@ export class TaskStore {
 
   static async list(projectPath: string): Promise<string[]> {
     return listTaskIds(projectPath);
+  }
+
+  static async remove(projectPath: string, taskId: string): Promise<void> {
+    await removeTaskDir(projectPath, taskId);
   }
 
   async saveSnapshot(snapshot: TaskSnapshot): Promise<void> {

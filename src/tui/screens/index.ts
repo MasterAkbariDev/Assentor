@@ -12,14 +12,17 @@ export {
   buildDefaultRows,
   buildAiRows,
   buildReviewRows,
+  buildReviewMenu,
   buildAdvancedRows,
   cycleAiField,
   cycleReviewField,
   cycleAdvancedField,
+  removeReviewerAt,
   EXECUTOR_OPTIONS,
   REVIEWER_OPTIONS,
   ROUTING_OPTIONS,
   REVIEW_STRATEGY_OPTIONS,
   ROUND_OPTIONS,
 } from "./settings.js";
+export type { ReviewMenuRow } from "./settings.js";
 export { MenuList, maskPreview, cycle } from "./shared.js";

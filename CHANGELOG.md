@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-08-26
+
+### Added
+
+- Configure → Reviewers lets you add mixed backends (Gemini via API key, Claude via CLI, …)
+- Tasks screen: resume failed/timed-out runs (`r`) and delete history (`d`)
+
+### Changed
+
+- Removed the global “reviewer runs via API or CLI” toggle; each reviewer has its own transport
+- A run uses the reviewers you added (not N clones of the first one)
+- “Explain reviewers for a goal” lists your backends plus recommended specialties (offline, no LLM)
+- API Keys no longer copies env vars into the vault as fake “Env Gemini” rows
+- Diagnostics nav label no longer wraps
+
 ## [0.3.2] — 2026-08-26
 
 ### Changed
@@ -93,7 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logical agents, diagnostics, and resumable task state under `.assentor/tasks/`
 - One-line install scripts for macOS/Linux and Windows
 
-[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/MasterAkbariDev/Assentor/compare/v0.2.2...v0.3.0

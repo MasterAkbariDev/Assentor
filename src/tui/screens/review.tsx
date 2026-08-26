@@ -22,14 +22,14 @@ export function ReviewScreen({
   focused: boolean;
   plan: ComplexityAnalysis | null;
 }) {
-  const explained = plan ? explainReviewPlan(plan) : null;
+  const explained = plan ? explainReviewPlan(plan, config.reviewers) : null;
 
   return (
     <Box flexDirection="column">
       <Text bold>Review</Text>
       <Text dimColor>
-        Reviewers inspect the executor&apos;s work. Assentor chooses how many
-        from the task — you usually leave this on Auto.
+        Reviewers inspect the executor&apos;s work. You add the backends
+        (Gemini API, Claude CLI, …) under Configure → Reviewers.
       </Text>
 
       <Box marginTop={1} flexDirection="column">
@@ -47,10 +47,17 @@ export function ReviewScreen({
         <Box marginTop={1} flexDirection="column">
           <Text bold>{explained.headline}</Text>
           <Text>
-            {explained.reviewers.join(" · ")}
+            Specialties {explained.reviewers.join(" · ")}
             {"  "}
             <Badge label={explained.riskLabel} tone={riskTone(plan!.risk)} />
           </Text>
+          {explained.backends.length > 0 ? (
+            <Text dimColor>
+              Your reviewers: {explained.backends.join(" · ")}
+            </Text>
+          ) : explained.backendHint ? (
+            <Text color="yellow">{explained.backendHint}</Text>
+          ) : null}
           <Text dimColor>Evidence: {explained.depthLabel}</Text>
           {explained.reasons.map((reason) => (
             <Text key={reason} dimColor>
@@ -61,8 +68,9 @@ export function ReviewScreen({
       ) : (
         <Box marginTop={1}>
           <Text dimColor>
-            Press <Text color="cyan">p</Text> and type a goal to see who would
-            review it and why.
+            Press <Text color="cyan">p</Text> and type a goal. Assentor scores
+            it offline (no LLM) and shows which of your reviewers would run,
+            plus why specialties like Security were suggested.
           </Text>
         </Box>
       )}

@@ -4,6 +4,7 @@ export {
   TRANSITIONS,
   isTerminalState,
   isRetryableState,
+  isFailedResumeStatus,
   canTransition,
   transition,
   allowedTransitions,

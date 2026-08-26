@@ -116,6 +116,11 @@ export function isRetryableState(state: TaskState): boolean {
   );
 }
 
+/** TUI Resume button: timed-out / failed runs only (not in-progress). */
+export function isFailedResumeStatus(state: string): boolean {
+  return state === TaskState.Failed || state === TaskState.Timeout;
+}
+
 export function canTransition(from: TaskState, to: TaskState): boolean {
   const allowed = TRANSITIONS[from];
   return allowed.includes(to);

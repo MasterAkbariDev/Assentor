@@ -86,7 +86,7 @@ export function Shell({
       <Box flexDirection="row" flexGrow={1} marginTop={0}>
         <Box
           flexDirection="column"
-          width={16}
+          width={20}
           borderStyle="single"
           borderColor={focus === "nav" ? "green" : "gray"}
           paddingX={1}

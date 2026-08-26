@@ -23,6 +23,8 @@ export const AssentorConfigSchema = z.object({
         /** How Assentor reaches the reviewer — identity stays separate. */
         transport: z.enum(["api", "cli"]).default("api"),
         model: z.string().optional(),
+        /** Optional vault key id when transport is API. */
+        keyId: z.string().optional(),
         /** Optional fallback transport/provider if primary fails. */
         fallback: z
           .object({

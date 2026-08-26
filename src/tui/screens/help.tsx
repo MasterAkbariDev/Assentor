@@ -15,8 +15,8 @@ export function HelpScreen() {
         </Text>
         <Text>Workspace — start / continue / review</Text>
         <Text>Tasks — history and resume</Text>
-        <Text>Agents — who implements & who reviews</Text>
-        <Text>Review — complexity plan & strategy</Text>
+        <Text>Agents — specialty roles (view-only)</Text>
+        <Text>Review — explain who would review a goal</Text>
       </Box>
 
       <Box marginTop={1} flexDirection="column">
@@ -25,7 +25,7 @@ export function HelpScreen() {
         </Text>
         <Text>/ or Ctrl+K — command palette</Text>
         <Text>? — contextual help overlay</Text>
-        <Text>n — new task · r/p — review plan</Text>
+        <Text>n — new task · r/p — explain reviewers · Tasks r resume / d delete</Text>
       </Box>
 
       <Box marginTop={1} flexDirection="column">

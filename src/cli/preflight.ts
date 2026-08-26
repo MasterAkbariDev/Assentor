@@ -1,9 +1,15 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import {
   isCursorAppBinary,
   resolveCursorBinary,
 } from "../providers/executors/cursor/index.js";
+import {
+  resolveCliAdapter,
+  resolveCliBinary,
+} from "../providers/reviewers/cli/index.js";
+import { findOnPath } from "../executors/registry.js";
 import { resolveProviderApiKey } from "../keys/resolve.js";
 
 export interface PreflightCheck {
@@ -17,12 +23,19 @@ export interface PreflightResult {
   checks: PreflightCheck[];
 }
 
+export interface PreflightReviewer {
+  provider: string;
+  transport?: "api" | "cli";
+}
+
 /**
  * Fail-fast environment checks before starting an Assentor run.
  */
 export async function runPreflight(input: {
   executor: string;
-  reviewer: string;
+  /** @deprecated Prefer `reviewers` for mixed API/CLI panels. */
+  reviewer?: string;
+  reviewers?: PreflightReviewer[];
   /** Target project directory for Cursor workspace trust / probe cwd. */
   projectPath?: string;
 }): Promise<PreflightResult> {
@@ -45,22 +58,99 @@ export async function runPreflight(input: {
     });
   }
 
-  if (input.reviewer === "gemini") {
-    checks.push(await checkReviewerKey("gemini", projectPath));
-  } else if (input.reviewer === "openai") {
-    checks.push(await checkReviewerKey("openai", projectPath));
-  } else if (input.reviewer === "mock") {
-    checks.push({
-      name: "reviewer:mock",
-      ok: true,
-      detail: "mock reviewer (no network)",
-    });
+  const reviewerList: PreflightReviewer[] =
+    input.reviewers && input.reviewers.length > 0
+      ? input.reviewers
+      : input.reviewer
+        ? [{ provider: input.reviewer, transport: "api" }]
+        : [];
+
+  for (const entry of reviewerList) {
+    checks.push(await checkReviewerEntry(entry, projectPath));
   }
 
   return {
     ok: checks.every((check) => check.ok),
     checks,
   };
+}
+
+async function checkReviewerEntry(
+  entry: PreflightReviewer,
+  projectPath: string,
+): Promise<PreflightCheck> {
+  const transport = entry.transport ?? "api";
+  const provider = entry.provider;
+
+  if (provider === "mock") {
+    return {
+      name: "reviewer:mock",
+      ok: true,
+      detail: "mock reviewer (no network)",
+    };
+  }
+
+  if (transport === "cli") {
+    return checkReviewerCli(provider);
+  }
+
+  if (provider === "gemini" || provider === "openai") {
+    return checkReviewerKey(provider, projectPath);
+  }
+
+  if (provider === "claude" || provider === "gemini-cli") {
+    return {
+      name: `reviewer:${provider}`,
+      ok: false,
+      detail: `Provider "${provider}" requires CLI transport`,
+    };
+  }
+
+  return {
+    name: `reviewer:${provider}`,
+    ok: false,
+    detail: `Unknown reviewer provider "${provider}"`,
+  };
+}
+
+function checkReviewerCli(provider: string): PreflightCheck {
+  try {
+    const adapter = resolveCliAdapter(provider);
+    if (adapter === "mock") {
+      return {
+        name: `reviewer:${provider}`,
+        ok: true,
+        detail: "mock CLI reviewer",
+      };
+    }
+    const binary = resolveCliBinary(adapter);
+    const resolved = existsSync(binary)
+      ? binary
+      : findOnPath(path.basename(binary));
+    if (resolved) {
+      return {
+        name: `reviewer:${provider}`,
+        ok: true,
+        detail: `CLI binary ${resolved}`,
+      };
+    }
+    const hint =
+      adapter === "claude"
+        ? "Install Claude Code CLI (`claude`) and log in once"
+        : "Install Gemini CLI (`gemini`) and log in once";
+    return {
+      name: `reviewer:${provider}`,
+      ok: false,
+      detail: `${binary} not found on PATH — ${hint}`,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      name: `reviewer:${provider}`,
+      ok: false,
+      detail: message,
+    };
+  }
 }
 
 async function checkReviewerKey(

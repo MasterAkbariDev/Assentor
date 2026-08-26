@@ -81,8 +81,12 @@ export function WorkspaceScreen({
       <Box marginTop={1} flexDirection="column">
         <Text dimColor>
           Defaults {config.executor.provider} /{" "}
-          {config.reviewers[0]?.provider ?? "mock"} /{" "}
-          {config.routing.reviewStrategy}
+          {config.reviewers.length === 0
+            ? "no reviewers"
+            : config.reviewers
+                .map((r) => `${r.provider}/${r.transport ?? "api"}`)
+                .join(" + ")}{" "}
+          / {config.routing.reviewStrategy}
         </Text>
         <Text dimColor>
           Keys {keyHealthy}/{keyTotal} healthy

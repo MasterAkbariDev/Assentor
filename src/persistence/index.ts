@@ -10,6 +10,7 @@ export {
   appendJsonl,
   readJsonl,
   listTaskIds,
+  removeTaskDir,
   type TaskPaths,
 } from "./paths.js";
 

@@ -7,7 +7,7 @@ import { redactSecrets } from "../../src/security/redact.js";
 const TEMP = path.join(process.cwd(), ".tmp", "services-tests");
 
 describe("Assentor services", () => {
-  it("boots services and seeds env keys when present", async () => {
+  it("boots services without copying env keys into the vault", async () => {
     await fs.mkdir(TEMP, { recursive: true });
     const dir = await fs.mkdtemp(path.join(TEMP, "svc-"));
     const prev = process.env.GEMINI_API_KEY;
@@ -16,9 +16,9 @@ describe("Assentor services", () => {
       const services = await createAssentorServices(dir);
       expect(services.providers.has("gemini")).toBe(true);
       expect(services.agents.list().length).toBeGreaterThan(5);
-      expect(services.vault.list("gemini").length).toBeGreaterThanOrEqual(1);
-      const masked = services.vault.list("gemini")[0]!.masked;
-      expect(masked.includes("AIzaSyServiceSeedKey9999")).toBe(false);
+      expect(
+        services.vault.list().some((k) => k.name === "Env Gemini"),
+      ).toBe(false);
     } finally {
       if (prev === undefined) delete process.env.GEMINI_API_KEY;
       else process.env.GEMINI_API_KEY = prev;

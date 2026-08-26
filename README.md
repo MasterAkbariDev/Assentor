@@ -41,7 +41,9 @@ assentor init --project ./my-app
 
 # Set defaults in the TUI (recommended)
 cd ./my-app && assentor
-# → Defaults → set executor=cursor, reviewer=gemini → Save
+# → Configure → AI defaults → executor=cursor → Save
+# → Configure → Reviewers → Add Gemini (API) and/or Claude (CLI) → Save
+# → Configure → API keys → Add a Gemini key if you use API review
 
 # Or run with explicit flags
 export GEMINI_API_KEY=...
@@ -69,19 +71,19 @@ assentor          # or: assentor ui
 
 | Menu | What it does |
 |------|----------------|
-| **Defaults** | Global executor / reviewer / models — **Save** writes `~/.assentor/config.yaml` |
-| Providers | List AI providers and key health |
-| **API Keys** | **Add** once to `~/.assentor/secrets.json` (works in every project) |
-| Models | Capability-ranked model catalog (`AUTO` picks) |
-| Executors | Detect / install plan for Cursor and other CLIs |
-| Agents | Logical agent profiles |
-| Diagnostics | Environment health check |
-| Logs / Audit | Recent Assentor audit events |
-| Settings | Shortcut into Defaults + config file locations |
-| **Update** | Pull / rebuild Assentor; banner + menu label when a newer version is on GitHub |
-| **Uninstall** | Remove the `assentor` command (project `.assentor/` data kept) |
+| **Workspace** | Start a task (shows current folder), continue latest, explain reviewers, diagnostics |
+| **Tasks** | History. `r` resumes **FAILED** / **TIMEOUT** only. `d` deletes a task. `n` new. |
+| **Agents** | Specialty roles (architecture, security, …) — **view-only**. Add backends under Reviewers. |
+| **Review** | **Explain reviewers for a goal** — offline score of the text (no LLM). Shows *your* Gemini/Claude rows plus suggested specialties and why. |
+| **Configure** | AI defaults (executor, models), **API keys**, executors, **Reviewers** (add mix of API/CLI), advanced, update/uninstall |
+| **Diagnostics** | Environment health check |
+| **Help** | Shortcuts and CLI reminders |
 
-Navigate with ↑ ↓ Enter Esc · **q** quit. ← → cycles values on the Defaults screen.
+Navigate with ↑ ↓ Enter Esc · **Tab** switches nav/main · **q** quit from nav · **/** command palette.
+
+**Reviewers:** Configure → Reviewers → `a` add. Pick Gemini/OpenAI/Claude/mock, then API or CLI (Claude is always CLI). Each row is a real reviewer on the panel — there is no global “run via API or CLI” switch.
+
+**API keys:** only keys you add appear. Environment variables (`GEMINI_API_KEY`, …) still work at run time as a fallback; they are **not** copied into the vault.
 
 Version: see `assentor -V`, `assentor version --check`, and [CHANGELOG.md](./CHANGELOG.md).
 
@@ -107,7 +109,7 @@ Version: see `assentor -V`, `assentor version --check`, and [CHANGELOG.md](./CHA
 4. **Review** — reviewer returns a structured decision  
 5. **Loop** — on `NEEDS_WORK`, feedback goes back to the executor  
 
-State lives under `.assentor/tasks/<id>/` (resumable when not terminal).
+State lives under `.assentor/tasks/<id>/`. Resume a failed or timed-out task from **Tasks** (`r`) or `assentor resume`. Delete history with `d` on the Tasks screen.
 
 ---
 
@@ -135,7 +137,7 @@ assentor diagnostics
 **Routing strategies:** `FREE_FIRST` · `CHEAPEST` · `BALANCED` · `BEST` · `CUSTOM`  
 **Review strategies:** `SINGLE` · `ADAPTIVE` · `PANEL` · `FULL`
 
-Set these under **Defaults** in the TUI (persisted in config).
+Set executor/models under **Configure → AI defaults**. Add reviewers under **Configure → Reviewers** (persisted in `~/.assentor/config.yaml`).
 
 ---
 
@@ -146,8 +148,9 @@ Set these under **Defaults** in the TUI (persisted in config).
 | Executor | `mock` | Deterministic, offline |
 | Executor | `cursor` | Cursor Agent CLI (`agent` / `cursor agent`) |
 | Reviewer | `mock` | Deterministic, offline |
-| Reviewer | `gemini` | Vault key or `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `ASSENTOR_GEMINI_API_KEY` |
-| Reviewer | `openai` | Vault key or `OPENAI_API_KEY` / `ASSENTOR_OPENAI_API_KEY` |
+| Reviewer | `gemini` | Vault key or `GEMINI_API_KEY` (transport `api`) or Gemini CLI (`transport: cli`) |
+| Reviewer | `openai` | Vault key or `OPENAI_API_KEY` (API only) |
+| Reviewer | `claude` | Claude Code CLI (`transport: cli`) |
 
 ### Cursor
 
@@ -160,7 +163,7 @@ assentor doctor --project . --executor cursor --reviewer gemini
 
 ### Models
 
-Prefer setting models in **Defaults** (`AUTO`, `gemini-3.6-flash`, `gpt-4o-mini`, …). Env overrides still work:
+Prefer setting models in **Configure → AI defaults** (`AUTO`, `gemini-3.6-flash`, `gpt-4o-mini`, …). Env overrides still work:
 
 ```bash
 export ASSENTOR_GEMINI_MODEL=gemini-3.6-flash
@@ -177,7 +180,7 @@ assentor                         # TUI
 assentor ui [--project <path>]
 assentor init [--project <path>]
 assentor run [--project <path>] [--executor <name>] [--reviewer <name>] [--max-rounds <n>] [-v] "<prompt>"
-assentor resume <taskId> [--project <path>]
+assentor resume [taskId] [--project <path>]
 assentor status <taskId> [--project <path>]
 assentor logs <taskId> [--project <path>]
 assentor doctor [--executor <name>] [--reviewer <name>] [--project <path>]
@@ -191,17 +194,17 @@ assentor agents
 assentor diagnostics
 ```
 
-Prefer saving keys in the TUI (**API Keys → Add**) — they go to **`~/.assentor/secrets.json`** and work in every project. Env vars still work as a fallback.
+Prefer saving keys in the TUI (**Configure → API Keys → Add**) — they go to **`~/.assentor/secrets.json`** and work in every project. Env vars still work as a fallback and are **not** listed as extra vault keys.
 
 The TUI checks GitHub on startup (cached ~6h under `~/.assentor/update-check.json`). Set `ASSENTOR_SKIP_UPDATE_CHECK=1` to disable.
 
-CLI flags override config for a single run.
+CLI flags override config for a single run (`--reviewer gemini` uses that one backend for the run).
 
 ---
 
 ## Configuration
 
-**Global (recommended)** — TUI **Defaults → Save** and **API Keys** write here:
+**Global (recommended)** — TUI **Configure → Save** and **API Keys** write here:
 
 - `~/.assentor/config.yaml` — executor, reviewer, models, routing
 - `~/.assentor/secrets.json` — encrypted API keys
@@ -218,7 +221,11 @@ executor:
   provider: cursor   # mock | cursor
 
 reviewers:
-  - provider: gemini # mock | gemini | openai
+  - provider: gemini # mock | gemini | openai | claude
+    transport: api   # api | cli (claude is CLI-only)
+    role: general
+  - provider: claude
+    transport: cli
     role: general
 
 routing:
@@ -237,7 +244,7 @@ limits:
   maxToolCalls: 200
 ```
 
-**Tip:** Open `assentor` once → **Defaults** (`cursor` + `gemini`) → **Save**, then **API Keys → Add**. After that, `assentor run --project ~/any-app "…"` uses those globals.
+**Tip:** Open `assentor` once → **Configure → AI** (`cursor`) → **Reviewers** (Gemini API + Claude CLI) → **Save**, then **API Keys → Add**. After that, `assentor run --project ~/any-app "…"` uses those globals.
 
 ---
 
@@ -258,7 +265,7 @@ pnpm build
 
 - Node.js ≥ 20
 - git
-- Optional: Cursor Agent CLI, Gemini or OpenAI API key
+- Optional: Cursor Agent CLI, Gemini or OpenAI API key, Claude Code CLI
 
 ---
 

@@ -6,7 +6,7 @@
 export const NAV_SCREENS = [
   { id: "workspace", label: "Workspace", hint: "Start / continue work" },
   { id: "tasks", label: "Tasks", hint: "Task history & status" },
-  { id: "agents", label: "Agents", hint: "Executors & reviewers" },
+  { id: "agents", label: "Agents", hint: "Specialty roles" },
   { id: "review", label: "Review", hint: "Review plan & findings" },
   { id: "configuration", label: "Configure", hint: "AI, keys, defaults" },
   { id: "diagnostics", label: "Diagnostics", hint: "Check & fix" },
@@ -26,6 +26,8 @@ export type DialogKind =
   | "review-plan"
   | "ai-defaults"
   | "confirm-uninstall"
+  | "add-reviewer"
+  | "confirm-delete-task"
   | "agent-editor";
 
 /** Configuration subsections (progressive disclosure). */
@@ -90,6 +92,10 @@ export type UiAction =
   | { type: "keys_check" }
   | { type: "keys_check_all" }
   | { type: "keys_delete" }
+  | { type: "reviewers_add" }
+  | { type: "reviewers_delete" }
+  | { type: "task_resume" }
+  | { type: "task_delete" }
   | { type: "executors_detect" }
   | { type: "executors_install" }
   | { type: "save_defaults" }
@@ -146,8 +152,10 @@ export function mapKeyToAction(state: UiState, key: KeyEvent): UiAction {
     if (key.escape) return { type: "escape" };
     if (key.upArrow || key.input === "k") return { type: "main_up" };
     if (key.downArrow || key.input === "j") return { type: "main_down" };
-    if (key.leftArrow) return { type: "cycle_left" };
-    if (key.rightArrow) return { type: "cycle_right" };
+    if (state.dialog === "ai-defaults") {
+      if (key.leftArrow) return { type: "cycle_left" };
+      if (key.rightArrow) return { type: "cycle_right" };
+    }
     if (key.return || key.input === " ") return { type: "activate" };
     return { type: "noop" };
   }
@@ -192,11 +200,17 @@ export function mapKeyToAction(state: UiState, key: KeyEvent): UiAction {
     if (key.input === "n") return { type: "start_task" };
     if (key.input === "r") return { type: "review_plan" };
   }
-  if (state.screen === "tasks" && key.input === "n") {
-    return { type: "start_task" };
+  if (state.screen === "tasks") {
+    if (key.input === "n") return { type: "start_task" };
+    if (key.input === "r") return { type: "task_resume" };
+    if (key.input === "d") return { type: "task_delete" };
   }
   if (state.screen === "review" && key.input === "p") {
     return { type: "review_plan" };
+  }
+  if (state.screen === "configuration" && state.configSection === "review") {
+    if (key.input === "a") return { type: "reviewers_add" };
+    if (key.input === "d") return { type: "reviewers_delete" };
   }
   if (state.screen === "configuration" && state.configSection === "keys") {
     if (key.input === "a") return { type: "keys_add" };
@@ -306,6 +320,14 @@ export function reduceUi(state: UiState, action: UiAction): UiState {
         capturingText: false,
         mainIndex: 0,
       };
+    case "reviewers_add":
+      return {
+        ...state,
+        dialog: "add-reviewer",
+        focus: "dialog",
+        capturingText: false,
+        mainIndex: 0,
+      };
     case "activate":
     case "space":
     case "cycle_left":
@@ -314,6 +336,9 @@ export function reduceUi(state: UiState, action: UiAction): UiState {
     case "keys_check":
     case "keys_check_all":
     case "keys_delete":
+    case "reviewers_delete":
+    case "task_resume":
+    case "task_delete":
     case "executors_detect":
     case "executors_install":
       return state;
@@ -343,6 +368,12 @@ export function footerHints(state: UiState): string {
   if (state.dialog === "ai-defaults") {
     return "↑↓ Field · ←→ Cycle · Enter Save · Esc Cancel";
   }
+  if (state.dialog === "add-reviewer") {
+    return "↑↓ Choose · Enter Next · Esc Cancel";
+  }
+  if (state.dialog === "confirm-delete-task") {
+    return "↑↓ · Enter Confirm · Esc Cancel";
+  }
   if (state.dialog === "confirm-uninstall") {
     return "↑↓ · Enter Confirm · Esc Cancel";
   }
@@ -355,10 +386,10 @@ export function footerHints(state: UiState): string {
       return "↑↓ Actions · Enter · n New task · Tab Nav · / Commands";
     case "tasks":
       return state.selectedTaskId
-        ? "Enter Resume · Esc Back to list · / Commands"
-        : "↑↓ Select · Enter Open · n New task · Tab Nav";
+        ? "r Resume (failed/timeout) · d Delete · Esc Back"
+        : "↑↓ Select · Enter Open · r Resume · d Delete · n New";
     case "agents":
-      return "↑↓ Select · Enter Inspect · Tab Nav";
+      return "↑↓ Browse specialties · Tab Nav · add backends in Configure → Reviewers";
     case "review":
       return "↑↓ · Enter · p Explain reviewers · Tab Nav";
     case "configuration":
@@ -367,6 +398,9 @@ export function footerHints(state: UiState): string {
       }
       if (state.configSection === "executors") {
         return "r Detect · i Install plan · Enter Check · Esc Back";
+      }
+      if (state.configSection === "review") {
+        return "a Add · d Delete · ←→ How many · s Save · Esc Back";
       }
       if (state.configSection === "menu") {
         return "↑↓ Section · Enter Open · Tab Nav";
@@ -420,9 +454,16 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
   },
   {
     id: "agents",
-    label: "Manage agents",
-    keywords: ["agent", "reviewer", "executor"],
+    label: "Browse specialty roles",
+    keywords: ["agent", "specialty", "role"],
     screen: "agents",
+  },
+  {
+    id: "config-reviewers",
+    label: "Add reviewers",
+    keywords: ["reviewer", "gemini", "claude", "cli", "panel"],
+    screen: "configuration",
+    configSection: "review",
   },
   {
     id: "config-ai",

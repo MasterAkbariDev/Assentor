@@ -45,7 +45,8 @@ export function HelpOverlay({ screenLabel }: { screenLabel: string }) {
     <Dialog title={`Help — ${screenLabel}`} hint="Esc close">
       <Text bold>What to do</Text>
       <Text dimColor>
-        Assentor is built around Tasks. Start or continue a task, then Review.
+        Assentor is built around Tasks. Add reviewers (Gemini API, Claude CLI)
+        under Configure → Reviewers, then start a task.
       </Text>
       <Box marginTop={1} flexDirection="column">
         <Text>
@@ -131,7 +132,16 @@ export function StartTaskDialog({
           {explanation ? (
             <Box marginTop={1} flexDirection="column">
               <Text bold>{explanation.headline}</Text>
-              <Text>{explanation.reviewers.join(" · ")}</Text>
+              {explanation.backends.length > 0 ? (
+                <Text>
+                  Your reviewers: {explanation.backends.join(" · ")}
+                </Text>
+              ) : explanation.backendHint ? (
+                <Text color="yellow">{explanation.backendHint}</Text>
+              ) : null}
+              <Text dimColor>
+                Specialties: {explanation.reviewers.join(" · ")}
+              </Text>
               {explanation.reasons.slice(0, 4).map((reason) => (
                 <Text key={reason} dimColor>
                   • {reason}
@@ -171,11 +181,22 @@ export function ReviewPlanDialog({
         </>
       ) : explanation ? (
         <Box flexDirection="column">
+          <Text dimColor>
+            Offline score of the goal (no LLM). Specialties are roles like
+            Security — backends are the Gemini/Claude rows you added.
+          </Text>
           <Text dimColor>{goal}</Text>
           <Text bold>{explanation.headline}</Text>
+          {explanation.backends.length > 0 ? (
+            <Text>
+              Your reviewers: {explanation.backends.join(" · ")}
+            </Text>
+          ) : explanation.backendHint ? (
+            <Text color="yellow">{explanation.backendHint}</Text>
+          ) : null}
           <Text>
-            {explanation.reviewers.join(" · ")} · {explanation.depthLabel} ·{" "}
-            {explanation.riskLabel} risk
+            Specialties: {explanation.reviewers.join(" · ")} ·{" "}
+            {explanation.depthLabel} · {explanation.riskLabel}
           </Text>
           {explanation.reasons.map((reason) => (
             <Text key={reason} dimColor>
@@ -186,6 +207,68 @@ export function ReviewPlanDialog({
       ) : (
         <Text dimColor>Analyzing…</Text>
       )}
+    </Dialog>
+  );
+}
+
+export type AddReviewerStep = "provider" | "transport" | "key";
+
+export function AddReviewerDialog({
+  step,
+  providers,
+  providerIdx,
+  transports,
+  transportIdx,
+  keyLabels,
+  keyIdx,
+}: {
+  step: AddReviewerStep;
+  providers: string[];
+  providerIdx: number;
+  transports: string[];
+  transportIdx: number;
+  keyLabels: string[];
+  keyIdx: number;
+}) {
+  const items =
+    step === "provider"
+      ? providers
+      : step === "transport"
+        ? transports.map((t) => (t === "cli" ? "CLI (local binary)" : "API key"))
+        : keyLabels;
+  const selected =
+    step === "provider"
+      ? providerIdx
+      : step === "transport"
+        ? transportIdx
+        : keyIdx;
+  const title =
+    step === "provider"
+      ? "Add reviewer — who"
+      : step === "transport"
+        ? "Add reviewer — how they run"
+        : "Add reviewer — which API key";
+  return (
+    <Dialog title={title} hint="↑↓ · Enter next · Esc cancel">
+      <Text dimColor>
+        {step === "provider"
+          ? "Gemini/OpenAI can use a key. Claude always uses the Claude CLI."
+          : step === "transport"
+            ? "API uses a vault or env key. CLI uses a binary on your PATH."
+            : "Pick a key you added, or resolve from the environment at run time."}
+      </Text>
+      <Box marginTop={1} flexDirection="column">
+        {items.map((label, index) => (
+          <Text
+            key={`${step}-${label}-${index}`}
+            color={index === selected ? "green" : undefined}
+            bold={index === selected}
+          >
+            {index === selected ? "> " : "  "}
+            {label}
+          </Text>
+        ))}
+      </Box>
     </Dialog>
   );
 }

@@ -33,7 +33,18 @@ export {
   type ProjectOverviewSignals,
   type TaskComplexityAnalyzerInput,
   type ReviewPlanExplanation,
+  type ReviewPlanBackend,
 } from "./complexity.js";
+export {
+  selectReviewerBackends,
+  formatReviewerBackend,
+  formatReviewerBackendShort,
+  transportsForProvider,
+  defaultTransportForProvider,
+  REVIEWER_ADD_PROVIDERS,
+  type ReviewerBackend,
+  type ReviewerAddProvider,
+} from "./backends.js";
 export {
   explainSignals,
   explainStrategy,

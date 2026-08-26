@@ -13,10 +13,10 @@ import {
 import type { ConfigSection } from "../keymap.js";
 
 export const CONFIG_MENU = [
-  { id: "ai" as const, label: "AI defaults (executor, reviewer, models)" },
+  { id: "ai" as const, label: "AI defaults (executor, models)" },
   { id: "keys" as const, label: "API keys" },
   { id: "executors" as const, label: "Executors (install / detect)" },
-  { id: "review" as const, label: "Reviewers (how many, how deep)" },
+  { id: "review" as const, label: "Reviewers (add Gemini, Claude, …)" },
   { id: "advanced" as const, label: "Advanced routing & budgets" },
   { id: "system" as const, label: "Update / Uninstall" },
 ];
@@ -28,6 +28,7 @@ export function ConfigurationScreen({
   config,
   keys,
   executorRows,
+  envHints = [],
 }: {
   section: ConfigSection;
   selected: number;
@@ -35,14 +36,14 @@ export function ConfigurationScreen({
   config: AssentorConfig;
   keys: StoredApiKey[];
   executorRows: ExecutorRow[];
+  envHints?: Array<{ provider: string; envName: string }>;
 }) {
   if (section === "menu") {
     return (
       <Box flexDirection="column">
         <Text bold>Configure Assentor</Text>
         <Text dimColor>
-          Everyday settings first. Providers and models live under AI —
-          not as root destinations.
+          Add reviewers one by one (API key or CLI). Executor lives under AI.
         </Text>
         <Box marginTop={1}>
           <MenuList
@@ -55,25 +56,38 @@ export function ConfigurationScreen({
     );
   }
 
-  if (section === "ai" || section === "review" || section === "advanced") {
+  if (section === "review") {
+    return (
+      <Box flexDirection="column">
+        <Text bold>Reviewers</Text>
+        <Text dimColor>
+          Each row is someone who reviews the executor. Mix API and CLI — e.g.
+          Gemini via a key, Claude via the Claude CLI.
+        </Text>
+        <Box marginTop={1}>
+          <MenuList
+            items={buildReviewRows(config)}
+            selected={selected}
+            focused={focused}
+          />
+        </Box>
+        <Box marginTop={1}>
+          <Text dimColor>
+            a Add · d Delete · ← → how many / rounds · s save · Esc back
+          </Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  if (section === "ai" || section === "advanced") {
     const rows =
-      section === "ai"
-        ? buildAiRows(config)
-        : section === "review"
-          ? buildReviewRows(config)
-          : buildAdvancedRows(config);
-    const title =
-      section === "ai"
-        ? "AI defaults"
-        : section === "review"
-          ? "Reviewers"
-          : "Advanced";
+      section === "ai" ? buildAiRows(config) : buildAdvancedRows(config);
+    const title = section === "ai" ? "AI defaults" : "Advanced";
     const hint =
-      section === "review"
-        ? "Auto picks how many reviewers from the task. You do not pick them by hand."
-        : section === "ai"
-          ? "Who writes code, who reviews it, and which model. ← → changes the highlighted row."
-          : "Routing and budgets. Leave Balanced unless you have a reason.";
+      section === "ai"
+        ? "Who writes code, and which model. Add reviewers under Reviewers."
+        : "Routing and budgets. Leave Balanced unless you have a reason.";
     return (
       <Box flexDirection="column">
         <Text bold>{title}</Text>
@@ -91,14 +105,19 @@ export function ConfigurationScreen({
   }
 
   if (section === "keys") {
+    const envLine =
+      envHints.length > 0
+        ? `Also from environment: ${envHints.map((h) => `$${h.envName}`).join(", ")}`
+        : null;
     if (keys.length === 0) {
       return (
         <Box flexDirection="column">
           <Text bold>No API keys</Text>
           <Text dimColor>
-            Keys unlock Gemini / OpenAI / OpenRouter / Qwen. Stored encrypted in
-            ~/.assentor.
+            Keys you add here unlock Gemini / OpenAI / OpenRouter / Qwen.
+            Stored encrypted in ~/.assentor — not copied from env vars.
           </Text>
+          {envLine ? <Text dimColor>{envLine}</Text> : null}
           <Text dimColor>
             Press <Text color="cyan">a</Text> to add
           </Text>
@@ -115,6 +134,7 @@ export function ConfigurationScreen({
     return (
       <Box flexDirection="column">
         <Text dimColor>a Add · c Check · C Check all · d Delete</Text>
+        {envLine ? <Text dimColor>{envLine}</Text> : null}
         <Box marginTop={1}>
           <MenuList items={labels} selected={selected} focused={focused} />
         </Box>

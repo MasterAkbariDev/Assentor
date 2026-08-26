@@ -1,6 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { TaskSnapshot } from "../../persistence/store.js";
+import { isFailedResumeStatus } from "../../orchestrator/state-machine.js";
 import { Badge } from "../components/badge.js";
 import { MenuList } from "./shared.js";
 
@@ -37,6 +38,7 @@ export function TasksScreen({
     : undefined;
 
   if (detail) {
+    const canResume = isFailedResumeStatus(detail.status);
     return (
       <Box flexDirection="column">
         <Text bold color="cyan">
@@ -67,9 +69,18 @@ export function TasksScreen({
             </Text>
           ) : null}
         </Box>
-        <Box marginTop={1}>
-          <Text dimColor>
-            Resume this task with Enter, or CLI: assentor resume {detail.taskId.slice(0, 12)}
+        <Box marginTop={1} flexDirection="column">
+          {canResume ? (
+            <Text>
+              <Text color="cyan">r</Text> Resume this failed/timed-out task
+            </Text>
+          ) : (
+            <Text dimColor>
+              Resume is for FAILED or TIMEOUT tasks only
+            </Text>
+          )}
+          <Text>
+            <Text color="cyan">d</Text> Delete this task from history
           </Text>
         </Box>
         <Box marginTop={1}>
@@ -83,16 +94,21 @@ export function TasksScreen({
     const mark =
       t.status === "DONE"
         ? "✓"
-        : t.status.includes("FAIL") || t.status.includes("HUMAN")
+        : t.status.includes("FAIL") ||
+            t.status.includes("HUMAN") ||
+            t.status === "TIMEOUT"
           ? "✗"
           : "●";
-    return `${mark} ${t.contract.goal.slice(0, 40)}  · ${t.status} · ${t.currentRound}/${t.maxRounds}`;
+    const resume = isFailedResumeStatus(t.status) ? "  [resume]" : "";
+    return `${mark} ${t.contract.goal.slice(0, 36)}  · ${t.status} · ${t.currentRound}/${t.maxRounds}${resume}`;
   });
 
   return (
     <Box flexDirection="column">
       <Text dimColor>
-        Select a task · <Text color="cyan">n</Text> new · Enter open workspace
+        Select a task · <Text color="cyan">n</Text> new ·{" "}
+        <Text color="cyan">r</Text> resume failed ·{" "}
+        <Text color="cyan">d</Text> delete
       </Text>
       <Box marginTop={1}>
         <MenuList items={labels} selected={selected} focused={focused} />
@@ -103,7 +119,12 @@ export function TasksScreen({
 
 function tone(status: string): "ok" | "warn" | "error" | "info" {
   if (status === "DONE") return "ok";
-  if (status.includes("FAIL") || status.includes("HUMAN") || status.includes("BLOCK"))
+  if (
+    status.includes("FAIL") ||
+    status.includes("HUMAN") ||
+    status.includes("BLOCK") ||
+    status === "TIMEOUT"
+  )
     return "error";
   return "warn";
 }

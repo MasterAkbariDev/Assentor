@@ -22,14 +22,43 @@ export interface ResolvedApiKey {
   masked?: string;
 }
 
-/**
- * Resolve a provider API key: process env → user vault (~/.assentor) → project vault.
- * User vault wins over per-project leftovers so one key works everywhere.
- */
+/** Names used by the old env→vault seeder — pruned on load so they are not listed as user keys. */
+export const AUTO_SEEDED_KEY_NAMES = [
+  "Env Gemini",
+  "Env OpenAI",
+  "Env OpenRouter",
+  "Env Qwen",
+] as const;
+
+/** Env vars currently set that can unlock a provider (not stored in the vault). */
+export function listEnvKeyPresence(): Array<{
+  provider: string;
+  envName: string;
+}> {
+  const out: Array<{ provider: string; envName: string }> = [];
+  for (const [provider, names] of Object.entries(ENV_KEYS)) {
+    for (const envName of names) {
+      if (process.env[envName]?.trim()) {
+        out.push({ provider, envName });
+        break;
+      }
+    }
+  }
+  return out;
+}
+
 export async function resolveProviderApiKey(
   provider: string,
   projectPath: string,
+  options: { keyId?: string } = {},
 ): Promise<ResolvedApiKey | undefined> {
+  if (options.keyId) {
+    const byId = await revealVaultKeyById(options.keyId, projectPath);
+    if (byId) {
+      return byId;
+    }
+  }
+
   const envNames = ENV_KEYS[provider];
   if (envNames) {
     for (const name of envNames) {
@@ -64,11 +93,45 @@ export async function resolveProviderApiKey(
   return undefined;
 }
 
+/**
+ * Resolve a provider API key: optional bound vault key, else env → user vault → project vault.
+ */
 export async function hasProviderApiKey(
   provider: string,
   projectPath: string,
 ): Promise<boolean> {
   return Boolean(await resolveProviderApiKey(provider, projectPath));
+}
+
+async function revealVaultKeyById(
+  keyId: string,
+  projectPath: string,
+): Promise<ResolvedApiKey | undefined> {
+  const projectRoot = path.resolve(projectPath);
+  const homeRoot = path.resolve(userAssentorProjectRoot());
+  for (const [root, source] of [
+    [homeRoot, "user-vault"],
+    [projectRoot, "project-vault"],
+  ] as const) {
+    const vault = new KeyVault(root);
+    await vault.load();
+    const stored = vault.get(keyId);
+    if (!stored) {
+      continue;
+    }
+    try {
+      const ref = await vault.reveal(keyId);
+      return {
+        secret: ref.secret,
+        source,
+        name: stored.name,
+        masked: stored.masked,
+      };
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
 }
 
 async function revealFromVault(
