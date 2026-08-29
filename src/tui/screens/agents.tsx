@@ -2,7 +2,8 @@ import React from "react";
 import { Box, Text } from "ink";
 import type { LogicalAgentProfile } from "../../agents/index.js";
 import { Badge } from "../components/badge.js";
-import { MenuList } from "./shared.js";
+import { Card } from "../components/panel.js";
+import { ScrollList, type ScrollListItem } from "../components/scroll-list.js";
 
 export function AgentsScreen({
   agents,
@@ -13,64 +14,126 @@ export function AgentsScreen({
   selected: number;
   focused: boolean;
 }) {
-  const executors = agents.filter((a) => a.kind === "executor");
-  const reviewers = agents.filter(
-    (a) => a.kind === "reviewer" || a.kind === "adjudicator",
-  );
-
   if (agents.length === 0) {
     return (
       <Box flexDirection="column">
-        <Text bold>No agents configured</Text>
-        <Text dimColor>
-          Agents are the people Assentor assigns: an executor that edits code,
-          and reviewers that inspect evidence.
-        </Text>
-        <Text dimColor>
-          These are specialty roles (architecture, security, testing) — not the
-          Gemini/Claude backends you add. Browse only.
-        </Text>
-        <Text dimColor>
-          Add who actually reviews under Configuration → Reviewers.
-        </Text>
+        <Box marginBottom={1}>
+          <Text bold color="white">
+            🤖 Specialty Agent Intelligence Matrix
+          </Text>
+        </Box>
+        <Card title="No Agents Configured" tone="neutral">
+          <Text dimColor>
+            Agents are specialty roles Assentor assigns dynamically during task review cycles.
+          </Text>
+          <Box marginTop={1}>
+            <Text dimColor>
+              Add backend providers (Gemini, Claude, Cursor) under <Text color="cyan">Configure › Reviewers</Text>.
+            </Text>
+          </Box>
+        </Card>
       </Box>
     );
   }
 
-  const labels = [
-    ...executors.map(
-      (a) =>
-        `EXEC  ${a.name}  · ${a.executorId ?? a.provider}/${a.model}  ${a.enabled ? "on" : "off"}`,
-    ),
-    ...reviewers.map(
-      (a) =>
-        `REV   ${a.name}  · ${(a.specialty ?? "general").padEnd(12)} ${a.provider}/${a.model}  ${a.transport ?? "api"}`,
-    ),
-  ];
+  const selectedAgent = agents[selected];
+
+  const items: ScrollListItem[] = agents.map((a) => {
+    const isExec = a.kind === "executor";
+    const icon = isExec ? "💻" : specialtyIcon(a.specialty);
+    const kindTag = isExec ? "EXEC" : "REV";
+    const spec = a.specialty ? `[${a.specialty}]` : `[${a.kind}]`;
+
+    return {
+      id: a.id,
+      icon,
+      label: `${kindTag}  ${a.name}  ${spec}`,
+      badge: a.enabled ? "Active" : "Disabled",
+      badgeTone: a.enabled ? "ok" : "neutral",
+      description: `Backend: ${a.provider}/${a.model} · Transport: ${a.transport ?? "api"}`,
+    };
+  });
 
   return (
     <Box flexDirection="column">
-      <Text dimColor>
-        Specialty roles Assentor can assign. Add Gemini/Claude under Configure →
-        Reviewers — this list is view-only.
-      </Text>
-      <Box marginTop={1}>
-        <MenuList items={labels} selected={selected} focused={focused} />
+      <Box marginBottom={1} flexDirection="row" justifyContent="space-between" alignItems="center">
+        <Text bold color="white">
+          🤖 Specialty Agent Roles & Intelligence Matrix
+        </Text>
+        <Text dimColor>
+          Browse logical roles (add backends in <Text color="cyan">Configure › Reviewers</Text>)
+        </Text>
       </Box>
-      {agents[selected] ? (
-        <Box marginTop={1} flexDirection="column">
-          <Text>
+
+      {/* Agents Scrollable List */}
+      <Box
+        borderStyle="round"
+        borderColor={focused ? "green" : "gray"}
+        paddingX={1}
+        marginBottom={1}
+        flexDirection="column"
+      >
+        <ScrollList
+          items={items}
+          selected={selected}
+          focused={focused}
+          maxVisible={6}
+        />
+      </Box>
+
+      {/* Selected Agent Inspector Card */}
+      {selectedAgent ? (
+        <Card
+          title={`${specialtyIcon(selectedAgent.specialty)} ${selectedAgent.name} (${selectedAgent.role})`}
+          badge={
             <Badge
-              label={agents[selected]!.enabled ? "enabled" : "disabled"}
-              tone={agents[selected]!.enabled ? "ok" : "warn"}
-            />{" "}
-            {agents[selected]!.role}
-          </Text>
-          <Text dimColor>
-            {agents[selected]!.instructions.slice(0, 120)}
-          </Text>
-        </Box>
+              label={selectedAgent.enabled ? "Enabled" : "Disabled"}
+              tone={selectedAgent.enabled ? "ok" : "warn"}
+            />
+          }
+        >
+          <Box flexDirection="column" marginTop={0}>
+            <Box flexDirection="row" marginBottom={0}>
+              <Text dimColor>Role: </Text>
+              <Text color="cyan" bold>{selectedAgent.kind.toUpperCase()}</Text>
+              {selectedAgent.specialty ? (
+                <>
+                  <Text dimColor>   ·   Specialty: </Text>
+                  <Text color="green" bold>{selectedAgent.specialty}</Text>
+                </>
+              ) : null}
+              <Text dimColor>   ·   Default Model: </Text>
+              <Text color="yellow" bold>{selectedAgent.provider}/{selectedAgent.model}</Text>
+            </Box>
+            <Box marginTop={1} flexDirection="column">
+              <Text bold color="white">Verification Focus & Instructions:</Text>
+              <Text dimColor>
+                {selectedAgent.instructions.length > 240
+                  ? `${selectedAgent.instructions.slice(0, 240)}…`
+                  : selectedAgent.instructions}
+              </Text>
+            </Box>
+          </Box>
+        </Card>
       ) : null}
     </Box>
   );
+}
+
+function specialtyIcon(specialty?: string): string {
+  switch (specialty?.toLowerCase()) {
+    case "security":
+      return "🔒";
+    case "testing":
+    case "qa":
+      return "🧪";
+    case "architecture":
+      return "🏗";
+    case "performance":
+      return "⚡";
+    case "adjudicator":
+      return "⚖";
+    default:
+      return "🛡";
+  }
 }

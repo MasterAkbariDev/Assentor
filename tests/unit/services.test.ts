@@ -10,10 +10,11 @@ describe("Assentor services", () => {
   it("boots services without copying env keys into the vault", async () => {
     await fs.mkdir(TEMP, { recursive: true });
     const dir = await fs.mkdtemp(path.join(TEMP, "svc-"));
+    const userRoot = path.join(dir, "user-assentor");
     const prev = process.env.GEMINI_API_KEY;
     process.env.GEMINI_API_KEY = "AIzaSyServiceSeedKey9999";
     try {
-      const services = await createAssentorServices(dir);
+      const services = await createAssentorServices(dir, { userRoot });
       expect(services.providers.has("gemini")).toBe(true);
       expect(services.agents.list().length).toBeGreaterThan(5);
       expect(
@@ -33,7 +34,8 @@ describe("Assentor services", () => {
   it("runs diagnostics without crashing when keys fail", async () => {
     await fs.mkdir(TEMP, { recursive: true });
     const dir = await fs.mkdtemp(path.join(TEMP, "diag-"));
-    const services = await createAssentorServices(dir);
+    const userRoot = path.join(dir, "user-assentor");
+    const services = await createAssentorServices(dir, { userRoot });
     await services.vault.add({
       provider: "gemini",
       name: "Bad",

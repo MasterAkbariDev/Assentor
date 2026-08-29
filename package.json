@@ -1,6 +1,6 @@
 {
   "name": "assentor",
-  "version": "0.3.15",
+  "version": "0.3.16",
   "description": "Local supervisor CLI that coordinates AI coding agents with evidence-based review",
   "type": "module",
   "bin": {
@@ -25,7 +25,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "install-cli": "./scripts/install-cli.sh",
-    "assentor": "./bin/assentor"
+    "assentor": "./bin/assentor",
+    "screenshots": "npm run build && node scripts/capture-tui-screens.mjs"
   },
   "keywords": [
     "ai",

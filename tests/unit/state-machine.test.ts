@@ -44,6 +44,7 @@ describe("state machine", () => {
     expect(isRetryableState(TaskState.HumanRequired)).toBe(true);
     expect(isRetryableState(TaskState.Done)).toBe(false);
     expect(isRetryableState(TaskState.Cancelled)).toBe(false);
+    expect(isRetryableState(TaskState.BudgetExceeded)).toBe(true);
     expect(isRetryableState(TaskState.Executing)).toBe(true);
     expect(isFailedResumeStatus(TaskState.Failed)).toBe(true);
     expect(isFailedResumeStatus(TaskState.Timeout)).toBe(true);

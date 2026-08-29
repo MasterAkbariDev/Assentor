@@ -2,7 +2,8 @@ import React from "react";
 import { Box, Text } from "ink";
 import type { DetectionResult, InstallPlan } from "../../executors/index.js";
 import { Badge } from "../components/badge.js";
-import { MenuList } from "./shared.js";
+import { Card } from "../components/panel.js";
+import { ScrollList, type ScrollListItem } from "../components/scroll-list.js";
 
 export interface ExecutorRow {
   id: string;
@@ -27,49 +28,91 @@ export function ExecutorsScreen({
   if (availableRows.length === 0) {
     return (
       <Box flexDirection="column">
-        <Text bold>No executors installed</Text>
-        <Text dimColor>
-          No supported coding-agent CLIs (Cursor, Antigravity, Claude Code, etc.) were found on PATH.
-        </Text>
-        <Box marginTop={1}>
-          <Text dimColor>[r] re-detect all</Text>
+        <Box marginBottom={1}>
+          <Text bold color="white">
+            💻 Executors Detection Hub
+          </Text>
         </Box>
+        <Card title="No Executors Detected" tone="warn">
+          <Text dimColor>
+            No supported coding-agent CLIs (Cursor, Antigravity, Claude Code, etc.) were found on PATH.
+          </Text>
+          <Box marginTop={1}>
+            <Text color="cyan">Press <Text color="green" bold>r</Text> to re-scan PATH.</Text>
+          </Box>
+        </Card>
       </Box>
     );
   }
 
+  const selectedRow = availableRows[selected];
+
+  const items: ScrollListItem[] = availableRows.map((r) => {
+    const d = r.detection;
+    const installed = d?.installed ?? false;
+    const icon = installed ? "✔" : "✖";
+    const pathStr = installed ? d?.path ?? "installed" : d?.error ?? "unknown";
+
+    return {
+      id: r.id,
+      icon,
+      label: r.name,
+      badge: installed ? "Installed" : "Missing",
+      badgeTone: installed ? "ok" : "error",
+      description: pathStr,
+    };
+  });
+
   return (
     <Box flexDirection="column">
-      <Text dimColor>[r] re-detect all · [u] use as executor · Enter detect one</Text>
-      <MenuList
-        focused={focused}
-        selected={selected}
-        items={availableRows.map((r) => {
-          const d = r.detection;
-          const mark = d
-            ? d.installed
-              ? "✓"
-              : "✗"
-            : "?";
-          const path = d?.installed ? d.path ?? "" : d?.error ?? "unknown";
-          return `${mark} ${r.name} · ${path}`;
-        })}
-      />
-      {availableRows[selected]?.installPlan ? (
-        <Box marginTop={1} flexDirection="column">
-          <Text>
-            Install:{" "}
+      <Box marginBottom={1} flexDirection="row" justifyContent="space-between" alignItems="center">
+        <Text bold color="white">
+          💻 Coding Agent Executors Hub ({availableRows.length} checked)
+        </Text>
+        <Text dimColor>
+          <Text color="green" bold>u</Text> Use · <Text color="cyan" bold>r</Text> Detect all · <Text color="yellow" bold>i</Text> Install plan · <Text color="green" bold>↵</Text> Test
+        </Text>
+      </Box>
+
+      <Box
+        borderStyle="round"
+        borderColor={focused ? "green" : "gray"}
+        paddingX={1}
+        marginBottom={1}
+        flexDirection="column"
+      >
+        <ScrollList
+          items={items}
+          selected={selected}
+          focused={focused}
+          maxVisible={5}
+        />
+      </Box>
+
+      {selectedRow?.installPlan ? (
+        <Card
+          title={`🚀 Install Plan for ${selectedRow.name}`}
+          badge={
             <Badge
-              label={availableRows[selected]!.installPlan!.automatic ? "auto" : "manual"}
+              label={selectedRow.installPlan.automatic ? "Automated" : "Manual"}
               tone="warn"
             />
-          </Text>
-          <Text color="cyan">{availableRows[selected]!.installPlan!.command}</Text>
-          {availableRows[selected]!.installPlan!.notes ? (
-            <Text dimColor>{availableRows[selected]!.installPlan!.notes}</Text>
-          ) : null}
-        </Box>
+          }
+        >
+          <Box flexDirection="column" marginTop={0}>
+            <Text dimColor>Run Command:</Text>
+            <Box borderStyle="single" borderColor="cyan" paddingX={1} marginY={0}>
+              <Text color="cyan" bold>{selectedRow.installPlan.command}</Text>
+            </Box>
+            {selectedRow.installPlan.notes ? (
+              <Box marginTop={0}>
+                <Text dimColor>{selectedRow.installPlan.notes}</Text>
+              </Box>
+            ) : null}
+          </Box>
+        </Card>
       ) : null}
+
       {detail ? (
         <Box marginTop={1}>
           <Text color="yellow">{detail}</Text>

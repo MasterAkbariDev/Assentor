@@ -19,7 +19,9 @@ export interface GeminiProviderOptions {
 
 interface GeminiResponse {
   candidates?: Array<{
-    content?: { parts?: Array<{ text?: string }> };
+    content?: {
+      parts?: Array<{ text?: string; inlineData?: { mimeType?: string } }>;
+    };
   }>;
   error?: { message?: string; status?: string; code?: number };
 }
@@ -171,6 +173,19 @@ export class GeminiProvider implements AIProvider {
 
   async generate(request: AIRequest): Promise<AIResponse> {
     const url = `${this.baseUrl}/models/${encodeURIComponent(request.model)}:generateContent?key=${encodeURIComponent(request.key.secret)}`;
+    const parts: Array<
+      | { text: string }
+      | { inlineData: { mimeType: string; data: string } }
+    > = [];
+    for (const image of request.images ?? []) {
+      parts.push({
+        inlineData: {
+          mimeType: image.mimeType,
+          data: image.data,
+        },
+      });
+    }
+    parts.push({ text: request.prompt });
     try {
       const response = await this.fetchFn(url, {
         method: "POST",
@@ -179,7 +194,7 @@ export class GeminiProvider implements AIProvider {
           contents: [
             {
               role: "user",
-              parts: [{ text: request.prompt }],
+              parts,
             },
           ],
           generationConfig: {

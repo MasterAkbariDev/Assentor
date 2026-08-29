@@ -10,8 +10,10 @@ export interface PrintCliRecipe {
   printArgs: string[];
   /** Extra flags so the CLI can edit without pausing for approval. */
   unattendedArgs?: string[];
-  /** Flag used with a session id, e.g. `--resume`. */
+  /** Flag used with a session id, e.g. `--resume` or `--conversation`. */
   resumeFlag?: string;
+  /** When continuing without a session id (e.g. agy `--continue`). */
+  continueFlag?: string;
   /** NDJSON stream for live tool/status updates when supported. */
   outputFormat?: PrintCliOutputFormat;
   /** How `-p` CLIs accept the task prompt. */
@@ -35,7 +37,8 @@ export const PRINT_CLI_RECIPES: Record<string, PrintCliRecipe> = {
     tool: "agy",
     printArgs: ["-p"],
     unattendedArgs: ["--dangerously-skip-permissions"],
-    resumeFlag: "--resume",
+    resumeFlag: "--conversation",
+    continueFlag: "--continue",
     outputFormat: "stream-json",
     promptStyle: "attached",
   },
@@ -68,12 +71,14 @@ export const PRINT_CLI_RECIPES: Record<string, PrintCliRecipe> = {
 export function buildPrintCliArgs(
   recipe: PrintCliRecipe,
   prompt: string,
-  options: { sessionId?: string } = {},
+  options: { sessionId?: string; continueRecent?: boolean } = {},
 ): string[] {
   const args: string[] = [...(recipe.unattendedArgs ?? [])];
 
   if (options.sessionId && recipe.resumeFlag) {
     args.push(recipe.resumeFlag, options.sessionId);
+  } else if (options.continueRecent && recipe.continueFlag) {
+    args.push(recipe.continueFlag);
   }
 
   const formatArgs: string[] =

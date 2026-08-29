@@ -11,9 +11,11 @@ export type { AddKeyStep } from "./keys.js";
 export {
   buildDefaultRows,
   buildAiRows,
+  buildAiStructuredFields,
   buildReviewRows,
   buildReviewMenu,
   buildAdvancedRows,
+  buildAdvancedStructuredFields,
   cycleAiField,
   cycleRunMode,
   cycleReviewField,

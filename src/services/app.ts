@@ -57,8 +57,9 @@ export interface AssentorServices {
  */
 export async function createAssentorServices(
   projectPath: string,
+  options: { userRoot?: string } = {},
 ): Promise<AssentorServices> {
-  const userRoot = userAssentorProjectRoot();
+  const userRoot = options.userRoot ?? userAssentorProjectRoot();
   const resolvedProject = path.resolve(projectPath);
 
   const providers = createDefaultProviderRegistry();

@@ -75,7 +75,16 @@ describe("OpenAICompatibleReviewer", () => {
 
 describe("GeminiReviewer", () => {
   it("parses generateContent JSON", async () => {
-    const fetchFn = vi.fn(async () => {
+    const fetchFn = vi.fn(async (url: string | URL) => {
+      const href = String(url);
+      if (href.includes("/models?")) {
+        return new Response(
+          JSON.stringify({
+            models: [{ name: "models/gemini-test" }],
+          }),
+          { status: 200 },
+        );
+      }
       return new Response(
         JSON.stringify({
           candidates: [{ content: { parts: [{ text: passJson }] } }],
@@ -100,14 +109,26 @@ describe("GeminiReviewer", () => {
     });
 
     expect(result.result?.status).toBe(ReviewStatus.Pass);
-    const call = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
-    expect(String(call[0])).toContain("gem-key");
-    expect(String(call[0])).toContain("gemini-test");
+    expect(reviewer.lastModelUsed).toBe("gemini-test");
+    expect(fetchFn.mock.calls.some((call) => String(call[0]).includes("gem-key"))).toBe(
+      true,
+    );
+    expect(
+      fetchFn.mock.calls.some((call) => String(call[0]).includes("gemini-test")),
+    ).toBe(true);
   });
 
   it("falls back when preferred model is unavailable", async () => {
     const fetchFn = vi.fn(async (url: string | URL) => {
       const href = String(url);
+      if (href.includes("/models?")) {
+        return new Response(
+          JSON.stringify({
+            models: [{ name: "models/gemini-old" }, { name: "models/gemini-new" }],
+          }),
+          { status: 200 },
+        );
+      }
       if (href.includes("gemini-old")) {
         return new Response(
           JSON.stringify({
@@ -147,8 +168,53 @@ describe("GeminiReviewer", () => {
 
     expect(result.result?.status).toBe(ReviewStatus.Pass);
     expect(reviewer.lastModelUsed).toBe("gemini-new");
-    expect(fetchFn).toHaveBeenCalledTimes(2);
-    expect(statuses.some((s) => s.includes("fallback"))).toBe(true);
+    expect(fetchFn.mock.calls.some((call) => String(call[0]).includes("/models?"))).toBe(
+      true,
+    );
+    expect(statuses.some((s) => s.includes("gemini-new"))).toBe(true);
+  });
+
+  it("prefers models returned by listModels and skips unknown defaults", async () => {
+    const fetchFn = vi.fn(async (url: string | URL) => {
+      const href = String(url);
+      if (href.includes("/models?")) {
+        return new Response(
+          JSON.stringify({
+            models: [{ name: "models/gemini-2.5-flash" }],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: passJson }] } }],
+        }),
+        { status: 200 },
+      );
+    });
+
+    const reviewer = new GeminiReviewer({
+      apiKey: "gem-key",
+      fetchFn,
+      model: "gemini-3.6-flash",
+      modelFallbacks: ["gemini-3-flash-preview", "gemini-2.5-flash"],
+    });
+
+    const result = await reviewer.review({
+      taskId: "t1",
+      projectPath: "/tmp",
+      contract: createEmptyContract("goal"),
+      round: 1,
+      artifacts: [],
+    });
+
+    expect(result.result?.status).toBe(ReviewStatus.Pass);
+    expect(reviewer.lastModelUsed).toBe("gemini-2.5-flash");
+    expect(
+      fetchFn.mock.calls.filter((call) =>
+        String(call[0]).includes(":generateContent"),
+      ),
+    ).toHaveLength(1);
   });
 
   it("surfaces non-retryable API failures", async () => {
@@ -156,7 +222,18 @@ describe("GeminiReviewer", () => {
       apiKey: "gem-key",
       model: "gemini-test",
       modelFallbacks: [],
-      fetchFn: async () => new Response("nope", { status: 500 }),
+      fetchFn: async (url: string | URL) => {
+        const href = String(url);
+        if (href.includes("/models?")) {
+          return new Response(
+            JSON.stringify({
+              models: [{ name: "models/gemini-test" }],
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response("nope", { status: 500 });
+      },
     });
 
     const result = await reviewer.review({

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.16] — 2026-08-29
+
+### Added
+
+- **TUI command center** — Sidebar navigation, quick actions, cycle selectors, scroll lists, and 80-column layouts across workspace, configuration, and help screens.
+- **Vision review** — Auto-collect PNG screenshots from `artifacts/screenshots/` and attach them to Gemini reviewer prompts.
+- **Budget resume** — `assentor resume` accepts `--max-rounds` / `--max-messages`; budget-exceeded tasks restore to executing.
+- **`assentor keys dedupe`** — Remove duplicate vault entries by provider, name, and masked secret.
+- **Antigravity resume** — Use `--conversation` / `--continue` flags when resuming print-mode executor sessions.
+
+### Fixed
+
+- **Supervisor executor skip** — Reviewer `NEEDS_WORK` with required changes routes back to the executor instead of stalling in local evidence collection.
+- **TUI header stacking** — Force full terminal redraw in integrated terminals where Ink line-erase fails.
+- **Key vault pollution** — Unit tests use isolated vault paths; duplicates dedupe on load.
+- **Gemini reviewer models** — Prefer `2.5-flash`, filter defaults via `listModels`, and fall back silently.
+- **Resume labels** — Task resume shows the configured executor and reviewer names.
+
+### Changed
+
+- Richer live executor status: step index, scoped grep paths, tool duration/output on completion.
+- Evidence-only reviewer requests show “Collecting reviewer-requested evidence locally” instead of misleading executor routing text.
+
 ## [0.3.15] — 2026-08-29
 
 ### Changed
@@ -213,7 +236,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logical agents, diagnostics, and resumable task state under `.assentor/tasks/`
 - One-line install scripts for macOS/Linux and Windows
 
-[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.15...HEAD
+[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.16...HEAD
+[0.3.16]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.15...v0.3.16
 [0.3.15]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.14...v0.3.15
 [0.3.14]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.13...v0.3.14
 [0.3.13]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.12...v0.3.13

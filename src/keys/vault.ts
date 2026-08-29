@@ -54,6 +54,9 @@ export class KeyVault {
     } catch {
       this.data = { version: 1, keys: [] };
     }
+    if (this.dedupeStoredKeys()) {
+      await this.save();
+    }
   }
 
   async save(): Promise<void> {
@@ -81,6 +84,16 @@ export class KeyVault {
     priority?: number;
   }): Promise<StoredApiKey> {
     await this.ensureLoaded();
+    const masked = maskSecret(input.secret);
+    const existing = this.data.keys.find(
+      (key) =>
+        key.provider === input.provider &&
+        key.name === input.name &&
+        key.masked === masked,
+    );
+    if (existing) {
+      return existing;
+    }
     const entry: StoredApiKey = {
       id: createId(),
       provider: input.provider,
@@ -252,6 +265,30 @@ export class KeyVault {
     if (!this.masterKey) {
       await this.load();
     }
+  }
+
+  /** Drop exact duplicate vault rows (same provider, label, masked secret). */
+  private dedupeStoredKeys(): boolean {
+    const seen = new Set<string>();
+    const kept: StoredApiKey[] = [];
+    for (const key of [...this.data.keys].sort(
+      (a, b) => a.priority - b.priority,
+    )) {
+      const fingerprint = `${key.provider}\0${key.name}\0${key.masked}`;
+      if (seen.has(fingerprint)) {
+        continue;
+      }
+      seen.add(fingerprint);
+      kept.push(key);
+    }
+    if (kept.length === this.data.keys.length) {
+      return false;
+    }
+    this.data.keys = kept.map((key, index) => ({
+      ...key,
+      priority: index + 1,
+    }));
+    return true;
   }
 }
 

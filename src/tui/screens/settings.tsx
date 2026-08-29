@@ -65,6 +65,79 @@ export function buildAiRows(
   ];
 }
 
+export interface StructuredConfigField {
+  label: string;
+  value: string;
+  description?: string;
+  badge?: string;
+  badgeTone?: "ok" | "warn" | "error" | "info" | "neutral";
+  isAction?: boolean;
+}
+
+export function buildAiStructuredFields(
+  config: AssentorConfig,
+  options: { installedIds?: ReadonlySet<string> } = {},
+): StructuredConfigField[] {
+  const installed = options.installedIds;
+  const isInstalled =
+    config.executor.provider === "mock"
+      ? true
+      : installed
+        ? installed.has(config.executor.provider)
+        : true;
+
+  return [
+    {
+      label: "Execution Mode",
+      value: formatRunMode(config.run.mode),
+      badge: config.run.mode === "autopilot" ? "Autopilot" : "Supervised",
+      badgeTone: config.run.mode === "autopilot" ? "warn" : "info",
+      description:
+        config.run.mode === "autopilot"
+          ? "Executor runs continuously through phases without pausing for approval"
+          : "Executor halts at verification gates between phases for human sign-off",
+    },
+    {
+      label: "Coding Executor",
+      value: formatExecutorProvider(config.executor.provider),
+      badge:
+        config.executor.provider === "mock"
+          ? undefined
+          : isInstalled
+            ? "Installed ✓"
+            : "Missing ✗",
+      badgeTone: isInstalled ? "ok" : "error",
+      description:
+        "Local coding agent CLI responsible for modifying source code in the repository",
+    },
+    {
+      label: "Default Model",
+      value: config.models.default,
+      description: "Baseline model selected when agents specify AUTO routing",
+    },
+    {
+      label: "Gemini Model",
+      value: config.models.gemini,
+      badge: "Google API",
+      badgeTone: "info",
+      description: "Model used for Google Gemini cloud reviewer agents",
+    },
+    {
+      label: "OpenAI Model",
+      value: config.models.openai,
+      badge: "OpenAI API",
+      badgeTone: "info",
+      description: "Model used for OpenAI GPT cloud reviewer agents",
+    },
+    {
+      label: "Save these defaults",
+      value: "Press ↵ or 's'",
+      isAction: true,
+      description: "Persist the configured AI defaults to ~/.assentor/config.yaml",
+    },
+  ];
+}
+
 export type ReviewMenuRow =
   | { kind: "add"; label: string }
   | { kind: "member"; index: number; label: string }
@@ -103,6 +176,34 @@ export function buildAdvancedRows(config: AssentorConfig): string[] {
     `Model routing        ${ROUTING_LABEL[routing] ?? routing}`,
     `Max messages         ${config.limits.maxMessages}`,
     "Save these defaults",
+  ];
+}
+
+export function buildAdvancedStructuredFields(
+  config: AssentorConfig,
+): StructuredConfigField[] {
+  const routing = config.routing.strategy;
+  return [
+    {
+      label: "Model Routing Strategy",
+      value: ROUTING_LABEL[routing] ?? routing,
+      badge: routing,
+      badgeTone: routing === "BALANCED" ? "ok" : "info",
+      description: "Balancing formula for speed, cost, and LLM reasoning depth",
+    },
+    {
+      label: "Max Messages Limit",
+      value: `${config.limits.maxMessages} messages`,
+      description:
+        "Context threshold before truncating or warning on runaway sessions",
+    },
+    {
+      label: "Save advanced defaults",
+      value: "Press ↵ or 's'",
+      isAction: true,
+      description:
+        "Persist routing thresholds and message constraints to ~/.assentor/config.yaml",
+    },
   ];
 }
 

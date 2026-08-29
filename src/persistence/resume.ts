@@ -47,7 +47,7 @@ export async function resolveTaskId(
 
 /**
  * Loads a persisted task for `assentor resume`.
- * Successful/cancelled/budget tasks stay closed; timeout/auth/fail can retry.
+ * Successful/cancelled tasks stay closed; timeout/auth/fail/budget can retry.
  */
 export async function loadTaskForResume(
   projectPath: string,

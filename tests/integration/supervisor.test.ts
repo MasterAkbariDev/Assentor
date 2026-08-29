@@ -381,6 +381,67 @@ describe("supervisor", () => {
     expect(executor.calls).toBe(1);
   });
 
+  it("routes required changes to the executor even when evidence is also requested", async () => {
+    const modes: Array<"run" | "continue"> = [];
+    const executor = mockExecutor(async ({ mode }) => {
+      modes.push(mode);
+      return {
+        status: "completed",
+        summary: "applied fixes",
+        sessionId: "s1",
+      };
+    });
+
+    const reviewer = mockReviewer((_input, call) => {
+      if (call === 1) {
+        return {
+          result: {
+            status: ReviewStatus.NeedsWork,
+            confidence: 0.8,
+            summary: "Wire CycleSelector and capture Help layout",
+            issues: [
+              {
+                id: "cycle",
+                severity: Severity.Major,
+                description: "CycleSelector unused",
+                evidence: [],
+              },
+            ],
+            requiredChanges: ["Wire CycleSelector into configuration.tsx"],
+            optionalChanges: [],
+            evidenceRequests: [
+              { kind: EvidenceKind.File, path: "src/tui/screens/help.tsx" },
+            ],
+          },
+        };
+      }
+      return {
+        result: {
+          status: ReviewStatus.Pass,
+          confidence: 0.9,
+          summary: "Verified",
+          issues: [],
+          requiredChanges: [],
+          optionalChanges: [],
+          evidenceRequests: [],
+        },
+      };
+    });
+
+    const result = await new Supervisor({
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("goal"),
+      executor,
+      reviewer,
+      budgets: createBudgets({ maxRounds: 3, maxMessages: 40 }),
+    }).run();
+
+    expect(result.status).toBe(TaskState.Done);
+    expect(modes).toEqual(["run", "continue"]);
+    expect(executor.calls).toBe(2);
+    expect(reviewer.calls).toBe(2);
+  });
+
   it("fulfills reviewer command evidence locally without calling the executor", async () => {
     const { promises: fs } = await import("node:fs");
     const pathMod = await import("node:path");

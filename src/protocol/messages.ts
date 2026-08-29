@@ -139,6 +139,7 @@ export const EvidenceRequestItemSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal(EvidenceKind.Screenshot),
     description: z.string().min(1),
+    path: z.string().min(1).optional(),
   }),
   z.object({
     kind: z.literal(EvidenceKind.Log),

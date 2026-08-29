@@ -5,7 +5,7 @@ import {
 } from "../core/budgets.js";
 import { createConversationId, createTaskId } from "../core/ids.js";
 import type { TaskContract } from "../core/task-contract.js";
-import { BudgetKind, ReviewStatus, type Budgets } from "../core/types.js";
+import { BudgetKind, ReviewStatus, Severity, type Budgets } from "../core/types.js";
 import {
   createProtocolMessage,
   MessageType,
@@ -59,6 +59,19 @@ import {
 } from "./state-machine.js";
 
 const MAX_EVIDENCE_ITERATIONS = 3;
+
+/** True when the executor must implement reviewer-requested work (not evidence-only). */
+export function reviewRequiresExecutor(review: ReviewResult): boolean {
+  if ((review.requiredChanges?.length ?? 0) > 0) {
+    return true;
+  }
+  if (review.phaseProgress?.nextPhaseDirective?.trim()) {
+    return true;
+  }
+  return (review.issues ?? []).some(
+    (issue) => issue.severity !== Severity.Info,
+  );
+}
 
 export type SupervisorEventType =
   | "state.changed"
@@ -309,7 +322,8 @@ export class Supervisor {
     if (
       state === TaskState.Failed ||
       state === TaskState.Timeout ||
-      state === TaskState.HumanRequired
+      state === TaskState.HumanRequired ||
+      state === TaskState.BudgetExceeded
     ) {
       state = TaskState.Executing;
     }
@@ -417,6 +431,9 @@ export class Supervisor {
       }
 
       await this.publishChangeRequest(conversationId, outcome.review);
+      if ((outcome.review.evidenceRequests?.length ?? 0) > 0) {
+        await this.publishEvidenceRequest(conversationId, outcome.review);
+      }
       this.emit("round.completed", { round: this.round, state: this.state });
       await this.flushPersist();
       await this.persistRoundHistory();
@@ -717,7 +734,8 @@ export class Supervisor {
 
     if (
       (turn.result.evidenceRequests?.length ?? 0) > 0 &&
-      turn.result.status === ReviewStatus.NeedsWork
+      turn.result.status === ReviewStatus.NeedsWork &&
+      !reviewRequiresExecutor(turn.result)
     ) {
       const evidenceMessage = createProtocolMessage({
         conversationId: _conversationId,
@@ -772,6 +790,33 @@ export class Supervisor {
     }
 
     return looping;
+  }
+
+  private async publishEvidenceRequest(
+    conversationId: string,
+    review: ReviewResult,
+  ): Promise<void> {
+    const requests = review.evidenceRequests ?? [];
+    if (requests.length === 0) {
+      return;
+    }
+
+    const message = createProtocolMessage({
+      conversationId,
+      round: this.round,
+      from: REVIEWER_ID,
+      to: EXECUTOR_ID,
+      type: MessageType.EvidenceRequest,
+      content: {
+        requests,
+        reason: review.summary,
+      },
+    });
+
+    if (await this.spendMessage()) {
+      await this.publishMessage(message);
+      this.emit("evidence.requested", { count: requests.length });
+    }
   }
 
   private async publishChangeRequest(

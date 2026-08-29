@@ -231,9 +231,25 @@ function parseAntigravityStreamEvent(
       : undefined;
 
   if (eventName === "init") {
+    const init =
+      event.init && typeof event.init === "object"
+        ? (event.init as JsonObject)
+        : {};
+    const cwd =
+      stringArg(init, "cwd") ??
+      stringArg(init, "workspace") ??
+      stringArg(init, "projectPath");
+    const tools = Array.isArray(init.tools) ? init.tools.length : undefined;
+    const parts: string[] = [];
+    if (cwd) {
+      parts.push(`workspace ${shortPath(cwd)}`);
+    }
+    if (tools !== undefined) {
+      parts.push(`${tools} tools`);
+    }
     return {
       activity: "starting",
-      detail: "session started",
+      detail: parts.length ? parts.join(" · ") : "session started",
       sessionId,
     };
   }
@@ -276,6 +292,8 @@ function parseAntigravityStreamEvent(
     typeof step.conversation_id === "string" ? step.conversation_id : sessionId;
 
   if (stepType === "tool") {
+    const stepIndex =
+      typeof step.step_index === "number" ? step.step_index : undefined;
     const toolName = String(step.tool_name ?? "tool");
     const toolInfo =
       step.tool_info && typeof step.tool_info === "object"
@@ -285,17 +303,18 @@ function parseAntigravityStreamEvent(
       toolInfo.parameters && typeof toolInfo.parameters === "object"
         ? (toolInfo.parameters as JsonObject)
         : {};
-    const mapped = describeAntigravityTool(toolName, params);
+    const mapped = describeAntigravityTool(toolName, params, stepIndex);
     if (state === "ACTIVE") {
       return { ...mapped, sessionId: stepSessionId };
     }
     if (state === "DONE" || state === "ERROR") {
       return {
         activity: mapped.activity,
-        detail:
-          state === "ERROR"
-            ? `${mapped.detail} · failed`
-            : `${mapped.detail} · done`,
+        detail: formatAntigravityToolCompletion(
+          mapped.detail,
+          toolInfo,
+          state === "ERROR",
+        ),
         sessionId: stepSessionId,
       };
     }
@@ -313,7 +332,9 @@ function parseAntigravityStreamEvent(
 function describeAntigravityTool(
   toolName: string,
   params: JsonObject,
+  stepIndex?: number,
 ): { activity: AgentActivity; detail: string } {
+  const prefix = stepIndex != null ? `#${stepIndex} · ` : "";
   const path =
     stringArg(params, "DirectoryPath") ??
     stringArg(params, "Path") ??
@@ -328,6 +349,8 @@ function describeAntigravityTool(
     stringArg(params, "pattern") ??
     stringArg(params, "Query") ??
     stringArg(params, "query");
+  const searchPath =
+    stringArg(params, "SearchPath") ?? stringArg(params, "searchPath");
 
   switch (toolName) {
     case "view_file":
@@ -336,44 +359,120 @@ function describeAntigravityTool(
     case "read_browser_page":
       return {
         activity: "reading",
-        detail: shortPath(path ?? "file"),
+        detail: `${prefix}read ${shortPath(path ?? "file")}`,
       };
     case "write_to_file":
       return {
         activity: "writing",
-        detail: shortPath(path ?? "file"),
+        detail: `${prefix}write ${shortPath(path ?? "file")}`,
       };
     case "replace_file_content":
     case "multi_replace_file_content":
     case "sed_file":
       return {
         activity: "editing",
-        detail: shortPath(path ?? "file"),
+        detail: `${prefix}edit ${shortPath(path ?? "file")}`,
       };
     case "run_command":
     case "send_command_input":
       return {
         activity: "running",
-        detail: truncate(commandLine ?? command ?? "shell command", 56),
+        detail: `${prefix}${truncate(commandLine ?? command ?? "shell command", 72)}`,
       };
     case "grep_search":
     case "find_by_name":
-    case "search_web":
+    case "search_web": {
+      const query = pattern ?? toolName.replace(/_/g, " ");
+      const scoped = searchPath
+        ? `${query} in ${shortPath(searchPath)}`
+        : query;
       return {
         activity: "searching",
-        detail: truncate(pattern ?? toolName, 56),
+        detail: `${prefix}${truncate(scoped, 72)}`,
       };
+    }
     case "list_dir":
       return {
         activity: "exploring",
-        detail: shortPath(path ?? "directory"),
+        detail: `${prefix}list ${shortPath(path ?? "directory")}`,
       };
     default:
       return {
         activity: "running",
-        detail: truncate(toolName.replace(/_/g, " "), 56),
+        detail: `${prefix}${truncate(toolName.replace(/_/g, " "), 72)}`,
       };
   }
+}
+
+function formatAntigravityToolCompletion(
+  activeDetail: string,
+  toolInfo: JsonObject,
+  failed: boolean,
+): string {
+  const parts = [activeDetail];
+  const durationMs =
+    typeof toolInfo.duration_ms === "number"
+      ? toolInfo.duration_ms
+      : typeof toolInfo.durationMs === "number"
+        ? toolInfo.durationMs
+        : undefined;
+  if (durationMs != null && durationMs > 0) {
+    parts.push(formatDuration(durationMs));
+  }
+  const error =
+    stringArg(toolInfo, "error") ??
+    stringArg(toolInfo, "Error") ??
+    stringArg(toolInfo, "message");
+  if (failed && error) {
+    parts.push(truncate(error, 48));
+  } else {
+    const preview = extractToolOutputPreview(toolInfo);
+    if (preview) {
+      parts.push(truncate(preview, 48));
+    }
+  }
+  parts.push(failed ? "failed" : "done");
+  return parts.join(" · ");
+}
+
+function extractToolOutputPreview(toolInfo: JsonObject): string {
+  for (const key of [
+    "output",
+    "stdout",
+    "result",
+    "response",
+    "summary",
+    "content",
+  ]) {
+    const value = toolInfo[key];
+    if (typeof value === "string" && value.trim()) {
+      return firstMeaningfulLine(value);
+    }
+  }
+  return "";
+}
+
+function firstMeaningfulLine(text: string): string {
+  for (const line of text.split(/\r?\n/)) {
+    const one = line.replace(/\s+/g, " ").trim();
+    if (one.length >= 3) {
+      return one;
+    }
+  }
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) {
+    return `${Math.round(ms)}ms`;
+  }
+  const sec = ms / 1000;
+  if (sec < 60) {
+    return `${sec.toFixed(sec >= 10 ? 0 : 1)}s`;
+  }
+  const min = Math.floor(sec / 60);
+  const rem = Math.round(sec % 60);
+  return rem > 0 ? `${min}m ${rem}s` : `${min}m`;
 }
 
 function describeToolCall(
@@ -674,7 +773,11 @@ export function summarizePartialStreamOutput(stdout: string): string {
             toolInfo.parameters && typeof toolInfo.parameters === "object"
               ? (toolInfo.parameters as JsonObject)
               : {};
-          lastTool = describeAntigravityTool(toolName, params).detail;
+          lastTool = describeAntigravityTool(
+            toolName,
+            params,
+            typeof step.step_index === "number" ? step.step_index : undefined,
+          ).detail;
         } else if (state === "DONE") {
           toolSteps += 1;
         }

@@ -1,6 +1,7 @@
 import {
   asReviewInput,
   buildReviewPrompt,
+  extractReviewImages,
   reviewResultFromModelText,
 } from "../shared/prompt.js";
 import type {
@@ -32,11 +33,10 @@ export interface GeminiReviewerOptions {
 }
 
 const DEFAULT_MODELS = [
-  "gemini-3.6-flash",
-  "gemini-3-flash-preview",
   "gemini-2.5-flash",
   "gemini-2.0-flash",
   "gemini-1.5-flash",
+  "gemini-1.5-pro",
 ];
 
 /**
@@ -54,6 +54,7 @@ export class GeminiReviewer implements Reviewer {
   private readonly specialtyAddendum?: string;
   callCount = 0;
   lastModelUsed?: string;
+  private resolvedModels?: string[];
 
   constructor(options: GeminiReviewerOptions = {}) {
     this.name = options.name ?? "gemini";
@@ -112,6 +113,7 @@ export class GeminiReviewer implements Reviewer {
       ...asReviewInput(input),
       specialtyAddendum: this.specialtyAddendum,
     });
+    const images = extractReviewImages(asReviewInput(input));
     const key: ApiKeyRef = {
       id: this.keyId,
       provider: "gemini",
@@ -119,13 +121,21 @@ export class GeminiReviewer implements Reviewer {
       secret: this.apiKey,
     };
     const errors: string[] = [];
+    const models = await this.resolveModels(key);
+    if (models.length === 0) {
+      return {
+        error:
+          "No Gemini models available for this API key. Set ASSENTOR_GEMINI_MODEL to a model your key supports (e.g. gemini-2.5-flash).",
+      };
+    }
 
-    for (const model of this.models) {
+    for (const model of models) {
       this.onStatus?.(`Calling Gemini (${model})…`);
       try {
         const response = await this.provider.generate({
           model,
           prompt,
+          images: images.length > 0 ? images : undefined,
           key,
           temperature: this.temperature,
           jsonMode: true,
@@ -143,7 +153,6 @@ export class GeminiReviewer implements Reviewer {
               rawOutput: error.error.raw,
             };
           }
-          this.onStatus?.(`${model} unavailable, trying next fallback…`);
           continue;
         }
         const message = error instanceof Error ? error.message : String(error);
@@ -154,6 +163,32 @@ export class GeminiReviewer implements Reviewer {
     return {
       error: `All Gemini models failed:\n${errors.join("\n")}`,
     };
+  }
+
+  private async resolveModels(key: ApiKeyRef): Promise<string[]> {
+    if (this.resolvedModels) {
+      return this.resolvedModels;
+    }
+
+    try {
+      const listed = await this.provider.listModels(key);
+      const available = new Set(
+        listed
+          .filter((model) => model.available !== false)
+          .map((model) => model.id.replace(/^models\//, "")),
+      );
+      if (available.size > 0) {
+        const matched = this.models.filter((model) => available.has(model));
+        this.resolvedModels =
+          matched.length > 0 ? matched : [...available].slice(0, 4);
+        return this.resolvedModels;
+      }
+    } catch {
+      // Fall through to configured preference order.
+    }
+
+    this.resolvedModels = this.models;
+    return this.resolvedModels;
   }
 }
 

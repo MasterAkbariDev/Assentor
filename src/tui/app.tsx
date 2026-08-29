@@ -45,6 +45,7 @@ import {
 } from "./components/overlays.js";
 import type { AddReviewerStep } from "./components/overlays.js";
 import { Shell } from "./layout/shell.js";
+import { createInkStdout } from "./stdout.js";
 import {
   createInitialUiState,
   filterPaletteCommands,
@@ -1161,6 +1162,18 @@ function App({
       return;
     }
 
+    if (action.type === "jump_screen") {
+      const screen = screenAt(action.screenIndex);
+      setUi((s) => reduceUi(s, action));
+      if (screen === "diagnostics" && diagItems.length === 0) {
+        void runDiagnostics();
+      }
+      if (screen === "tasks") {
+        void listProjectTasks(services.projectPath).then(setTasks);
+      }
+      return;
+    }
+
     if (action.type === "select_nav") {
       const screen = screenAt(ui.navIndex);
       setUi((s) => reduceUi(s, action));
@@ -1376,6 +1389,11 @@ function shortPath(p: string): string {
 }
 
 export async function startTui(projectPath: string): Promise<TuiHandoff> {
+  const inkStdout = createInkStdout();
+  if (process.stdout.isTTY) {
+    process.stdout.write("\x1b[2J\x1b[H");
+  }
+
   const services = await createAssentorServices(projectPath);
   const initialConfig = await loadAssentorConfig(projectPath);
   let handoff: TuiHandoff = { kind: "exit" };
@@ -1394,7 +1412,7 @@ export async function startTui(projectPath: string): Promise<TuiHandoff> {
         });
       }}
     />,
-    { patchConsole: false },
+    { stdout: inkStdout },
   );
   try {
     await instance.waitUntilExit();

@@ -153,7 +153,7 @@ describe("Cursor stream-json status", () => {
     );
     expect(active).toMatchObject({
       activity: "exploring",
-      detail: "src/cli",
+      detail: "#2 · list src/cli",
       sessionId: "agy-1",
     });
 
@@ -171,6 +171,31 @@ describe("Cursor stream-json status", () => {
       isFinal: true,
       resultText: "Done",
       sessionId: "agy-1",
+    });
+  });
+
+  it("includes step index and completion details for Antigravity tools", () => {
+    const done = parseStreamLine(
+      JSON.stringify({
+        event: "step_update",
+        step_update: {
+          conversation_id: "agy-3",
+          step_index: 5,
+          state: "DONE",
+          step_type: "tool",
+          tool_name: "run_command",
+          tool_info: {
+            name: "run_command",
+            duration_ms: 2400,
+            output: "All tests passed\n",
+            parameters: { CommandLine: "npm test" },
+          },
+        },
+      }),
+    );
+    expect(done).toMatchObject({
+      activity: "running",
+      detail: "#5 · npm test · 2.4s · All tests passed · done",
     });
   });
 
@@ -206,7 +231,7 @@ describe("Cursor stream-json status", () => {
     ].join("\n");
 
     expect(summarizeExecutorStreamOutput(stdout)).toBe(
-      "Ran 2 tool step(s); last: SELECTABLE_EXECUTOR_PROVIDERS",
+      "Ran 2 tool step(s); last: #2 · SELECTABLE_EXECUTOR_PROVIDERS in src",
     );
     expect(isExecutorStreamBlob(stdout)).toBe(true);
   });

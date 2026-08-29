@@ -1,44 +1,31 @@
 import React from "react";
-import { Box, Text } from "ink";
+import { ScrollList, type ScrollListItem } from "../components/scroll-list.js";
 
 export function MenuList({
   items,
   selected,
   focused = true,
+  maxVisible = 8,
 }: {
-  items: string[];
+  items: Array<string | ScrollListItem>;
   selected: number;
   focused?: boolean;
+  maxVisible?: number;
 }) {
-  if (items.length === 0) {
-    return <Text dimColor>(empty)</Text>;
-  }
   return (
-    <Box flexDirection="column">
-      {items.map((label, index) => (
-        <Text
-          key={`${index}-${label.slice(0, 40)}`}
-          color={
-            index === selected && focused
-              ? "green"
-              : index === selected
-                ? "cyan"
-                : undefined
-          }
-          bold={index === selected}
-        >
-          {index === selected ? "> " : "  "}
-          {label}
-        </Text>
-      ))}
-    </Box>
+    <ScrollList
+      items={items}
+      selected={selected}
+      focused={focused}
+      maxVisible={maxVisible}
+    />
   );
 }
 
 export function maskPreview(secret: string): string {
   if (!secret) return "(empty)";
   if (secret.length <= 8) return "*".repeat(secret.length);
-  return `${secret.slice(0, 4)}${"*".repeat(Math.min(secret.length - 8, 24))}${secret.slice(-4)}`;
+  return `${secret.slice(0, 4)}${"*".repeat(Math.min(secret.length - 8, 16))}${secret.slice(-4)}`;
 }
 
 export function cycle<T>(values: readonly T[], current: T, dir: 1 | -1): T {
@@ -46,4 +33,26 @@ export function cycle<T>(values: readonly T[], current: T, dir: 1 | -1): T {
   const from = idx < 0 ? 0 : idx;
   const next = (from + dir + values.length) % values.length;
   return values[next]!;
+}
+
+export function providerIcon(provider: string): string {
+  switch (provider.toLowerCase()) {
+    case "gemini":
+      return "✦";
+    case "openai":
+      return "❖";
+    case "claude":
+    case "anthropic":
+      return "⚡";
+    case "cursor":
+      return "⚙";
+    case "antigravity":
+      return "⬡";
+    case "openrouter":
+      return "⬢";
+    case "qwen":
+      return "🔮";
+    default:
+      return "●";
+  }
 }

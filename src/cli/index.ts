@@ -139,11 +139,19 @@ program
   .argument("[task-id]", "Task id (omit to resume the latest in this project)")
   .option("-p, --project <path>", "Project directory", ".")
   .option("-v, --verbose", "Verbose event logging", false)
-  .action(async (taskId: string | undefined, options: { project: string; verbose?: boolean }) => {
+  .option("--max-rounds <n>", "Raise round budget for this resume", (v: string) =>
+    Number(v),
+  )
+  .option("--max-messages <n>", "Raise message budget for this resume", (v: string) =>
+    Number(v),
+  )
+  .action(async (taskId: string | undefined, options: { project: string; verbose?: boolean; maxRounds?: number; maxMessages?: number }) => {
     const result = await resumeAssentorTask({
       projectPath: options.project,
       taskId,
       verbose: options.verbose,
+      maxRounds: options.maxRounds,
+      maxMessages: options.maxMessages,
     });
     console.log(`Task ${result.taskId} finished: ${result.status}`);
     if (result.status !== "DONE") {
@@ -300,6 +308,18 @@ keysCmd
       if (!status.valid) process.exitCode = 1;
     },
   );
+
+keysCmd
+  .command("dedupe")
+  .description("Remove duplicate vault keys (same provider, name, masked secret)")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(async (options: { project: string }) => {
+    const services = await createAssentorServices(path.resolve(options.project));
+    const before = services.vault.list().length;
+    await services.vault.load();
+    const after = services.vault.list().length;
+    console.log(`Vault deduped: ${before} → ${after} key(s)`);
+  });
 
 keysCmd
   .command("delete")

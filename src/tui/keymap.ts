@@ -78,6 +78,7 @@ export type UiAction =
   | { type: "focus_nav" }
   | { type: "focus_main" }
   | { type: "select_nav" }
+  | { type: "jump_screen"; screenIndex: number }
   | { type: "activate" }
   | { type: "escape" }
   | { type: "quit" }
@@ -171,6 +172,9 @@ export function mapKeyToAction(state: UiState, key: KeyEvent): UiAction {
   }
 
   if (state.focus === "nav") {
+    if (key.input >= "1" && key.input <= "7") {
+      return { type: "jump_screen", screenIndex: parseInt(key.input, 10) - 1 };
+    }
     if (key.upArrow || key.input === "k") return { type: "nav_up" };
     if (key.downArrow || key.input === "j") return { type: "nav_down" };
     if (key.rightArrow) return { type: "focus_main" };
@@ -179,23 +183,25 @@ export function mapKeyToAction(state: UiState, key: KeyEvent): UiAction {
     return { type: "noop" };
   }
 
+  // Editing config rows
+  const editingConfig =
+    state.screen === "configuration" &&
+    (state.configSection === "ai" ||
+      state.configSection === "review" ||
+      state.configSection === "advanced");
+
+  if (editingConfig) {
+    if (key.leftArrow) return { type: "cycle_left" };
+    if (key.rightArrow) return { type: "cycle_right" };
+    if (key.input === "s") return { type: "save_defaults" };
+  }
+
   // main focus — arrows stay on this screen (Tab/Esc for nav).
   if (key.upArrow || key.input === "k") return { type: "main_up" };
   if (key.downArrow || key.input === "j") return { type: "main_down" };
   if (key.return) return { type: "activate" };
   if (key.input === " ") return { type: "space" };
   if (key.input === "q") return { type: "focus_nav" };
-
-  const editingConfig =
-    state.screen === "configuration" &&
-    (state.configSection === "ai" ||
-      state.configSection === "review" ||
-      state.configSection === "advanced");
-  if (editingConfig) {
-    if (key.leftArrow) return { type: "cycle_left" };
-    if (key.rightArrow) return { type: "cycle_right" };
-    if (key.input === "s") return { type: "save_defaults" };
-  }
 
   // Contextual shortcuts
   if (state.screen === "workspace") {
@@ -266,6 +272,19 @@ export function reduceUi(state: UiState, action: UiAction): UiState {
       return { ...state, focus: "nav" };
     case "focus_main":
       return { ...state, focus: "main" };
+    case "jump_screen": {
+      const screen = screenAt(action.screenIndex);
+      return {
+        ...state,
+        screen,
+        navIndex: action.screenIndex,
+        focus: "main",
+        mainIndex: 0,
+        selectedTaskId: null,
+        configSection: screen === "configuration" ? "menu" : state.configSection,
+        dialog: "none",
+      };
+    }
     case "select_nav": {
       const screen = screenAt(state.navIndex);
       return {
@@ -357,67 +376,67 @@ export function reduceUi(state: UiState, action: UiAction): UiState {
 
 export function footerHints(state: UiState): string {
   if (state.dialog === "palette") {
-    return "↑↓ Select · Enter Run · Esc Close · type to filter";
+    return "↑↓ Select · ↵ Run · Esc Close · Type to filter";
   }
   if (state.dialog === "help") {
-    return "Esc Close · / Commands · ? This help";
+    return "Esc Close · / Commands · ? Help";
   }
   if (state.dialog === "start-task") {
-    return "Type · Enter Next · Esc Cancel";
+    return "Type text · ↵ Next · Esc Cancel";
   }
   if (state.dialog === "add-key") {
-    return "↑↓ Provider · Enter Next · Esc Cancel";
+    return "↑↓ Provider · ↵ Next · Esc Cancel";
   }
   if (state.dialog === "review-plan") {
-    return "Enter Close · Esc Back";
+    return "↵ Close · Esc Back";
   }
   if (state.dialog === "ai-defaults") {
-    return "↑↓ Field · ←→ Cycle · Enter Save · Esc Cancel";
+    return "↑↓ Field · ←→ Cycle · ↵ Save · Esc Cancel";
   }
   if (state.dialog === "add-reviewer") {
-    return "↑↓ Choose · Enter Next · Esc Cancel";
+    return "↑↓ Choose · ↵ Next · Esc Cancel";
   }
   if (state.dialog === "confirm-delete-task") {
-    return "↑↓ · Enter Confirm · Esc Cancel";
+    return "↑↓ Option · ↵ Confirm · Esc Cancel";
   }
   if (state.dialog === "confirm-uninstall") {
-    return "↑↓ · Enter Confirm · Esc Cancel";
+    return "↑↓ Option · ↵ Confirm · Esc Cancel";
   }
   if (state.focus === "nav") {
-    return "↑↓ Highlight · Enter Open · Tab Main · / Commands · ? Help · q Quit";
+    return "1-7 Jump · ↑↓ Move · ↵ Open · Tab Main · / Commands · ? Help · q Quit";
   }
 
   switch (state.screen) {
     case "workspace":
-      return "↑↓ Actions · Enter · n New task · m Mode · Tab Nav · / Commands";
+      return "↑↓ Actions · ↵ Select · n New task · m Mode · Tab Nav · / Commands";
     case "tasks":
       return state.selectedTaskId
         ? "r Resume (failed/timeout) · d Delete · Esc Back"
-        : "↑↓ Select · Enter Open · r Resume · d Delete · n New";
+        : "↑↓ Select · ↵ Open · r Resume · d Delete · n New task";
     case "agents":
-      return "↑↓ Browse specialties · Tab Nav · add backends in Configure → Reviewers";
+      return "↑↓ Browse specialties · Tab Nav · Add backends in Configure › Reviewers";
     case "review":
-      return "↑↓ · Enter · p Explain reviewers · Tab Nav";
+      return "↑↓ Action · ↵ Select · p Explain reviewers · Tab Nav";
     case "configuration":
       if (state.configSection === "keys") {
-        return "a Add · c Check · C Check all · d Delete · Esc Back";
+        return "a Add key · c Check · C Check all · d Delete · Esc Back";
       }
       if (state.configSection === "executors") {
-        return "r Detect · u Use · i Install plan · Enter Check · Esc Back";
+        return "r Detect all · u Use · i Install plan · ↵ Check · Esc Back";
       }
       if (state.configSection === "review") {
-        return "a Add · d Delete · ←→ How many · s Save · Esc Back";
+        return "a Add · d Delete · ←→ Settings · s Save · Esc Back";
       }
       if (state.configSection === "menu") {
-        return "↑↓ Section · Enter Open · Tab Nav";
+        return "↑↓ Section · ↵ Open · Tab Nav";
       }
       return "↑↓ Field · ←→ Change value · s Save · Esc Back";
     case "diagnostics":
-      return "Enter Refresh · Esc Nav · / Commands";
+      return "↵ Refresh & run all checks · Esc Nav · / Commands";
     case "help":
       return "/ Commands · Esc Nav · q Quit from nav";
     default:
-      return "↑↓ · Enter · Esc · / · ?";
+      return "↑↓ · ↵ · Esc · / · ?";
   }
 }
 
@@ -447,7 +466,7 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
   },
   {
     id: "task-list",
-    label: "Open tasks",
+    label: "Open tasks history",
     keywords: ["task", "list", "history", "resume"],
     screen: "tasks",
   },
@@ -459,7 +478,7 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
   },
   {
     id: "review",
-    label: "Open review",
+    label: "Open review engine",
     keywords: ["review"],
     screen: "review",
   },
@@ -486,14 +505,14 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
   },
   {
     id: "config-keys",
-    label: "API keys",
+    label: "API keys vault",
     keywords: ["key", "api", "secret"],
     screen: "configuration",
     configSection: "keys",
   },
   {
     id: "config-executors",
-    label: "Executors",
+    label: "Executors hub",
     keywords: ["executor", "cursor", "cli", "install"],
     screen: "configuration",
     configSection: "executors",
@@ -512,7 +531,7 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
   },
   {
     id: "help",
-    label: "Help",
+    label: "Help & shortcuts",
     keywords: ["help", "shortcuts"],
     screen: "help",
     dialog: "help",

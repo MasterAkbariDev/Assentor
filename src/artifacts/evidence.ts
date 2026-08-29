@@ -4,6 +4,10 @@ import { spawn } from "node:child_process";
 import type { EvidenceRequestItem } from "../protocol/messages.js";
 import { EvidenceKind } from "../protocol/messages.js";
 import {
+  isImagePath,
+  readProjectImageBase64,
+} from "./images.js";
+import {
   assertSafeProjectPath,
   readProjectFile,
   listProjectDirectory,
@@ -77,6 +81,20 @@ async function fulfillOne(
   switch (request.kind) {
     case EvidenceKind.File: {
       const absolute = assertSafeProjectPath(deps.projectPath, request.path);
+      if (isImagePath(request.path)) {
+        const image = await readProjectImageBase64(deps.projectPath, request.path);
+        deps.collector.add({
+          type: ArtifactType.Screenshot,
+          path: request.path,
+          description: request.description ?? request.path,
+          content: image.data,
+          metadata: {
+            mimeType: image.mimeType,
+            encoding: "base64",
+          },
+        });
+        return true;
+      }
       const raw = await readProjectFile(absolute);
       const redacted = redactSecrets(raw);
       deps.collector.addFile(
@@ -92,6 +110,21 @@ async function fulfillOne(
       for (const rel of request.paths) {
         try {
           const absolute = assertSafeProjectPath(deps.projectPath, rel);
+          if (isImagePath(rel)) {
+            const image = await readProjectImageBase64(deps.projectPath, rel);
+            deps.collector.add({
+              type: ArtifactType.Screenshot,
+              path: rel,
+              description: request.description ?? rel,
+              content: image.data,
+              metadata: {
+                mimeType: image.mimeType,
+                encoding: "base64",
+              },
+            });
+            any = true;
+            continue;
+          }
           const raw = await readProjectFile(absolute);
           const redacted = redactSecrets(raw);
           deps.collector.addFile(
@@ -215,11 +248,53 @@ async function fulfillOne(
     case EvidenceKind.RuntimeInformation:
     case EvidenceKind.Log:
     case EvidenceKind.Logs:
-    case EvidenceKind.Screenshot:
     case EvidenceKind.Environment:
     case EvidenceKind.SceneHierarchy:
     case EvidenceKind.McpInspection:
       return false;
+    case EvidenceKind.Screenshot: {
+      let relative =
+        "path" in request && typeof request.path === "string"
+          ? request.path
+          : undefined;
+
+      // If no explicit path is given, check for existing project screenshot artifacts
+      if (!relative) {
+        const candidates = [
+          "artifacts/screenshots/workspace-80col.png",
+          "artifacts/screenshots/help-80col.png",
+          "artifacts/screenshots/configuration-ai-80col.png",
+        ];
+        for (const c of candidates) {
+          try {
+            assertSafeProjectPath(deps.projectPath, c);
+            const image = await readProjectImageBase64(deps.projectPath, c);
+            if (image && image.data) {
+              relative = c;
+              break;
+            }
+          } catch {
+            // try next candidate
+          }
+        }
+      }
+
+      if (!relative || !isImagePath(relative)) {
+        return false;
+      }
+      const image = await readProjectImageBase64(deps.projectPath, relative);
+      deps.collector.add({
+        type: ArtifactType.Screenshot,
+        path: relative,
+        description: request.description ?? relative,
+        content: image.data,
+        metadata: {
+          mimeType: image.mimeType,
+          encoding: "base64",
+        },
+      });
+      return true;
+    }
     default: {
       return false;
     }

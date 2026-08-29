@@ -63,6 +63,18 @@ export class RunReporter {
     },
   ) {}
 
+  updateAgentLabels(labels: {
+    executorName?: string;
+    reviewerName?: string;
+  }): void {
+    if (labels.executorName) {
+      this.options.executorName = labels.executorName;
+    }
+    if (labels.reviewerName) {
+      this.options.reviewerName = labels.reviewerName;
+    }
+  }
+
   /** Immediate spinner so run/resume is never a blank screen. */
   preparing(detail: string): void {
     this.section("Setup");
@@ -266,7 +278,7 @@ export class RunReporter {
       this.activity = "thinking";
       this.activityDetail = truncate(
         `still working · last: ${this.lastToolDetail}`,
-        56,
+        72,
       );
       this.paint(true);
       return;
@@ -276,7 +288,7 @@ export class RunReporter {
       next === "thinking" && (!detail || /^(reasoning|planning)/i.test(detail))
         ? "model thinking — this can take a few minutes"
         : detail || next,
-      56,
+      72,
     );
     if (
       next === "editing" ||
@@ -369,7 +381,7 @@ export class RunReporter {
         break;
       case "COMMUNICATING":
         this.section("Follow-up");
-        this.oneShot("Routing reviewer feedback to the executor");
+        this.oneShot("Collecting reviewer-requested evidence locally");
         break;
       case "DONE":
         this.endStatus();
@@ -490,7 +502,7 @@ export class RunReporter {
     const elapsed = formatElapsed(now - this.phaseStartedAt);
     const spin = SPINNER[this.spinnerIndex] ?? "·";
     const color = activityColor(this.activity);
-    const line = `  ${c.cyan}${spin}${c.reset} ${this.statusLabel} ${c.dim}·${c.reset} ${color}${c.bold}${this.activity}${c.reset} ${c.dim}${elapsed}${c.reset}  ${c.dim}${truncate(this.activityDetail, 48)}${c.reset}`;
+    const line = `  ${c.cyan}${spin}${c.reset} ${this.statusLabel} ${c.dim}·${c.reset} ${color}${c.bold}${this.activity}${c.reset} ${c.dim}${elapsed}${c.reset}  ${c.dim}${truncate(this.activityDetail, 64)}${c.reset}`;
 
     if (this.isTty) {
       this.clearLine();

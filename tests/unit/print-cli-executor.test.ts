@@ -18,6 +18,35 @@ describe("print-mode CLI recipes", () => {
     ]);
   });
 
+  it("builds Antigravity resume args with --conversation", () => {
+    expect(
+      buildPrintCliArgs(PRINT_CLI_RECIPES.antigravity!, "Continue work", {
+        sessionId: "conv-1",
+      }),
+    ).toEqual([
+      "--dangerously-skip-permissions",
+      "--conversation",
+      "conv-1",
+      "--output-format",
+      "stream-json",
+      "-p=Continue work",
+    ]);
+  });
+
+  it("builds Antigravity continue args without a session id", () => {
+    expect(
+      buildPrintCliArgs(PRINT_CLI_RECIPES.antigravity!, "Continue work", {
+        continueRecent: true,
+      }),
+    ).toEqual([
+      "--dangerously-skip-permissions",
+      "--continue",
+      "--output-format",
+      "stream-json",
+      "-p=Continue work",
+    ]);
+  });
+
   it("builds Claude Code print args", () => {
     const recipe = PRINT_CLI_RECIPES["claude-code"];
     expect(buildPrintCliArgs(recipe!, "Implement average", { sessionId: "abc" })).toEqual([
@@ -107,6 +136,48 @@ describe("print-mode CLI recipes", () => {
     expect(result.summary).toBe("Updated executors list");
     expect(result.sessionId).toBe("agy-1");
     expect(statuses.some((s) => s.startsWith("reading:"))).toBe(true);
+    expect(statuses.some((s) => s.includes("#1"))).toBe(true);
+  });
+
+  it("continues Antigravity with --conversation when session id is known", async () => {
+    const recipe = PRINT_CLI_RECIPES.antigravity!;
+    const executor = new PrintCliExecutor({
+      recipe,
+      binary: "/tmp/agy",
+      spawnFn: async (request) => {
+        expect(request.args).toContain("--conversation");
+        expect(request.args).toContain("agy-1");
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    });
+    await executor.continue({
+      taskId: "t1",
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("goal"),
+      sessionId: "agy-1",
+      mode: "supervised",
+      messages: [],
+    });
+  });
+
+  it("continues Antigravity with --continue when no session id", async () => {
+    const recipe = PRINT_CLI_RECIPES.antigravity!;
+    const executor = new PrintCliExecutor({
+      recipe,
+      binary: "/tmp/agy",
+      spawnFn: async (request) => {
+        expect(request.args).toContain("--continue");
+        expect(request.args).not.toContain("--conversation");
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    });
+    await executor.continue({
+      taskId: "t1",
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("goal"),
+      mode: "supervised",
+      messages: [],
+    });
   });
 
   it("streams plain text lines when output format is text", async () => {

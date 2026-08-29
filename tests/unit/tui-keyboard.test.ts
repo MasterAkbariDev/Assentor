@@ -156,4 +156,47 @@ describe("TUI keyboard map (§44 + UX rewrite)", () => {
     });
     expect(mapKeyToAction(state, { input: "u" }).type).toBe("executors_use");
   });
+
+  it("1-7 on nav jumps directly to target screen", () => {
+    const nav = createInitialUiState({ focus: "nav" });
+    const action = mapKeyToAction(nav, { input: "4" });
+    expect(action).toEqual({ type: "jump_screen", screenIndex: 3 });
+    const nextState = reduceUi(nav, action);
+    expect(nextState.screen).toBe("review");
+    expect(nextState.focus).toBe("main");
+  });
+
+  it("cycles fields on review and advanced configuration sections", () => {
+    const reviewState = createInitialUiState({
+      focus: "main",
+      screen: "configuration",
+      configSection: "review",
+    });
+    expect(mapKeyToAction(reviewState, { input: "", leftArrow: true }).type).toBe("cycle_left");
+    expect(mapKeyToAction(reviewState, { input: "", rightArrow: true }).type).toBe("cycle_right");
+    expect(mapKeyToAction(reviewState, { input: "a" }).type).toBe("reviewers_add");
+    expect(mapKeyToAction(reviewState, { input: "d" }).type).toBe("reviewers_delete");
+
+    const advState = createInitialUiState({
+      focus: "main",
+      screen: "configuration",
+      configSection: "advanced",
+    });
+    expect(mapKeyToAction(advState, { input: "", leftArrow: true }).type).toBe("cycle_left");
+    expect(mapKeyToAction(advState, { input: "", rightArrow: true }).type).toBe("cycle_right");
+    expect(mapKeyToAction(advState, { input: "s" }).type).toBe("save_defaults");
+  });
+
+  it("toggles focus seamlessly between nav and main with Tab", () => {
+    let state = createInitialUiState({ focus: "nav" });
+    let action = mapKeyToAction(state, { input: "", tab: true });
+    expect(action.type).toBe("focus_main");
+    state = reduceUi(state, action);
+    expect(state.focus).toBe("main");
+
+    action = mapKeyToAction(state, { input: "", tab: true });
+    expect(action.type).toBe("focus_nav");
+    state = reduceUi(state, action);
+    expect(state.focus).toBe("nav");
+  });
 });

@@ -564,6 +564,8 @@ export async function resumeAssentorTask(input: {
   projectPath: string;
   taskId?: string;
   verbose?: boolean;
+  maxRounds?: number;
+  maxMessages?: number;
 }) {
   const projectPath = path.resolve(input.projectPath);
   const reporter = new RunReporter({
@@ -599,6 +601,36 @@ export async function resumeAssentorTask(input: {
 
     reporter.updatePreparing("loading config…");
     const config = await loadAssentorConfig(projectPath);
+    if (
+      resume.snapshot.status === TaskState.BudgetExceeded ||
+      input.maxRounds ||
+      input.maxMessages
+    ) {
+      const limits = { ...resume.snapshot.budgets.limits };
+      if (input.maxRounds) {
+        limits.maxRounds = input.maxRounds;
+      } else if (resume.snapshot.status === TaskState.BudgetExceeded) {
+        limits.maxRounds = Math.max(
+          limits.maxRounds + 4,
+          config.limits.maxRounds,
+        );
+      }
+      if (input.maxMessages) {
+        limits.maxMessages = input.maxMessages;
+      } else if (resume.snapshot.status === TaskState.BudgetExceeded) {
+        limits.maxMessages = Math.max(
+          limits.maxMessages + 20,
+          config.limits.maxMessages,
+        );
+      }
+      resume.snapshot.budgets = {
+        ...resume.snapshot.budgets,
+        limits,
+      };
+      reporter.note(
+        `Extended budgets for resume: rounds ${resume.snapshot.budgets.usage.rounds}/${limits.maxRounds}, messages ${resume.snapshot.budgets.usage.messages}/${limits.maxMessages}`,
+      );
+    }
     const executorProvider = config.executor.provider;
     const backends = selectReviewerBackends(config);
 
@@ -647,6 +679,11 @@ export async function resumeAssentorTask(input: {
             acceptanceCriteria:
               resume.snapshot.contract.acceptanceCriteria ?? [],
           });
+
+    reporter.updateAgentLabels({
+      executorName: executor.name,
+      reviewerName: formatReviewerRunLabel(reviewer.name, backends[0]),
+    });
 
     supervisor = new Supervisor({
       projectPath,
@@ -719,7 +756,7 @@ export async function doctorAssentor(): Promise<string[]> {
     `CURSOR_API_KEY: ${process.env.CURSOR_API_KEY ? "set" : "missing"}`,
   );
   lines.push(
-    `ASSENTOR_GEMINI_MODEL: ${process.env.ASSENTOR_GEMINI_MODEL ?? "(default gemini-3.6-flash + fallbacks)"}`,
+    `ASSENTOR_GEMINI_MODEL: ${process.env.ASSENTOR_GEMINI_MODEL ?? "(default gemini-2.5-flash + fallbacks)"}`,
   );
 
   const { resolveCursorBinary, isCursorAppBinary } = await import(

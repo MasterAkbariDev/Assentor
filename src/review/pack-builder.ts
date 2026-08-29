@@ -24,6 +24,10 @@ import {
   type VerificationCommands,
 } from "../config/detect-commands.js";
 import { fulfillEvidenceRequests } from "../artifacts/evidence.js";
+import {
+  isImagePath,
+  readProjectImageBase64,
+} from "../artifacts/images.js";
 import type { ExecutorResult } from "../providers/executors/types.js";
 import type { TaskContract } from "../core/task-contract.js";
 import { runShellCommand } from "../process/run-shell.js";
@@ -144,6 +148,7 @@ export class EvidencePackBuilder {
     }
 
     this.syncCollector(pack);
+    await this.collectScreenshotArtifacts();
     return pack;
   }
 
@@ -583,6 +588,9 @@ export class EvidencePackBuilder {
     relative: string,
     role: EvidenceFileRef["role"],
   ): Promise<EvidenceFileRef | null> {
+    if (isImagePath(relative)) {
+      return null;
+    }
     const absolute = path.join(this.projectPath, relative);
     try {
       const stat = await fs.stat(absolute);
@@ -599,6 +607,60 @@ export class EvidencePackBuilder {
       };
     } catch {
       return null;
+    }
+  }
+
+  private async collectScreenshotArtifacts(): Promise<void> {
+    const dirs = ["artifacts/screenshots"];
+    if (this.options.taskId) {
+      dirs.push(
+        path.join(
+          ".assentor",
+          "tasks",
+          this.options.taskId,
+          "artifacts",
+          "screenshots",
+        ),
+      );
+    }
+
+    const seen = new Set(
+      this.collector
+        .list({ type: ArtifactType.Screenshot })
+        .map((artifact) => artifact.path)
+        .filter(Boolean) as string[],
+    );
+
+    for (const relativeDir of dirs) {
+      const absoluteDir = path.join(this.projectPath, relativeDir);
+      let entries: string[];
+      try {
+        entries = await fs.readdir(absoluteDir);
+      } catch {
+        continue;
+      }
+      for (const name of entries.sort()) {
+        const relative = path.join(relativeDir, name).replace(/\\/g, "/");
+        if (!isImagePath(relative) || seen.has(relative)) {
+          continue;
+        }
+        try {
+          const image = await readProjectImageBase64(this.projectPath, relative);
+          this.collector.add({
+            type: ArtifactType.Screenshot,
+            path: relative,
+            description: `terminal screenshot: ${name}`,
+            content: image.data,
+            metadata: {
+              mimeType: image.mimeType,
+              encoding: "base64",
+            },
+          });
+          seen.add(relative);
+        } catch {
+          // skip unreadable images
+        }
+      }
     }
   }
 

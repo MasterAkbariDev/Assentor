@@ -114,7 +114,9 @@ export class PrintCliExecutor implements Executor {
   }
 
   async run(task: ExecutorTask): Promise<ExecutorResult> {
-    return this.execute(task.taskId, task.projectPath, task.prompt);
+    return this.execute(task.taskId, task.projectPath, task.prompt, {
+      isContinuation: false,
+    });
   }
 
   async continue(input: ExecutorContinuation): Promise<ExecutorResult> {
@@ -128,7 +130,9 @@ export class PrintCliExecutor implements Executor {
             input.nextPhaseDirective,
           )
         : buildSupervisedContinuationPrompt(input.messages);
-    return this.execute(input.taskId, input.projectPath, prompt);
+    return this.execute(input.taskId, input.projectPath, prompt, {
+      isContinuation: true,
+    });
   }
 
   async cancel(taskId: string): Promise<void> {
@@ -142,6 +146,7 @@ export class PrintCliExecutor implements Executor {
     taskId: string,
     projectPath: string,
     prompt: string,
+    options: { isContinuation?: boolean } = {},
   ): Promise<ExecutorResult> {
     if (this.cancelled.has(taskId)) {
       return {
@@ -156,6 +161,10 @@ export class PrintCliExecutor implements Executor {
     this.binary = binary;
     const args = buildPrintCliArgs(this.recipe, prompt, {
       sessionId: this.sessionId,
+      continueRecent:
+        options.isContinuation === true &&
+        !this.sessionId &&
+        Boolean(this.recipe.continueFlag),
     });
 
     const useStreamJson = this.recipe.outputFormat === "stream-json";

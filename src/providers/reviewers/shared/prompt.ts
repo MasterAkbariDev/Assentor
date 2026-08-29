@@ -11,6 +11,8 @@ import type { ProtocolMessage } from "../../../protocol/messages.js";
 import type { PhaseProgress } from "../../../protocol/review-result.js";
 import type { ProjectReviewEvidencePack } from "../../../review/evidence-pack.js";
 import { evidencePackToMarkdown } from "../../../review/persist.js";
+import type { AIImagePart } from "../../ai/types.js";
+import { ArtifactType } from "../../../artifacts/types.js";
 
 export function buildReviewPrompt(input: {
   contract: TaskContract;
@@ -30,6 +32,9 @@ export function buildReviewPrompt(input: {
     .slice(0, 24)
     .map((artifact) => {
       const header = `- (${artifact.type}) ${artifact.path ?? artifact.id}: ${artifact.description ?? ""}`;
+      if (isVisionArtifact(artifact)) {
+        return `${header} [attached as vision input]`;
+      }
       const limit = artifact.type === "file" ? 24_000 : 4_000;
       const body = artifact.content
         ? `\n\`\`\`\n${truncate(artifact.content, limit)}\n\`\`\``
@@ -234,6 +239,44 @@ export function asReviewInput(
     phaseProgress: "phaseProgress" in input ? input.phaseProgress : undefined,
     autopilot: "autopilot" in input ? input.autopilot : undefined,
   };
+}
+
+/** Extract base64 screenshots for vision-capable reviewers (e.g. Gemini). */
+export function extractReviewImages(input: {
+  artifacts?: ReviewArtifactRef[];
+}): AIImagePart[] {
+  const images: AIImagePart[] = [];
+  const seen = new Set<string>();
+  for (const artifact of input.artifacts ?? []) {
+    if (!isVisionArtifact(artifact) || !artifact.content) {
+      continue;
+    }
+    const key = artifact.path ?? artifact.id;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    const mimeType =
+      typeof artifact.metadata?.mimeType === "string"
+        ? artifact.metadata.mimeType
+        : "image/png";
+    images.push({
+      mimeType,
+      data: artifact.content,
+      label: artifact.description ?? artifact.path ?? artifact.id,
+    });
+    if (images.length >= 6) {
+      break;
+    }
+  }
+  return images;
+}
+
+function isVisionArtifact(artifact: ReviewArtifactRef): boolean {
+  if (artifact.type === ArtifactType.Screenshot) {
+    return true;
+  }
+  return artifact.metadata?.encoding === "base64";
 }
 
 function truncate(value: string, max: number): string {

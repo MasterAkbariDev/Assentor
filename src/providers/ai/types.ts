@@ -79,6 +79,13 @@ export interface UsageInfo {
   known: boolean;
 }
 
+export interface AIImagePart {
+  mimeType: string;
+  /** Base64-encoded image bytes (no data: URL prefix). */
+  data: string;
+  label?: string;
+}
+
 export interface AIRequest {
   model: string;
   prompt: string;
@@ -87,6 +94,8 @@ export interface AIRequest {
   jsonMode?: boolean;
   timeoutMs?: number;
   key: ApiKeyRef;
+  /** Optional vision inputs (Gemini inlineData, etc.). */
+  images?: AIImagePart[];
 }
 
 export interface AIResponse {

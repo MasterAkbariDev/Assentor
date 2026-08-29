@@ -125,6 +125,7 @@ export class ArtifactCollector {
     path?: string;
     description?: string;
     content?: string;
+    metadata?: Record<string, unknown>;
   }> {
     return this.artifacts.map((artifact) => ({
       id: artifact.id,
@@ -132,6 +133,7 @@ export class ArtifactCollector {
       path: artifact.path,
       description: artifact.description,
       content: artifact.content,
+      metadata: artifact.metadata,
     }));
   }
 }

@@ -36,6 +36,7 @@ export interface ReviewArtifactRef {
   path?: string;
   description?: string;
   content?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ReviewerTurnResult {
