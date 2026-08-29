@@ -3,6 +3,8 @@ import {
   CursorExecutor,
   type CursorExecutorOptions,
 } from "../providers/executors/cursor/index.js";
+import { PrintCliExecutor } from "../providers/executors/cli-print/index.js";
+import { PRINT_CLI_RECIPES } from "../providers/executors/cli-print/recipes.js";
 import type {
   ExecutorContinuation,
   ExecutorResult,
@@ -16,13 +18,28 @@ import {
   type InstallPlan,
 } from "./registry.js";
 
+export interface ExecutorRuntimeOptions {
+  onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
+  onStatus?: (status: { activity: string; detail: string }) => void;
+  timeoutMs?: number;
+}
+
 export class CursorExecutorAdapter implements ExecutorAdapter {
   readonly id = "cursor";
   readonly name = "Cursor";
   private readonly inner: CursorExecutor;
 
-  constructor(options: CursorExecutorOptions = {}) {
-    this.inner = new CursorExecutor(options);
+  constructor(options: CursorExecutorOptions | ExecutorRuntimeOptions = {}) {
+    this.inner = new CursorExecutor({
+      ...options,
+      onStatus: options.onStatus
+        ? (status) =>
+            options.onStatus?.({
+              activity: status.activity,
+              detail: status.detail,
+            })
+        : undefined,
+    });
   }
 
   capabilities() {
@@ -110,18 +127,21 @@ export class CodexExecutorAdapter extends CliExecutorAdapter {
   }
 }
 
-export class GeminiCliExecutorAdapter extends CliExecutorAdapter {
-  readonly id = "gemini-cli";
-  readonly name = "Gemini CLI";
-  readonly binaryNames = ["gemini"];
-  override readonly binaryTool = "gemini" as const;
+export class AntigravityExecutorAdapter extends CliExecutorAdapter {
+  readonly id = "antigravity";
+  readonly name = "Antigravity";
+  readonly binaryNames = ["agy", "antigravity"];
+  override readonly binaryTool = "agy" as const;
 
   installPlan(): InstallPlan {
     return {
-      application: "Gemini CLI",
-      command: "npm install -g @google/gemini-cli",
-      source: "https://github.com/google-gemini/gemini-cli",
-      automatic: true,
+      application: "Google Antigravity CLI",
+      command:
+        "Install the Antigravity CLI (`agy`). See https://antigravity.google/docs/cli or set ASSENTOR_AGY_BINARY.",
+      source: "https://antigravity.google",
+      automatic: false,
+      notes:
+        "Binary is `agy` (often ~/.local/bin/agy). Print mode: agy -p \"prompt\".",
     };
   }
 }
@@ -161,14 +181,31 @@ export class OpenCodeExecutorAdapter extends CliExecutorAdapter {
 }
 
 export function buildExecutorRegistry(
-  cursorOptions: CursorExecutorOptions = {},
+  options: ExecutorRuntimeOptions = {},
 ): ExecutorRegistry {
   const registry = new ExecutorRegistry();
-  registry.register(new CursorExecutorAdapter(cursorOptions));
-  registry.register(new ClaudeCodeExecutorAdapter());
-  registry.register(new CodexExecutorAdapter());
-  registry.register(new GeminiCliExecutorAdapter());
-  registry.register(new QwenExecutorAdapter());
-  registry.register(new OpenCodeExecutorAdapter());
+  registry.register(new CursorExecutorAdapter(options));
+  registry.register(new ClaudeCodeExecutorAdapter(options));
+  registry.register(new AntigravityExecutorAdapter(options));
+  registry.register(new CodexExecutorAdapter(options));
+  registry.register(new QwenExecutorAdapter(options));
+  registry.register(new OpenCodeExecutorAdapter(options));
   return registry;
+}
+
+/** Shared by print-mode CLI adapters (Claude, Gemini, Antigravity, …). */
+export function createPrintCliExecutor(
+  id: string,
+  options: ExecutorRuntimeOptions = {},
+): PrintCliExecutor | undefined {
+  const recipe = PRINT_CLI_RECIPES[id];
+  if (!recipe) {
+    return undefined;
+  }
+  return new PrintCliExecutor({
+    recipe,
+    timeoutMs: options.timeoutMs,
+    onOutput: options.onOutput,
+    onStatus: options.onStatus,
+  });
 }

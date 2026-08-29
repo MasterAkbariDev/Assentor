@@ -18,6 +18,11 @@ import {
 } from "./evidence-pack.js";
 import { saveEvidencePack } from "./persist.js";
 import type { EvidenceRequestItem } from "../protocol/messages.js";
+import {
+  detectVerificationCommands,
+  emptyVerificationCommands,
+  type VerificationCommands,
+} from "../config/detect-commands.js";
 import { fulfillEvidenceRequests } from "../artifacts/evidence.js";
 import type { ExecutorResult } from "../providers/executors/types.js";
 import type { TaskContract } from "../core/task-contract.js";
@@ -38,6 +43,8 @@ export interface EvidencePackBuilderOptions {
   collector?: ArtifactCollector;
   /** Git HEAD at task start so committed executor work still shows as changed. */
   gitBaselineHead?: string | null;
+  /** Configured/detected project commands for test/lint/typecheck/build. */
+  verificationCommands?: VerificationCommands;
 }
 
 /**
@@ -151,11 +158,13 @@ export class EvidencePackBuilder {
     unfulfilled: EvidenceRequestItem[];
   }> {
     const git = new LocalGitService({ cwd: this.projectPath });
+    const commands = await this.resolveCommands();
     const result = await fulfillEvidenceRequests(requests, {
       projectPath: this.projectPath,
       collector: this.collector,
       git: (await git.isRepo()) ? git : undefined,
       runCommand: runShellCommand,
+      verificationCommands: commands,
     });
 
     for (const request of result.unfulfilled) {
@@ -596,27 +605,47 @@ export class EvidencePackBuilder {
   private async collectCommandStatus(
     run: boolean,
   ): Promise<ProjectReviewEvidencePack["tests"]> {
+    const commands = await this.resolveCommands();
     const notRun = (cmd?: string) => ({
       status: "NOT_RUN" as RunStatusMarker,
-      command: cmd,
+      command: cmd || undefined,
     });
     if (!run) {
       return {
         relevantTests: [],
-        test: notRun("npm test"),
-        build: notRun("npm run build"),
-        lint: notRun("npm run lint"),
-        typecheck: notRun("npx tsc --noEmit"),
+        test: notRun(commands.test),
+        build: notRun(commands.build),
+        lint: notRun(commands.lint),
+        typecheck: notRun(commands.typecheck),
       };
     }
 
     return {
       relevantTests: [],
-      test: await tryCommand(this.projectPath, "npm test"),
-      build: await tryCommand(this.projectPath, "npm run build"),
-      lint: await tryCommand(this.projectPath, "npm run lint"),
-      typecheck: await tryCommand(this.projectPath, "npx tsc --noEmit"),
+      test: commands.test
+        ? await tryCommand(this.projectPath, commands.test)
+        : notRun(),
+      build: commands.build
+        ? await tryCommand(this.projectPath, commands.build)
+        : notRun(),
+      lint: commands.lint
+        ? await tryCommand(this.projectPath, commands.lint)
+        : notRun(),
+      typecheck: commands.typecheck
+        ? await tryCommand(this.projectPath, commands.typecheck)
+        : notRun(),
     };
+  }
+
+  private async resolveCommands(): Promise<VerificationCommands> {
+    if (this.options.verificationCommands) {
+      return this.options.verificationCommands;
+    }
+    try {
+      return await detectVerificationCommands(this.projectPath);
+    } catch {
+      return emptyVerificationCommands();
+    }
   }
 }
 

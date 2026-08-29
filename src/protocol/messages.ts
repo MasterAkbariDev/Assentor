@@ -260,6 +260,7 @@ const ChangeRequestPayloadSchema = z.object({
   requiredChanges: z.array(z.string()).default([]),
   optionalChanges: z.array(z.string()).default([]),
   issueIds: z.array(z.string()).default([]),
+  nextPhaseDirective: z.string().optional(),
 });
 
 const InvestigationRequestPayloadSchema = z.object({

@@ -103,4 +103,13 @@ describe("CLI locator", () => {
     expect(isCursorAppBinary("cursor.exe")).toBe(true);
     expect(isCursorAppBinary("agent.cmd")).toBe(false);
   });
+
+  it("lists ~/.local/bin/agy as a default Antigravity location", () => {
+    const paths = wellKnownBinaryPaths("agy", {
+      platform: "linux",
+      homedir: "/home/sam",
+      env: { HOME: "/home/sam" },
+    });
+    expect(paths.some((p) => p.endsWith("/.local/bin/agy"))).toBe(true);
+  });
 });

@@ -25,6 +25,17 @@ describe("specialty prompts", () => {
     });
     expect(prompt).toContain("Specialty: Architecture");
     expect(prompt).toContain("unchanged interfaces");
+    expect(prompt).not.toContain("MULTI-PHASE TASK STEERING");
+  });
+
+  it("includes multi-phase steering only in Autopilot", () => {
+    const prompt = buildReviewPrompt({
+      contract: createEmptyContract("Build the app"),
+      round: 1,
+      artifacts: [],
+      autopilot: true,
+    });
+    expect(prompt).toContain("MULTI-PHASE TASK STEERING");
   });
 });
 

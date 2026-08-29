@@ -6,6 +6,7 @@ import { NAV_SCREENS, type FocusPane, type ScreenId } from "../keymap.js";
 
 export interface StatusBarProps {
   projectLabel: string;
+  mode: string;
   executor: string;
   reviewStrategy: string;
   model: string;
@@ -15,6 +16,7 @@ export interface StatusBarProps {
 
 export function StatusBar({
   projectLabel,
+  mode,
   executor,
   reviewStrategy,
   model,
@@ -25,6 +27,8 @@ export function StatusBar({
     <Box flexDirection="column" marginBottom={0}>
       <Text dimColor>
         {projectLabel}
+        {"  ·  "}
+        mode {mode}
         {"  ·  "}
         exec {executor}
         {"  ·  "}
@@ -74,6 +78,15 @@ export function Shell({
         <Text dimColor>  v{version}</Text>
         <Text>  </Text>
         <Badge label={statusLabel} tone={statusTone} />
+        {statusBar?.mode ? (
+          <>
+            <Text>  </Text>
+            <Badge
+              label={statusBar.mode}
+              tone={statusBar.mode === "Autopilot" ? "warn" : "info"}
+            />
+          </>
+        ) : null}
         {focus === "main" || focus === "palette" || focus === "dialog" ? (
           <Text color="green"> · focused</Text>
         ) : (

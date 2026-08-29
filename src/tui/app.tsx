@@ -20,6 +20,8 @@ import {
   type AssentorServices,
   type DiagnosticItem,
 } from "../services/app.js";
+import { formatRunMode } from "../core/run-mode.js";
+import { formatExecutorProvider } from "../executors/providers.js";
 import { loadAssentorConfig, type AssentorConfig } from "../config/load.js";
 import { explainReviewPlan } from "../review/complexity.js";
 import {
@@ -63,6 +65,7 @@ import {
   CONFIG_MENU,
   ConfigurationScreen,
   cycleAiField,
+  cycleRunMode,
   cycleAdvancedField,
   cycleReviewField,
   removeReviewerAt,
@@ -82,7 +85,13 @@ import {
 
 export type TuiHandoff =
   | { kind: "exit" }
-  | { kind: "run"; projectPath: string; prompt: string }
+  | {
+      kind: "run";
+      projectPath: string;
+      prompt: string;
+      executor?: string;
+      mode?: AssentorConfig["run"]["mode"];
+    }
   | { kind: "resume"; projectPath: string; taskId: string };
 
 function isRetryableTaskStatus(status: string): boolean {
@@ -372,6 +381,13 @@ function App({
       });
       return;
     }
+    if (cmd.id === "mode-cycle") {
+      const next = cycleRunMode(config);
+      setConfig(next);
+      setMessage(`Mode: ${formatRunMode(next.run.mode)}`);
+      patchUi({ dialog: "none", focus: "main" });
+      return;
+    }
     if (cmd.dialog === "help") {
       patchUi({ dialog: "help", focus: "dialog" });
       return;
@@ -493,6 +509,8 @@ function App({
       kind: "run",
       projectPath: path.resolve(startTaskPath),
       prompt: taskPrompt.trim(),
+      executor: config.executor.provider,
+      mode: config.run.mode,
     });
     exit();
   }
@@ -1080,6 +1098,38 @@ function App({
       return;
     }
 
+    if (action.type === "executors_use") {
+      const row = executorRows[ui.mainIndex];
+      if (!row) {
+        setMessage("Select an executor first");
+        return;
+      }
+      setConfig((c) => {
+        const next = structuredClone(c);
+        next.executor.provider =
+          row.id as AssentorConfig["executor"]["provider"];
+        return next;
+      });
+      const installed = row.detection?.installed;
+      setMessage(
+        installed
+          ? `Executor set to ${row.name} — press s in AI defaults to save`
+          : `Executor set to ${row.name} (not installed yet) — r to detect, i for install plan`,
+      );
+      return;
+    }
+
+    if (action.type === "cycle_mode") {
+      const next = cycleRunMode(config);
+      setConfig(next);
+      setMessage(
+        next.run.mode === "autopilot"
+          ? "Mode: Autopilot — executor continues through phases without asking"
+          : "Mode: Supervised — executor stops for review between rounds",
+      );
+      return;
+    }
+
     if (action.type === "cycle_left" || action.type === "cycle_right") {
       const dir = action.type === "cycle_right" ? 1 : -1;
       applyConfigCycle(dir as 1 | -1);
@@ -1131,6 +1181,7 @@ function App({
       footer={footerHints(ui)}
       statusBar={{
         projectLabel: shortPath(services.projectPath),
+        mode: formatRunMode(config.run.mode),
         executor: config.executor.provider,
         reviewStrategy: config.routing.reviewStrategy,
         model: config.models.default,
@@ -1155,6 +1206,8 @@ function App({
           step={startTaskStep}
           projectPath={startTaskPath}
           goal={taskPrompt}
+          mode={formatRunMode(config.run.mode)}
+          executor={formatExecutorProvider(config.executor.provider)}
           explanation={
             reviewPlan && startTaskStep === "confirm"
               ? explainReviewPlan(reviewPlan, config.reviewers)
@@ -1272,6 +1325,13 @@ function App({
               config={config}
               keys={keys}
               executorRows={executorRows}
+              installedIds={
+                new Set(
+                  executorRows
+                    .filter((row) => row.detection?.installed)
+                    .map((row) => row.id),
+                )
+              }
               envHints={envHints}
             />
           ) : null}

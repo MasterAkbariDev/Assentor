@@ -466,4 +466,280 @@ describe("supervisor", () => {
     expect(result.status).toBe(TaskState.Failed);
     expect(result.reason).toMatch(/Ctrl\+C|Interrupted/i);
   });
+
+  it("skips the LLM reviewer when a hard verification gate fails", async () => {
+    const executor = mockExecutor(async () => ({
+      status: "completed",
+      summary: "wrote code",
+      sessionId: "s1",
+    }));
+    const reviewer = mockReviewer(() => {
+      throw new Error("reviewer should not be called");
+    });
+
+    const result = await new Supervisor({
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("Implement average()"),
+      executor,
+      reviewer,
+      budgets: createBudgets({ maxRounds: 2, maxMessages: 20 }),
+      verification: {
+        enabled: true,
+        commands: {
+          typecheck: "npx tsc --noEmit",
+          test: "",
+          lint: "",
+          build: "",
+        },
+        skipReviewOnFailure: {
+          typecheck: true,
+          build: true,
+          test: true,
+          lint: false,
+        },
+      },
+      runVerificationCommand: async () => ({
+        stdout: "",
+        stderr: "error TS2322: Type 'string' is not assignable",
+        code: 1,
+      }),
+    }).run();
+
+    expect(reviewer.calls).toBe(0);
+    expect(executor.calls).toBe(2);
+    expect(result.status).toBe(TaskState.BudgetExceeded);
+    expect(
+      result.history.some(
+        (message) =>
+          message.type === MessageType.ChangeRequest &&
+          JSON.stringify(message.content).includes("TS2322"),
+      ),
+    ).toBe(true);
+  });
+
+  it("steers Phase 1 → Phase 2 → Phase 3 and only PASSes when all phases complete", async () => {
+    const directives: Array<string | undefined> = [];
+    const executor = mockExecutor(async ({ mode, cont, task }) => {
+      if (mode === "run") {
+        expect(task?.prompt).toMatch(/AUTONOMOUS SUPERVISOR DIRECTIVE/);
+        return {
+          status: "completed",
+          summary: "Finished Phase 1. Should I proceed to Phase 2?",
+          rawOutput: "Finished Phase 1. Should I proceed to Phase 2?",
+          sessionId: "s1",
+        };
+      }
+      directives.push(cont?.nextPhaseDirective);
+      return {
+        status: "completed",
+        summary: "continued",
+        sessionId: "s1",
+      };
+    });
+
+    const reviewer = mockReviewer((_input, call) => {
+      if (call === 1) {
+        expect(_input.evidencePack?.executorStalledWaitingForConfirmation).toBe(
+          true,
+        );
+        return {
+          result: {
+            status: ReviewStatus.NeedsWork,
+            confidence: 0.9,
+            summary: "Phase 1 verified",
+            phases: [
+              {
+                id: "p1",
+                title: "Schema",
+                status: "completed",
+                acceptanceCriteria: [],
+              },
+              {
+                id: "p2",
+                title: "API",
+                status: "pending",
+                acceptanceCriteria: [],
+              },
+              {
+                id: "p3",
+                title: "UI",
+                status: "pending",
+                acceptanceCriteria: [],
+              },
+            ],
+            phaseProgress: {
+              completedPhaseIds: ["p1"],
+              currentPhaseId: "p2",
+              nextPhaseDirective:
+                "Phase 1 verified. Autonomous mode. Proceed immediately to Phase 2: API. Do NOT ask for confirmation.",
+              allPhasesComplete: false,
+            },
+          },
+        };
+      }
+      if (call === 2) {
+        return {
+          result: {
+            status: ReviewStatus.NeedsWork,
+            confidence: 0.9,
+            summary: "Phase 2 verified",
+            phaseProgress: {
+              completedPhaseIds: ["p1", "p2"],
+              currentPhaseId: "p3",
+              nextPhaseDirective:
+                "Phase 2 verified. Proceed immediately to Phase 3: UI. Do NOT ask for confirmation.",
+              allPhasesComplete: false,
+            },
+          },
+        };
+      }
+      return {
+        result: {
+          status: ReviewStatus.Pass,
+          confidence: 0.97,
+          summary: "All phases complete",
+          issues: [],
+          requiredChanges: [],
+          optionalChanges: [],
+          evidenceRequests: [],
+          phaseProgress: {
+            completedPhaseIds: ["p1", "p2", "p3"],
+            allPhasesComplete: true,
+          },
+        },
+      };
+    });
+
+    const result = await new Supervisor({
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("Build the app"),
+      executor,
+      reviewer,
+      budgets: createBudgets({ maxRounds: 5, maxMessages: 40 }),
+      autopilot: true,
+    }).run();
+
+    expect(result.status).toBe(TaskState.Done);
+    expect(result.round).toBe(3);
+    expect(reviewer.calls).toBe(3);
+    expect(executor.calls).toBe(3);
+    expect(directives[0]).toMatch(/Phase 2/);
+    expect(directives[1]).toMatch(/Phase 3/);
+    expect(
+      result.history.filter((m) => m.type === MessageType.ChangeRequest),
+    ).toHaveLength(2);
+  });
+
+  it("downgrades an early PASS while phases remain", async () => {
+    const executor = mockExecutor(async ({ mode }) => ({
+      status: "completed",
+      summary: mode === "run" ? "phase 1" : "rest",
+      sessionId: "s1",
+    }));
+
+    const reviewer = mockReviewer((_input, call) => {
+      if (call === 1) {
+        return {
+          result: {
+            status: ReviewStatus.Pass,
+            confidence: 0.9,
+            summary: "Looks done",
+            issues: [],
+            requiredChanges: [],
+            optionalChanges: [],
+            evidenceRequests: [],
+            phases: [
+              { id: "p1", title: "One", status: "completed", acceptanceCriteria: [] },
+              { id: "p2", title: "Two", status: "pending", acceptanceCriteria: [] },
+            ],
+            phaseProgress: {
+              completedPhaseIds: ["p1"],
+              allPhasesComplete: false,
+            },
+          },
+        };
+      }
+      return {
+        result: {
+          status: ReviewStatus.Pass,
+          confidence: 0.95,
+          summary: "Really done",
+          issues: [],
+          requiredChanges: [],
+          optionalChanges: [],
+          evidenceRequests: [],
+          phaseProgress: {
+            completedPhaseIds: ["p1", "p2"],
+            allPhasesComplete: true,
+          },
+        },
+      };
+    });
+
+    const result = await new Supervisor({
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("Multi-phase"),
+      executor,
+      reviewer,
+      budgets: createBudgets({ maxRounds: 4, maxMessages: 30 }),
+      autopilot: true,
+    }).run();
+
+    expect(result.status).toBe(TaskState.Done);
+    expect(reviewer.calls).toBe(2);
+    expect(executor.calls).toBe(2);
+    expect(
+      result.history.some(
+        (message) =>
+          message.type === MessageType.ChangeRequest &&
+          JSON.stringify(message.content).includes("Two"),
+      ),
+    ).toBe(true);
+  });
+
+  it("supervised mode does not wrap the first prompt or downgrade PASS", async () => {
+    const executor = mockExecutor(async ({ mode, task }) => {
+      if (mode === "run") {
+        expect(task?.prompt).toBe("Multi-phase");
+        expect(task?.prompt).not.toMatch(/AUTONOMOUS SUPERVISOR DIRECTIVE/);
+      }
+      return {
+        status: "completed",
+        summary: "phase 1 only",
+        sessionId: "s1",
+      };
+    });
+
+    const reviewer = mockReviewer(() => ({
+      result: {
+        status: ReviewStatus.Pass,
+        confidence: 0.9,
+        summary: "Looks done",
+        issues: [],
+        requiredChanges: [],
+        optionalChanges: [],
+        evidenceRequests: [],
+        phases: [
+          { id: "p1", title: "One", status: "completed", acceptanceCriteria: [] },
+          { id: "p2", title: "Two", status: "pending", acceptanceCriteria: [] },
+        ],
+        phaseProgress: {
+          completedPhaseIds: ["p1"],
+          allPhasesComplete: false,
+        },
+      },
+    }));
+
+    const result = await new Supervisor({
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("Multi-phase"),
+      executor,
+      reviewer,
+      budgets: createBudgets({ maxRounds: 4, maxMessages: 30 }),
+    }).run();
+
+    expect(result.status).toBe(TaskState.Done);
+    expect(reviewer.calls).toBe(1);
+    expect(executor.calls).toBe(1);
+  });
 });

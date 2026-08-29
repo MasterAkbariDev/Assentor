@@ -6,7 +6,11 @@ import type { GitCheckpoint } from "../git/types.js";
 import { TaskState } from "../orchestrator/state-machine.js";
 import type { SupervisorEvent } from "../orchestrator/supervisor.js";
 import type { ProtocolMessage } from "../protocol/messages.js";
-import type { ReviewResult } from "../protocol/review-result.js";
+import {
+  PhaseProgressSchema,
+  type PhaseProgress,
+  type ReviewResult,
+} from "../protocol/review-result.js";
 import {
   appendJsonl,
   ensureTaskLayout,
@@ -61,6 +65,7 @@ export const TaskSnapshotSchema = z.object({
   budgets: PersistedBudgetsSchema,
   executorSessionId: z.string().optional(),
   lastCheckpoint: GitCheckpointSchema.optional(),
+  phaseProgress: PhaseProgressSchema.optional(),
   finalReview: z.unknown().optional(),
   reason: z.string().optional(),
   startedAt: z.string().datetime({ offset: true }),
@@ -70,12 +75,13 @@ export const TaskSnapshotSchema = z.object({
 
 export type TaskSnapshot = Omit<
   z.infer<typeof TaskSnapshotSchema>,
-  "contract" | "budgets" | "finalReview" | "lastCheckpoint"
+  "contract" | "budgets" | "finalReview" | "lastCheckpoint" | "phaseProgress"
 > & {
   contract: TaskContract;
   budgets: Budgets;
   finalReview?: ReviewResult;
   lastCheckpoint?: GitCheckpoint;
+  phaseProgress?: PhaseProgress;
 };
 
 export interface CreateTaskStoreInput {

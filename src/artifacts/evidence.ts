@@ -13,6 +13,11 @@ import { redactSecrets } from "../security/redact.js";
 import type { ArtifactCollector } from "./collector.js";
 import { ArtifactType } from "./types.js";
 import type { GitService } from "../git/types.js";
+import type { VerificationCommands } from "../config/detect-commands.js";
+import {
+  commandForSlot,
+  emptyVerificationCommands,
+} from "../config/detect-commands.js";
 
 export interface EvidenceFulfillment {
   fulfilled: number;
@@ -30,6 +35,7 @@ export interface EvidenceCollectorDeps {
     command: string,
     cwd: string,
   ) => Promise<{ stdout: string; stderr: string; code: number }>;
+  verificationCommands?: VerificationCommands;
 }
 
 /**
@@ -148,7 +154,7 @@ async function fulfillOne(
     case EvidenceKind.Build:
     case EvidenceKind.Lint:
     case EvidenceKind.Typecheck: {
-      const command = resolveCommand(request);
+      const command = resolveCommand(request, deps.verificationCommands);
       if (!command || !deps.runCommand) return false;
       assertCommandAllowed(command);
       const result = await deps.runCommand(command, deps.projectPath);
@@ -220,17 +226,21 @@ async function fulfillOne(
   }
 }
 
-function resolveCommand(request: EvidenceRequestItem): string | undefined {
+function resolveCommand(
+  request: EvidenceRequestItem,
+  commands?: VerificationCommands,
+): string | undefined {
   if ("command" in request && request.command) return request.command;
+  const map = commands ?? emptyVerificationCommands();
   switch (request.kind) {
     case EvidenceKind.Test:
-      return "npm test";
+      return commandForSlot(map, "test");
     case EvidenceKind.Build:
-      return "npm run build";
+      return commandForSlot(map, "build");
     case EvidenceKind.Lint:
-      return "npm run lint";
+      return commandForSlot(map, "lint");
     case EvidenceKind.Typecheck:
-      return "npx tsc --noEmit";
+      return commandForSlot(map, "typecheck");
     default:
       return undefined;
   }

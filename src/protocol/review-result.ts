@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ReviewStatus, Severity } from "../core/types.js";
+import { PhaseItemSchema } from "../core/task-contract.js";
 import { EvidenceRequestItemSchema } from "./messages.js";
 
 export const IssueCategory = {
@@ -69,6 +70,15 @@ export const VerificationBlockSchema = z
   })
   .optional();
 
+export const PhaseProgressSchema = z.object({
+  currentPhaseId: z.string().optional(),
+  completedPhaseIds: z.array(z.string()).default([]),
+  nextPhaseDirective: z.string().optional(),
+  allPhasesComplete: z.boolean().default(false),
+});
+
+export type PhaseProgress = z.infer<typeof PhaseProgressSchema>;
+
 export const ReviewResultSchema = z
   .object({
     status: z.enum([
@@ -79,6 +89,8 @@ export const ReviewResultSchema = z
     ]),
     confidence: z.number().min(0).max(1),
     summary: z.string().min(1),
+    phaseProgress: PhaseProgressSchema.optional(),
+    phases: z.array(PhaseItemSchema).optional(),
     architectureAssessment: ArchitectureAssessmentSchema,
     requirementsAssessment: z
       .array(RequirementsAssessmentItemSchema)
@@ -122,15 +134,19 @@ export const ReviewResultSchema = z
     }
 
     if (value.status === ReviewStatus.NeedsWork) {
+      const hasDirective = Boolean(
+        value.phaseProgress?.nextPhaseDirective?.trim(),
+      );
       if (
         value.requiredChanges.length === 0 &&
         value.issues.length === 0 &&
-        value.evidenceRequests.length === 0
+        value.evidenceRequests.length === 0 &&
+        !hasDirective
       ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message:
-            "NEEDS_WORK requires issues, requiredChanges, or evidenceRequests",
+            "NEEDS_WORK requires issues, requiredChanges, evidenceRequests, or phaseProgress.nextPhaseDirective",
           path: ["status"],
         });
       }

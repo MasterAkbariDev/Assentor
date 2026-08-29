@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.12] — 2026-08-29
+
+### Added
+
+- **Autopilot run mode** — Phase steering (next-phase directives, anti-stall, PASS downgrade) is opt-in via `--mode autopilot` / `--autopilot` or `run.mode: autopilot`; default remains supervised.
+- **Verification gates** — Configurable local checks run after evidence collection; hard failures skip the LLM reviewer and emit a synthetic `NEEDS_WORK` with stdout.
+- **Phase progress** — Reviewer prompts and supervisor steering track multi-phase tasks (`PhaseItem`, stall detection, continuation prompts on Cursor).
+- **Multi-CLI executors** — TUI/CLI can select any detected coding CLI (Claude, Antigravity, Codex, Qwen, OpenCode) via a shared print-mode adapter, not only mock/Cursor.
+- **Antigravity (`agy`)** — Google coding CLI replaces Gemini CLI for executor/reviewer roles; Gemini API reviewer remains API-only.
+- **Cursor CLI reviewer** — Cursor can be added as a CLI reviewer alongside Claude and Antigravity.
+- **Command detection** — `assentor init` populates `verification.*` and binary paths from installed ecosystem CLIs.
+
+### Changed
+
+- Executor registry and preflight now resolve all registered provider binaries instead of hardcoding mock/Cursor.
+- TUI: `m` cycles run mode on Workspace; status bar shows supervised/autopilot; AI defaults and Executors screen list all detected CLIs.
+
 ## [0.3.11] — 2026-08-26
 
 ### Fixed
@@ -167,7 +184,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logical agents, diagnostics, and resumable task state under `.assentor/tasks/`
 - One-line install scripts for macOS/Linux and Windows
 
-[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.11...HEAD
+[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.12...HEAD
+[0.3.12]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.11...v0.3.12
 [0.3.11]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.10...v0.3.11
 [0.3.10]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.9...v0.3.10
 [0.3.9]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.8...v0.3.9

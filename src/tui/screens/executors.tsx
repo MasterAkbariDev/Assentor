@@ -24,7 +24,7 @@ export function ExecutorsScreen({
 }) {
   return (
     <Box flexDirection="column">
-      <Text dimColor>[r] re-detect all · [i] show install plan · Enter detect one</Text>
+      <Text dimColor>[r] re-detect all · [u] use as executor · [i] show install plan · Enter detect one</Text>
       <MenuList
         focused={focused}
         selected={selected}

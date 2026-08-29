@@ -5,6 +5,8 @@ import {
 } from "../providers/executors/cursor/index.js";
 import { resolveCliAdapter } from "../providers/reviewers/cli/index.js";
 import { locateBinary, spawnCliProcess } from "../executors/cli-locator.js";
+import { buildExecutorRegistry } from "../executors/adapters.js";
+import { normalizeExecutorProvider } from "../executors/providers.js";
 import { resolveProviderApiKey } from "../keys/resolve.js";
 
 export interface PreflightCheck {
@@ -60,6 +62,8 @@ export async function runPreflight(input: {
       ok: true,
       detail: "mock executor (no network)",
     });
+  } else if (input.executor && input.executor !== "project-mutating") {
+    checks.push(await checkRegisteredExecutor(input.executor));
   }
 
   const reviewerList: PreflightReviewer[] =
@@ -102,7 +106,7 @@ async function checkReviewerEntry(
     return checkReviewerKey(provider, projectPath);
   }
 
-  if (provider === "claude" || provider === "gemini-cli") {
+  if (provider === "claude" || provider === "antigravity" || provider === "cursor") {
     return {
       name: `reviewer:${provider}`,
       ok: false,
@@ -127,7 +131,8 @@ function checkReviewerCli(provider: string): PreflightCheck {
         detail: "mock CLI reviewer",
       };
     }
-    const tool = adapter === "claude" ? "claude" : "gemini";
+    const tool =
+      adapter === "claude" ? "claude" : adapter === "cursor" ? "cursor" : "agy";
     const resolved = locateBinary(tool);
     if (resolved) {
       return {
@@ -139,7 +144,9 @@ function checkReviewerCli(provider: string): PreflightCheck {
     const hint =
       adapter === "claude"
         ? "Install Claude Code CLI (`claude`) and log in once"
-        : "Install Gemini CLI (`gemini`) and log in once";
+        : adapter === "cursor"
+          ? "Install Cursor CLI (`agent` / `cursor`) and run `agent login`"
+          : "Install Antigravity CLI (`agy`) and log in once";
     return {
       name: `reviewer:${provider}`,
       ok: false,
@@ -200,6 +207,39 @@ function checkCursorBinary(): PreflightCheck {
     ok: false,
     detail:
       "Cursor CLI not found. Install Cursor, put `agent`/`cursor` on PATH, or set ASSENTOR_CURSOR_BINARY. Windows: %LOCALAPPDATA%\\cursor-agent\\agent.cmd",
+  };
+}
+
+async function checkRegisteredExecutor(provider: string): Promise<PreflightCheck> {
+  const id = normalizeExecutorProvider(provider);
+  const registry = buildExecutorRegistry();
+  const adapter = registry.get(id);
+  if (!adapter) {
+    return {
+      name: `executor:${provider}`,
+      ok: false,
+      detail: `Unknown executor "${provider}"`,
+    };
+  }
+  const detection = await adapter.detect();
+  if (detection.installed) {
+    return {
+      name: `executor:${adapter.id}`,
+      ok: true,
+      detail: detection.path
+        ? `found ${detection.path}`
+        : `${adapter.name} installed`,
+    };
+  }
+  const plan = adapter.installPlan?.();
+  return {
+    name: `executor:${adapter.id}`,
+    ok: false,
+    detail:
+      detection.error ??
+      (plan
+        ? `${adapter.name} not found. Install: ${plan.command}`
+        : `${adapter.name} not found on PATH`),
   };
 }
 

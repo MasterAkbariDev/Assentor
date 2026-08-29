@@ -116,10 +116,7 @@ export class RunReporter {
       return;
     }
 
-    if (
-      event.type === "executor.completed" ||
-      event.type === "executor.failed"
-    ) {
+    if (event.type === "executor.completed" || event.type === "executor.failed") {
       const summary = event.data?.summary
         ? String(event.data.summary)
         : event.type === "executor.failed"
@@ -136,6 +133,25 @@ export class RunReporter {
         }
         console.log("");
       }
+      this.debug(event);
+      return;
+    }
+
+    if (event.type === "verification.started") {
+      this.section("Verification");
+      this.startStatus("Gates", "running", "lint / typecheck / tests");
+      this.debug(event);
+      return;
+    }
+
+    if (event.type === "verification.passed") {
+      this.finishStatus(true, "deterministic checks passed");
+      this.debug(event);
+      return;
+    }
+
+    if (event.type === "verification.failed") {
+      this.finishStatus(false, "deterministic checks failed — skipping LLM review");
       this.debug(event);
       return;
     }

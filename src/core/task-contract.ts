@@ -1,11 +1,24 @@
 import { z } from "zod";
 import { ValidationError } from "./errors.js";
 
+export const PhaseItemSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  description: z.string().optional(),
+  status: z
+    .enum(["pending", "in_progress", "completed", "blocked"])
+    .default("pending"),
+  acceptanceCriteria: z.array(z.string()).default([]),
+});
+
+export type PhaseItem = z.infer<typeof PhaseItemSchema>;
+
 export const TaskContractSchema = z.object({
   goal: z.string().min(1),
   requirements: z.array(z.string()),
   constraints: z.array(z.string()),
   acceptanceCriteria: z.array(z.string()),
+  phases: z.array(PhaseItemSchema).optional().default([]),
   nonGoals: z.array(z.string()),
   verificationPlan: z.array(z.string()),
 });
@@ -23,6 +36,7 @@ export function createEmptyContract(goal: string): TaskContract {
     requirements: [],
     constraints: [],
     acceptanceCriteria: [],
+    phases: [],
     nonGoals: [],
     verificationPlan: [],
   };

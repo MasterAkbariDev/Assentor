@@ -3,6 +3,7 @@ import {
   locateBinary,
   spawnCliProcess,
 } from "../../../executors/cli-locator.js";
+import { isCursorAppBinary } from "../../executors/cursor/index.js";
 import {
   asReviewInput,
   buildReviewPrompt,
@@ -15,7 +16,7 @@ import type {
   ReviewInput,
 } from "../types.js";
 
-export type CliReviewerAdapter = "claude" | "gemini-cli" | "mock";
+export type CliReviewerAdapter = "claude" | "antigravity" | "cursor" | "mock";
 
 export interface CliSpawnRequest {
   command: string;
@@ -121,7 +122,7 @@ export interface ProcessCliTransportOptions {
 }
 
 /**
- * Spawns Claude Code or Gemini CLI with a pack-aware review prompt.
+ * Spawns Claude Code, Antigravity, or Cursor CLI with a pack-aware review prompt.
  */
 export class ProcessCliTransport implements CliTransport {
   readonly adapter: Exclude<CliReviewerAdapter, "mock">;
@@ -145,7 +146,10 @@ export class ProcessCliTransport implements CliTransport {
     timeoutMs: number;
     env?: NodeJS.ProcessEnv;
   }): Promise<CliSpawnResult> {
-    const args = buildCliArgs(this.adapter, input.prompt, this.extraArgs);
+    const args = buildCliArgs(this.adapter, input.prompt, this.extraArgs, {
+      cwd: input.cwd,
+      binary: this.binary,
+    });
     this.lastCommand = { command: this.binary, args, cwd: input.cwd };
     return this.spawnFn({
       command: this.binary,
@@ -171,7 +175,7 @@ export interface CliReviewerOptions {
 }
 
 /**
- * Reviewer that reaches a coding-agent CLI (Claude / Gemini CLI / mock).
+ * Reviewer that reaches a coding-agent CLI (Claude / Antigravity / Cursor / mock).
  * Logical agent identity is owned by the caller (`name`); this class is transport only.
  */
 export class CliReviewer implements Reviewer {
@@ -293,14 +297,17 @@ export function resolveCliAdapter(
   if (p === "claude" || p === "claude-code") {
     return "claude";
   }
-  if (p === "gemini-cli" || p === "gemini") {
-    return "gemini-cli";
+  if (p === "antigravity" || p === "agy" || p === "gemini-cli" || p === "gemini") {
+    return "antigravity";
+  }
+  if (p === "cursor" || p === "cursor-agent" || p === "agent") {
+    return "cursor";
   }
   if (p === "mock") {
     return "mock";
   }
   throw new Error(
-    `Provider "${provider}" does not support CLI transport. Use claude, gemini-cli, or mock.`,
+    `Provider "${provider}" does not support CLI transport. Use claude, antigravity, cursor, or mock.`,
   );
 }
 
@@ -308,19 +315,33 @@ export function resolveCliBinary(adapter: Exclude<CliReviewerAdapter, "mock">): 
   if (adapter === "claude") {
     return locateBinary("claude") ?? findOnPath("claude") ?? "claude";
   }
-  return locateBinary("gemini") ?? findOnPath("gemini") ?? "gemini";
+  if (adapter === "cursor") {
+    return locateBinary("cursor") ?? findOnPath("agent") ?? "agent";
+  }
+  return locateBinary("agy") ?? findOnPath("agy") ?? "agy";
 }
 
 function buildCliArgs(
   adapter: Exclude<CliReviewerAdapter, "mock">,
   prompt: string,
   extraArgs: string[],
+  context: { cwd?: string; binary?: string } = {},
 ): string[] {
   if (adapter === "claude") {
-    // Claude Code print mode — ask for JSON-only review output in the prompt.
     return ["-p", "--output-format", "text", ...extraArgs, prompt];
   }
-  // Gemini CLI non-interactive prompt
+  if (adapter === "cursor") {
+    const args: string[] = [];
+    if (context.binary && isCursorAppBinary(context.binary)) {
+      args.push("agent");
+    }
+    args.push("-p", "--print", "--trust");
+    if (context.cwd) {
+      args.push("--workspace", context.cwd);
+    }
+    args.push("--output-format", "text", ...extraArgs, prompt);
+    return args;
+  }
   return ["-p", ...extraArgs, prompt];
 }
 

@@ -1,7 +1,11 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import { parseAssentorConfig, type AssentorConfig } from "./schema.js";
+import {
+  normalizeExecutorProvider,
+  parseAssentorConfig,
+  type AssentorConfig,
+} from "./schema.js";
 import { defaultTransportForProvider } from "../review/backends.js";
 import {
   assentorConfigPath,
@@ -73,6 +77,7 @@ export async function loadAssentorConfig(
     reviewer: string;
     maxRounds: number;
     maxMessages: number;
+    mode: AssentorConfig["run"]["mode"];
   }> = {},
 ): Promise<AssentorConfig> {
   const userRaw = (await readYamlFile(userConfigPath())) as Record<
@@ -93,8 +98,12 @@ export async function loadAssentorConfig(
   const parsed = parseAssentorConfig(merged);
 
   if (overrides.executor) {
-    parsed.executor.provider =
-      overrides.executor as AssentorConfig["executor"]["provider"];
+    parsed.executor.provider = normalizeExecutorProvider(
+      overrides.executor,
+    ) as AssentorConfig["executor"]["provider"];
+  }
+  if (overrides.mode) {
+    parsed.run.mode = overrides.mode;
   }
   if (overrides.reviewer) {
     const provider =
@@ -124,6 +133,7 @@ function toSerializable(config: AssentorConfig) {
   return {
     project: { path: "." },
     executor: { provider: config.executor.provider },
+    run: { mode: config.run.mode },
     reviewers: config.reviewers.map((r) => ({
       provider: r.provider,
       role: r.role,
@@ -152,6 +162,11 @@ function toSerializable(config: AssentorConfig) {
     security: config.security,
     artifacts: config.artifacts,
     binaries: config.binaries,
+    verification: {
+      enabled: config.verification.enabled,
+      commands: { ...config.verification.commands },
+      skipReviewOnFailure: { ...config.verification.skipReviewOnFailure },
+    },
   };
 }
 

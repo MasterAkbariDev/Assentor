@@ -9,7 +9,8 @@ import { explainReviewPlan, TaskComplexityAnalyzer } from "../../src/review/comp
 
 describe("reviewer backends", () => {
   it("lists API and CLI transports per provider", () => {
-    expect(transportsForProvider("gemini")).toEqual(["api", "cli"]);
+    expect(transportsForProvider("gemini")).toEqual(["api"]);
+    expect(transportsForProvider("antigravity")).toEqual(["cli"]);
     expect(transportsForProvider("claude")).toEqual(["cli"]);
     expect(transportsForProvider("openai")).toEqual(["api"]);
     expect(transportsForProvider("mock")).toEqual(["api"]);

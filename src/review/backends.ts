@@ -7,7 +7,8 @@ const PROVIDER_LABEL: Record<string, string> = {
   gemini: "Gemini",
   openai: "OpenAI",
   claude: "Claude",
-  "gemini-cli": "Gemini CLI",
+  antigravity: "Antigravity",
+  cursor: "Cursor",
 };
 
 /** Providers the TUI can add. */
@@ -16,18 +17,25 @@ export const REVIEWER_ADD_PROVIDERS = [
   "gemini",
   "openai",
   "claude",
+  "antigravity",
+  "cursor",
 ] as const;
 
 export type ReviewerAddProvider = (typeof REVIEWER_ADD_PROVIDERS)[number];
 
 /**
  * Which transports a provider actually supports.
- * Claude / gemini-cli are CLI-only; OpenAI is API-only.
+ * Claude / Antigravity / Cursor are CLI-only; OpenAI and Gemini API are API-only.
  */
 export function transportsForProvider(
   provider: string,
 ): Array<"api" | "cli"> {
-  if (provider === "claude" || provider === "gemini-cli") {
+  if (
+    provider === "claude" ||
+    provider === "antigravity" ||
+    provider === "gemini-cli" ||
+    provider === "cursor"
+  ) {
     return ["cli"];
   }
   if (provider === "openai") {
@@ -37,7 +45,7 @@ export function transportsForProvider(
     return ["api"];
   }
   if (provider === "gemini") {
-    return ["api", "cli"];
+    return ["api"];
   }
   return ["api"];
 }

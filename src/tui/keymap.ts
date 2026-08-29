@@ -98,6 +98,8 @@ export type UiAction =
   | { type: "task_delete" }
   | { type: "executors_detect" }
   | { type: "executors_install" }
+  | { type: "executors_use" }
+  | { type: "cycle_mode" }
   | { type: "save_defaults" }
   | { type: "noop" };
 
@@ -199,6 +201,7 @@ export function mapKeyToAction(state: UiState, key: KeyEvent): UiAction {
   if (state.screen === "workspace") {
     if (key.input === "n") return { type: "start_task" };
     if (key.input === "r") return { type: "review_plan" };
+    if (key.input === "m") return { type: "cycle_mode" };
   }
   if (state.screen === "tasks") {
     if (key.input === "n") return { type: "start_task" };
@@ -224,6 +227,7 @@ export function mapKeyToAction(state: UiState, key: KeyEvent): UiAction {
   ) {
     if (key.input === "r") return { type: "executors_detect" };
     if (key.input === "i") return { type: "executors_install" };
+    if (key.input === "u") return { type: "executors_use" };
   }
 
   return { type: "noop" };
@@ -341,6 +345,8 @@ export function reduceUi(state: UiState, action: UiAction): UiState {
     case "task_delete":
     case "executors_detect":
     case "executors_install":
+    case "executors_use":
+    case "cycle_mode":
       return state;
     default: {
       const _exhaustive: never = action;
@@ -383,7 +389,7 @@ export function footerHints(state: UiState): string {
 
   switch (state.screen) {
     case "workspace":
-      return "↑↓ Actions · Enter · n New task · Tab Nav · / Commands";
+      return "↑↓ Actions · Enter · n New task · m Mode · Tab Nav · / Commands";
     case "tasks":
       return state.selectedTaskId
         ? "r Resume (failed/timeout) · d Delete · Esc Back"
@@ -397,7 +403,7 @@ export function footerHints(state: UiState): string {
         return "a Add · c Check · C Check all · d Delete · Esc Back";
       }
       if (state.configSection === "executors") {
-        return "r Detect · i Install plan · Enter Check · Esc Back";
+        return "r Detect · u Use · i Install plan · Enter Check · Esc Back";
       }
       if (state.configSection === "review") {
         return "a Add · d Delete · ←→ How many · s Save · Esc Back";
@@ -435,6 +441,11 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
     dialog: "start-task",
   },
   {
+    id: "mode-cycle",
+    label: "Cycle run mode (Supervised / Autopilot)",
+    keywords: ["mode", "autopilot", "supervised", "phase", "agent"],
+  },
+  {
     id: "task-list",
     label: "Open tasks",
     keywords: ["task", "list", "history", "resume"],
@@ -461,7 +472,7 @@ export const PALETTE_COMMANDS: PaletteCommand[] = [
   {
     id: "config-reviewers",
     label: "Add reviewers",
-    keywords: ["reviewer", "gemini", "claude", "cli", "panel"],
+    keywords: ["reviewer", "gemini", "claude", "cursor", "antigravity", "cli", "panel"],
     screen: "configuration",
     configSection: "review",
   },

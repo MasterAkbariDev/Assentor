@@ -63,6 +63,7 @@ describe("CursorExecutor", () => {
       projectPath: "/tmp/project",
       contract: createEmptyContract("goal"),
       sessionId: "sess-abc",
+      mode: "autopilot",
       messages: [
         createProtocolMessage({
           conversationId: "c",
@@ -81,6 +82,75 @@ describe("CursorExecutor", () => {
     expect(result.status).toBe("completed");
     expect(result.sessionId).toBe("sess-abc");
     expect(result.summary).toContain("fixed");
+    const prompt = spawnFn.mock.calls[0]?.[0]?.args.at(-1) ?? "";
+    expect(prompt).toMatch(/AUTONOMOUS SUPERVISOR DIRECTIVE/);
+    expect(prompt).toContain("Add tests");
+  });
+
+  it("injects nextPhaseDirective into the continuation prompt", async () => {
+    const spawnFn = vi.fn(async (request: CursorSpawnRequest) => {
+      expect(request.args.at(-1)).toContain("Proceed immediately to Phase 2");
+      expect(request.args.at(-1)).toMatch(/DO NOT pause/i);
+      return { code: 0, stdout: "continued", stderr: "" };
+    });
+
+    const executor = new CursorExecutor({ spawnFn, binary: "agent" });
+    await executor.continue({
+      taskId: "t1",
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("goal"),
+      sessionId: "sess-abc",
+      mode: "autopilot",
+      nextPhaseDirective:
+        "Proceed immediately to Phase 2: API. Do NOT ask for confirmation.",
+      messages: [
+        createProtocolMessage({
+          conversationId: "c",
+          round: 2,
+          from: "reviewer",
+          to: "executor",
+          type: MessageType.ChangeRequest,
+          content: {
+            summary: "Phase 1 done",
+            requiredChanges: [],
+            nextPhaseDirective: "Proceed immediately to Phase 2",
+          },
+        }),
+      ],
+    });
+    expect(spawnFn).toHaveBeenCalledOnce();
+  });
+
+  it("supervised continue does not wrap the autonomous banner", async () => {
+    const spawnFn = vi.fn(async (request: CursorSpawnRequest) => {
+      const prompt = request.args.at(-1) ?? "";
+      expect(prompt).not.toMatch(/AUTONOMOUS SUPERVISOR DIRECTIVE/);
+      expect(prompt).toContain("Add tests");
+      return { code: 0, stdout: "ok", stderr: "" };
+    });
+
+    const executor = new CursorExecutor({ spawnFn, binary: "agent" });
+    await executor.continue({
+      taskId: "t1",
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("goal"),
+      sessionId: "sess-abc",
+      mode: "supervised",
+      messages: [
+        createProtocolMessage({
+          conversationId: "c",
+          round: 2,
+          from: "reviewer",
+          to: "executor",
+          type: MessageType.ChangeRequest,
+          content: {
+            summary: "Add tests",
+            requiredChanges: ["Add tests"],
+          },
+        }),
+      ],
+    });
+    expect(spawnFn).toHaveBeenCalledOnce();
   });
 
   it("maps non-zero exit to failed", async () => {

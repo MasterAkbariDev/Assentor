@@ -201,3 +201,12 @@ describe("config schema transport + fallback", () => {
     expect(config.reviewers[0]?.transport).toBe("api");
   });
 });
+
+describe("Google CLI reviewer", () => {
+  it("maps Gemini CLI aliases to Antigravity", async () => {
+    const { resolveCliAdapter } = await import("../../src/index.js");
+    expect(resolveCliAdapter("antigravity")).toBe("antigravity");
+    expect(resolveCliAdapter("agy")).toBe("antigravity");
+    expect(resolveCliAdapter("gemini-cli")).toBe("antigravity");
+  });
+});

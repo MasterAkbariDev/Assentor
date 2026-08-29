@@ -45,7 +45,8 @@ export function HelpOverlay({ screenLabel }: { screenLabel: string }) {
     <Dialog title={`Help — ${screenLabel}`} hint="Esc close">
       <Text bold>What to do</Text>
       <Text dimColor>
-        Assentor is built around Tasks. Add reviewers (Gemini API, Claude CLI)
+        Assentor is built around Tasks. Add reviewers (Gemini API, Claude CLI,
+        Cursor CLI)
         under Configure → Reviewers, then start a task.
       </Text>
       <Box marginTop={1} flexDirection="column">
@@ -58,6 +59,9 @@ export function HelpOverlay({ screenLabel }: { screenLabel: string }) {
         </Text>
         <Text>
           <Text color="cyan">n</Text> New task (Workspace/Tasks)
+        </Text>
+        <Text>
+          <Text color="cyan">m</Text> Cycle Supervised / Autopilot (Workspace)
         </Text>
         <Text>
           <Text color="cyan">p</Text> Explain reviewers for a goal
@@ -83,11 +87,15 @@ export function StartTaskDialog({
   step,
   projectPath,
   goal,
+  mode,
+  executor,
   explanation,
 }: {
   step: "path" | "goal" | "confirm";
   projectPath: string;
   goal: string;
+  mode?: string;
+  executor?: string;
   explanation?: ReviewPlanExplanation | null;
 }) {
   return (
@@ -129,6 +137,13 @@ export function StartTaskDialog({
           <Text>
             Goal <Text color="green">{goal}</Text>
           </Text>
+          {mode || executor ? (
+            <Text dimColor>
+              {mode ? `Mode ${mode}` : ""}
+              {mode && executor ? " · " : ""}
+              {executor ? `Executor ${executor}` : ""}
+            </Text>
+          ) : null}
           {explanation ? (
             <Box marginTop={1} flexDirection="column">
               <Text bold>{explanation.headline}</Text>
@@ -252,7 +267,7 @@ export function AddReviewerDialog({
     <Dialog title={title} hint="↑↓ · Enter next · Esc cancel">
       <Text dimColor>
         {step === "provider"
-          ? "Gemini/OpenAI can use a key. Claude always uses the Claude CLI."
+          ? "Gemini/OpenAI use a key. Claude, Cursor, and Antigravity use a local CLI."
           : step === "transport"
             ? "API uses a vault or env key. CLI uses a binary on your PATH."
             : "Pick a key you added, or resolve from the environment at run time."}

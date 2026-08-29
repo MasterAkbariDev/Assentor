@@ -13,7 +13,7 @@ import {
 import type { ConfigSection } from "../keymap.js";
 
 export const CONFIG_MENU = [
-  { id: "ai" as const, label: "AI defaults (executor, models)" },
+  { id: "ai" as const, label: "AI defaults (mode, executor, models)" },
   { id: "keys" as const, label: "API keys" },
   { id: "executors" as const, label: "Executors (install / detect)" },
   { id: "review" as const, label: "Reviewers (add Gemini, Claude, …)" },
@@ -28,6 +28,7 @@ export function ConfigurationScreen({
   config,
   keys,
   executorRows,
+  installedIds,
   envHints = [],
 }: {
   section: ConfigSection;
@@ -36,6 +37,7 @@ export function ConfigurationScreen({
   config: AssentorConfig;
   keys: StoredApiKey[];
   executorRows: ExecutorRow[];
+  installedIds?: ReadonlySet<string>;
   envHints?: Array<{ provider: string; envName: string }>;
 }) {
   if (section === "menu") {
@@ -82,11 +84,13 @@ export function ConfigurationScreen({
 
   if (section === "ai" || section === "advanced") {
     const rows =
-      section === "ai" ? buildAiRows(config) : buildAdvancedRows(config);
+      section === "ai"
+        ? buildAiRows(config, { installedIds })
+        : buildAdvancedRows(config);
     const title = section === "ai" ? "AI defaults" : "Advanced";
     const hint =
       section === "ai"
-        ? "Who writes code, and which model. Add reviewers under Reviewers."
+        ? "Run mode, who writes code, and which model. Add reviewers under Reviewers."
         : "Routing and budgets. Leave Balanced unless you have a reason.";
     return (
       <Box flexDirection="column">
@@ -150,7 +154,7 @@ export function ConfigurationScreen({
     return (
       <Box flexDirection="column">
         <Text dimColor>
-          Pick an executor in AI defaults. Here you install / check CLIs.
+          Pick an executor with u, or cycle them in AI defaults. Here you install / check CLIs.
         </Text>
         <Box marginTop={1}>
           <MenuList
@@ -166,7 +170,7 @@ export function ConfigurationScreen({
           />
         </Box>
         <Box marginTop={1}>
-          <Text dimColor>r Detect all · i Install plan · Enter check one</Text>
+          <Text dimColor>r Detect all · u Use as executor · i Install plan · Enter check one</Text>
         </Box>
       </Box>
     );

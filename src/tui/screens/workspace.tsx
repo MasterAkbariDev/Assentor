@@ -1,5 +1,6 @@
 import React from "react";
 import { Box, Text } from "ink";
+import { formatRunMode } from "../../core/run-mode.js";
 import type { AssentorConfig } from "../../config/load.js";
 import type { AssentorServices } from "../../services/app.js";
 import type { TaskSnapshot } from "../../persistence/store.js";
@@ -80,7 +81,8 @@ export function WorkspaceScreen({
 
       <Box marginTop={1} flexDirection="column">
         <Text dimColor>
-          Defaults {config.executor.provider} /{" "}
+          Mode {formatRunMode(config.run.mode)} · Defaults{" "}
+          {config.executor.provider} /{" "}
           {config.reviewers.length === 0
             ? "no reviewers"
             : config.reviewers

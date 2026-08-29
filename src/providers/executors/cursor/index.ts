@@ -20,6 +20,7 @@ import {
   trackChildProcess,
   untrackChildProcess,
 } from "../../../process/tracker.js";
+import { buildAutonomousContinuationPrompt, buildSupervisedContinuationPrompt } from "../../../orchestrator/phase-steering.js";
 
 export type CursorOutputFormat = "text" | "json" | "stream-json";
 export type { AgentStatusUpdate };
@@ -167,7 +168,11 @@ export class CursorExecutor implements Executor {
     if (input.sessionId) {
       this.sessionId = input.sessionId;
     }
-    const prompt = buildContinuationPrompt(input.messages);
+    const prompt = buildContinuationPrompt(
+      input.messages,
+      input.nextPhaseDirective,
+      input.mode,
+    );
     return this.execute(
       input.taskId,
       input.projectPath,
@@ -471,22 +476,15 @@ export function isCursorAppBinary(binary: string): boolean {
   return base === "cursor";
 }
 
-function buildContinuationPrompt(messages: ProtocolMessage[]): string {
-  if (messages.length === 0) {
-    return "Continue the current task. Apply any outstanding required changes and report what you did.";
+export function buildContinuationPrompt(
+  messages: ProtocolMessage[],
+  nextPhaseDirective?: string,
+  mode: "supervised" | "autopilot" = "supervised",
+): string {
+  if (mode === "autopilot") {
+    return buildAutonomousContinuationPrompt(messages, nextPhaseDirective);
   }
-
-  const parts = messages.map((message) => {
-    return `[${message.type} from ${message.from}]\n${JSON.stringify(message.content, null, 2)}`;
-  });
-
-  return [
-    "Continue the Assentor orchestration task.",
-    "Address the following supervisor/reviewer messages:",
-    ...parts,
-    "",
-    "Make the necessary project changes, then summarize what you changed.",
-  ].join("\n");
+  return buildSupervisedContinuationPrompt(messages);
 }
 
 function summarizeOutput(stdout: string): string {

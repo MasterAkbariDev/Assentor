@@ -1,3 +1,4 @@
+import type { RunMode } from "../../core/run-mode.js";
 import type { TaskContract } from "../../core/task-contract.js";
 import type { ProtocolMessage } from "../../protocol/messages.js";
 
@@ -22,6 +23,10 @@ export interface ExecutorContinuation {
   contract: TaskContract;
   messages: ProtocolMessage[];
   sessionId?: string;
+  /** Imperative next-phase order from the reviewer/supervisor. */
+  nextPhaseDirective?: string;
+  /** Supervised is the default; Autopilot wraps anti-stall / next-phase prompts. */
+  mode?: RunMode;
 }
 
 export interface ExecutorResult {

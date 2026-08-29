@@ -4,6 +4,8 @@ import {
   locateBinary,
   type BinaryTool,
 } from "./cli-locator.js";
+import { PrintCliExecutor } from "../providers/executors/cli-print/index.js";
+import { PRINT_CLI_RECIPES } from "../providers/executors/cli-print/recipes.js";
 import type {
   Executor,
   ExecutorCapabilities,
@@ -69,18 +71,27 @@ export function findOnPath(command: string): string | undefined {
   return findOnPathSmart(command);
 }
 
+export interface CliExecutorOptions {
+  onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
+  onStatus?: (status: { activity: string; detail: string }) => void;
+  timeoutMs?: number;
+}
+
 export abstract class CliExecutorAdapter implements ExecutorAdapter {
   abstract readonly id: string;
   abstract readonly name: string;
   abstract readonly binaryNames: string[];
   /** When set, detection uses PATH + well-known install locations. */
   readonly binaryTool?: BinaryTool;
+  private inner?: PrintCliExecutor;
+
+  constructor(protected readonly options: CliExecutorOptions = {}) {}
 
   capabilities(): ExecutorCapabilities {
     return {
       canEditFiles: true,
       canRunCommands: true,
-      canContinueSession: false,
+      canContinueSession: Boolean(PRINT_CLI_RECIPES[this.id]?.resumeFlag),
       supportsScreenshots: false,
     };
   }
@@ -125,15 +136,40 @@ export abstract class CliExecutorAdapter implements ExecutorAdapter {
   }
 
   async execute(task: ExecutorTask): Promise<ExecutorResult> {
-    return this.runUnsupported(task.taskId);
+    const inner = this.getInner();
+    if (!inner) {
+      return this.runUnsupported(task.taskId);
+    }
+    return inner.run(task);
   }
 
   async continue(input: ExecutorContinuation): Promise<ExecutorResult> {
-    return this.runUnsupported(input.taskId);
+    const inner = this.getInner();
+    if (!inner) {
+      return this.runUnsupported(input.taskId);
+    }
+    return inner.continue(input);
   }
 
-  async cancel(_taskId: string): Promise<void> {
-    // no-op by default
+  async cancel(taskId: string): Promise<void> {
+    await this.inner?.cancel(taskId);
+  }
+
+  private getInner(): PrintCliExecutor | undefined {
+    if (this.inner) {
+      return this.inner;
+    }
+    const recipe = PRINT_CLI_RECIPES[this.id];
+    if (!recipe) {
+      return undefined;
+    }
+    this.inner = new PrintCliExecutor({
+      recipe,
+      timeoutMs: this.options.timeoutMs,
+      onOutput: this.options.onOutput,
+      onStatus: this.options.onStatus,
+    });
+    return this.inner;
   }
 
   protected runUnsupported(taskId: string): ExecutorResult {

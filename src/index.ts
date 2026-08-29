@@ -6,6 +6,15 @@ export * from "./security/index.js";
 export * from "./git/index.js";
 export * from "./persistence/index.js";
 export {
+  detectVerificationCommands,
+  resolveVerificationCommands,
+  emptyVerificationCommands,
+  hasAnyCommand,
+  type VerificationCommands,
+  type VerificationSlot,
+  type DetectedProjectCommands,
+} from "./config/detect-commands.js";
+export {
   AssentorConfigSchema,
   parseAssentorConfig,
   loadAssentorConfig,
@@ -19,6 +28,18 @@ export {
   type AssentorConfig,
   type ConfigSaveScope,
 } from "./config/load.js";
+export {
+  PrintCliExecutor,
+  defaultPrintCliSpawn,
+  type PrintCliExecutorOptions,
+  type PrintCliSpawnFn,
+  type PrintCliSpawnRequest,
+  type PrintCliSpawnResult,
+} from "./providers/executors/cli-print/index.js";
+export {
+  buildPrintCliArgs,
+  PRINT_CLI_RECIPES,
+} from "./providers/executors/cli-print/recipes.js";
 
 export type {
   Executor,
@@ -44,6 +65,7 @@ export {
   defaultSpawn,
   resolveCursorBinary,
   isCursorAppBinary,
+  buildContinuationPrompt,
   type CursorExecutorOptions,
   type CursorSpawnFn,
   type CursorSpawnRequest,

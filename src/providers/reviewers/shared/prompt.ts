@@ -8,6 +8,7 @@ import type {
 } from "../types.js";
 import type { TaskContract } from "../../../core/task-contract.js";
 import type { ProtocolMessage } from "../../../protocol/messages.js";
+import type { PhaseProgress } from "../../../protocol/review-result.js";
 import type { ProjectReviewEvidencePack } from "../../../review/evidence-pack.js";
 import { evidencePackToMarkdown } from "../../../review/persist.js";
 
@@ -18,6 +19,8 @@ export function buildReviewPrompt(input: {
   messages?: ProtocolMessage[];
   evidencePack?: ProjectReviewEvidencePack;
   specialtyAddendum?: string;
+  phaseProgress?: PhaseProgress;
+  autopilot?: boolean;
 }): string {
   const packBlock = input.evidencePack
     ? formatEvidencePackForPrompt(input.evidencePack)
@@ -51,6 +54,22 @@ export function buildReviewPrompt(input: {
     "Evaluate only against the task contract and provided evidence.",
     "Every issue must cite evidence (file path, diff hunk, command output, or pack section).",
     "",
+    ...(input.autopilot
+      ? [
+          "## MULTI-PHASE TASK STEERING INSTRUCTIONS:",
+          "1. Large tasks must be broken down into ordered phases (e.g. Phase 1, Phase 2, Phase 3).",
+          "2. If contract.phases is empty, infer a roadmap from the goal and return it in `phases`.",
+          "3. If the executor only completed an intermediate phase and stopped or asked \"Should I proceed?\":",
+          "   - DO NOT mark the task as PASS if later phases or acceptance criteria remain unfulfilled.",
+          "   - Mark status as NEEDS_WORK.",
+          "   - Update `phaseProgress.completedPhaseIds` with the verified phase.",
+          "   - In `phaseProgress.nextPhaseDirective`, provide commanding instructions for the next phase:",
+          "     \"Phase [X] verified. You are in autonomous execution mode. Proceed immediately to Phase [X+1]: [Specific steps]. Do NOT stop or ask for confirmation.\"",
+          "4. If evidence pack `executorStalledWaitingForConfirmation` is true, treat it as a sub-phase pause — not PASS.",
+          "5. Only output status: PASS when ALL phases and ALL acceptance criteria are completely implemented and verified by evidence.",
+          "",
+        ]
+      : []),
     "Git / evidence rules:",
     "- Section G lists files changed since TASK START (later commits + uncommitted). A clean working tree with a non-empty changed list means the executor already committed — that is valid evidence.",
     "- Do NOT require git add, git commit, or staging unless the task contract explicitly asks for a commit.",
@@ -85,6 +104,21 @@ export function buildReviewPrompt(input: {
           { kind: "search", query: "symbolOrText" },
           { kind: "command", command: "npm test" },
         ],
+        phaseProgress: {
+          currentPhaseId: "phase-2",
+          completedPhaseIds: ["phase-1"],
+          nextPhaseDirective:
+            "Phase 1 verified. Autonomous mode. Proceed immediately to Phase 2. Do NOT ask for confirmation.",
+          allPhasesComplete: false,
+        },
+        phases: [
+          {
+            id: "phase-1",
+            title: "Schema",
+            status: "completed",
+            acceptanceCriteria: [],
+          },
+        ],
         verification: {
           tests: "PASSED|FAILED|NOT_RUN",
           build: "NOT_RUN",
@@ -104,6 +138,9 @@ export function buildReviewPrompt(input: {
     "Task contract:",
     JSON.stringify(input.contract, null, 2),
     "",
+    input.phaseProgress
+      ? `Latest phase progress:\n${JSON.stringify(input.phaseProgress, null, 2)}\n`
+      : "",
     "Evidence pack (scoped — request more if needed):",
     packBlock || "(none — request evidence via evidenceRequests)",
     "",
@@ -159,6 +196,9 @@ export function formatEvidencePackForPrompt(
       "(no executor explanation)",
     `Architecture source: ${pack.architecture.source}`,
     pack.architecture.summary || "(no architecture summary)",
+    pack.executorStalledWaitingForConfirmation
+      ? "\n## Stall signal\nExecutor appears stalled waiting for confirmation to proceed to the next phase. Do NOT PASS. Issue a nextPhaseDirective."
+      : "",
   ].join("\n");
 
   return truncate(combined, maxChars);
@@ -191,6 +231,8 @@ export function asReviewInput(
     artifacts: input.artifacts,
     messages: input.messages,
     evidencePack: "evidencePack" in input ? input.evidencePack : undefined,
+    phaseProgress: "phaseProgress" in input ? input.phaseProgress : undefined,
+    autopilot: "autopilot" in input ? input.autopilot : undefined,
   };
 }
 

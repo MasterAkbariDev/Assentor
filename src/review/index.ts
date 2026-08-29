@@ -62,3 +62,11 @@ export {
   type CorrelatedFinding,
   type ReviewCoordinatorOptions,
 } from "./coordinator.js";
+export {
+  runVerificationGates,
+  applyGateRunsToPack,
+  syntheticNeedsWorkFromGates,
+  type GateRun,
+  type VerificationGateResult,
+  type RunVerificationCommand,
+} from "./verification-gates.js";

@@ -15,9 +15,16 @@ import {
 import { Supervisor } from "../orchestrator/supervisor.js";
 import { isTerminalState, TaskState } from "../orchestrator/state-machine.js";
 import { TaskStore, loadTaskForResume, findLatestResumableTask } from "../persistence/index.js";
-import { CursorExecutor, killAllTrackedProcesses } from "../providers/executors/cursor/index.js";
+import { killAllTrackedProcesses } from "../providers/executors/cursor/index.js";
 import { MockExecutor } from "../providers/executors/mock/index.js";
 import type { Executor } from "../providers/executors/types.js";
+import { buildExecutorRegistry } from "../executors/adapters.js";
+import {
+  isSelectableExecutorProvider,
+  normalizeExecutorProvider,
+  SELECTABLE_EXECUTOR_PROVIDERS,
+} from "../executors/providers.js";
+import { type RunMode } from "../core/run-mode.js";
 import {
   CliReviewer,
   resolveCliAdapter,
@@ -50,6 +57,9 @@ export interface RunAssentorInput {
   acceptanceCriteria?: string[];
   verbose?: boolean;
   skipPreflight?: boolean;
+  skipGates?: boolean;
+  mode?: RunMode;
+  autopilot?: boolean;
 }
 
 export async function createExecutor(
@@ -69,21 +79,30 @@ export async function createExecutor(
   );
 
   let executor: Executor;
-  switch (provider) {
-    case "cursor":
-      executor = new CursorExecutor({
-        onOutput: options.onOutput,
-        onStatus: options.onStatus,
-        timeoutMs: options.timeoutMs,
-      });
-      break;
-    case "mock":
-      executor = new MockExecutor();
-      break;
-    default:
+  const id = normalizeExecutorProvider(provider);
+  if (id === "mock") {
+    executor = new MockExecutor();
+  } else if (id === "project-mutating") {
+    throw new Error(
+      "project-mutating executor is test-only; use mock or a detected CLI",
+    );
+  } else if (isSelectableExecutorProvider(id) && id !== "mock") {
+    const registry = buildExecutorRegistry({
+      onOutput: options.onOutput,
+      onStatus: options.onStatus,
+      timeoutMs: options.timeoutMs,
+    });
+    const adapter = registry.get(id);
+    if (!adapter) {
       throw new Error(
-        `Unknown executor provider "${provider}". Supported: mock, cursor`,
+        `Unknown executor provider "${provider}". Supported: ${SELECTABLE_EXECUTOR_PROVIDERS.join(", ")}`,
       );
+    }
+    executor = adapter;
+  } else {
+    throw new Error(
+      `Unknown executor provider "${provider}". Supported: ${SELECTABLE_EXECUTOR_PROVIDERS.join(", ")}`,
+    );
   }
 
   return withAssentorGitignore(executor);
@@ -187,13 +206,14 @@ async function createReviewerTransport(
           : {}),
       });
     case "claude":
-    case "gemini-cli":
+    case "antigravity":
+    case "cursor":
       throw new Error(
         `Provider "${provider}" requires transport: "cli". Set reviewers[].transport to "cli".`,
       );
     default:
       throw new Error(
-        `Unknown reviewer provider "${provider}". Supported: mock, openai, gemini, claude, gemini-cli`,
+        `Unknown reviewer provider "${provider}". Supported: mock, openai, gemini, claude, antigravity, cursor`,
       );
   }
 }
@@ -202,7 +222,7 @@ function resolveReviewerModel(
   config: AssentorConfig,
   provider: string,
 ): string | undefined {
-  if (provider === "gemini" || provider === "gemini-cli") {
+  if (provider === "gemini") {
     return config.models.gemini !== "AUTO"
       ? config.models.gemini
       : config.models.default;
@@ -393,7 +413,10 @@ async function runAssentorTaskBody(
     reviewer: input.reviewer,
     maxRounds: input.maxRounds,
     maxMessages: input.maxMessages,
+    mode: input.autopilot ? "autopilot" : input.mode,
   });
+  const runMode = config.run.mode;
+  const autopilot = runMode === "autopilot";
 
   const executorProvider = config.executor.provider;
   const backends = selectReviewerBackends(config);
@@ -424,7 +447,9 @@ async function runAssentorTaskBody(
         "Preflight failed. Fix the issues above, then re-run.\n" +
           "Cursor: `agent login` or set CURSOR_API_KEY\n" +
           "Gemini/OpenAI: assentor → API Keys (global ~/.assentor), or export GEMINI_API_KEY / OPENAI_API_KEY\n" +
-          "Claude CLI: install `claude` and run `claude` once to log in",
+          "Claude CLI: install `claude` and run `claude` once to log in\n" +
+          "Cursor CLI: `agent login` or set CURSOR_API_KEY\n" +
+          "Antigravity: install `agy` and log in once",
       );
     }
   }
@@ -482,7 +507,7 @@ async function runAssentorTaskBody(
   reporter.note(`task id: ${taskId}`);
   reporter.note(`project: ${projectPath}`);
   reporter.note(
-    `defaults: ${executorProvider} + ${reviewerLabel} · routing=${config.routing.strategy}`,
+    `defaults: ${runMode} · ${executorProvider} + ${reviewerLabel} · routing=${config.routing.strategy}`,
   );
   reporter.note(`state dir: ${store.paths.taskDir}`);
 
@@ -496,6 +521,9 @@ async function runAssentorTaskBody(
     conversationId,
     store,
     evidenceDepth: complexity.evidenceDepth,
+    verification: config.verification,
+    skipGates: input.skipGates,
+    autopilot,
     onEvent: (event) => {
       reporter.onEvent(event);
     },
@@ -508,6 +536,7 @@ async function runAssentorTaskBody(
     round: `0 / ${budgets.limits.maxRounds}`,
     executor: executor.name,
     reviewer: reviewer.name,
+    mode: runMode,
     status: TaskState.Executing,
   });
 
@@ -518,6 +547,7 @@ async function runAssentorTaskBody(
     round: `${result.round} / ${budgets.limits.maxRounds}`,
     executor: executor.name,
     reviewer: reviewer.name,
+    mode: runMode,
     status: result.status,
   });
 
@@ -619,6 +649,8 @@ export async function resumeAssentorTask(input: {
       reviewer,
       store: resume.store,
       resumeFrom: resume.snapshot,
+      verification: config.verification,
+      autopilot: config.run.mode === "autopilot",
       onEvent: (event) => reporter.onEvent(event),
     });
 
@@ -637,6 +669,9 @@ export async function statusAssentorTask(projectPath: string, taskId: string) {
 export async function initAssentorProject(projectPath: string): Promise<string> {
   const { parseAssentorConfig, saveAssentorConfig, assentorConfigPath } =
     await import("../config/load.js");
+  const { detectVerificationCommands } = await import(
+    "../config/detect-commands.js"
+  );
   const { ensureAssentorGitignored } = await import("../persistence/paths.js");
   await ensureAssentorGitignored(projectPath);
   const configPath = assentorConfigPath(projectPath);
@@ -646,9 +681,22 @@ export async function initAssentorProject(projectPath: string): Promise<string> 
   } catch {
     // create defaults
   }
-  return saveAssentorConfig(projectPath, parseAssentorConfig({}), {
-    scope: "project",
-  });
+  const detected = await detectVerificationCommands(projectPath);
+  return saveAssentorConfig(
+    projectPath,
+    parseAssentorConfig({
+      verification: {
+        enabled: true,
+        commands: {
+          typecheck: detected.typecheck,
+          test: detected.test,
+          lint: detected.lint,
+          build: detected.build,
+        },
+      },
+    }),
+    { scope: "project" },
+  );
 }
 
 export async function doctorAssentor(): Promise<string[]> {
@@ -721,6 +769,7 @@ function printBanner(input: {
   round: string;
   executor: string;
   reviewer: string;
+  mode?: string;
   status: string;
 }): void {
   const task = truncate(input.task, 40);
@@ -732,6 +781,7 @@ function printBanner(input: {
   console.log(`${cyan}${bold}├──────────────────────────────────────────┤${reset}`);
   console.log(`${cyan}│${reset} Task      ${pad(task, 29)}${cyan}│${reset}`);
   console.log(`${cyan}│${reset} Round     ${pad(input.round, 29)}${cyan}│${reset}`);
+  console.log(`${cyan}│${reset} Mode      ${pad(input.mode ?? "supervised", 29)}${cyan}│${reset}`);
   console.log(`${cyan}│${reset} Executor  ${pad(input.executor, 29)}${cyan}│${reset}`);
   console.log(`${cyan}│${reset} Reviewer  ${pad(input.reviewer, 29)}${cyan}│${reset}`);
   console.log(`${cyan}│${reset} Status    ${pad(input.status, 29)}${cyan}│${reset}`);

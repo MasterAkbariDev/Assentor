@@ -147,10 +147,13 @@ Set executor/models under **Configure → AI defaults**. Add reviewers under **C
 |------|----------|--------|
 | Executor | `mock` | Deterministic, offline |
 | Executor | `cursor` | Cursor Agent CLI (`agent` / `cursor agent`) |
+| Executor | `antigravity` | Google Antigravity CLI (`agy`) |
 | Reviewer | `mock` | Deterministic, offline |
-| Reviewer | `gemini` | Vault key or `GEMINI_API_KEY` (transport `api`) or Gemini CLI (`transport: cli`) |
+| Reviewer | `gemini` | Vault key or `GEMINI_API_KEY` (Gemini API) |
 | Reviewer | `openai` | Vault key or `OPENAI_API_KEY` (API only) |
 | Reviewer | `claude` | Claude Code CLI (`transport: cli`) |
+| Reviewer | `cursor` | Cursor Agent CLI (`agent` / `cursor agent`, `transport: cli`) |
+| Reviewer | `antigravity` | Antigravity CLI (`agy`, `transport: cli`) |
 
 ### Cursor
 

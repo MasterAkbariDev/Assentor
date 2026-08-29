@@ -1,6 +1,6 @@
 import type { TaskContract } from "../../core/task-contract.js";
 import type { ProtocolMessage } from "../../protocol/messages.js";
-import type { ReviewResult } from "../../protocol/review-result.js";
+import type { ReviewResult, PhaseProgress } from "../../protocol/review-result.js";
 import type { ProjectReviewEvidencePack } from "../../review/evidence-pack.js";
 
 export interface ReviewInput {
@@ -12,6 +12,10 @@ export interface ReviewInput {
   messages?: ProtocolMessage[];
   /** Structured evidence pack (preferred over raw artifacts alone). */
   evidencePack?: ProjectReviewEvidencePack;
+  /** Latest phase steering state from prior rounds. */
+  phaseProgress?: PhaseProgress;
+  /** When true, reviewer should steer multi-phase work autonomously. */
+  autopilot?: boolean;
 }
 
 export interface ReviewContinuation {
@@ -22,6 +26,8 @@ export interface ReviewContinuation {
   messages: ProtocolMessage[];
   artifacts: ReviewArtifactRef[];
   evidencePack?: ProjectReviewEvidencePack;
+  phaseProgress?: PhaseProgress;
+  autopilot?: boolean;
 }
 
 export interface ReviewArtifactRef {

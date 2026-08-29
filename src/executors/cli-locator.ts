@@ -17,7 +17,7 @@ import { userConfigPath } from "../config/paths.js";
 export type BinaryTool =
   | "cursor"
   | "claude"
-  | "gemini"
+  | "agy"
   | "codex"
   | "qwen"
   | "opencode";
@@ -214,6 +214,23 @@ export function wellKnownBinaryPaths(
     ];
   }
 
+  if (tool === "agy") {
+    if (h.platform === "win32") {
+      return [
+        path.join(localAppData, "agy", "bin", "agy.exe"),
+        path.join(localAppData, "agy", "bin", "agy.cmd"),
+        path.join(npm, "agy.cmd"),
+        path.join(npm, "agy.exe"),
+        path.join(localBin, "agy.cmd"),
+      ];
+    }
+    return [
+      path.join(localBin, "agy"),
+      "/usr/local/bin/agy",
+      "/opt/homebrew/bin/agy",
+    ];
+  }
+
   const unixBins = (name: string) => [
     path.join(localBin, name),
     `/usr/local/bin/${name}`,
@@ -225,9 +242,8 @@ export function wellKnownBinaryPaths(
     path.join(localBin, `${name}.cmd`),
   ];
 
-  const names: Record<Exclude<BinaryTool, "cursor">, string> = {
+  const names: Record<Exclude<BinaryTool, "cursor" | "agy">, string> = {
     claude: "claude",
-    gemini: "gemini",
     codex: "codex",
     qwen: "qwen",
     opencode: "opencode",
@@ -242,7 +258,7 @@ export function wellKnownBinaryPaths(
 const TOOL_NAMES: Record<BinaryTool, string[]> = {
   cursor: ["agent", "cursor-agent", "cursor"],
   claude: ["claude"],
-  gemini: ["gemini"],
+  agy: ["agy", "antigravity"],
   codex: ["codex"],
   qwen: ["qwen", "qwen-code"],
   opencode: ["opencode"],
@@ -251,7 +267,7 @@ const TOOL_NAMES: Record<BinaryTool, string[]> = {
 const TOOL_ENV: Record<BinaryTool, string[]> = {
   cursor: ["ASSENTOR_CURSOR_BINARY"],
   claude: ["ASSENTOR_CLAUDE_BINARY"],
-  gemini: ["ASSENTOR_GEMINI_CLI_BINARY"],
+  agy: ["ASSENTOR_AGY_BINARY", "ASSENTOR_ANTIGRAVITY_BINARY"],
   codex: ["ASSENTOR_CODEX_BINARY"],
   qwen: ["ASSENTOR_QWEN_BINARY"],
   opencode: ["ASSENTOR_OPENCODE_BINARY"],

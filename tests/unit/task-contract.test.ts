@@ -17,6 +17,7 @@ describe("task contract", () => {
       acceptanceCriteria: [],
       nonGoals: [],
       verificationPlan: [],
+      phases: [],
     });
     expect(hasAcceptanceCriteria(contract)).toBe(false);
   });
@@ -36,6 +37,31 @@ describe("task contract", () => {
     });
     expect(parsed.goal).toBe("Ship feature");
     expect(hasAcceptanceCriteria(parsed)).toBe(true);
+    expect(parsed.phases).toEqual([]);
+  });
+
+  it("parses a multi-phase contract", () => {
+    const parsed = parseTaskContract({
+      goal: "Build the app",
+      requirements: [],
+      constraints: [],
+      acceptanceCriteria: ["all phases done"],
+      nonGoals: [],
+      verificationPlan: [],
+      phases: [
+        {
+          id: "p1",
+          title: "Schema",
+          status: "completed",
+          acceptanceCriteria: ["tables exist"],
+        },
+        { id: "p2", title: "API" },
+      ],
+    });
+    expect(parsed.phases).toHaveLength(2);
+    expect(parsed.phases[0]?.status).toBe("completed");
+    expect(parsed.phases[1]?.status).toBe("pending");
+    expect(parsed.phases[1]?.acceptanceCriteria).toEqual([]);
   });
 
   it("rejects malformed contracts", () => {

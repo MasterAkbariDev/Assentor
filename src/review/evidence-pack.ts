@@ -147,6 +147,8 @@ export const ProjectReviewEvidencePackSchema = z.object({
   runtime: RuntimeInfoSchema.default({}),
   executorExplanation: ExecutorExplanationSchema.default({}),
   notes: z.array(z.string()).default([]),
+  /** True when executor output looks like it stopped to ask permission. */
+  executorStalledWaitingForConfirmation: z.boolean().optional().default(false),
 });
 
 export type ProjectReviewEvidencePack = z.infer<

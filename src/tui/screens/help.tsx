@@ -25,7 +25,7 @@ export function HelpScreen() {
         </Text>
         <Text>/ or Ctrl+K — command palette</Text>
         <Text>? — contextual help overlay</Text>
-        <Text>n — new task · r/p — explain reviewers · Tasks r resume / d delete</Text>
+        <Text>n — new task · m — Supervised/Autopilot · r/p — explain reviewers · Tasks r resume / d delete</Text>
       </Box>
 
       <Box marginTop={1} flexDirection="column">

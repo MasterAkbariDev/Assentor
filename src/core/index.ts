@@ -7,6 +7,15 @@ export {
 } from "./ids.js";
 
 export {
+  RUN_MODES,
+  DEFAULT_RUN_MODE,
+  parseRunMode,
+  isAutopilot,
+  formatRunMode,
+  type RunMode,
+} from "./run-mode.js";
+
+export {
   AgentRole,
   Severity,
   ReviewStatus,
@@ -31,7 +40,9 @@ export {
 
 export {
   TaskContractSchema,
+  PhaseItemSchema,
   type TaskContract,
+  type PhaseItem,
   createEmptyContract,
   parseTaskContract,
   mergeAcceptanceCriteria,

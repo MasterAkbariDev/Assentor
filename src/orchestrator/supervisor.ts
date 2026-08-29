@@ -12,7 +12,7 @@ import {
   ProtocolBus,
   type ProtocolMessage,
 } from "../protocol/index.js";
-import type { ReviewResult } from "../protocol/review-result.js";
+import type { ReviewResult, PhaseProgress } from "../protocol/review-result.js";
 import { makeReviewResult } from "../protocol/review-result.js";
 import type { EvidenceRequestItem } from "../protocol/messages.js";
 import type { Executor, ExecutorResult } from "../providers/executors/types.js";
@@ -30,7 +30,25 @@ import {
   parseExecutorExplanation,
   type ProjectReviewEvidencePack,
 } from "../review/index.js";
+import {
+  applyGateRunsToPack,
+  runVerificationGates,
+  syntheticNeedsWorkFromGates,
+  type RunVerificationCommand,
+} from "../review/verification-gates.js";
+import type { AssentorConfig } from "../config/schema.js";
+import {
+  resolveVerificationCommands,
+  type VerificationCommands,
+} from "../config/detect-commands.js";
 import { LoopDetector } from "./loop-detector.js";
+import {
+  applyPhaseProgressToContract,
+  buildAutonomousTaskPrompt,
+  downgradePassIfPhasesRemain,
+  isStalledWaitingForConfirmation,
+  mergeContractPhases,
+} from "./phase-steering.js";
 import {
   canTransition,
   isTerminalState,
@@ -54,6 +72,9 @@ export type SupervisorEventType =
   | "evidence.requested"
   | "evidence.fulfilled"
   | "change.requested"
+  | "verification.started"
+  | "verification.passed"
+  | "verification.failed"
   | "loop.detected"
   | "budget.exceeded"
   | "task.completed"
@@ -84,6 +105,17 @@ export interface SupervisorConfig {
   maxEvidenceIterations?: number;
   /** Called for observability; must not throw. */
   onEvent?: (event: SupervisorEvent) => void;
+  /** Project verification commands and skip-on-failure policy. */
+  verification?: AssentorConfig["verification"];
+  /** Skip deterministic pre-review gates. */
+  skipGates?: boolean;
+  /** Injectable command runner for verification gates (tests). */
+  runVerificationCommand?: RunVerificationCommand;
+  /**
+   * Autopilot wraps executor prompts, stalls as not-PASS, and downgrades
+   * PASS while phases remain. Default supervised (opt-in).
+   */
+  autopilot?: boolean;
 }
 
 export interface SupervisorResult {
@@ -133,6 +165,9 @@ export class Supervisor {
   private evidencePack?: ProjectReviewEvidencePack;
   private evidenceIterations = 0;
   private readonly maxEvidenceIterations: number;
+  private contract: TaskContract;
+  private phaseProgress?: PhaseProgress;
+  private verificationCommands?: VerificationCommands;
 
   constructor(private readonly config: SupervisorConfig) {
     this.budgets = config.budgets ?? createBudgets();
@@ -145,6 +180,7 @@ export class Supervisor {
       config.resumeFrom?.startedAt ?? new Date().toISOString();
     this.maxEvidenceIterations =
       config.maxEvidenceIterations ?? MAX_EVIDENCE_ITERATIONS;
+    this.contract = config.contract;
 
     if (config.resumeFrom) {
       this.restoreFromSnapshot(config.resumeFrom);
@@ -157,6 +193,10 @@ export class Supervisor {
 
   getTaskId(): string {
     return this.taskId;
+  }
+
+  private get autopilot(): boolean {
+    return this.config.autopilot === true;
   }
 
   requestCancel(): void {
@@ -215,6 +255,18 @@ export class Supervisor {
         }
 
         if (this.state === TaskState.Reviewing) {
+          const gateReview = await this.maybeRunVerificationGates();
+          if (gateReview) {
+            const done = await this.applyReviewOutcome(taskId, conversationId, {
+              kind: "needs_work",
+              review: gateReview,
+            });
+            if (done) {
+              break;
+            }
+            continue;
+          }
+
           const outcome = await this.runReviewer(taskId, conversationId);
           if (isTerminalState(this.state)) {
             break;
@@ -270,6 +322,8 @@ export class Supervisor {
     this.taskStarted =
       Boolean(snapshot.executorSessionId) || snapshot.currentRound > 0;
     this.lastCheckpoint = snapshot.lastCheckpoint;
+    this.contract = snapshot.contract;
+    this.phaseProgress = snapshot.phaseProgress;
   }
 
   private async captureGitCheckpoint(): Promise<void> {
@@ -432,9 +486,13 @@ export class Supervisor {
         result = await this.config.executor.continue({
           taskId,
           projectPath: this.config.projectPath,
-          contract: this.config.contract,
+          contract: this.contract,
           messages: inbound,
           sessionId: this.sessionId,
+          nextPhaseDirective: this.autopilot
+            ? this.phaseProgress?.nextPhaseDirective
+            : undefined,
+          mode: this.autopilot ? "autopilot" : "supervised",
         });
       } else {
         const taskMessage = createProtocolMessage({
@@ -444,8 +502,8 @@ export class Supervisor {
           to: EXECUTOR_ID,
           type: MessageType.Task,
           content: {
-            goal: this.config.contract.goal,
-            contract: this.config.contract as unknown as Record<string, unknown>,
+            goal: this.contract.goal,
+            contract: this.contract as unknown as Record<string, unknown>,
           },
         });
         if (!(await this.spendMessage())) {
@@ -462,8 +520,10 @@ export class Supervisor {
         result = await this.config.executor.run({
           taskId,
           projectPath: this.config.projectPath,
-          contract: this.config.contract,
-          prompt: this.config.contract.goal,
+          contract: this.contract,
+          prompt: this.autopilot
+            ? buildAutonomousTaskPrompt(this.contract.goal, this.contract)
+            : this.contract.goal,
           messages: queued,
         });
         this.taskStarted = true;
@@ -500,15 +560,7 @@ export class Supervisor {
     const explanation = parseExecutorExplanation(executorText);
     const architectureSummary = parseArchitectureSummary(executorText);
 
-    const builder = new EvidencePackBuilder({
-      projectPath: this.config.projectPath,
-      taskId: this.taskId,
-      round: this.round,
-      depth: this.config.evidenceDepth ?? "STANDARD",
-      contract: this.config.contract,
-      runCommands: false,
-      gitBaselineHead: this.lastCheckpoint?.head,
-    });
+    const builder = new EvidencePackBuilder(this.packBuilderOptions(false));
 
     const architecture = architectureSummary
       ? {
@@ -525,6 +577,16 @@ export class Supervisor {
       executorExplanation: explanation,
       architecture,
     });
+
+    if (
+      this.autopilot &&
+      isStalledWaitingForConfirmation(executorText)
+    ) {
+      this.evidencePack.executorStalledWaitingForConfirmation = true;
+      this.evidencePack.notes.push(
+        "Executor appears stalled waiting for confirmation to proceed to the next phase.",
+      );
+    }
 
     try {
       await builder.persist(this.evidencePack, this.taskId);
@@ -565,11 +627,13 @@ export class Supervisor {
       turn = await this.config.reviewer.review({
         taskId,
         projectPath: this.config.projectPath,
-        contract: this.config.contract,
+        contract: this.contract,
         round: this.round,
         artifacts: [...this.artifacts],
         messages: inbound,
         evidencePack: this.evidencePack,
+        phaseProgress: this.phaseProgress,
+        autopilot: this.autopilot,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -635,6 +699,22 @@ export class Supervisor {
       evidenceRequests: turn.result.evidenceRequests,
     });
 
+    this.absorbReview(turn.result);
+
+    if (this.autopilot && turn.result.status === ReviewStatus.Pass) {
+      const stalled = Boolean(
+        this.evidencePack?.executorStalledWaitingForConfirmation,
+      );
+      turn.result = downgradePassIfPhasesRemain(
+        makeReviewResult(turn.result),
+        this.contract,
+        stalled,
+      );
+      if (turn.result.status === ReviewStatus.NeedsWork) {
+        this.phaseProgress = makeReviewResult(turn.result).phaseProgress;
+      }
+    }
+
     if (
       (turn.result.evidenceRequests?.length ?? 0) > 0 &&
       turn.result.status === ReviewStatus.NeedsWork
@@ -679,7 +759,8 @@ export class Supervisor {
     const { signal, looping } = this.loopDetector.check(this.round, {
       requiredChanges: review.requiredChanges,
       issueIds: (review.issues ?? []).map((issue) => issue.id),
-      summary: review.summary,
+      summary:
+        review.phaseProgress?.nextPhaseDirective ?? review.summary,
     });
 
     if (looping) {
@@ -708,6 +789,7 @@ export class Supervisor {
         requiredChanges: review.requiredChanges ?? [],
         optionalChanges: review.optionalChanges ?? [],
         issueIds: (review.issues ?? []).map((issue) => issue.id),
+        nextPhaseDirective: review.phaseProgress?.nextPhaseDirective,
       },
     });
 
@@ -749,27 +831,11 @@ export class Supervisor {
     const pending = this.extractPendingEvidenceRequests();
     if (pending.length > 0) {
       if (!this.evidencePack) {
-        const bootstrap = new EvidencePackBuilder({
-          projectPath: this.config.projectPath,
-          taskId: this.taskId,
-          round: this.round,
-          depth: this.config.evidenceDepth ?? "STANDARD",
-          contract: this.config.contract,
-          runCommands: false,
-          gitBaselineHead: this.lastCheckpoint?.head,
-        });
+        const bootstrap = new EvidencePackBuilder(this.packBuilderOptions(false));
         this.evidencePack = await bootstrap.build({});
       }
 
-      const builder = new EvidencePackBuilder({
-        projectPath: this.config.projectPath,
-        taskId: this.taskId,
-        round: this.round,
-        depth: this.config.evidenceDepth ?? "STANDARD",
-        contract: this.config.contract,
-        runCommands: true,
-        gitBaselineHead: this.lastCheckpoint?.head,
-      });
+      const builder = new EvidencePackBuilder(this.packBuilderOptions(true));
       const merged = await builder.mergeRequests(this.evidencePack, pending);
       this.evidencePack = merged.pack;
       try {
@@ -902,10 +968,11 @@ export class Supervisor {
         maxRounds: this.budgets.limits.maxRounds,
         executor: this.config.executor.name,
         reviewers: [this.config.reviewer.name],
-        contract: this.config.contract,
+        contract: this.contract,
         budgets: this.budgets,
         executorSessionId: this.sessionId,
         lastCheckpoint: this.lastCheckpoint,
+        phaseProgress: this.phaseProgress,
         finalReview: this.finalReview,
         reason: this.lastReason,
         startedAt: this.startedAt,
@@ -930,6 +997,90 @@ export class Supervisor {
     } catch {
       // ignore
     }
+  }
+
+  private packBuilderOptions(runCommands: boolean) {
+    return {
+      projectPath: this.config.projectPath,
+      taskId: this.taskId,
+      round: this.round,
+      depth: this.config.evidenceDepth ?? "STANDARD",
+      contract: this.contract,
+      runCommands,
+      gitBaselineHead: this.lastCheckpoint?.head,
+      verificationCommands: this.verificationCommands,
+    };
+  }
+
+  private absorbReview(review: ReviewResult): void {
+    const parsed = makeReviewResult(review);
+    if (parsed.phases && parsed.phases.length > 0) {
+      this.contract = mergeContractPhases(this.contract, parsed.phases);
+    }
+    if (parsed.phaseProgress) {
+      this.phaseProgress = parsed.phaseProgress;
+      this.contract = applyPhaseProgressToContract(
+        this.contract,
+        parsed.phaseProgress,
+      );
+    }
+  }
+
+  private async maybeRunVerificationGates(): Promise<ReviewResult | undefined> {
+    if (this.config.skipGates || this.config.verification === undefined) {
+      return undefined;
+    }
+    if (this.config.verification.enabled === false) {
+      return undefined;
+    }
+
+    if (!this.verificationCommands) {
+      this.verificationCommands = await resolveVerificationCommands(
+        this.config.projectPath,
+        this.config.verification.commands,
+      );
+    }
+
+    this.emit("verification.started", {
+      commands: this.verificationCommands,
+    });
+
+    const result = await runVerificationGates({
+      projectPath: this.config.projectPath,
+      commands: this.verificationCommands,
+      skipReviewOnFailure: this.config.verification.skipReviewOnFailure,
+      runCommand: this.config.runVerificationCommand,
+    });
+
+    if (this.evidencePack) {
+      applyGateRunsToPack(this.evidencePack, result.runs);
+    }
+
+    if (result.passed) {
+      this.emit("verification.passed", {
+        slots: result.runs.map((run) => ({
+          slot: run.slot,
+          status: run.status,
+        })),
+      });
+      return undefined;
+    }
+
+    this.emit("verification.failed", {
+      failures: result.hardFailures.map((run) => ({
+        slot: run.slot,
+        command: run.command,
+        exitCode: run.exitCode,
+      })),
+    });
+
+    const review = syntheticNeedsWorkFromGates({
+      failures: result.hardFailures,
+      phases: this.contract.phases,
+      phaseProgress: this.phaseProgress,
+    });
+    this.absorbReview(review);
+    return review;
   }
 
   private emit(

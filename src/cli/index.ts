@@ -38,6 +38,8 @@ program
       const { result } = await runAssentorTask({
         projectPath: handoff.projectPath,
         prompt: handoff.prompt,
+        executor: handoff.executor,
+        mode: handoff.mode,
       });
       console.log(`Task ${result.taskId} finished: ${result.status}`);
       if (result.status !== "DONE") process.exitCode = 1;
@@ -67,11 +69,17 @@ program
   .description("Run an orchestrated development task")
   .argument("[prompt...]", "Task prompt")
   .option("-p, --project <path>", "Project directory", ".")
-  .option("-e, --executor <provider>", "Executor provider (mock|cursor)")
+  .option(
+    "-e, --executor <provider>",
+    "Executor (mock|cursor|claude-code|antigravity|codex|qwen|opencode)",
+  )
   .option("-r, --reviewer <provider>", "Reviewer provider (mock|openai|gemini)")
   .option("--max-rounds <n>", "Maximum rounds", (v: string) => Number(v))
   .option("--max-messages <n>", "Maximum messages", (v: string) => Number(v))
   .option("-v, --verbose", "Verbose event logging", false)
+  .option("--skip-gates", "Skip deterministic pre-review verification", false)
+  .option("--mode <mode>", "Run mode (supervised|autopilot)")
+  .option("--autopilot", "Shortcut for --mode autopilot (auto next-phase)", false)
   .action(
     async (
       promptParts: string[],
@@ -82,6 +90,9 @@ program
         maxRounds?: number;
         maxMessages?: number;
         verbose?: boolean;
+        skipGates?: boolean;
+        mode?: string;
+        autopilot?: boolean;
       },
     ) => {
       const prompt = promptParts.join(" ").trim();
@@ -91,6 +102,13 @@ program
         return;
       }
 
+      const mode =
+        options.autopilot
+          ? "autopilot"
+          : options.mode === "autopilot" || options.mode === "supervised"
+            ? options.mode
+            : undefined;
+
       const { result } = await runAssentorTask({
         projectPath: options.project,
         prompt,
@@ -99,6 +117,9 @@ program
         maxRounds: options.maxRounds,
         maxMessages: options.maxMessages,
         verbose: options.verbose,
+        skipGates: options.skipGates,
+        mode,
+        autopilot: options.autopilot,
       });
 
       console.log(`Task ${result.taskId} finished: ${result.status}`);

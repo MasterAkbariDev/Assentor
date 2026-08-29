@@ -91,6 +91,8 @@ describe("TUI keyboard map (§44 + UX rewrite)", () => {
   it("footer adapts to screen", () => {
     const ws = createInitialUiState({ screen: "workspace", focus: "main" });
     expect(footerHints(ws)).toMatch(/New task/i);
+    expect(footerHints(ws)).toMatch(/Mode/i);
+    expect(mapKeyToAction(ws, { input: "m" }).type).toBe("cycle_mode");
     const keys = createInitialUiState({
       screen: "configuration",
       configSection: "keys",
@@ -144,5 +146,14 @@ describe("TUI keyboard map (§44 + UX rewrite)", () => {
       "cycle_right",
     );
     expect(mapKeyToAction(state, { input: "s" }).type).toBe("save_defaults");
+  });
+
+  it("u on executors uses the highlighted CLI", () => {
+    const state = createInitialUiState({
+      focus: "main",
+      screen: "configuration",
+      configSection: "executors",
+    });
+    expect(mapKeyToAction(state, { input: "u" }).type).toBe("executors_use");
   });
 });

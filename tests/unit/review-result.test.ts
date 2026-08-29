@@ -74,6 +74,25 @@ describe("review result", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("allows NEEDS_WORK via nextPhaseDirective only", () => {
+    const result = parseReviewResult({
+      status: ReviewStatus.NeedsWork,
+      confidence: 0.8,
+      summary: "Phase 1 done",
+      phaseProgress: {
+        completedPhaseIds: ["phase-1"],
+        nextPhaseDirective:
+          "Phase 1 verified. Proceed immediately to Phase 2. Do NOT ask for confirmation.",
+        allPhasesComplete: false,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.phaseProgress?.completedPhaseIds).toEqual(["phase-1"]);
+    }
+  });
+
   it("rejects empty NEEDS_WORK", () => {
     const result = parseReviewResult({
       status: ReviewStatus.NeedsWork,

@@ -125,6 +125,9 @@ export function evidencePackToMarkdown(pack: ProjectReviewEvidencePack): string 
     pack.executorExplanation.whatChanged ||
       pack.executorExplanation.raw ||
       "(missing)",
+    pack.executorStalledWaitingForConfirmation
+      ? `\n## Stall\nExecutor appears stalled waiting for confirmation.\n`
+      : "",
     ``,
   ];
   return lines.join("\n");

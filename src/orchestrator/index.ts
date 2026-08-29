@@ -19,6 +19,20 @@ export {
 } from "./loop-detector.js";
 
 export {
+  isStalledWaitingForConfirmation,
+  remainingPhases,
+  areAllPhasesComplete,
+  buildNextPhaseDirective,
+  mergeContractPhases,
+  applyPhaseProgressToContract,
+  generateDirectiveForRemaining,
+  downgradePassIfPhasesRemain,
+  buildSupervisedContinuationPrompt,
+  buildAutonomousTaskPrompt,
+  buildAutonomousContinuationPrompt,
+} from "./phase-steering.js";
+
+export {
   Supervisor,
   type SupervisorConfig,
   type SupervisorEvent,

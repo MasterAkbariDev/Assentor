@@ -262,11 +262,13 @@ export function explainReviewPlan(
         ? "Gemini"
         : entry.provider === "openai"
           ? "OpenAI"
-          : entry.provider === "claude"
-            ? "Claude"
-            : entry.provider === "gemini-cli"
-              ? "Gemini CLI"
-              : entry.provider === "mock"
+            : entry.provider === "claude"
+              ? "Claude"
+              : entry.provider === "antigravity"
+                ? "Antigravity"
+                : entry.provider === "cursor"
+                  ? "Cursor"
+                : entry.provider === "mock"
                 ? "Mock"
                 : entry.provider;
     const name = entry.name?.trim();

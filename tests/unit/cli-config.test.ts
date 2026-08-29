@@ -22,6 +22,34 @@ describe("config + cli helpers", () => {
     expect(config.limits.maxRounds).toBe(8);
     expect(config.routing.strategy).toBe("BALANCED");
     expect(config.models.default).toBe("AUTO");
+    expect(config.run.mode).toBe("supervised");
+  });
+
+  it("normalizes executor aliases including Antigravity", () => {
+    expect(parseAssentorConfig({ executor: { provider: "agy" } }).executor.provider).toBe(
+      "antigravity",
+    );
+    expect(
+      parseAssentorConfig({ executor: { provider: "claude" } }).executor.provider,
+    ).toBe("claude-code");
+    expect(
+      parseAssentorConfig({ executor: { provider: "gemini" } }).executor.provider,
+    ).toBe("antigravity");
+    expect(
+      parseAssentorConfig({ executor: { provider: "gemini-cli" } }).executor
+        .provider,
+    ).toBe("antigravity");
+    expect(
+      parseAssentorConfig({
+        reviewers: [{ provider: "gemini-cli", transport: "cli" }],
+      }).reviewers[0]?.provider,
+    ).toBe("antigravity");
+    expect(
+      parseAssentorConfig({
+        executor: { provider: "antigravity" },
+        run: { mode: "autopilot" },
+      }).run.mode,
+    ).toBe("autopilot");
   });
 
   it("initializes optional project .assentor/config.yaml override", async () => {
@@ -36,6 +64,7 @@ describe("config + cli helpers", () => {
     expect(raw).toContain("provider: mock");
     expect(raw).toContain("routing:");
     expect(raw).toContain("models:");
+    expect(raw).toContain("verification:");
   });
 
   it("saves and reloads project overrides", async () => {

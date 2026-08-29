@@ -201,6 +201,7 @@ describe("Executors detection", () => {
     expect(ids).toContain("cursor");
     expect(ids).toContain("claude-code");
     expect(ids).toContain("codex");
+    expect(ids).toContain("antigravity");
     const detections = await registry.detectAll();
     expect(detections.length).toBeGreaterThanOrEqual(5);
   });

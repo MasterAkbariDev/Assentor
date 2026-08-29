@@ -1,9 +1,16 @@
 import type { AssentorConfig } from "../../config/load.js";
+import {
+  SELECTABLE_EXECUTOR_PROVIDERS,
+  formatExecutorProvider,
+  type SelectableExecutorProvider,
+} from "../../executors/providers.js";
+import { RUN_MODES, formatRunMode, type RunMode } from "../../core/run-mode.js";
 import { formatReviewerBackend } from "../../review/backends.js";
 import { cycle } from "./shared.js";
 
-export const EXECUTOR_OPTIONS = ["mock", "cursor"] as const;
-export const REVIEWER_OPTIONS = ["mock", "gemini", "openai", "claude"] as const;
+export const EXECUTOR_OPTIONS = SELECTABLE_EXECUTOR_PROVIDERS;
+export const RUN_MODE_OPTIONS = RUN_MODES;
+export const REVIEWER_OPTIONS = ["mock", "gemini", "openai", "claude", "cursor"] as const;
 export const TRANSPORT_OPTIONS = ["api", "cli"] as const;
 export const ROUTING_OPTIONS = [
   "FREE_FIRST",
@@ -35,9 +42,22 @@ const ROUTING_LABEL: Record<(typeof ROUTING_OPTIONS)[number], string> = {
   CUSTOM: "Custom",
 };
 
-export function buildAiRows(config: AssentorConfig): string[] {
+export function buildAiRows(
+  config: AssentorConfig,
+  options: { installedIds?: ReadonlySet<string> } = {},
+): string[] {
+  const installed = options.installedIds;
+  const executorMark =
+    config.executor.provider === "mock"
+      ? ""
+      : installed
+        ? installed.has(config.executor.provider)
+          ? " ✓"
+          : " ✗"
+        : "";
   return [
-    `Executor             ${config.executor.provider}`,
+    `Mode                 ${formatRunMode(config.run.mode)}`,
+    `Executor             ${formatExecutorProvider(config.executor.provider)}${executorMark}`,
     `Default model        ${config.models.default}`,
     `Gemini model         ${config.models.gemini}`,
     `OpenAI model         ${config.models.openai}`,
@@ -104,28 +124,35 @@ export function cycleAiField(
   const next = structuredClone(config);
   switch (idx) {
     case 0:
-      next.executor.provider = cycle(
-        EXECUTOR_OPTIONS,
-        EXECUTOR_OPTIONS.includes(
-          next.executor.provider as (typeof EXECUTOR_OPTIONS)[number],
-        )
-          ? (next.executor.provider as (typeof EXECUTOR_OPTIONS)[number])
-          : "cursor",
-        dir,
-      );
+      next.run.mode = cycle(RUN_MODE_OPTIONS, next.run.mode, dir);
       break;
-    case 1:
+    case 1: {
+      const current = EXECUTOR_OPTIONS.includes(
+        next.executor.provider as SelectableExecutorProvider,
+      )
+        ? (next.executor.provider as SelectableExecutorProvider)
+        : "cursor";
+      next.executor.provider = cycle(EXECUTOR_OPTIONS, current, dir);
+      break;
+    }
+    case 2:
       next.models.default = cycle(modelChoices, next.models.default, dir);
       break;
-    case 2:
+    case 3:
       next.models.gemini = cycle(modelChoices, next.models.gemini, dir);
       break;
-    case 3:
+    case 4:
       next.models.openai = cycle(modelChoices, next.models.openai, dir);
       break;
     default:
       break;
   }
+  return next;
+}
+
+export function cycleRunMode(config: AssentorConfig, dir: 1 | -1 = 1): AssentorConfig {
+  const next = structuredClone(config);
+  next.run.mode = cycle(RUN_MODE_OPTIONS, next.run.mode as RunMode, dir);
   return next;
 }
 

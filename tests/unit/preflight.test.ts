@@ -25,4 +25,15 @@ describe("runPreflight", () => {
     expect(result.ok).toBe(true);
     expect(result.checks.some((c) => c.name === "executor:mock")).toBe(true);
   });
+
+  it("probes a registered print CLI without spawning it", async () => {
+    const result = await runPreflight({
+      executor: "antigravity",
+      reviewers: [{ provider: "mock" }],
+      projectPath: process.cwd(),
+    });
+    const check = result.checks.find((c) => c.name === "executor:antigravity");
+    expect(check).toBeDefined();
+    expect(check?.detail).not.toMatch(/PONG|probe timed out/i);
+  });
 });
