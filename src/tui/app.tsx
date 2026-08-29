@@ -802,9 +802,17 @@ function App({
           patchUi({ busy: false });
         } else if (ui.mainIndex === 1) {
           patchUi({ busy: true });
-          const result = await performUpdate();
-          setMessage(result.output.slice(0, 240));
-          patchUi({ busy: false });
+          const result = await performUpdate({
+            relaunchArgs: ["ui", "-p", services.projectPath],
+          });
+          if (!result.relaunched) {
+            setMessage(
+              result.code === 0
+                ? `Updated to v${result.localVersion}`
+                : result.output.slice(0, 240),
+            );
+            patchUi({ busy: false });
+          }
         } else if (ui.mainIndex === 2) {
           patchUi({
             dialog: "confirm-uninstall",

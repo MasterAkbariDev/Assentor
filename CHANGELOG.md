@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.14] — 2026-08-29
+
+### Added
+
+- **Live CLI streaming** — Print-mode executors (Antigravity, Claude Code, Qwen) use `--output-format stream-json` with live tool/status updates; Codex/OpenCode stream plain-text lines.
+- **Antigravity stream parser** — Maps `agy` NDJSON `step_update` / `result` events to reading/editing/running status.
+
+### Fixed
+
+- **Post-update reload** — TUI restart after “Update Assentor” loads the rebuilt CLI; `assentor update` verifies version in a fresh process.
+- **Reviewer banner** — Run banner shows provider plus logical role (e.g. `Cursor (general-reviewer)`).
+
 ## [0.3.13] — 2026-08-29
 
 ### Fixed
@@ -190,7 +202,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logical agents, diagnostics, and resumable task state under `.assentor/tasks/`
 - One-line install scripts for macOS/Linux and Windows
 
-[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.13...HEAD
+[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.14...HEAD
+[0.3.14]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.13...v0.3.14
 [0.3.13]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.12...v0.3.13
 [0.3.12]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.11...v0.3.12
 [0.3.11]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.10...v0.3.11

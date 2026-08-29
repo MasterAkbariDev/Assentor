@@ -41,6 +41,7 @@ export {
   selectReviewerBackends,
   formatReviewerBackend,
   formatReviewerBackendShort,
+  formatReviewerRunLabel,
   transportsForProvider,
   defaultTransportForProvider,
   REVIEWER_ADD_PROVIDERS,

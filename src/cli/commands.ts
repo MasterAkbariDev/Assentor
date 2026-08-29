@@ -40,6 +40,7 @@ import {
   TaskComplexityAnalyzer,
   specialtyAddendum,
   selectReviewerBackends,
+  formatReviewerRunLabel,
   type ReviewerBackend,
 } from "../review/index.js";
 import { loadAssentorConfig, type AssentorConfig } from "../config/load.js";
@@ -530,12 +531,17 @@ async function runAssentorTaskBody(
   });
   slots.setSupervisor(supervisor);
 
+  const reviewerDisplay = formatReviewerRunLabel(
+    reviewer.name,
+    backends[0],
+  );
+
   reporter.ready();
   printBanner({
     task: contract.goal,
     round: `0 / ${budgets.limits.maxRounds}`,
     executor: executor.name,
-    reviewer: reviewer.name,
+    reviewer: reviewerDisplay,
     mode: runMode,
     status: TaskState.Executing,
   });
@@ -546,7 +552,7 @@ async function runAssentorTaskBody(
     task: contract.goal,
     round: `${result.round} / ${budgets.limits.maxRounds}`,
     executor: executor.name,
-    reviewer: reviewer.name,
+    reviewer: reviewerDisplay,
     mode: runMode,
     status: result.status,
   });

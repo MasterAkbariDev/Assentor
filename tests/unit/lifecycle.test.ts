@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import path from "node:path";
 import {
+  buildAssentorLaunchCommand,
   defaultBinDir,
   defaultInstallHome,
   lifecycleProcessArgs,
@@ -38,6 +39,35 @@ describe("lifecycle scripts", () => {
     );
     expect(command).toBe("bash");
     expect(args).toEqual(["/Users/sam/.assentor/scripts/update.sh", "--purge"]);
+  });
+});
+
+describe("assentor relaunch", () => {
+  it("builds cmd.exe launch for Windows shim", () => {
+    const launch = buildAssentorLaunchCommand(
+      "C:\\Users\\sam\\.local\\bin\\assentor.cmd",
+      ["version"],
+      "win32",
+    );
+    expect(launch.command).toBe("cmd.exe");
+    expect(launch.args).toEqual([
+      "/d",
+      "/s",
+      "/c",
+      "C:\\Users\\sam\\.local\\bin\\assentor.cmd",
+      "version",
+    ]);
+  });
+
+  it("builds bash launch on Unix", () => {
+    const launch = buildAssentorLaunchCommand(
+      "/Users/sam/.local/bin/assentor",
+      ["ui", "-p", "."],
+    );
+    expect(launch).toEqual({
+      command: "/Users/sam/.local/bin/assentor",
+      args: ["ui", "-p", "."],
+    });
   });
 });
 

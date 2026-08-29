@@ -7,6 +7,10 @@ export {
   updateAssentor,
   uninstallAssentor,
   runScript,
+  resolveAssentorBinary,
+  buildAssentorLaunchCommand,
+  relaunchAssentor,
+  runAssentorSubcommand,
 } from "./lifecycle.js";
 export {
   getLocalVersionSync,

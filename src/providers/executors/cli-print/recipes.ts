@@ -1,5 +1,7 @@
 import type { BinaryTool } from "../../../executors/cli-locator.js";
 
+export type PrintCliOutputFormat = "text" | "json" | "stream-json";
+
 export interface PrintCliRecipe {
   id: string;
   name: string;
@@ -10,6 +12,10 @@ export interface PrintCliRecipe {
   unattendedArgs?: string[];
   /** Flag used with a session id, e.g. `--resume`. */
   resumeFlag?: string;
+  /** NDJSON stream for live tool/status updates when supported. */
+  outputFormat?: PrintCliOutputFormat;
+  /** How `-p` CLIs accept the task prompt. */
+  promptStyle?: "attached" | "positional";
 }
 
 export const PRINT_CLI_RECIPES: Record<string, PrintCliRecipe> = {
@@ -17,9 +23,11 @@ export const PRINT_CLI_RECIPES: Record<string, PrintCliRecipe> = {
     id: "claude-code",
     name: "Claude Code",
     tool: "claude",
-    printArgs: ["-p", "--output-format", "text"],
+    printArgs: ["-p"],
     unattendedArgs: ["--dangerously-skip-permissions"],
     resumeFlag: "--resume",
+    outputFormat: "stream-json",
+    promptStyle: "positional",
   },
   antigravity: {
     id: "antigravity",
@@ -28,6 +36,8 @@ export const PRINT_CLI_RECIPES: Record<string, PrintCliRecipe> = {
     printArgs: ["-p"],
     unattendedArgs: ["--dangerously-skip-permissions"],
     resumeFlag: "--resume",
+    outputFormat: "stream-json",
+    promptStyle: "attached",
   },
   codex: {
     id: "codex",
@@ -35,6 +45,7 @@ export const PRINT_CLI_RECIPES: Record<string, PrintCliRecipe> = {
     tool: "codex",
     printArgs: ["exec", "--skip-git-repo-check"],
     unattendedArgs: ["--dangerously-bypass-approvals-and-sandbox"],
+    outputFormat: "text",
   },
   qwen: {
     id: "qwen",
@@ -42,12 +53,15 @@ export const PRINT_CLI_RECIPES: Record<string, PrintCliRecipe> = {
     tool: "qwen",
     printArgs: ["-p"],
     unattendedArgs: ["--yolo"],
+    outputFormat: "stream-json",
+    promptStyle: "attached",
   },
   opencode: {
     id: "opencode",
     name: "OpenCode",
     tool: "opencode",
     printArgs: ["run"],
+    outputFormat: "text",
   },
 };
 
@@ -62,16 +76,18 @@ export function buildPrintCliArgs(
     args.push(recipe.resumeFlag, options.sessionId);
   }
 
-  // CLIs such as agy/qwen treat `-p` as `--prompt=<text>`; flags after a bare `-p`
-  // become the prompt and the real task text is dropped.
-  const lonePromptFlag =
-    recipe.printArgs.length === 1 && recipe.printArgs[0] === "-p";
+  const formatArgs: string[] =
+    recipe.outputFormat && recipe.outputFormat !== "text"
+      ? ["--output-format", recipe.outputFormat]
+      : [];
 
-  if (lonePromptFlag) {
-    args.push(`-p=${prompt}`);
+  const attachPrompt = recipe.promptStyle === "attached";
+
+  if (attachPrompt) {
+    args.push(...formatArgs, `-p=${prompt}`);
     return args;
   }
 
-  args.push(...recipe.printArgs, prompt);
+  args.push(...recipe.printArgs, ...formatArgs, prompt);
   return args;
 }

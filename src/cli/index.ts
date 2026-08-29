@@ -17,6 +17,7 @@ import {
   checkForUpdate,
   getLocalVersionSync,
   readChangelog,
+  runAssentorSubcommand,
 } from "../self/index.js";
 
 const program = new Command();
@@ -509,8 +510,19 @@ program
     }
     const result = await updateAssentor();
     console.log(result.output);
-    console.log(`Local version after update: v${getLocalVersionSync()}`);
-    process.exitCode = result.code === 0 ? 0 : 1;
+    if (result.code !== 0) {
+      process.exitCode = 1;
+      return;
+    }
+    const verified = await runAssentorSubcommand(["version"]);
+    const versionLine =
+      verified.stdout.trim().split("\n").find(Boolean) ??
+      `assentor v${getLocalVersionSync()}`;
+    console.log(`Reloaded: ${versionLine}`);
+    if (verified.stderr.trim()) {
+      console.error(verified.stderr.trim());
+    }
+    process.exitCode = verified.code === 0 ? 0 : verified.code ?? 1;
   });
 
 program

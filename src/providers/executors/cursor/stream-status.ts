@@ -128,6 +128,10 @@ export function parseStreamLine(line: string): AgentStatusUpdate | undefined {
     return { activity: "running", detail: truncate(text, 56) };
   }
 
+  if (typeof event.event === "string") {
+    return parseAntigravityStreamEvent(event);
+  }
+
   const type = String(event.type ?? "");
   const sessionId =
     typeof event.session_id === "string"
@@ -215,6 +219,172 @@ export function parseStreamLine(line: string): AgentStatusUpdate | undefined {
   }
 
   return undefined;
+}
+
+function parseAntigravityStreamEvent(
+  event: JsonObject,
+): AgentStatusUpdate | undefined {
+  const eventName = String(event.event);
+  const sessionId =
+    typeof event.conversation_id === "string"
+      ? event.conversation_id
+      : undefined;
+
+  if (eventName === "init") {
+    return {
+      activity: "starting",
+      detail: "session started",
+      sessionId,
+    };
+  }
+
+  if (eventName === "result") {
+    const result =
+      event.result && typeof event.result === "object"
+        ? (event.result as JsonObject)
+        : {};
+    const response =
+      typeof result.response === "string" ? result.response : "";
+    const status = String(result.status ?? "").toUpperCase();
+    return {
+      activity: "waiting",
+      detail:
+        status && status !== "SUCCESS"
+          ? "result received with errors"
+          : "result received — waiting for process to exit",
+      sessionId:
+        typeof result.conversation_id === "string"
+          ? result.conversation_id
+          : sessionId,
+      resultText: response,
+      isFinal: true,
+      resultFailed: status !== "" && status !== "SUCCESS",
+    };
+  }
+
+  if (eventName !== "step_update") {
+    return undefined;
+  }
+
+  const step =
+    event.step_update && typeof event.step_update === "object"
+      ? (event.step_update as JsonObject)
+      : {};
+  const stepType = String(step.step_type ?? "");
+  const state = String(step.state ?? "").toUpperCase();
+  const stepSessionId =
+    typeof step.conversation_id === "string" ? step.conversation_id : sessionId;
+
+  if (stepType === "tool") {
+    const toolName = String(step.tool_name ?? "tool");
+    const toolInfo =
+      step.tool_info && typeof step.tool_info === "object"
+        ? (step.tool_info as JsonObject)
+        : {};
+    const params =
+      toolInfo.parameters && typeof toolInfo.parameters === "object"
+        ? (toolInfo.parameters as JsonObject)
+        : {};
+    const mapped = describeAntigravityTool(toolName, params);
+    if (state === "ACTIVE") {
+      return { ...mapped, sessionId: stepSessionId };
+    }
+    if (state === "DONE" || state === "ERROR") {
+      return {
+        activity: mapped.activity,
+        detail:
+          state === "ERROR"
+            ? `${mapped.detail} · failed`
+            : `${mapped.detail} · done`,
+        sessionId: stepSessionId,
+      };
+    }
+    return undefined;
+  }
+
+  if (stepType === "agent_response") {
+    const delta =
+      typeof step.text_delta === "string" ? step.text_delta.trim() : "";
+    if (state === "ACTIVE" && delta) {
+      return {
+        activity: "thinking",
+        detail: truncate(delta.replace(/\s+/g, " "), 56),
+        sessionId: stepSessionId,
+      };
+    }
+    if (state === "DONE") {
+      return {
+        activity: "thinking",
+        detail: "planning next step",
+        sessionId: stepSessionId,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+function describeAntigravityTool(
+  toolName: string,
+  params: JsonObject,
+): { activity: AgentActivity; detail: string } {
+  const path =
+    stringArg(params, "DirectoryPath") ??
+    stringArg(params, "Path") ??
+    stringArg(params, "path") ??
+    stringArg(params, "FilePath") ??
+    stringArg(params, "file_path");
+  const command = stringArg(params, "Command") ?? stringArg(params, "command");
+  const pattern =
+    stringArg(params, "Pattern") ??
+    stringArg(params, "pattern") ??
+    stringArg(params, "Query");
+
+  switch (toolName) {
+    case "view_file":
+    case "read_resource":
+    case "read_url_content":
+    case "read_browser_page":
+      return {
+        activity: "reading",
+        detail: shortPath(path ?? "file"),
+      };
+    case "write_to_file":
+      return {
+        activity: "writing",
+        detail: shortPath(path ?? "file"),
+      };
+    case "replace_file_content":
+    case "multi_replace_file_content":
+    case "sed_file":
+      return {
+        activity: "editing",
+        detail: shortPath(path ?? "file"),
+      };
+    case "run_command":
+    case "send_command_input":
+      return {
+        activity: "running",
+        detail: truncate(command ?? "shell command", 56),
+      };
+    case "grep_search":
+    case "find_by_name":
+    case "search_web":
+      return {
+        activity: "searching",
+        detail: truncate(pattern ?? toolName, 56),
+      };
+    case "list_dir":
+      return {
+        activity: "exploring",
+        detail: shortPath(path ?? "directory"),
+      };
+    default:
+      return {
+        activity: "running",
+        detail: truncate(toolName.replace(/_/g, " "), 56),
+      };
+  }
 }
 
 function describeToolCall(
@@ -454,8 +624,20 @@ export function summarizeStreamJson(stdout: string): {
       if (typeof event.session_id === "string") {
         sessionId = event.session_id;
       }
+      if (typeof event.conversation_id === "string") {
+        sessionId = event.conversation_id;
+      }
       if (event.type === "result" && typeof event.result === "string") {
         summary = event.result;
+      }
+      if (event.event === "result" && event.result && typeof event.result === "object") {
+        const result = event.result as JsonObject;
+        if (typeof result.response === "string") {
+          summary = result.response;
+        }
+        if (typeof result.conversation_id === "string") {
+          sessionId = result.conversation_id;
+        }
       }
     } catch {
       // skip

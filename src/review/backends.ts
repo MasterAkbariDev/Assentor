@@ -84,3 +84,22 @@ export function formatReviewerBackendShort(entry: ReviewerBackend): string {
   const via = entry.transport === "cli" ? "CLI" : "API";
   return `${provider} via ${via}`;
 }
+
+/** Run banner / status label: provider plus logical agent role when they differ. */
+export function formatReviewerRunLabel(
+  logicalName: string,
+  backend: ReviewerBackend | undefined,
+): string {
+  if (!backend) {
+    return logicalName;
+  }
+  const provider = PROVIDER_LABEL[backend.provider] ?? backend.provider;
+  if (
+    logicalName === backend.provider ||
+    logicalName === provider ||
+    logicalName === backend.name
+  ) {
+    return provider;
+  }
+  return `${provider} (${logicalName})`;
+}

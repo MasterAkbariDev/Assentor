@@ -131,4 +131,44 @@ describe("Cursor stream-json status", () => {
       sessionId: "x1",
     });
   });
+
+  it("maps Antigravity step_update tool events", () => {
+    const active = parseStreamLine(
+      JSON.stringify({
+        event: "step_update",
+        step_update: {
+          conversation_id: "agy-1",
+          step_index: 2,
+          state: "ACTIVE",
+          step_type: "tool",
+          tool_name: "list_dir",
+          tool_info: {
+            name: "list_dir",
+            parameters: { DirectoryPath: "/tmp/project/src/cli" },
+          },
+        },
+      }),
+    );
+    expect(active).toMatchObject({
+      activity: "exploring",
+      detail: "src/cli",
+      sessionId: "agy-1",
+    });
+
+    const result = parseStreamLine(
+      JSON.stringify({
+        event: "result",
+        result: {
+          conversation_id: "agy-1",
+          status: "SUCCESS",
+          response: "Done",
+        },
+      }),
+    );
+    expect(result).toMatchObject({
+      isFinal: true,
+      resultText: "Done",
+      sessionId: "agy-1",
+    });
+  });
 });

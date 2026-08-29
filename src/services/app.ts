@@ -28,6 +28,7 @@ import { RoutingEngine } from "../routing/index.js";
 import {
   checkForUpdate,
   getLocalVersionSync,
+  relaunchAssentor,
   uninstallAssentor,
   updateAssentor,
   type UpdateCheckResult,
@@ -324,16 +325,29 @@ export async function performUpdateCheck(
   return checkForUpdate({ force });
 }
 
-export async function performUpdate(): Promise<{
+export async function performUpdate(options?: {
+  relaunchArgs?: string[];
+}): Promise<{
   code: number;
   output: string;
   localVersion: string;
+  relaunched?: boolean;
 }> {
   const result = await updateAssentor();
+  const localVersion = getLocalVersionSync();
+  if (result.code === 0 && options?.relaunchArgs) {
+    await relaunchAssentor(options.relaunchArgs);
+    return {
+      code: result.code,
+      output: result.output,
+      localVersion,
+      relaunched: true,
+    };
+  }
   return {
     code: result.code,
     output: result.output,
-    localVersion: getLocalVersionSync(),
+    localVersion,
   };
 }
 

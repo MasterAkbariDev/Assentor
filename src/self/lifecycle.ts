@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { findOnPath } from "../executors/cli-locator.js";
 
 export type LifecycleScript = "update" | "uninstall" | "install";
 
@@ -134,6 +135,93 @@ export async function updateAssentor(): Promise<{ code: number; output: string }
     await clearUpdateCheckCache();
   }
   return result;
+}
+
+/** Resolve the launcher users invoke (`assentor` on PATH or package `bin/assentor`). */
+export async function resolveAssentorBinary(): Promise<string> {
+  const env = process.env;
+  if (env.ASSENTOR_BIN) {
+    for (const name of assentorBinaryNames()) {
+      const candidate = path.join(env.ASSENTOR_BIN, name);
+      try {
+        await fs.access(candidate);
+        return candidate;
+      } catch {
+        // try next
+      }
+    }
+  }
+
+  for (const name of assentorBinaryNames()) {
+    const onPath = findOnPath(name);
+    if (onPath) {
+      return onPath;
+    }
+  }
+
+  return path.join(resolvePackageRoot(), "bin", "assentor");
+}
+
+function assentorBinaryNames(): string[] {
+  return process.platform === "win32"
+    ? ["assentor.cmd", "assentor.bat", "assentor.exe", "assentor"]
+    : ["assentor"];
+}
+
+export function buildAssentorLaunchCommand(
+  binary: string,
+  args: string[],
+  platform: NodeJS.Platform = process.platform,
+): { command: string; args: string[] } {
+  if (platform === "win32") {
+    const lower = binary.toLowerCase();
+    if (lower.endsWith(".cmd") || lower.endsWith(".bat")) {
+      return { command: "cmd.exe", args: ["/d", "/s", "/c", binary, ...args] };
+    }
+    if (lower.endsWith(".ps1")) {
+      return lifecycleProcessArgs(binary, args);
+    }
+  }
+  return { command: binary, args };
+}
+
+/**
+ * Spawn a fresh Assentor process and exit the current one.
+ * Use after self-update so the running Node process reloads rebuilt dist/.
+ */
+export async function relaunchAssentor(
+  args: string[] = process.argv.slice(1),
+): Promise<never> {
+  const binary = await resolveAssentorBinary();
+  const launch = buildAssentorLaunchCommand(binary, args);
+  const child = spawn(launch.command, launch.args, {
+    detached: true,
+    stdio: "inherit",
+    env: process.env,
+    cwd: process.cwd(),
+    windowsHide: false,
+  });
+  child.unref();
+  process.exit(0);
+}
+
+/** Run a subcommand in a fresh process (used to verify post-update version). */
+export async function runAssentorSubcommand(
+  args: string[],
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  const binary = await resolveAssentorBinary();
+  const launch = buildAssentorLaunchCommand(binary, args);
+  const result = spawnSync(launch.command, launch.args, {
+    encoding: "utf8",
+    env: process.env,
+    cwd: process.cwd(),
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return {
+    code: result.status,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+  };
 }
 
 export async function uninstallAssentor(options: {
