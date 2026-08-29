@@ -11,21 +11,20 @@ describe("print-mode CLI recipes", () => {
     const recipe = PRINT_CLI_RECIPES.antigravity;
     expect(recipe?.tool).toBe("agy");
     expect(buildPrintCliArgs(recipe!, "Fix the tests")).toEqual([
-      "-p",
       "--dangerously-skip-permissions",
-      "Fix the tests",
+      "-p=Fix the tests",
     ]);
   });
 
   it("builds Claude Code print args", () => {
     const recipe = PRINT_CLI_RECIPES["claude-code"];
     expect(buildPrintCliArgs(recipe!, "Implement average", { sessionId: "abc" })).toEqual([
-      "-p",
-      "--output-format",
-      "text",
       "--dangerously-skip-permissions",
       "--resume",
       "abc",
+      "-p",
+      "--output-format",
+      "text",
       "Implement average",
     ]);
   });
@@ -37,8 +36,8 @@ describe("print-mode CLI recipes", () => {
       binary: "/tmp/agy",
       spawnFn: async (request) => {
         expect(request.command).toBe("/tmp/agy");
-        expect(request.args.at(-1)).toBe("Add login");
-        expect(request.args).toContain("-p");
+        expect(request.args.at(-1)).toBe("-p=Add login");
+        expect(request.args.some((arg) => arg.startsWith("-p="))).toBe(true);
         return { code: 0, stdout: "done", stderr: "" };
       },
     });

@@ -56,10 +56,22 @@ export function buildPrintCliArgs(
   prompt: string,
   options: { sessionId?: string } = {},
 ): string[] {
-  const args = [...recipe.printArgs, ...(recipe.unattendedArgs ?? [])];
+  const args: string[] = [...(recipe.unattendedArgs ?? [])];
+
   if (options.sessionId && recipe.resumeFlag) {
     args.push(recipe.resumeFlag, options.sessionId);
   }
-  args.push(prompt);
+
+  // CLIs such as agy/qwen treat `-p` as `--prompt=<text>`; flags after a bare `-p`
+  // become the prompt and the real task text is dropped.
+  const lonePromptFlag =
+    recipe.printArgs.length === 1 && recipe.printArgs[0] === "-p";
+
+  if (lonePromptFlag) {
+    args.push(`-p=${prompt}`);
+    return args;
+  }
+
+  args.push(...recipe.printArgs, prompt);
   return args;
 }

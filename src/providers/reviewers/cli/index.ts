@@ -342,7 +342,7 @@ function buildCliArgs(
     args.push("--output-format", "text", ...extraArgs, prompt);
     return args;
   }
-  return ["-p", ...extraArgs, prompt];
+  return [...extraArgs, `-p=${prompt}`];
 }
 
 export async function defaultCliSpawn(

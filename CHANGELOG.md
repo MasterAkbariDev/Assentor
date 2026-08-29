@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.13] — 2026-08-29
+
+### Fixed
+
+- Antigravity and Qwen print-mode executors no longer pass `--dangerously-skip-permissions` (or other unattended flags) as the `-p` prompt. Unattended flags are ordered first and the task text is attached as `-p=<prompt>`.
+
 ## [0.3.12] — 2026-08-29
 
 ### Added
@@ -184,7 +190,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logical agents, diagnostics, and resumable task state under `.assentor/tasks/`
 - One-line install scripts for macOS/Linux and Windows
 
-[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.12...HEAD
+[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.13...HEAD
+[0.3.13]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.12...v0.3.13
 [0.3.12]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.11...v0.3.12
 [0.3.11]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.10...v0.3.11
 [0.3.10]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.9...v0.3.10
