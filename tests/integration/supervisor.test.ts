@@ -803,4 +803,120 @@ describe("supervisor", () => {
     expect(reviewer.calls).toBe(1);
     expect(executor.calls).toBe(1);
   });
+
+  it("retries transient executor failures and resets retry budget after success", async () => {
+    const retryAttempts: number[] = [];
+    let calls = 0;
+
+    const executor = mockExecutor(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          status: "timeout",
+          summary: "Antigravity timed out — timeout waiting for response",
+          error: "Antigravity: timeout waiting for response",
+        };
+      }
+      return {
+        status: "completed",
+        summary: "Recovered after retry",
+        sessionId: "sess-retry",
+      };
+    });
+
+    const reviewer = mockReviewer(() => ({
+      result: {
+        status: ReviewStatus.Pass,
+        confidence: 0.9,
+        summary: "Looks good",
+        issues: [],
+        requiredChanges: [],
+        optionalChanges: [],
+        evidenceRequests: [],
+      },
+    }));
+
+    const result = await new Supervisor({
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("Retry reset"),
+      executor,
+      reviewer,
+      budgets: createBudgets({ maxRounds: 2, maxMessages: 20 }),
+      maxFailureRetries: 3,
+      onEvent: (event) => {
+        if (event.type === "executor.retry") {
+          retryAttempts.push(Number(event.data?.attempt ?? 0));
+        }
+      },
+    }).run();
+
+    expect(result.status).toBe(TaskState.Done);
+    expect(calls).toBe(2);
+    expect(retryAttempts).toEqual([1]);
+  }, 15_000);
+
+  it("starts retry count at 1 again on a later round after a successful retry", async () => {
+    const retryAttempts: number[] = [];
+    let calls = 0;
+
+    const executor = mockExecutor(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return { status: "completed", summary: "Round 1 done", sessionId: "s1" };
+      }
+      if (calls === 2) {
+        return {
+          status: "timeout",
+          summary: "Antigravity timed out",
+          error: "timeout waiting for response",
+        };
+      }
+      return { status: "completed", summary: "Round 2 done", sessionId: "s1" };
+    });
+
+    const reviewer = mockReviewer((_input, call) => {
+      if (call === 1) {
+        return {
+          result: {
+            status: ReviewStatus.NeedsWork,
+            confidence: 0.8,
+            summary: "Fix tests",
+            issues: [],
+            requiredChanges: ["Run tests"],
+            optionalChanges: [],
+            evidenceRequests: [],
+          },
+        };
+      }
+      return {
+        result: {
+          status: ReviewStatus.Pass,
+          confidence: 0.9,
+          summary: "Good now",
+          issues: [],
+          requiredChanges: [],
+          optionalChanges: [],
+          evidenceRequests: [],
+        },
+      };
+    });
+
+    const result = await new Supervisor({
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("Round retry reset"),
+      executor,
+      reviewer,
+      budgets: createBudgets({ maxRounds: 3, maxMessages: 30 }),
+      maxFailureRetries: 3,
+      onEvent: (event) => {
+        if (event.type === "executor.retry") {
+          retryAttempts.push(Number(event.data?.attempt ?? 0));
+        }
+      },
+    }).run();
+
+    expect(result.status).toBe(TaskState.Done);
+    expect(calls).toBe(3);
+    expect(retryAttempts).toEqual([1]);
+  }, 15_000);
 });

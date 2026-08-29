@@ -391,12 +391,26 @@ export class Supervisor {
   }
 
   private handleExecutorTerminal(result: ExecutorResult): boolean {
+    const withResumeHint = (message: string): string => {
+      const base = message.trim();
+      if (!base) {
+        return "Resume with: assentor resume";
+      }
+      if (/resume with:\s*assentor resume/i.test(base)) {
+        return base;
+      }
+      return `${base} Resume with: assentor resume`;
+    };
+
     if (result.status === "failed") {
-      this.moveTo(TaskState.Failed, result.error ?? result.summary);
+      this.moveTo(TaskState.Failed, withResumeHint(result.error ?? result.summary));
       return true;
     }
     if (result.status === "timeout") {
-      this.moveTo(TaskState.Timeout, result.error ?? "Executor timed out");
+      this.moveTo(
+        TaskState.Timeout,
+        withResumeHint(result.error ?? "Executor timed out"),
+      );
       return true;
     }
     if (result.status === "cancelled") {
@@ -604,25 +618,30 @@ export class Supervisor {
     conversationId: string,
   ): Promise<ExecutorResult> {
     const maxAttempts = this.maxFailureRetries();
-    let last: ExecutorResult | undefined;
+    let failures = 0;
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    while (true) {
       const result = await this.runExecutor(taskId, conversationId);
-      if (!isRetryableExecutorResult(result) || attempt >= maxAttempts) {
+      if (!isRetryableExecutorResult(result)) {
         return result;
       }
-      last = result;
-      const delayMs = retryDelayMs(attempt);
+
+      failures += 1;
+      if (failures >= maxAttempts) {
+        return result;
+      }
+
+      const delayMs = retryDelayMs(failures);
       this.emit("executor.retry", {
-        attempt,
+        attempt: failures,
         maxAttempts,
         delayMs,
-        reason: result.error ?? result.summary,
+        reason: (result.error ?? result.summary ?? "")
+          .replace(/\s*Resume with:\s*assentor resume\.?/gi, "")
+          .trim(),
       });
       await sleep(delayMs);
     }
-
-    return last!;
   }
 
   private async runReviewerWithRetries(
@@ -630,29 +649,31 @@ export class Supervisor {
     conversationId: string,
   ): Promise<ReviewOutcome> {
     const maxAttempts = this.maxFailureRetries();
-    let last: ReviewOutcome | undefined;
+    let failures = 0;
 
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    while (true) {
       const outcome = await this.runReviewer(taskId, conversationId);
       if (
         outcome.kind !== "failed" ||
-        !isRetryableReviewFailure(outcome.review) ||
-        attempt >= maxAttempts
+        !isRetryableReviewFailure(outcome.review)
       ) {
         return outcome;
       }
-      last = outcome;
-      const delayMs = retryDelayMs(attempt);
+
+      failures += 1;
+      if (failures >= maxAttempts) {
+        return outcome;
+      }
+
+      const delayMs = retryDelayMs(failures);
       this.emit("review.retry", {
-        attempt,
+        attempt: failures,
         maxAttempts,
         delayMs,
         reason: outcome.review.summary,
       });
       await sleep(delayMs);
     }
-
-    return last!;
   }
 
   private async collectBasicArtifacts(result: ExecutorResult): Promise<void> {

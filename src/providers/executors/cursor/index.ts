@@ -379,13 +379,10 @@ export class CursorExecutor implements Executor {
         stderr: result.stderr,
         exitCode: result.code,
       });
-      const resumeHint = this.sessionId
-        ? ` Resume with: assentor resume ${taskId}`
-        : "";
       return {
         status: failure.kind,
         summary: failure.summary,
-        error: `${failure.error}${resumeHint}`,
+        error: failure.error,
         sessionId: this.sessionId,
         rawOutput: result.stdout,
       };

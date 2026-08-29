@@ -7,8 +7,7 @@ export const DEFAULT_RETRY_DEBOUNCE_MS = 2_000;
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref?.();
+    setTimeout(resolve, ms);
   });
 }
 

@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.18] — 2026-08-29
+## [0.3.19] — 2026-08-29
+
+### Added
+
+- **Colorful installers** — Styled `install.sh`, `install-cli.sh`, and `install.ps1` with banners, step counters, and shared UI helpers.
+
+### Fixed
+
+- **Retry count reset** — Executor/reviewer retry budget resets after a successful retry and on each new round (shows `(1/3)` again instead of continuing a stale streak).
+- **Retry debounce sleep** — Keep the event loop alive during retry backoff so the supervisor no longer exits to the shell mid-countdown.
+- **Resume hints** — Append `assentor resume` guidance only on final executor failure in the supervisor, not on every transient retry error.
 
 ### Added
 
