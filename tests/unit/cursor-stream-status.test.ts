@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   CursorStreamStatusParser,
+  isExecutorStreamBlob,
   parseStreamLine,
+  summarizeExecutorStreamOutput,
   summarizeStreamJson,
 } from "../../src/providers/executors/cursor/stream-status.js";
 
@@ -170,5 +172,42 @@ describe("Cursor stream-json status", () => {
       resultText: "Done",
       sessionId: "agy-1",
     });
+  });
+
+  it("summarizes partial Antigravity stdout without dumping NDJSON", () => {
+    const stdout = [
+      JSON.stringify({
+        event: "step_update",
+        step_update: {
+          conversation_id: "agy-2",
+          step_index: 2,
+          state: "ACTIVE",
+          step_type: "tool",
+          tool_name: "grep_search",
+          tool_info: {
+            name: "grep_search",
+            parameters: {
+              Query: "SELECTABLE_EXECUTOR_PROVIDERS",
+              SearchPath: "src",
+            },
+          },
+        },
+      }),
+      JSON.stringify({
+        event: "step_update",
+        step_update: {
+          conversation_id: "agy-2",
+          step_index: 2,
+          state: "DONE",
+          step_type: "tool",
+          tool_name: "grep_search",
+        },
+      }),
+    ].join("\n");
+
+    expect(summarizeExecutorStreamOutput(stdout)).toBe(
+      "Ran 2 tool step(s); last: SELECTABLE_EXECUTOR_PROVIDERS",
+    );
+    expect(isExecutorStreamBlob(stdout)).toBe(true);
   });
 });

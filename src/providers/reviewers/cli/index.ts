@@ -2,6 +2,7 @@ import {
   findOnPath,
   locateBinary,
   spawnCliProcess,
+  type HostEnv,
 } from "../../../executors/cli-locator.js";
 import { isCursorAppBinary } from "../../executors/cursor/index.js";
 import {
@@ -319,6 +320,23 @@ export function resolveCliBinary(adapter: Exclude<CliReviewerAdapter, "mock">): 
     return locateBinary("cursor") ?? findOnPath("agent") ?? "agent";
   }
   return locateBinary("agy") ?? findOnPath("agy") ?? "agy";
+}
+
+export function isCliReviewerAvailable(
+  provider: string,
+  options: { host?: Partial<HostEnv> } = {},
+): boolean {
+  try {
+    const adapter = resolveCliAdapter(provider);
+    if (adapter === "mock") {
+      return true;
+    }
+    const tool =
+      adapter === "claude" ? "claude" : adapter === "cursor" ? "cursor" : "agy";
+    return Boolean(locateBinary(tool, { ...options, persist: false }));
+  } catch {
+    return false;
+  }
 }
 
 function buildCliArgs(

@@ -38,4 +38,12 @@ describe("AI defaults", () => {
     });
     expect(rows[1]).toMatch(/Antigravity ✓/);
   });
+
+  it("cycles only available executors when filtered", () => {
+    let config = parseAssentorConfig({ executor: { provider: "cursor" } });
+    config = cycleAiField(config, 1, 1, ["AUTO"], ["cursor", "antigravity"]);
+    expect(config.executor.provider).toBe("antigravity");
+    config = cycleAiField(config, 1, 1, ["AUTO"], ["cursor", "antigravity"]);
+    expect(config.executor.provider).toBe("cursor");
+  });
 });

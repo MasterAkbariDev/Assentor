@@ -116,6 +116,7 @@ export {
   defaultCliSpawn,
   resolveCliAdapter,
   resolveCliBinary,
+  isCliReviewerAvailable,
   type CliReviewerAdapter,
   type CliReviewerOptions,
   type CliTransport,

@@ -1,4 +1,5 @@
 import type { AssentorConfig } from "../config/schema.js";
+import { isCliReviewerAvailable } from "../providers/reviewers/cli/index.js";
 
 export type ReviewerBackend = AssentorConfig["reviewers"][number];
 
@@ -22,6 +23,17 @@ export const REVIEWER_ADD_PROVIDERS = [
 ] as const;
 
 export type ReviewerAddProvider = (typeof REVIEWER_ADD_PROVIDERS)[number];
+
+/** Providers the TUI can add that are currently available. */
+export function getAvailableReviewerProviders(): ReviewerAddProvider[] {
+  return REVIEWER_ADD_PROVIDERS.filter((provider) => {
+    const transports = transportsForProvider(provider);
+    if (transports.length === 1 && transports[0] === "cli") {
+      return isCliReviewerAvailable(provider);
+    }
+    return true;
+  });
+}
 
 /**
  * Which transports a provider actually supports.

@@ -4,6 +4,7 @@ import {
   selectReviewerBackends,
   transportsForProvider,
   formatReviewerBackend,
+  getAvailableReviewerProviders,
 } from "../../src/review/backends.js";
 import { explainReviewPlan, TaskComplexityAnalyzer } from "../../src/review/complexity.js";
 
@@ -57,5 +58,12 @@ describe("reviewer backends", () => {
 
     const empty = explainReviewPlan(plan, []);
     expect(empty.backendHint).toMatch(/Configure/i);
+  });
+
+  it("filters unavailable CLIs from the reviewer add list", () => {
+    const available = getAvailableReviewerProviders();
+    expect(available).toContain("mock");
+    expect(available).toContain("gemini");
+    expect(available).toContain("openai");
   });
 });

@@ -120,6 +120,7 @@ export function cycleAiField(
   idx: number,
   dir: 1 | -1,
   modelChoices: string[],
+  availableExecutors?: readonly string[],
 ): AssentorConfig {
   const next = structuredClone(config);
   switch (idx) {
@@ -127,12 +128,16 @@ export function cycleAiField(
       next.run.mode = cycle(RUN_MODE_OPTIONS, next.run.mode, dir);
       break;
     case 1: {
-      const current = EXECUTOR_OPTIONS.includes(
+      const options =
+        availableExecutors && availableExecutors.length > 0
+          ? (availableExecutors as readonly SelectableExecutorProvider[])
+          : EXECUTOR_OPTIONS;
+      const current = options.includes(
         next.executor.provider as SelectableExecutorProvider,
       )
         ? (next.executor.provider as SelectableExecutorProvider)
-        : "cursor";
-      next.executor.provider = cycle(EXECUTOR_OPTIONS, current, dir);
+        : (options[0] ?? "cursor");
+      next.executor.provider = cycle(options, current, dir);
       break;
     }
     case 2:

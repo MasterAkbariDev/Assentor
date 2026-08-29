@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.15] — 2026-08-29
+
+### Changed
+
+- TUI and CLI hide unavailable executors and CLI reviewers; only installed binaries appear in Executors, AI defaults, and Add Reviewer lists (`assentor executors --all` shows everything).
+
+### Fixed
+
+- Antigravity stream-json no longer dumps raw NDJSON as the executor response; partial streams summarize tool activity instead.
+- Live executor status skips agent prose/code deltas and maps Antigravity `CommandLine` / `Query` tool params.
+
 ## [0.3.14] — 2026-08-29
 
 ### Added
@@ -202,7 +213,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logical agents, diagnostics, and resumable task state under `.assentor/tasks/`
 - One-line install scripts for macOS/Linux and Windows
 
-[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.14...HEAD
+[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.15...HEAD
+[0.3.15]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.14...v0.3.15
 [0.3.14]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.13...v0.3.14
 [0.3.13]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.12...v0.3.13
 [0.3.12]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.11...v0.3.12

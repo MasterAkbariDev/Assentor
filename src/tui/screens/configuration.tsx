@@ -147,14 +147,26 @@ export function ConfigurationScreen({
   }
 
   if (section === "executors") {
-    const rows: ExecutorRow[] =
-      executorRows.length > 0
-        ? executorRows
-        : [{ id: "cursor", name: "Cursor" }];
+    const rows: ExecutorRow[] = executorRows.filter(
+      (r) => r.detection?.installed ?? true,
+    );
+    if (rows.length === 0) {
+      return (
+        <Box flexDirection="column">
+          <Text bold>No executors installed</Text>
+          <Text dimColor>
+            No supported coding-agent CLIs (Cursor, Antigravity, Claude Code, etc.) were found on PATH.
+          </Text>
+          <Box marginTop={1}>
+            <Text dimColor>r Detect all · Esc back</Text>
+          </Box>
+        </Box>
+      );
+    }
     return (
       <Box flexDirection="column">
         <Text dimColor>
-          Pick an executor with u, or cycle them in AI defaults. Here you install / check CLIs.
+          Pick an executor with u, or cycle them in AI defaults.
         </Text>
         <Box marginTop={1}>
           <MenuList

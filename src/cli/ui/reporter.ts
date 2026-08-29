@@ -1,5 +1,9 @@
 import * as readline from "node:readline";
 import type { SupervisorEvent } from "../../orchestrator/supervisor.js";
+import {
+  isExecutorStreamBlob,
+  summarizeExecutorStreamOutput,
+} from "../../providers/executors/cursor/stream-status.js";
 
 const ESC = "\x1b[";
 const c = {
@@ -726,15 +730,14 @@ function wrapMultiline(text: string, width: number): string[] {
 /** Prefer the agent's summary; skip huge stream-json blobs. */
 function preferPlainExecutorText(summary: string, raw: string): string {
   const s = summary.trim();
-  if (s && !s.startsWith("{") && s.length > 12) {
+  if (s && !isExecutorStreamBlob(s)) {
     return s;
   }
-  const r = raw.trim();
-  if (!r) return s;
-  if (r.startsWith("{") || r.includes('"type":"tool_call"')) {
-    return s;
+  const fromRaw = summarizeExecutorStreamOutput(raw);
+  if (fromRaw) {
+    return fromRaw;
   }
-  return r;
+  return "";
 }
 
 function labelEvent(type: string): string {

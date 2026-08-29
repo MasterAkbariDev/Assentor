@@ -22,13 +22,29 @@ export function ExecutorsScreen({
   focused: boolean;
   detail?: string;
 }) {
+  const availableRows = rows.filter((r) => r.detection?.installed ?? true);
+
+  if (availableRows.length === 0) {
+    return (
+      <Box flexDirection="column">
+        <Text bold>No executors installed</Text>
+        <Text dimColor>
+          No supported coding-agent CLIs (Cursor, Antigravity, Claude Code, etc.) were found on PATH.
+        </Text>
+        <Box marginTop={1}>
+          <Text dimColor>[r] re-detect all</Text>
+        </Box>
+      </Box>
+    );
+  }
+
   return (
     <Box flexDirection="column">
-      <Text dimColor>[r] re-detect all · [u] use as executor · [i] show install plan · Enter detect one</Text>
+      <Text dimColor>[r] re-detect all · [u] use as executor · Enter detect one</Text>
       <MenuList
         focused={focused}
         selected={selected}
-        items={rows.map((r) => {
+        items={availableRows.map((r) => {
           const d = r.detection;
           const mark = d
             ? d.installed
@@ -39,18 +55,18 @@ export function ExecutorsScreen({
           return `${mark} ${r.name} · ${path}`;
         })}
       />
-      {rows[selected]?.installPlan ? (
+      {availableRows[selected]?.installPlan ? (
         <Box marginTop={1} flexDirection="column">
           <Text>
             Install:{" "}
             <Badge
-              label={rows[selected]!.installPlan!.automatic ? "auto" : "manual"}
+              label={availableRows[selected]!.installPlan!.automatic ? "auto" : "manual"}
               tone="warn"
             />
           </Text>
-          <Text color="cyan">{rows[selected]!.installPlan!.command}</Text>
-          {rows[selected]!.installPlan!.notes ? (
-            <Text dimColor>{rows[selected]!.installPlan!.notes}</Text>
+          <Text color="cyan">{availableRows[selected]!.installPlan!.command}</Text>
+          {availableRows[selected]!.installPlan!.notes ? (
+            <Text dimColor>{availableRows[selected]!.installPlan!.notes}</Text>
           ) : null}
         </Box>
       ) : null}

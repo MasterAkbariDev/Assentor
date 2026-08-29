@@ -13,6 +13,8 @@ import {
 } from "../../../orchestrator/phase-steering.js";
 import {
   CursorStreamStatusParser,
+  isExecutorStreamBlob,
+  summarizeExecutorStreamOutput,
   summarizeStreamJson,
 } from "../cursor/stream-status.js";
 import type {
@@ -348,10 +350,11 @@ export class PrintCliExecutor implements Executor {
       };
     }
 
+    const streamSummary = summarizeExecutorStreamOutput(result.stdout);
     const summary =
       streamParser?.getResultText() ||
-      summarizeStreamJson(result.stdout).summary ||
-      summarizePrintOutput(stdout) ||
+      streamSummary ||
+      (!isExecutorStreamBlob(result.stdout) ? summarizePrintOutput(stdout) : "") ||
       `${this.name} completed`;
 
     return {

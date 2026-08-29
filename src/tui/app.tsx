@@ -26,6 +26,7 @@ import { loadAssentorConfig, type AssentorConfig } from "../config/load.js";
 import { explainReviewPlan } from "../review/complexity.js";
 import {
   REVIEWER_ADD_PROVIDERS,
+  getAvailableReviewerProviders,
   defaultTransportForProvider,
   transportsForProvider,
 } from "../review/backends.js";
@@ -165,8 +166,14 @@ function App({
     return [...new Set(ids)];
   }, [models]);
 
+  const availableReviewerProviders = useMemo(() => {
+    return getAvailableReviewerProviders();
+  }, []);
+
   const addReviewerProvider =
-    REVIEWER_ADD_PROVIDERS[addReviewerProviderIdx] ?? "gemini";
+    availableReviewerProviders[addReviewerProviderIdx] ??
+    availableReviewerProviders[0] ??
+    "gemini";
   const addReviewerTransports = transportsForProvider(addReviewerProvider);
   const addReviewerKeyChoices = useMemo(() => {
     const providerKeys = keys.filter((k) => k.provider === addReviewerProvider);
@@ -191,7 +198,7 @@ function App({
       return addStep === "provider" ? KEY_PROVIDERS.length : 1;
     }
     if (ui.dialog === "add-reviewer") {
-      if (addReviewerStep === "provider") return REVIEWER_ADD_PROVIDERS.length;
+      if (addReviewerStep === "provider") return availableReviewerProviders.length;
       if (addReviewerStep === "transport")
         return Math.max(addReviewerTransports.length, 1);
       return Math.max(addReviewerKeyChoices.length, 1);
@@ -267,23 +274,16 @@ function App({
   }, []);
 
   async function refreshExecutors() {
-    const listed = services.executors.list();
-    setExecutorRows(
-      listed.map((a) => ({
-        id: a.id,
-        name: a.name,
-        installPlan: a.installPlan?.(),
-      })),
-    );
     const detected = await detectExecutors(services);
-    setExecutorRows(
-      detected.map((d) => ({
+    const available = detected
+      .filter((d) => d.detection.installed)
+      .map((d) => ({
         id: d.id,
         name: d.name,
         detection: d.detection,
         installPlan: services.executors.get(d.id)?.installPlan?.(),
-      })),
-    );
+      }));
+    setExecutorRows(available);
   }
 
   function patchUi(partial: Partial<UiState>) {
@@ -462,7 +462,18 @@ function App({
     if (ui.configSection === "ai") {
       const rows = buildAiRows(config);
       if (idx >= rows.length - 1) return;
-      setConfig((c) => cycleAiField(c, idx, dir, modelChoices));
+      const availableExecutors = executorRows
+        .filter((r) => r.detection?.installed)
+        .map((r) => r.id);
+      setConfig((c) =>
+        cycleAiField(
+          c,
+          idx,
+          dir,
+          modelChoices,
+          availableExecutors.length > 0 ? availableExecutors : undefined,
+        ),
+      );
       return;
     }
     if (ui.configSection === "review") {
@@ -548,7 +559,7 @@ function App({
     if (ui.dialog === "add-reviewer") {
       if (addReviewerStep === "provider") {
         const idx = ui.mainIndex;
-        const provider = REVIEWER_ADD_PROVIDERS[idx] ?? "mock";
+        const provider = availableReviewerProviders[idx] ?? "mock";
         setAddReviewerProviderIdx(idx);
         setAddReviewerTransportIdx(0);
         const transports = transportsForProvider(provider);
@@ -1259,7 +1270,7 @@ function App({
       {ui.dialog === "add-reviewer" ? (
         <AddReviewerDialog
           step={addReviewerStep}
-          providers={[...REVIEWER_ADD_PROVIDERS]}
+          providers={[...availableReviewerProviders]}
           providerIdx={
             addReviewerStep === "provider"
               ? ui.mainIndex

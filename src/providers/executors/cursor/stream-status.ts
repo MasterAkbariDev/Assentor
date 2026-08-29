@@ -303,22 +303,8 @@ function parseAntigravityStreamEvent(
   }
 
   if (stepType === "agent_response") {
-    const delta =
-      typeof step.text_delta === "string" ? step.text_delta.trim() : "";
-    if (state === "ACTIVE" && delta) {
-      return {
-        activity: "thinking",
-        detail: truncate(delta.replace(/\s+/g, " "), 56),
-        sessionId: stepSessionId,
-      };
-    }
-    if (state === "DONE") {
-      return {
-        activity: "thinking",
-        detail: "planning next step",
-        sessionId: stepSessionId,
-      };
-    }
+    // Skip prose/code deltas in the live spinner — tool events are the signal.
+    return undefined;
   }
 
   return undefined;
@@ -335,10 +321,13 @@ function describeAntigravityTool(
     stringArg(params, "FilePath") ??
     stringArg(params, "file_path");
   const command = stringArg(params, "Command") ?? stringArg(params, "command");
+  const commandLine =
+    stringArg(params, "CommandLine") ?? stringArg(params, "commandLine");
   const pattern =
     stringArg(params, "Pattern") ??
     stringArg(params, "pattern") ??
-    stringArg(params, "Query");
+    stringArg(params, "Query") ??
+    stringArg(params, "query");
 
   switch (toolName) {
     case "view_file":
@@ -365,7 +354,7 @@ function describeAntigravityTool(
     case "send_command_input":
       return {
         activity: "running",
-        detail: truncate(command ?? "shell command", 56),
+        detail: truncate(commandLine ?? command ?? "shell command", 56),
       };
     case "grep_search":
     case "find_by_name":
@@ -644,11 +633,118 @@ export function summarizeStreamJson(stdout: string): {
     }
   }
   if (!summary) {
-    const lines = stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-    summary = lines.at(-1) ?? "";
+    summary = summarizePartialStreamOutput(stdout);
   }
   return { summary: summary.slice(0, 500), sessionId };
+}
+
+/** Best-effort human summary when no terminal `result` event was captured. */
+export function summarizePartialStreamOutput(stdout: string): string {
+  let toolSteps = 0;
+  let lastTool = "";
+  let prose = "";
+
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) {
+      continue;
+    }
+    let event: JsonObject;
+    try {
+      event = JSON.parse(trimmed) as JsonObject;
+    } catch {
+      continue;
+    }
+
+    if (event.event === "step_update") {
+      const step =
+        event.step_update && typeof event.step_update === "object"
+          ? (event.step_update as JsonObject)
+          : {};
+      if (step.step_type === "tool") {
+        const state = String(step.state ?? "").toUpperCase();
+        if (state === "ACTIVE") {
+          toolSteps += 1;
+          const toolName = String(step.tool_name ?? "tool");
+          const toolInfo =
+            step.tool_info && typeof step.tool_info === "object"
+              ? (step.tool_info as JsonObject)
+              : {};
+          const params =
+            toolInfo.parameters && typeof toolInfo.parameters === "object"
+              ? (toolInfo.parameters as JsonObject)
+              : {};
+          lastTool = describeAntigravityTool(toolName, params).detail;
+        } else if (state === "DONE") {
+          toolSteps += 1;
+        }
+      }
+      if (
+        typeof step.text_delta === "string" &&
+        step.text_delta.trim() &&
+        !looksLikeCodeFragment(step.text_delta)
+      ) {
+        prose += step.text_delta;
+      }
+    }
+
+    if (event.type === "assistant") {
+      const text = extractAssistantText(event);
+      if (text && !looksLikeCodeFragment(text)) {
+        prose = text;
+      }
+    }
+  }
+
+  const trimmedProse = prose.replace(/\s+/g, " ").trim();
+  if (trimmedProse.length >= 12) {
+    return truncate(trimmedProse, 500);
+  }
+  if (lastTool) {
+    return `Ran ${toolSteps} tool step(s); last: ${lastTool}`;
+  }
+  if (toolSteps > 0) {
+    return `Ran ${toolSteps} tool step(s); no final response captured`;
+  }
+  return "";
+}
+
+export function isExecutorStreamBlob(text: string): boolean {
+  const sample = text.trim().slice(0, 4000);
+  if (!sample.startsWith("{")) {
+    return false;
+  }
+  return (
+    sample.includes('"type":"tool_call"') ||
+    sample.includes('"event":"init"') ||
+    sample.includes('"event":"step_update"') ||
+    sample.includes('"event":"result"')
+  );
+}
+
+function looksLikeCodeFragment(text: string): boolean {
+  const one = text.replace(/\s+/g, " ").trim();
+  if (!one) {
+    return true;
+  }
+  if (/^(import |export |const |let |function |class |\/\/|\/\*)/.test(one)) {
+    return true;
+  }
+  if (/SELECTABLE_|EXECUTOR_|REVIEWER_|\.tsx?|\.js["']/.test(one)) {
+    return true;
+  }
+  return one.length > 120 && /[{}();]/.test(one);
+}
+
+/** Prefer parsed stream summary over raw NDJSON stdout. */
+export function summarizeExecutorStreamOutput(stdout: string): string {
+  const parsed = summarizeStreamJson(stdout);
+  if (parsed.summary && !isExecutorStreamBlob(parsed.summary)) {
+    return parsed.summary;
+  }
+  const partial = summarizePartialStreamOutput(stdout);
+  if (partial) {
+    return partial;
+  }
+  return "";
 }

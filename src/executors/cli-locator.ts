@@ -285,9 +285,11 @@ export function locateBinary(
     }
   }
 
-  const cached = readCachedBinaries()[tool];
-  if (cached && fileLooksRunnable(cached, h)) {
-    return cached;
+  if (!options.host || process.env.ASSENTOR_BINARY_CACHE_PATH) {
+    const cached = readCachedBinaries()[tool];
+    if (cached && fileLooksRunnable(cached, h)) {
+      return cached;
+    }
   }
 
   for (const name of TOOL_NAMES[tool]) {

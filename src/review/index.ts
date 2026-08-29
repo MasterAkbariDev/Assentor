@@ -45,6 +45,7 @@ export {
   transportsForProvider,
   defaultTransportForProvider,
   REVIEWER_ADD_PROVIDERS,
+  getAvailableReviewerProviders,
   type ReviewerBackend,
   type ReviewerAddProvider,
 } from "./backends.js";

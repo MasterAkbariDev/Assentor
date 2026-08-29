@@ -336,12 +336,18 @@ program
     const projectPath = path.resolve(options.project);
     const { loadAssentorConfig } = await import("../config/load.js");
     const { DEFAULT_AGENT_PROFILES } = await import("../agents/index.js");
+    const { isCliReviewerAvailable } = await import(
+      "../providers/reviewers/cli/index.js"
+    );
     const config = await loadAssentorConfig(projectPath);
     console.log(`reviewStrategy: ${config.routing.reviewStrategy}`);
     console.log(`routing: ${config.routing.strategy}`);
     console.log("");
     console.log("Configured transports:");
     for (const reviewer of config.reviewers) {
+      if (reviewer.transport === "cli" && !isCliReviewerAvailable(reviewer.provider)) {
+        continue;
+      }
       console.log(
         `  - ${reviewer.provider}  role=${reviewer.role}  transport=${reviewer.transport ?? "api"}${reviewer.fallback ? `  fallback=${reviewer.fallback.provider}/${reviewer.fallback.transport ?? "api"}` : ""}`,
       );
@@ -351,6 +357,9 @@ program
     for (const agent of DEFAULT_AGENT_PROFILES.filter(
       (a) => a.kind === "reviewer" || a.kind === "adjudicator",
     )) {
+      if (agent.transport === "cli" && !isCliReviewerAvailable(agent.provider)) {
+        continue;
+      }
       console.log(
         `  ${agent.id.padEnd(24)} ${(agent.specialty ?? "-").padEnd(14)} ${agent.enabled ? "on" : "off"}  transport=${agent.transport ?? "api"}`,
       );
@@ -453,9 +462,17 @@ program
   .command("executors")
   .description("Detect installed coding-agent CLIs")
   .option("-p, --project <path>", "Project directory", ".")
-  .action(async (options: { project: string }) => {
+  .option("-a, --all", "Include unavailable/uninstalled CLIs", false)
+  .action(async (options: { project: string; all?: boolean }) => {
     const services = await createAssentorServices(path.resolve(options.project));
-    const results = await services.executors.detectAll();
+    const allResults = await services.executors.detectAll();
+    const results = options.all
+      ? allResults
+      : allResults.filter((r) => r.detection.installed);
+    if (results.length === 0) {
+      console.log("No installed coding-agent CLIs found.");
+      return;
+    }
     for (const result of results) {
       const mark = result.detection.installed ? "✓" : "✗";
       console.log(
