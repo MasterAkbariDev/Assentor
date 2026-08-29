@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { resolvePackageRoot } from "./lifecycle.js";
+import { userAssentorDir } from "../config/paths.js";
 
 export const ASSENTOR_REPO_SLUG = "MasterAkbariDev/Assentor";
 export const ASSENTOR_PACKAGE_URL = `https://raw.githubusercontent.com/${ASSENTOR_REPO_SLUG}/main/package.json`;
@@ -64,8 +65,7 @@ interface UpdateCacheFile {
 }
 
 export function updateCheckCachePath(): string {
-  const home = process.env.HOME || process.env.USERPROFILE || "";
-  return path.join(home, ".assentor", "update-check.json");
+  return path.join(userAssentorDir(), "update-check.json");
 }
 
 export async function clearUpdateCheckCache(): Promise<void> {

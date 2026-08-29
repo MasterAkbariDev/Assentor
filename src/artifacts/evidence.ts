@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { EvidenceRequestItem } from "../protocol/messages.js";
 import { EvidenceKind } from "../protocol/messages.js";
 import {
@@ -321,19 +322,16 @@ function resolveCommand(
   }
 }
 
+const execFileAsync = promisify(execFile);
+
 async function runGit(cwd: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("git", args, { cwd });
-    let out = "";
-    let err = "";
-    child.stdout.on("data", (c) => (out += c.toString()));
-    child.stderr.on("data", (c) => (err += c.toString()));
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) resolve(out.trim());
-      else reject(new Error(err || `git ${args.join(" ")} failed`));
-    });
+  const result = await execFileAsync("git", args, {
+    cwd,
+    encoding: "utf8",
+    timeout: 30_000,
+    maxBuffer: 5 * 1024 * 1024,
   });
+  return result.stdout.trim();
 }
 
 const SKIP_DIRS = new Set([

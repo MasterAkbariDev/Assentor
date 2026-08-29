@@ -1,4 +1,4 @@
-import { describe, expect, it, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { KeyVault, resolveProviderApiKey } from "../../src/keys/index.js";
@@ -7,7 +7,15 @@ import { runPreflight } from "../../src/cli/preflight.js";
 const TEMP_ROOT = path.join(process.cwd(), ".tmp", "key-resolve-tests");
 const tempDirs: string[] = [];
 
+beforeEach(async () => {
+  await fs.mkdir(TEMP_ROOT, { recursive: true });
+  const userDir = await fs.mkdtemp(path.join(TEMP_ROOT, "user-"));
+  tempDirs.push(userDir);
+  process.env.ASSENTOR_USER_DIR = path.join(userDir, ".assentor");
+});
+
 afterEach(async () => {
+  delete process.env.ASSENTOR_USER_DIR;
   await Promise.all(
     tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
   );

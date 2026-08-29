@@ -27,12 +27,11 @@ interface GeminiResponse {
 }
 
 const DEFAULT_MODELS: ModelInfo[] = [
-  seed("gemini-3.6-flash", 0.85, 0.9, 1_000_000, 0.2),
-  seed("gemini-3-flash-preview", 0.8, 0.85, 1_000_000, 0.25),
-  seed("gemini-2.5-flash", 0.75, 0.85, 1_000_000, 0.2),
-  seed("gemini-2.0-flash", 0.7, 0.8, 1_000_000, 0.15),
-  seed("gemini-1.5-flash", 0.6, 0.7, 1_000_000, 0.1),
-  seed("gemini-1.5-pro", 0.85, 0.8, 2_000_000, 0.5),
+  seed("gemini-2.5-flash", 0.85, 0.9, 1_000_000, 0.15),
+  seed("gemini-2.5-pro", 0.95, 0.95, 2_000_000, 0.5),
+  seed("gemini-2.0-flash", 0.8, 0.85, 1_000_000, 0.15),
+  seed("gemini-1.5-flash", 0.7, 0.75, 1_000_000, 0.1),
+  seed("gemini-1.5-pro", 0.85, 0.8, 2_000_000, 0.4),
 ];
 
 function seed(
@@ -79,8 +78,9 @@ export class GeminiProvider implements AIProvider {
 
   async listModels(key: ApiKeyRef): Promise<ModelInfo[]> {
     try {
-      const url = `${this.baseUrl}/models?key=${encodeURIComponent(key.secret)}`;
+      const url = `${this.baseUrl}/models`;
       const response = await this.fetchFn(url, {
+        headers: { "x-goog-api-key": key.secret },
         signal: AbortSignal.timeout(this.timeoutMs),
       });
       const raw = await response.text();
@@ -125,8 +125,9 @@ export class GeminiProvider implements AIProvider {
 
   async validateKey(key: ApiKeyRef): Promise<KeyStatus> {
     try {
-      const url = `${this.baseUrl}/models?key=${encodeURIComponent(key.secret)}`;
+      const url = `${this.baseUrl}/models`;
       const response = await this.fetchFn(url, {
+        headers: { "x-goog-api-key": key.secret },
         signal: AbortSignal.timeout(Math.min(this.timeoutMs, 30_000)),
       });
       const raw = await response.text();
@@ -172,7 +173,7 @@ export class GeminiProvider implements AIProvider {
   }
 
   async generate(request: AIRequest): Promise<AIResponse> {
-    const url = `${this.baseUrl}/models/${encodeURIComponent(request.model)}:generateContent?key=${encodeURIComponent(request.key.secret)}`;
+    const url = `${this.baseUrl}/models/${encodeURIComponent(request.model)}:generateContent`;
     const parts: Array<
       | { text: string }
       | { inlineData: { mimeType: string; data: string } }
@@ -189,7 +190,10 @@ export class GeminiProvider implements AIProvider {
     try {
       const response = await this.fetchFn(url, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "x-goog-api-key": request.key.secret,
+        },
         body: JSON.stringify({
           contents: [
             {

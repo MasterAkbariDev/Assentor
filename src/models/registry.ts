@@ -142,7 +142,7 @@ function modelKey(provider: string, id: string): string {
 function defaultSeeds(): ModelInfo[] {
   return [
     {
-      id: "gemini-3.6-flash",
+      id: "gemini-2.5-flash",
       provider: "gemini",
       reasoningScore: 0.85,
       codingScore: 0.9,
@@ -150,8 +150,8 @@ function defaultSeeds(): ModelInfo[] {
       vision: true,
       tools: true,
       structuredOutput: true,
-      speed: 0.8,
-      cost: 0.2,
+      speed: 0.85,
+      cost: 0.15,
       freeTier: "UNKNOWN",
       available: true,
       source: "seed",

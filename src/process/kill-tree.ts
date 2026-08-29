@@ -25,11 +25,22 @@ export function killProcessTree(child: KillableProcess | ChildProcess | undefine
       }
     } else {
       try {
+        // Try killing process group if detached/leader
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        // not process group leader or unsupported
+      }
+      try {
         spawn("pkill", ["-9", "-P", String(pid)], {
           stdio: "ignore",
         }).unref();
       } catch {
         // fall through
+      }
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // already exited or permission denied
       }
     }
   }

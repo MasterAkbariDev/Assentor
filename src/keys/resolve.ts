@@ -113,13 +113,13 @@ async function revealVaultKeyById(
     [homeRoot, "user-vault"],
     [projectRoot, "project-vault"],
   ] as const) {
-    const vault = new KeyVault(root);
-    await vault.load();
-    const stored = vault.get(keyId);
-    if (!stored) {
-      continue;
-    }
     try {
+      const vault = new KeyVault(root);
+      await vault.load();
+      const stored = vault.get(keyId);
+      if (!stored) {
+        continue;
+      }
       const ref = await vault.reveal(keyId);
       return {
         secret: ref.secret,
@@ -138,13 +138,13 @@ async function revealFromVault(
   provider: string,
   root: string,
 ): Promise<{ secret: string; name: string; masked: string } | undefined> {
-  const vault = new KeyVault(root);
-  await vault.load();
-  const selected = vault.selectKey(provider);
-  if (!selected) {
-    return undefined;
-  }
   try {
+    const vault = new KeyVault(root);
+    await vault.load();
+    const selected = vault.selectKey(provider);
+    if (!selected) {
+      return undefined;
+    }
     const ref = await vault.reveal(selected.id);
     return {
       secret: ref.secret,

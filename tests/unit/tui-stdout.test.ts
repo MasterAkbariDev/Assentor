@@ -7,7 +7,7 @@ import { Shell } from "../../src/tui/layout/shell.js";
 import { createInkStdout } from "../../src/tui/stdout.js";
 
 function createMockStdout(rows = 40): WriteStream {
-  const stream = new PassThrough() as WriteStream & {
+  const stream = new PassThrough() as unknown as WriteStream & {
     columns: number;
     rows: number;
     isTTY: boolean;

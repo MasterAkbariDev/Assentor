@@ -1,4 +1,4 @@
-import { describe, expect, it, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { parseAssentorConfig } from "../../src/index.js";
 import { doctorAssentor, initAssentorProject } from "../../src/cli/commands.js";
 import { promises as fs } from "node:fs";
@@ -8,7 +8,15 @@ import os from "node:os";
 const TEMP_ROOT = path.join(process.cwd(), ".tmp", "cli-tests");
 const tempDirs: string[] = [];
 
+beforeEach(async () => {
+  await fs.mkdir(TEMP_ROOT, { recursive: true });
+  const userDir = await fs.mkdtemp(path.join(TEMP_ROOT, "user-"));
+  tempDirs.push(userDir);
+  process.env.ASSENTOR_USER_DIR = path.join(userDir, ".assentor");
+});
+
 afterEach(async () => {
+  delete process.env.ASSENTOR_USER_DIR;
   await Promise.all(
     tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
   );

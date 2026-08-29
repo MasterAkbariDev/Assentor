@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { mkdir, writeFile } from "node:fs/promises";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { mkdir, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import {
   checkForUpdate,
@@ -9,6 +9,18 @@ import {
   parseSemver,
   updateCheckCachePath,
 } from "../../src/self/version.js";
+
+const TEMP_USER_DIR = path.join(process.cwd(), ".tmp", "version-tests", ".assentor");
+
+beforeEach(async () => {
+  process.env.ASSENTOR_USER_DIR = TEMP_USER_DIR;
+  await mkdir(TEMP_USER_DIR, { recursive: true });
+});
+
+afterEach(async () => {
+  delete process.env.ASSENTOR_USER_DIR;
+  await rm(path.dirname(TEMP_USER_DIR), { recursive: true, force: true });
+});
 
 describe("semver helpers", () => {
   it("parses versions", () => {

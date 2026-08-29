@@ -46,16 +46,33 @@ export class KeyVault {
     );
   }
 
+  private async ensureMasterKey(): Promise<Buffer> {
+    if (!this.masterKey) {
+      this.masterKey = await getOrCreateMasterKey(this.projectPath);
+    }
+    return this.masterKey;
+  }
+
   async load(): Promise<void> {
-    this.masterKey = await getOrCreateMasterKey(this.projectPath);
     try {
       const raw = await fs.readFile(this.filePath, "utf8");
       this.data = JSON.parse(raw) as KeyVaultFile;
     } catch {
       this.data = { version: 1, keys: [] };
     }
-    if (this.dedupeStoredKeys()) {
-      await this.save();
+    if (this.data.keys.length > 0) {
+      try {
+        await this.ensureMasterKey();
+      } catch {
+        // master key unavailable; keys remain encrypted until revealed
+      }
+      if (this.dedupeStoredKeys()) {
+        try {
+          await this.save();
+        } catch {
+          // ignore save failures on read-only environments
+        }
+      }
     }
   }
 
@@ -94,12 +111,13 @@ export class KeyVault {
     if (existing) {
       return existing;
     }
+    const masterKey = await this.ensureMasterKey();
     const entry: StoredApiKey = {
       id: createId(),
       provider: input.provider,
       name: input.name,
       masked: maskSecret(input.secret),
-      ciphertext: encryptSecret(this.masterKey!, input.secret),
+      ciphertext: encryptSecret(masterKey, input.secret),
       enabled: true,
       priority: input.priority ?? this.data.keys.length + 1,
       health: "unknown",
@@ -114,7 +132,9 @@ export class KeyVault {
     await this.ensureLoaded();
     const before = this.data.keys.length;
     this.data.keys = this.data.keys.filter((k) => k.id !== id);
-    await this.save();
+    if (this.data.keys.length < before) {
+      await this.save();
+    }
     return this.data.keys.length < before;
   }
 
@@ -134,11 +154,12 @@ export class KeyVault {
     if (!key) {
       throw new Error(`Key not found: ${id}`);
     }
+    const masterKey = await this.ensureMasterKey();
     return {
       id: key.id,
       provider: key.provider,
       name: key.name,
-      secret: decryptSecret(this.masterKey!, key.ciphertext),
+      secret: decryptSecret(masterKey, key.ciphertext),
     };
   }
 

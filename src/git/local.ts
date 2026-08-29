@@ -238,8 +238,12 @@ export class LocalGitService implements GitService {
     }
 
     if (checkpoint.stashRef) {
-      // Best-effort: apply the stash created for this checkpoint.
-      await git(this.cwd, ["stash", "pop"]);
+      // Best-effort: apply the specific stash created for this checkpoint.
+      try {
+        await git(this.cwd, ["stash", "apply", checkpoint.stashRef]);
+      } catch {
+        await git(this.cwd, ["stash", "pop"]);
+      }
       return;
     }
 

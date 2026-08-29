@@ -1,9 +1,21 @@
 import os from "node:os";
 import path from "node:path";
 
+function resolveBaseHome(): string {
+  return (
+    process.env.ASSENTOR_HOME ||
+    process.env.HOME ||
+    process.env.USERPROFILE ||
+    os.homedir()
+  );
+}
+
 /** Directory that holds user-global Assentor data (`~/.assentor`). */
 export function userAssentorDir(): string {
-  return path.join(os.homedir(), ".assentor");
+  if (process.env.ASSENTOR_USER_DIR) {
+    return path.resolve(process.env.ASSENTOR_USER_DIR);
+  }
+  return path.join(resolveBaseHome(), ".assentor");
 }
 
 /**
@@ -11,7 +23,10 @@ export function userAssentorDir(): string {
  * (Those APIs join `<root>/.assentor/...`.)
  */
 export function userAssentorProjectRoot(): string {
-  return os.homedir();
+  if (process.env.ASSENTOR_USER_DIR) {
+    return path.dirname(path.resolve(process.env.ASSENTOR_USER_DIR));
+  }
+  return resolveBaseHome();
 }
 
 export function userConfigPath(): string {

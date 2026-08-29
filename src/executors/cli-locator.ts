@@ -367,8 +367,12 @@ export function rememberBinary(tool: BinaryTool, filePath: string): void {
     [tool]: filePath,
   };
   current.binaries = binaries;
-  mkdirSync(path.dirname(cachePath), { recursive: true });
-  writeFileSync(cachePath, stringifyYaml(current, { lineWidth: 100 }), "utf8");
+  try {
+    mkdirSync(path.dirname(cachePath), { recursive: true });
+    writeFileSync(cachePath, stringifyYaml(current, { lineWidth: 100 }), "utf8");
+  } catch {
+    // Best-effort cache: do not fail when user config dir is read-only or restricted
+  }
 }
 
 function binaryCachePath(): string {

@@ -194,7 +194,6 @@ export class AgentRegistry {
       this.profiles = JSON.parse(raw) as LogicalAgentProfile[];
     } catch {
       this.profiles = structuredClone(DEFAULT_AGENT_PROFILES);
-      await this.save();
     }
   }
 

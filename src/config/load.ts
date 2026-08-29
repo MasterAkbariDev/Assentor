@@ -30,7 +30,12 @@ async function readYamlFile(filePath: string): Promise<unknown> {
     return parseYaml(raw) ?? {};
   } catch (error) {
     const err = error as NodeJS.ErrnoException;
-    if (err.code === "ENOENT") {
+    if (
+      err.code === "ENOENT" ||
+      err.code === "EACCES" ||
+      err.code === "EPERM" ||
+      err.code === "ENOTDIR"
+    ) {
       return {};
     }
     throw error;

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.17] — 2026-08-29
+
+### Added
+
+- **`ASSENTOR_USER_DIR` / `ASSENTOR_HOME`** — Override user-global config and vault paths for tests and custom installs.
+
+### Fixed
+
+- **Gemini API auth** — Send API keys via `x-goog-api-key` header instead of query string.
+- **Key vault** — Lazy master-key load; tolerate read-only or restricted config dirs without failing list/load.
+- **Key resolve** — Skip unreadable vault roots instead of aborting resolution.
+- **Git rollback** — Apply the specific checkpoint stash ref before falling back to `stash pop`.
+- **Agent registry** — Do not overwrite profiles when the agents file is missing or unreadable.
+- **Config load** — Treat `EACCES`, `EPERM`, and `ENOTDIR` like missing files (empty defaults).
+- **CLI binary cache** — Best-effort write; ignore failures on read-only user dirs.
+- **Process cleanup** — Kill detached process groups and direct PID on Unix after `pkill`.
+- **Shell output** — Cap stdout/stderr at 10 MB to avoid unbounded memory growth.
+- **Verification gates** — Cap gate output before redaction.
+- **Model seeds** — Default Gemini seed is `gemini-2.5-flash` (removed fictional 3.6 id).
+
+### Changed
+
+- Evidence git commands use `execFile` with timeout and buffer limits.
+- Update-check cache path follows `userAssentorDir()` (respects `ASSENTOR_USER_DIR`).
+- Unit tests isolate user-global state via `ASSENTOR_USER_DIR`.
+
 ## [0.3.16] — 2026-08-29
 
 ### Added
@@ -236,7 +262,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logical agents, diagnostics, and resumable task state under `.assentor/tasks/`
 - One-line install scripts for macOS/Linux and Windows
 
-[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.16...HEAD
+[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.17...HEAD
+[0.3.17]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.16...v0.3.17
 [0.3.16]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.15...v0.3.16
 [0.3.15]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.14...v0.3.15
 [0.3.14]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.13...v0.3.14

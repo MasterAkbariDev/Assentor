@@ -57,9 +57,9 @@ export async function runVerificationGates(input: {
     }
     try {
       const result = await runner(command, input.projectPath);
-      const redacted = redactSecrets(
-        [result.stdout, result.stderr].filter(Boolean).join("\n"),
-      );
+      const rawOutput = [result.stdout, result.stderr].filter(Boolean).join("\n");
+      const capped = rawOutput.slice(0, OUTPUT_LIMIT * 2);
+      const redacted = redactSecrets(capped);
       runs.push({
         slot,
         command,

@@ -77,7 +77,7 @@ describe("GeminiReviewer", () => {
   it("parses generateContent JSON", async () => {
     const fetchFn = vi.fn(async (url: string | URL) => {
       const href = String(url);
-      if (href.includes("/models?")) {
+      if (href.endsWith("/models") || href.includes("/models?")) {
         return new Response(
           JSON.stringify({
             models: [{ name: "models/gemini-test" }],
@@ -110,9 +110,9 @@ describe("GeminiReviewer", () => {
 
     expect(result.result?.status).toBe(ReviewStatus.Pass);
     expect(reviewer.lastModelUsed).toBe("gemini-test");
-    expect(fetchFn.mock.calls.some((call) => String(call[0]).includes("gem-key"))).toBe(
-      true,
-    );
+    expect(
+      fetchFn.mock.calls.some((call) => JSON.stringify(call).includes("gem-key")),
+    ).toBe(true);
     expect(
       fetchFn.mock.calls.some((call) => String(call[0]).includes("gemini-test")),
     ).toBe(true);
@@ -121,7 +121,7 @@ describe("GeminiReviewer", () => {
   it("falls back when preferred model is unavailable", async () => {
     const fetchFn = vi.fn(async (url: string | URL) => {
       const href = String(url);
-      if (href.includes("/models?")) {
+      if (href.endsWith("/models") || href.includes("/models?")) {
         return new Response(
           JSON.stringify({
             models: [{ name: "models/gemini-old" }, { name: "models/gemini-new" }],
@@ -168,16 +168,19 @@ describe("GeminiReviewer", () => {
 
     expect(result.result?.status).toBe(ReviewStatus.Pass);
     expect(reviewer.lastModelUsed).toBe("gemini-new");
-    expect(fetchFn.mock.calls.some((call) => String(call[0]).includes("/models?"))).toBe(
-      true,
-    );
+    expect(
+      fetchFn.mock.calls.some((call) => {
+        const href = String(call[0]);
+        return href.endsWith("/models") || href.includes("/models?");
+      }),
+    ).toBe(true);
     expect(statuses.some((s) => s.includes("gemini-new"))).toBe(true);
   });
 
   it("prefers models returned by listModels and skips unknown defaults", async () => {
     const fetchFn = vi.fn(async (url: string | URL) => {
       const href = String(url);
-      if (href.includes("/models?")) {
+      if (href.endsWith("/models") || href.includes("/models?")) {
         return new Response(
           JSON.stringify({
             models: [{ name: "models/gemini-2.5-flash" }],
@@ -196,8 +199,8 @@ describe("GeminiReviewer", () => {
     const reviewer = new GeminiReviewer({
       apiKey: "gem-key",
       fetchFn,
-      model: "gemini-3.6-flash",
-      modelFallbacks: ["gemini-3-flash-preview", "gemini-2.5-flash"],
+      model: "gemini-unknown-model",
+      modelFallbacks: ["gemini-2.5-flash"],
     });
 
     const result = await reviewer.review({
