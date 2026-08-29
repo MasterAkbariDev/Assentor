@@ -22,6 +22,7 @@ import { buildExecutorRegistry } from "../executors/adapters.js";
 import {
   isSelectableExecutorProvider,
   normalizeExecutorProvider,
+  formatExecutorProvider,
   SELECTABLE_EXECUTOR_PROVIDERS,
 } from "../executors/providers.js";
 import { type RunMode } from "../core/run-mode.js";
@@ -364,9 +365,12 @@ export function buildContract(
 
 export async function runAssentorTask(input: RunAssentorInput) {
   const projectPath = path.resolve(input.projectPath);
+  const executorLabel = input.executor
+    ? formatExecutorProvider(normalizeExecutorProvider(input.executor))
+    : "executor";
   const reporter = new RunReporter({
     verbose: input.verbose,
-    executorName: input.executor ?? "executor",
+    executorName: executorLabel,
     reviewerName: input.reviewer ?? "reviewer",
   });
   reporter.preparing("loading config…");
@@ -535,6 +539,11 @@ async function runAssentorTaskBody(
     reviewer.name,
     backends[0],
   );
+
+  reporter.updateAgentLabels({
+    executorName: executor.name,
+    reviewerName: reviewerDisplay,
+  });
 
   reporter.ready();
   printBanner({

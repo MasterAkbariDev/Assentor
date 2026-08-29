@@ -10,6 +10,7 @@ import type {
 } from "../types.js";
 import {
   CursorStreamStatusParser,
+  resolveExecutorFailureMessage,
   summarizeStreamJson,
   type AgentStatusUpdate,
 } from "./stream-status.js";
@@ -371,25 +372,37 @@ export class CursorExecutor implements Executor {
 
     const completedViaResult = Boolean(streamParser?.hasFinalResult());
     if (streamParser?.isResultError()) {
-      const summary =
-        streamParser.getResultText() ||
-        result.stderr ||
-        result.stdout ||
-        "Cursor agent reported an error";
+      const failure = resolveExecutorFailureMessage({
+        executorName: "Cursor",
+        parser: streamParser,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.code,
+      });
+      const resumeHint = this.sessionId
+        ? ` Resume with: assentor resume ${taskId}`
+        : "";
       return {
-        status: "failed",
-        summary,
-        error: summary,
+        status: failure.kind,
+        summary: failure.summary,
+        error: `${failure.error}${resumeHint}`,
         sessionId: this.sessionId,
         rawOutput: result.stdout,
       };
     }
 
     if (result.code !== 0 && !completedViaResult) {
+      const failure = resolveExecutorFailureMessage({
+        executorName: "Cursor",
+        parser: streamParser,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.code,
+      });
       return {
-        status: "failed",
-        summary: `Cursor agent exited with code ${result.code}`,
-        error: result.stderr || result.stdout || `exit ${result.code}`,
+        status: failure.kind,
+        summary: failure.summary,
+        error: failure.error,
         sessionId: this.sessionId,
         rawOutput: result.stdout,
       };

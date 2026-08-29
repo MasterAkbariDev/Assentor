@@ -4,6 +4,13 @@ import {
   spend,
 } from "../core/budgets.js";
 import { createConversationId, createTaskId } from "../core/ids.js";
+import {
+  DEFAULT_MAX_ATTEMPTS,
+  isRetryableExecutorResult,
+  isRetryableReviewFailure,
+  retryDelayMs,
+  sleep,
+} from "../core/retry.js";
 import type { TaskContract } from "../core/task-contract.js";
 import { BudgetKind, ReviewStatus, Severity, type Budgets } from "../core/types.js";
 import {
@@ -80,8 +87,10 @@ export type SupervisorEventType =
   | "executor.started"
   | "executor.completed"
   | "executor.failed"
+  | "executor.retry"
   | "review.started"
   | "review.completed"
+  | "review.retry"
   | "evidence.requested"
   | "evidence.fulfilled"
   | "change.requested"
@@ -129,6 +138,8 @@ export interface SupervisorConfig {
    * PASS while phases remain. Default supervised (opt-in).
    */
   autopilot?: boolean;
+  /** Retry transient executor/reviewer failures with debounce. Default 3. */
+  maxFailureRetries?: number;
 }
 
 export interface SupervisorResult {
@@ -254,7 +265,10 @@ export class Supervisor {
             break;
           }
 
-          const execResult = await this.runExecutor(taskId, conversationId);
+          const execResult = await this.runExecutorWithRetries(
+            taskId,
+            conversationId,
+          );
           if (isTerminalState(this.state)) {
             break;
           }
@@ -280,7 +294,10 @@ export class Supervisor {
             continue;
           }
 
-          const outcome = await this.runReviewer(taskId, conversationId);
+          const outcome = await this.runReviewerWithRetries(
+            taskId,
+            conversationId,
+          );
           if (isTerminalState(this.state)) {
             break;
           }
@@ -564,12 +581,78 @@ export class Supervisor {
       }
     }
 
-    this.emit("executor.completed", {
-      status: result.status,
-      summary: result.summary,
-      rawOutput: result.rawOutput,
-    });
+    this.emit(
+      result.status === "completed"
+        ? "executor.completed"
+        : "executor.failed",
+      {
+        status: result.status,
+        summary: result.summary,
+        rawOutput: result.rawOutput,
+        error: result.error,
+      },
+    );
     return result;
+  }
+
+  private maxFailureRetries(): number {
+    return this.config.maxFailureRetries ?? DEFAULT_MAX_ATTEMPTS;
+  }
+
+  private async runExecutorWithRetries(
+    taskId: string,
+    conversationId: string,
+  ): Promise<ExecutorResult> {
+    const maxAttempts = this.maxFailureRetries();
+    let last: ExecutorResult | undefined;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const result = await this.runExecutor(taskId, conversationId);
+      if (!isRetryableExecutorResult(result) || attempt >= maxAttempts) {
+        return result;
+      }
+      last = result;
+      const delayMs = retryDelayMs(attempt);
+      this.emit("executor.retry", {
+        attempt,
+        maxAttempts,
+        delayMs,
+        reason: result.error ?? result.summary,
+      });
+      await sleep(delayMs);
+    }
+
+    return last!;
+  }
+
+  private async runReviewerWithRetries(
+    taskId: string,
+    conversationId: string,
+  ): Promise<ReviewOutcome> {
+    const maxAttempts = this.maxFailureRetries();
+    let last: ReviewOutcome | undefined;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const outcome = await this.runReviewer(taskId, conversationId);
+      if (
+        outcome.kind !== "failed" ||
+        !isRetryableReviewFailure(outcome.review) ||
+        attempt >= maxAttempts
+      ) {
+        return outcome;
+      }
+      last = outcome;
+      const delayMs = retryDelayMs(attempt);
+      this.emit("review.retry", {
+        attempt,
+        maxAttempts,
+        delayMs,
+        reason: outcome.review.summary,
+      });
+      await sleep(delayMs);
+    }
+
+    return last!;
   }
 
   private async collectBasicArtifacts(result: ExecutorResult): Promise<void> {
@@ -952,7 +1035,7 @@ export class Supervisor {
     }
 
     this.moveTo(TaskState.Executing);
-    const execResult = await this.runExecutor(taskId, conversationId);
+    const execResult = await this.runExecutorWithRetries(taskId, conversationId);
     if (this.handleExecutorTerminal(execResult)) {
       return false;
     }

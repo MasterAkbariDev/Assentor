@@ -3,6 +3,7 @@ import {
   CursorStreamStatusParser,
   isExecutorStreamBlob,
   parseStreamLine,
+  resolveExecutorFailureMessage,
   summarizeExecutorStreamOutput,
   summarizeStreamJson,
 } from "../../src/providers/executors/cursor/stream-status.js";
@@ -172,6 +173,50 @@ describe("Cursor stream-json status", () => {
       resultText: "Done",
       sessionId: "agy-1",
     });
+  });
+
+  it("captures Antigravity ERROR result without dumping NDJSON", () => {
+    const parser = new CursorStreamStatusParser();
+    const stdout = [
+      JSON.stringify({
+        event: "step_update",
+        step_update: {
+          conversation_id: "agy-timeout",
+          step_index: 1,
+          state: "DONE",
+          step_type: "agent_response",
+          text_delta: "I am checking the environment.",
+        },
+      }),
+      JSON.stringify({
+        event: "result",
+        result: {
+          conversation_id: "agy-timeout",
+          status: "ERROR",
+          response: "",
+          error: "timeout waiting for response",
+        },
+      }),
+    ].join("\n");
+
+    for (const line of stdout.split("\n")) {
+      parser.push(`${line}\n`);
+    }
+
+    expect(parser.isResultError()).toBe(true);
+    expect(parser.getResultError()).toBe("timeout waiting for response");
+
+    const failure = resolveExecutorFailureMessage({
+      executorName: "Antigravity",
+      parser,
+      stdout,
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(failure.kind).toBe("timeout");
+    expect(failure.error).toBe("Antigravity: timeout waiting for response");
+    expect(failure.summary).toContain("timed out");
+    expect(failure.summary).not.toContain('"event":"init"');
   });
 
   it("includes step index and completion details for Antigravity tools", () => {

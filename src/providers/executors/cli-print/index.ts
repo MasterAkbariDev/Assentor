@@ -14,8 +14,8 @@ import {
 import {
   CursorStreamStatusParser,
   isExecutorStreamBlob,
+  resolveExecutorFailureMessage,
   summarizeExecutorStreamOutput,
-  summarizeStreamJson,
 } from "../cursor/stream-status.js";
 import type {
   Executor,
@@ -334,15 +334,20 @@ export class PrintCliExecutor implements Executor {
     }
 
     if (streamParser?.isResultError()) {
-      const summary =
-        streamParser.getResultText() ||
-        stderr ||
-        stdout ||
-        `${this.name} reported an error`;
+      const failure = resolveExecutorFailureMessage({
+        executorName: this.name,
+        parser: streamParser,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.code,
+      });
+      const resumeHint = this.sessionId
+        ? " Resume with: assentor resume"
+        : "";
       return {
-        status: "failed",
-        summary,
-        error: summary,
+        status: failure.kind,
+        summary: failure.summary,
+        error: `${failure.error}${resumeHint}`,
         rawOutput: result.stdout,
         sessionId: this.sessionId,
       };
@@ -350,10 +355,17 @@ export class PrintCliExecutor implements Executor {
 
     const completedViaResult = Boolean(streamParser?.hasFinalResult());
     if (result.code !== 0 && !completedViaResult) {
+      const failure = resolveExecutorFailureMessage({
+        executorName: this.name,
+        parser: streamParser,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.code,
+      });
       return {
-        status: "failed",
-        summary: `${this.name} exited ${result.code ?? "null"}`,
-        error: stderr || stdout || `exit ${result.code}`,
+        status: failure.kind,
+        summary: failure.summary,
+        error: failure.error,
         rawOutput: result.stdout,
         sessionId: this.sessionId,
       };

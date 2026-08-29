@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { resetTerminalForRelaunch } from "../cli/terminal.js";
 import { findOnPath } from "../executors/cli-locator.js";
 
 export type LifecycleScript = "update" | "uninstall" | "install";
@@ -192,6 +193,7 @@ export function buildAssentorLaunchCommand(
 export async function relaunchAssentor(
   args: string[] = process.argv.slice(1),
 ): Promise<never> {
+  resetTerminalForRelaunch();
   const binary = await resolveAssentorBinary();
   const launch = buildAssentorLaunchCommand(binary, args);
   const child = spawn(launch.command, launch.args, {

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.18] — 2026-08-29
+
+### Added
+
+- **Transient failure retries** — Supervisor retries executor/reviewer timeouts and rate limits up to 3 times with debounced backoff (2s, 4s, 6s).
+
+### Fixed
+
+- **CLI executor labels** — Run reporter shows the configured executor name (e.g. Antigravity) instead of generic `executor`.
+- **Antigravity error messages** — Parse `result.error` from stream-json; never surface raw NDJSON as the task failure reason; map provider timeouts to retryable `TIMEOUT`.
+- **TUI post-update relaunch** — Unmount Ink and reset the terminal before spawning the updated UI, fixing blink-on-keypress after self-update.
+- **Executor failure reporting** — Emit `executor.failed` (not `executor.completed`) when the agent exits with errors.
+
 ## [0.3.17] — 2026-08-29
 
 ### Added
@@ -262,7 +275,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logical agents, diagnostics, and resumable task state under `.assentor/tasks/`
 - One-line install scripts for macOS/Linux and Windows
 
-[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.17...HEAD
+[Unreleased]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.18...HEAD
+[0.3.18]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.17...v0.3.18
 [0.3.17]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.16...v0.3.17
 [0.3.16]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.15...v0.3.16
 [0.3.15]: https://github.com/MasterAkbariDev/Assentor/compare/v0.3.14...v0.3.15

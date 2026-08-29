@@ -46,6 +46,8 @@ import {
 import type { AddReviewerStep } from "./components/overlays.js";
 import { Shell } from "./layout/shell.js";
 import { createInkStdout } from "./stdout.js";
+import { resetTerminalForRelaunch } from "../cli/terminal.js";
+import { relaunchAssentor } from "../self/lifecycle.js";
 import {
   createInitialUiState,
   filterPaletteCommands,
@@ -94,7 +96,8 @@ export type TuiHandoff =
       executor?: string;
       mode?: AssentorConfig["run"]["mode"];
     }
-  | { kind: "resume"; projectPath: string; taskId: string };
+  | { kind: "resume"; projectPath: string; taskId: string }
+  | { kind: "relaunch"; args: string[] };
 
 function isRetryableTaskStatus(status: string): boolean {
   return (
@@ -814,17 +817,18 @@ function App({
           patchUi({ busy: false });
         } else if (ui.mainIndex === 1) {
           patchUi({ busy: true });
-          const result = await performUpdate({
-            relaunchArgs: ["ui", "-p", services.projectPath],
-          });
-          if (!result.relaunched) {
-            setMessage(
-              result.code === 0
-                ? `Updated to v${result.localVersion}`
-                : result.output.slice(0, 240),
-            );
-            patchUi({ busy: false });
+          const result = await performUpdate();
+          if (result.code === 0) {
+            onHandoff({
+              kind: "relaunch",
+              args: ["ui", "-p", services.projectPath],
+            });
+            return;
           }
+          setMessage(
+            result.output.slice(0, 240) || `Update failed (${result.code})`,
+          );
+          patchUi({ busy: false });
         } else if (ui.mainIndex === 2) {
           patchUi({
             dialog: "confirm-uninstall",
@@ -1397,12 +1401,16 @@ export async function startTui(projectPath: string): Promise<TuiHandoff> {
   const services = await createAssentorServices(projectPath);
   const initialConfig = await loadAssentorConfig(projectPath);
   let handoff: TuiHandoff = { kind: "exit" };
+  let relaunchArgs: string[] | undefined;
   const instance = render(
     <App
       services={services}
       initialConfig={initialConfig}
       onHandoff={(next) => {
         handoff = next;
+        if (next.kind === "relaunch") {
+          relaunchArgs = next.args;
+        }
         queueMicrotask(() => {
           try {
             instance.unmount();
@@ -1424,16 +1432,15 @@ export async function startTui(projectPath: string): Promise<TuiHandoff> {
     }
     restoreTerminal();
   }
+
+  if (relaunchArgs) {
+    await relaunchAssentor(relaunchArgs);
+    return { kind: "exit" };
+  }
+
   return handoff;
 }
 
 function restoreTerminal(): void {
-  try {
-    if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
-      process.stdin.setRawMode(false);
-    }
-  } catch {
-    // ignore
-  }
-  process.stdout.write("\x1b[?25h\x1b[0m");
+  resetTerminalForRelaunch();
 }

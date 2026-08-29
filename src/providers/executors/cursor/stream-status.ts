@@ -20,6 +20,8 @@ export interface AgentStatusUpdate {
   sessionId?: string;
   /** Final assistant result text when type=result */
   resultText?: string;
+  /** Provider error string on a terminal result event (e.g. Antigravity `error`). */
+  resultError?: string;
   /** True when Cursor emitted the terminal stream-json `result` event. */
   isFinal?: boolean;
   /** True when that result event reports failure. */
@@ -34,6 +36,7 @@ type JsonObject = Record<string, unknown>;
 export class CursorStreamStatusParser {
   private buffer = "";
   private lastResultText = "";
+  private lastResultError = "";
   private sessionId?: string;
   private sawFinal = false;
   private resultFailed = false;
@@ -89,6 +92,10 @@ export class CursorStreamStatusParser {
     return this.lastResultText;
   }
 
+  getResultError(): string {
+    return this.lastResultError;
+  }
+
   hasFinalResult(): boolean {
     return this.sawFinal;
   }
@@ -106,6 +113,9 @@ export class CursorStreamStatusParser {
     }
     if (update.resultText) {
       this.lastResultText = update.resultText;
+    }
+    if (update.resultError) {
+      this.lastResultError = update.resultError;
     }
     if (update.isFinal) {
       this.sawFinal = true;
@@ -261,18 +271,23 @@ function parseAntigravityStreamEvent(
         : {};
     const response =
       typeof result.response === "string" ? result.response : "";
+    const errorText =
+      typeof result.error === "string" ? result.error.trim() : "";
     const status = String(result.status ?? "").toUpperCase();
     return {
       activity: "waiting",
       detail:
         status && status !== "SUCCESS"
-          ? "result received with errors"
+          ? errorText
+            ? truncate(errorText, 56)
+            : "result received with errors"
           : "result received — waiting for process to exit",
       sessionId:
         typeof result.conversation_id === "string"
           ? result.conversation_id
           : sessionId,
       resultText: response,
+      resultError: errorText || undefined,
       isFinal: true,
       resultFailed: status !== "" && status !== "SUCCESS",
     };
@@ -850,4 +865,48 @@ export function summarizeExecutorStreamOutput(stdout: string): string {
     return partial;
   }
   return "";
+}
+
+/** Human failure message — never return raw stream-json blobs. */
+export function resolveExecutorFailureMessage(input: {
+  executorName: string;
+  parser?: Pick<
+    CursorStreamStatusParser,
+    "getResultText" | "getResultError" | "hasFinalResult" | "isResultError"
+  >;
+  stdout: string;
+  stderr: string;
+  exitCode?: number | null;
+}): { summary: string; error: string; kind: "failed" | "timeout" } {
+  const resultError = input.parser?.getResultError()?.trim() ?? "";
+  const resultText = input.parser?.getResultText()?.trim() ?? "";
+  const stderr = input.stderr.trim();
+
+  let detail = resultError || resultText || stderr;
+  if (!detail || isExecutorStreamBlob(detail)) {
+    const partial = summarizeExecutorStreamOutput(input.stdout);
+    if (partial) {
+      detail = partial;
+    }
+  }
+  if (!detail || isExecutorStreamBlob(detail)) {
+    detail =
+      input.exitCode != null && input.exitCode !== 0
+        ? `${input.executorName} exited ${input.exitCode}`
+        : `${input.executorName} reported an error`;
+  }
+
+  const timeoutHint = /timeout/i.test(resultError) || /timeout/i.test(detail);
+  const error = resultError
+    ? `${input.executorName}: ${resultError}`
+    : detail;
+  const summary = timeoutHint
+    ? `${input.executorName} timed out — ${resultError || detail}`
+    : error;
+
+  return {
+    summary: truncate(summary, 500),
+    error: truncate(error, 500),
+    kind: timeoutHint ? "timeout" : "failed",
+  };
 }

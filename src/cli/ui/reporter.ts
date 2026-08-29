@@ -132,15 +132,52 @@ export class RunReporter {
       return;
     }
 
+    if (event.type === "executor.retry") {
+      const attempt = Number(event.data?.attempt ?? 1);
+      const maxAttempts = Number(event.data?.maxAttempts ?? 1);
+      const delayMs = Number(event.data?.delayMs ?? 0);
+      const reason = event.data?.reason
+        ? String(event.data.reason)
+        : "transient error";
+      this.endStatus();
+      console.log(
+        `  ${c.yellow}↻${c.reset} Retrying ${this.options.executorName} (${attempt}/${maxAttempts}) in ${Math.round(delayMs / 1000)}s ${c.dim}— ${truncate(reason, 72)}${c.reset}`,
+      );
+      this.debug(event);
+      return;
+    }
+
+    if (event.type === "review.retry") {
+      const attempt = Number(event.data?.attempt ?? 1);
+      const maxAttempts = Number(event.data?.maxAttempts ?? 1);
+      const delayMs = Number(event.data?.delayMs ?? 0);
+      const reason = event.data?.reason
+        ? String(event.data.reason)
+        : "transient error";
+      this.endStatus();
+      console.log(
+        `  ${c.yellow}↻${c.reset} Retrying ${this.options.reviewerName} (${attempt}/${maxAttempts}) in ${Math.round(delayMs / 1000)}s ${c.dim}— ${truncate(reason, 72)}${c.reset}`,
+      );
+      this.debug(event);
+      return;
+    }
+
     if (event.type === "executor.completed" || event.type === "executor.failed") {
+      const execStatus =
+        typeof event.data?.status === "string" ? event.data.status : undefined;
       const summary = event.data?.summary
         ? String(event.data.summary)
         : event.type === "executor.failed"
           ? "failed"
           : "done";
       const raw = event.data?.rawOutput ? String(event.data.rawOutput) : "";
-      const ok = event.type === "executor.completed";
-      this.finishStatus(ok, ok ? "done" : truncate(summary, 80));
+      const ok =
+        event.type === "executor.completed" && execStatus === "completed";
+      const failLabel =
+        execStatus === "timeout"
+          ? "timed out"
+          : truncate(String(event.data?.error ?? summary), 80);
+      this.finishStatus(ok, ok ? "done" : failLabel);
       const body = preferPlainExecutorText(summary, raw);
       if (body) {
         console.log(`\n  ${c.bold}Executor response${c.reset}`);
