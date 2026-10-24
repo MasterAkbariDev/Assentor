@@ -97,6 +97,11 @@ Phase exit criteria:
 ### T01-04 · Finding agreement counts
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** —
 
+**Status: ✅ done.** Shipped in `fc43032`. Sonnet review PASS, no required changes. Decisions:
+- `severityRank()` extracted from `maxSeverity` (same ordering; unknown values rank last); clustering unchanged.
+- `agreement.total` counts reviewers that produced any finding (not configured seats).
+- `rankCorrelatedFindings` is exported from `src/review/coordinator.ts` only; re-export from `src/review/index.ts` when a consumer needs it (T04-10).
+
 **Goal** — UIs can show "3/4 reviewers flagged `auth.ts:42`".
 
 **Context to read** — `src/review/coordinator.ts:24-33` (`CorrelatedFinding`) and `:252-300` (`correlateFindings`), `tests/unit/multi-agent.test.ts`.

@@ -30,6 +30,8 @@ export interface CorrelatedFinding {
   issueIds: string[];
   affectedFiles: string[];
   evidence: string[];
+  /** How many reviewers flagged this finding, out of all reviewers in the run. */
+  agreement: { count: number; total: number; ratio: number };
 }
 
 export interface ReviewCoordinatorOptions {
@@ -261,6 +263,7 @@ export function correlateFindings(
     }
   }
 
+  const totalAgents = new Set(findings.map((f) => f.agentId)).size;
   const clusters: CorrelatedFinding[] = [];
   const used = new Set<number>();
 
@@ -284,12 +287,14 @@ export function correlateFindings(
     ];
     const evidence = [...new Set(group.flatMap((g) => g.issue.evidence ?? []))];
     const severities = group.map((g) => g.issue.severity);
+    const agentIds = [...new Set(group.map((g) => g.agentId))];
     clusters.push({
       key: clusterKey(seed.issue),
       description: seed.issue.description,
       severity: maxSeverity(severities),
       category: seed.issue.category ?? IssueCategory.Other,
-      agentIds: [...new Set(group.map((g) => g.agentId))],
+      agentIds,
+      agreement: agreementOf(agentIds.length, totalAgents),
       issueIds: group.map((g) => g.issue.id),
       affectedFiles: files,
       evidence,
@@ -297,6 +302,21 @@ export function correlateFindings(
   }
 
   return clusters;
+}
+
+/**
+ * Most severe first, then most agreement first, then key ascending.
+ * Returns a new array; the input is not modified.
+ */
+export function rankCorrelatedFindings(
+  list: CorrelatedFinding[],
+): CorrelatedFinding[] {
+  return [...list].sort(
+    (a, b) =>
+      severityRank(a.severity) - severityRank(b.severity) ||
+      b.agreement.count - a.agreement.count ||
+      (a.key < b.key ? -1 : a.key > b.key ? 1 : 0),
+  );
 }
 
 export function securityVeto(
@@ -582,19 +602,33 @@ function jaccard(a: string[], b: string[]): number {
   return union === 0 ? 0 : inter / union;
 }
 
+const SEVERITY_ORDER = [
+  Severity.Blocker,
+  Severity.Major,
+  Severity.Minor,
+  Severity.Info,
+] as const;
+
+/** Position in the severity order; 0 is most severe. Unknown values rank after every known one. */
+function severityRank(severity: ReviewIssue["severity"]): number {
+  const index = SEVERITY_ORDER.indexOf(severity as (typeof SEVERITY_ORDER)[number]);
+  return index === -1 ? SEVERITY_ORDER.length : index;
+}
+
 function maxSeverity(
   severities: Array<ReviewIssue["severity"]>,
 ): ReviewIssue["severity"] {
-  const order = [
-    Severity.Blocker,
-    Severity.Major,
-    Severity.Minor,
-    Severity.Info,
-  ] as const;
-  for (const s of order) {
-    if (severities.includes(s)) return s;
+  let best: ReviewIssue["severity"] | undefined;
+  for (const s of severities) {
+    const rank = severityRank(s);
+    if (rank === SEVERITY_ORDER.length) continue;
+    if (best === undefined || rank < severityRank(best)) best = s;
   }
-  return Severity.Major;
+  return best ?? Severity.Major;
+}
+
+function agreementOf(count: number, total: number) {
+  return { count, total, ratio: total === 0 ? 0 : count / total };
 }
 
 function averageConfidence(findings: ReviewerFinding[]): number {
