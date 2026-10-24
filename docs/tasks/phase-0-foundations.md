@@ -301,6 +301,11 @@ Phase exit criteria:
 ### T00-09 · Config save must keep `teams`, `modes` and new fields
 **Tier:** 🔴 O · **Review:** O2 + human · **Size:** S · **Depends:** T00-02 (and T00-03 for `executor.model`)
 
+**Status: ✅ done.** Shipped by the planner. O2 review PASS; user signed off. Decisions:
+- `toSerializable` writes every parsed schema section generically (schema order; `project.path` forced to "."; undefined optionals omitted), so new schema fields are saved automatically. A test asserts every top-level schema key is written and a full round trip is exact.
+- `saveAssentorConfig(..., { preserveFromExisting })` keeps listed sections from the file being overwritten; the TUI (`saveGlobalDefaults`) preserves `teams`/`modes` so project-only teams are not copied to `~/.assentor`. An unparseable target file makes the save throw without touching it.
+- Follow-ups (pre-existing): the TUI still copies other merged project values (now incl. `executor.model`) to user scope; writes are not atomic; YAML comments/unknown keys are dropped on save.
+
 **Goal** — Saving config from the TUI (`saveAssentorConfig` → `toSerializable` in `src/config/load.ts`) rebuilds the YAML from a fixed list of fields, so it **silently deletes** a user's `teams`, `modes` and (after T00-03) `executor.model`. Danger #10: user config rewrite.
 
 **Deliverables**

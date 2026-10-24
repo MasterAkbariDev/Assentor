@@ -303,8 +303,11 @@ export async function saveGlobalDefaults(
   services: AssentorServices,
   config: AssentorConfig,
 ): Promise<string> {
+  // The TUI edits a merged user + project config but has no teams/modes editor yet:
+  // keep the user file's own teams/modes so project-only ones aren't copied into it.
   const saved = await saveAssentorConfig(services.projectPath, config, {
     scope: "user",
+    preserveFromExisting: ["teams", "modes"],
   });
   await services.audit.append(
     "agent.updated",

@@ -99,7 +99,7 @@ Legend: 🟢 H · 🟡 S · 🔴 O · Size S/M/L (≈ <150 / 150–500 / >500 ch
 | T00-06 | Output-delta coalescer ✅ | 🟢 H | S | S | T00-01 |
 | T00-07 | Supervisor emits seat-scoped events | 🔴 O | O2 | M | T00-01, T00-05 |
 | T00-08 | CI matrix: macOS + Windows + Linux | 🟡 S | O | S–M | — |
-| T00-09 | Config save keeps `teams`/`modes`/new fields | 🔴 O | O2 + human | S | T00-02 |
+| T00-09 | Config save keeps `teams`/`modes`/new fields ✅ | 🔴 O | O2 + human | S | T00-02 |
 
 ### Phase 1 — Multi-seat review & model selection · [phase-1-review-models.md](./phase-1-review-models.md)
 | ID | Title | Tier | Review | Size | Depends |

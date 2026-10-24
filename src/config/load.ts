@@ -134,64 +134,58 @@ export async function loadAssentorConfig(
 
 export type ConfigSaveScope = "user" | "project";
 
-function toSerializable(config: AssentorConfig) {
-  return {
-    project: { path: "." },
-    executor: { provider: config.executor.provider },
-    run: { mode: config.run.mode },
-    reviewers: config.reviewers.map((r) => ({
-      provider: r.provider,
-      role: r.role,
-      transport: r.transport,
-      ...(r.name ? { name: r.name } : {}),
-      ...(r.model ? { model: r.model } : {}),
-      ...(r.keyId ? { keyId: r.keyId } : {}),
-      ...(r.fallback ? { fallback: r.fallback } : {}),
-    })),
-    routing: {
-      strategy: config.routing.strategy,
-      reviewStrategy: config.routing.reviewStrategy,
-    },
-    models: {
-      default: config.models.default,
-      gemini: config.models.gemini,
-      openai: config.models.openai,
-    },
-    limits: {
-      maxRounds: config.limits.maxRounds,
-      maxMessages: config.limits.maxMessages,
-      maxRuntimeMinutes: config.limits.maxRuntimeMinutes,
-      maxToolCalls: config.limits.maxToolCalls,
-    },
-    git: config.git,
-    security: config.security,
-    artifacts: config.artifacts,
-    binaries: config.binaries,
-    verification: {
-      enabled: config.verification.enabled,
-      commands: { ...config.verification.commands },
-      skipReviewOnFailure: { ...config.verification.skipReviewOnFailure },
-    },
-  };
+/** Top-level sections a caller can ask `saveAssentorConfig` to keep from the existing file. */
+export type PreservableConfigSection = "teams" | "modes";
+
+/**
+ * Every schema section is written, in schema order, so a field added to the
+ * schema is saved without touching this function. `undefined` optionals are
+ * dropped by the YAML writer. `project.path` is always written as "." because
+ * the loader sets it from the directory being loaded.
+ */
+function toSerializable(config: AssentorConfig): Record<string, unknown> {
+  const { project: _project, ...sections } = config;
+  return { project: { path: "." }, ...sections };
 }
 
 /**
  * Persist defaults. TUI saves to the user scope (`~/.assentor/config.yaml`) by default
  * so settings follow you across projects. Use scope "project" for per-repo overrides.
+ *
+ * `preserveFromExisting` keeps those sections exactly as they are in the file
+ * being overwritten (omitting them if the file has none) instead of writing them
+ * from `config`. The TUI uses this because it saves the merged user + project
+ * config to user scope and has no editor for these sections: without it, a
+ * project's teams would be copied into `~/.assentor/config.yaml`.
  */
 export async function saveAssentorConfig(
   projectPath: string,
   config: AssentorConfig,
-  options: { scope?: ConfigSaveScope } = {},
+  options: {
+    scope?: ConfigSaveScope;
+    preserveFromExisting?: readonly PreservableConfigSection[];
+  } = {},
 ): Promise<string> {
   const scope = options.scope ?? "user";
   const configPath =
     scope === "user" ? userConfigPath() : projectConfigPath(projectPath);
 
+  const output = toSerializable(config);
+  if (options.preserveFromExisting?.length) {
+    const existing = (await readYamlFile(configPath)) as Record<string, unknown>;
+    for (const section of options.preserveFromExisting) {
+      if (existing && Object.prototype.hasOwnProperty.call(existing, section)) {
+        output[section] = existing[section];
+      } else {
+        delete output[section];
+      }
+    }
+  }
+
   await fs.mkdir(path.dirname(configPath), { recursive: true });
   await fs.writeFile(
     configPath,
-    stringifyYaml(toSerializable(config), { lineWidth: 100 }),
+    stringifyYaml(output, { lineWidth: 100 }),
     "utf8",
   );
   return configPath;
