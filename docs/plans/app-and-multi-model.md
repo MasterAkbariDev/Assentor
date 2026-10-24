@@ -97,6 +97,10 @@ modes:
 
 ## 4. Feature specs
 
+### 4.0 Session modes (full catalog)
+
+Negotiate (§4.2) and Review (§4.3) are two of **17 session modes**: Solo, Review, Negotiate, **Lead (Supervisor)**, Cascade, Pipeline, Pair, Race, Red team, TDD, Swarm, Debug, Explore, Plan, Interactive, Auto and Watch. Lead mode is the "team lead" AI: it picks agents and models per task, dispatches work, reads structured reports and manages the team without coding itself. **Mode** (how seats are organized) and **autonomy** (manual / supervised / autopilot) become two separate settings. Full design: [modes.md](./modes.md).
+
 ### 4.1 Realtime model selection for CLIs
 
 1. **Per-recipe model flag**: extend `PrintCliRecipe` with `modelFlag` (`--model` for Claude Code/Cursor agent, `-m`/`--model` for Codex/Qwen, `-m provider/model` for OpenCode, verify for `agy`). Each must be verified against the installed CLI version during implementation — don't hardcode assumptions.
@@ -261,6 +265,13 @@ Each phase is shippable on its own.
 - Concurrency limiter + rate-limit queue + budgets per seat.
 - **Exit:** "3× Opus + 2× Codex debate a plan, best-of-N implement, panel review" runs end-to-end from CLI.
 
+### Phase 2b — Lead (Supervisor), Cascade & more modes · ~3–4 wks
+- Mode registry + controller protocol; split "mode" from "autonomy" (old `--mode supervised/autopilot` kept as aliases).
+- **Lead mode**: task board, roster-based agent picking, structured agent reports verified against diffs/gates, policy-checked actions, limits and loop detection.
+- **Cascade mode** with a danger-area classifier (cheap → mid → strong tiers).
+- **Auto** mode router; Pipeline, TDD, Explore, Plan as playbooks; Pair, Red team, Swarm, Debug next.
+- **Exit:** "Lead (Opus) plans a feature, hires Haiku for tests and Sonnet for code, reviews reports, escalates one task to Opus, integrates after approval" runs end-to-end with mocks and manually with real CLIs. Tasks: [phase-2b-modes.md](../tasks/phase-2b-modes.md).
+
 ### Phase 3 — Prompt library & playbooks · ~1–2 wks
 - Prompt file format, loader (built-in → user → project), templating, validation.
 - Ship built-in roles + playbooks listed in §4.5.
@@ -269,7 +280,7 @@ Each phase is shippable on its own.
 
 ### Phase 4 — `assentor serve` + Web UI · ~3–4 wks
 - JSON-RPC/WebSocket server (sessions, seats, prompts, teams, settings) with token auth, reconnect via `seq`.
-- React + Vite UI: Session board, Seat drawer, Negotiation view, Review view, Diff/worktrees, Prompts/Teams/Playbooks editors, Settings.
+- React + Vite UI: Session board, Seat drawer, Negotiation view, Review view, Diff/worktrees, Prompts/Teams/Playbooks editors, Settings, **mode picker** and **Lead team board** (kanban, lead log, org chart).
 - `assentor app` launches server + browser.
 - **Exit:** full session driven and observed from the browser on all 3 OSes.
 
@@ -279,7 +290,7 @@ Each phase is shippable on its own.
 - Installers (`.dmg`, NSIS `.exe`, AppImage/`.deb`); release workflow with signing/notarization.
 
 ### Phase 6 — Extras (pick based on usage)
-- Model scoreboard feeding AUTO routing · session export reports · `assentor review --pr` GitHub Action · MCP server mode · user-defined CLI provider recipes.
+- Model scoreboard feeding AUTO routing and Lead's roster · session export reports · `assentor review --pr` GitHub Action · MCP server mode · user-defined CLI provider recipes · **Watch mode** daemon · **Interactive** team chat (needs Phase 4 UI).
 
 ---
 
@@ -299,6 +310,7 @@ Each phase is shippable on its own.
 4. **Code signing**: do you have / want Apple Developer + Windows signing certificates? (Needed for a smooth desktop install.)
 5. **Scope of v1**: ship Phases 0–3 (CLI/TUI) first as v0.4, then the app as v0.5 — or app-first?
 6. **Model ids**: exact model ids for each CLI (e.g. the Codex model you call "sol") should come from discovery/user config — OK to not hardcode any?
+7. **Modes**: see the four decisions in [modes.md §10](./modes.md) (naming, first-release modes, Lead's default model, auto-integration).
 
 ---
 

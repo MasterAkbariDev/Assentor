@@ -227,3 +227,34 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 3. Ctrl+C stops the server gracefully.
 
 **Tests** — opener command chosen per platform (inject platform); `--no-open` doesn't spawn; URL contains token only in the fragment (`#token=`).
+
+---
+
+### T04-16 · Mode picker (new session)
+**Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T04-06, T02B-01, T02B-08
+
+**Allowed files** — `packages/ui/src/features/mode-picker/*`, tests; modify: the new-session route only.
+
+**Spec**
+1. Grid of mode cards from `modes.list` RPC: title, one-line description, static/dynamic badge, "edits code" badge, recommended team.
+2. Goal textarea; "Suggest" button calls `modes.suggest` (T02B-08 via RPC) and highlights the suggested card with its reasons and alternatives.
+3. Autonomy segmented control (Manual / Supervised / Autopilot) with a one-line explanation of each; Autopilot shows a warning when the mode edits code.
+4. Team picker + cost estimate (T02-10) before "Start".
+
+**Tests** — suggestion highlight, autonomy warning, start sends `session.create` with mode, autonomy and team.
+
+---
+
+### T04-17 · Lead team board view
+**Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T04-06, T02B-18
+
+**Allowed files** — `packages/ui/src/features/lead-board/*`, tests.
+
+**Spec**
+1. Kanban columns from the shared reducer in `@assentor/ui-shared/lead` (T02B-18): Backlog / Assigned / In progress / In review / Accepted / Rejected; cards show task title, owner seat (status icon + model), reassign/escalation counters.
+2. **Lead log** panel: every `lead.action` with reason and ✓/✗ validation result; filter to refused actions.
+3. **Org chart**: lead node → seat nodes with live status icons (simple vertical tree, no graph library).
+4. Controls: approve integration (confirm dialog listing tasks/files), override assignment (pick seat/model → RPC), pin a model for a task, pause/resume lead.
+5. Clicking a card opens that task's reports and the owner's Seat drawer.
+
+**Tests** — columns from fixture stream; refused-actions filter; approve requires confirm; override sends RPC.

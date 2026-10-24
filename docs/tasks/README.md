@@ -12,7 +12,7 @@ This folder turns those plans into **task cards** sized for a model team:
 
 Human sign-off is required on every 🔴 task before merge.
 
-**Totals (Phases 0–5, 58 cards):** 🟢 Haiku 29 · 🟡 Sonnet 11 · 🔴 Opus 18. Haiku cards carry exact files, specs and tests; 🟡/🔴 cards carry goals, deliverables and acceptance and leave design decisions to the stronger model.
+**Totals (Phases 0–5 incl. 2b, 80 cards):** 🟢 Haiku 41 · 🟡 Sonnet 17 · 🔴 Opus 22. Haiku cards carry exact files, specs and tests; 🟡/🔴 cards carry goals, deliverables and acceptance and leave design decisions to the stronger model.
 
 ---
 
@@ -124,6 +124,30 @@ Legend: 🟢 H · 🟡 S · 🔴 O · Size S/M/L (≈ <150 / 150–500 / >500 ch
 | T02-09 | Stage-graph runner (plan → execute → review, tiebreak) | 🔴 O | O2 + human | L | T02-03, T01-03 |
 | T02-10 | Pre-run cost estimator | 🟢 H | S | S | T00-02 |
 
+### Phase 2b — Lead (Supervisor), Cascade & more modes · [phase-2b-modes.md](./phase-2b-modes.md)
+Design: [modes.md](../plans/modes.md)
+| ID | Title | Tier | Review | Size | Depends |
+|---|---|---|---|---|---|
+| T02B-01 | Mode registry, controller contract, autonomy axis | 🔴 O | O2 + human | L | T02-09, T00-09 |
+| T02B-02 | Lead controller (the Supervisor) | 🔴 O | O2 + human | L | T02B-01, 03, 04, 05, T02-01, T02-02 |
+| T02B-03 | Agent report parser + claim verification | 🟢 H | S | M | T02B-01 |
+| T02B-04 | Roster builder | 🟢 H | S | M | T02B-01, T01-01 |
+| T02B-05 | Task board model | 🟢 H | S | M | T02B-01 |
+| T02B-06 | Cascade mode | 🟡 S | O | M | T02B-01, T02B-07, T01-03 |
+| T02B-07 | Danger-area classifier | 🔴 O | O2 | S | T02B-01 |
+| T02B-08 | Auto mode router | 🟢 H | S | S | T02B-01 |
+| T02B-09 | Playbooks: Pipeline, Explore, Plan | 🟢 H | S | S | T02B-01, T03-01, T03-04 |
+| T02B-10 | Mode prompts (lead, navigator, attacker, …) | 🟢 H | O (quality) | M | T03-01, T02B-01 |
+| T02B-11 | TDD mode | 🟡 S | O | M | T02B-01, T02B-12, T02-01 |
+| T02B-12 | Test-tamper detector | 🟢 H | S | S | — |
+| T02B-13 | Pair mode | 🟡 S | O | M | T02B-01, T01-05, T00-06 |
+| T02B-14 | Red-team mode | 🟡 S | O | M | T02B-01, T02-01 |
+| T02B-15 | Swarm mode | 🟡 S | O | L | T02B-01, T02-01, T02-02, T02B-06 |
+| T02B-16 | Debug mode | 🟡 S | O | M | T02B-01, T02-01 |
+| T02B-17 | CLI: `--mode`, `--autonomy`, `assentor modes` | 🟢 H | S | S | T02B-01 |
+| T02B-18 | TUI: Lead team board + lead log | 🟢 H | S | M | T02B-02, T01-06 |
+| T02B-19 | Retro stage | 🟢 H | S | S | T02B-01, T02B-10 |
+
 ### Phase 3 — Prompt library & playbooks · [phase-3-prompts.md](./phase-3-prompts.md)
 | ID | Title | Tier | Review | Size | Depends |
 |---|---|---|---|---|---|
@@ -152,6 +176,8 @@ Legend: 🟢 H · 🟡 S · 🔴 O · Size S/M/L (≈ <150 / 150–500 / >500 ch
 | T04-13 | Settings, Doctor, Onboarding | 🟢 H | S | M | T04-06 |
 | T04-14 | Command palette + keyboard map | 🟢 H | S | S | T04-06 |
 | T04-15 | `assentor app` launcher | 🟢 H | S | S | T04-03 |
+| T04-16 | Mode picker (new session) | 🟢 H | S | S | T04-06, T02B-01, T02B-08 |
+| T04-17 | Lead team board view | 🟢 H | S | M | T04-06, T02B-18 |
 
 ### Phase 5 — Desktop (Tauri) · [phase-5-desktop-tauri.md](./phase-5-desktop-tauri.md)
 | ID | Title | Tier | Review | Size | Depends |
@@ -170,7 +196,7 @@ Legend: 🟢 H · 🟡 S · 🔴 O · Size S/M/L (≈ <150 / 150–500 / >500 ch
 | T05-12 | Updater + signing + release workflow | 🔴 O | O2 + human | L | T05-11 |
 
 ### Phase 6 — Backlog · [phase-6-backlog.md](./phase-6-backlog.md)
-Model scoreboard · session export · PR-review GitHub Action · MCP server mode · user-defined CLI recipes.
+Model scoreboard · session export · PR-review GitHub Action · MCP server mode · user-defined CLI recipes · Watch mode · Interactive mode · scoreboard-driven roster tuning.
 
 ---
 
@@ -185,6 +211,10 @@ T00-01 ─┬─ T00-02 ── T01-02 ── T01-03 ─────────�
 T00-03 ── T01-01                                  ├─ T02-04/05/06/07/08
 T00-04, T00-08, T01-04 (independent)              │
 T03-01 ── T03-02/03/05/06                         │
+T02-09 + T00-09 ── T02B-01 ─┬─ T02B-03/04/05/08/17 (Haiku, parallel) ── T02B-02 (Lead) ── T02B-18
+                            ├─ T02B-07 ── T02B-06 (Cascade) ── T02B-15 (Swarm)
+                            └─ T02B-11/13/14/16, T02B-09/10/19 (after T03-01)
+T02B-12 (independent, Haiku any time)
                                   T04-01 ── T04-02 ─┬─ T04-03 ── T04-15
                                                     ├─ T04-04 / T04-05
                                                     └─ T04-06 ── T04-07…14

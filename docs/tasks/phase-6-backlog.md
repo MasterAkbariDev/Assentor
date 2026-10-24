@@ -12,3 +12,6 @@ Promote an item to a full card (see [templates.md §4](./templates.md)) when it'
 | T06-06 | Unify executor recipes and reviewer CLI adapters | 🔴 O | Touches permission flags for every CLI | Removes duplicate arg builders noted in README §7 |
 | T06-07 | Flatpak / `.rpm` packages | 🟡 S | Packaging only | After T05-11 |
 | T06-08 | i18n of UI strings | 🟢 H | Mechanical | Extract strings first |
+| T06-09 | Watch mode daemon (`assentor watch`, push/PR/CI/schedule triggers) | 🔴 O | Long-running processes, CI tokens | Read-only by default; see modes.md §6 |
+| T06-10 | Interactive mode (team chat with `@seat` routing) | 🟡 S, review O | Needs Phase 4 UI + Lead routing | modes.md §6 |
+| T06-11 | Scoreboard → Lead roster & Cascade tier tuning | 🟡 S, review O | Changes who gets hired | Builds on T06-01 + T02B-19 rows |
