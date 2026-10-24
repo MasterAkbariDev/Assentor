@@ -350,7 +350,11 @@ async function instantiateBackend(
 
   return createReviewer(backend.provider, {
     onStatus: extras.onStatus,
-    model: backend.model ?? resolveReviewerModel(config, backend.provider),
+    // CLI reviewers only use an explicitly configured model; models.* defaults are API-oriented.
+    model:
+      transport === "cli"
+        ? backend.model
+        : (backend.model ?? resolveReviewerModel(config, backend.provider)),
     apiKey: resolvedKey?.secret,
     name: extras.logicalName,
     transport,
@@ -360,11 +364,15 @@ async function instantiateBackend(
           fallback: {
             transport: backend.fallback.transport,
             provider: backend.fallback.provider,
+            // A CLI fallback uses only its own model. "AUTO" (not undefined) stops
+            // createReviewer from inheriting the primary's model.
             model:
-              backend.fallback.model ??
-              (fallbackProvider
-                ? resolveReviewerModel(config, fallbackProvider)
-                : undefined),
+              fallbackTransport === "cli"
+                ? (backend.fallback.model ?? "AUTO")
+                : (backend.fallback.model ??
+                  (fallbackProvider
+                    ? resolveReviewerModel(config, fallbackProvider)
+                    : undefined)),
             apiKey: fallbackKey?.secret,
           },
         }
