@@ -163,6 +163,11 @@ Phase exit criteria:
 ### T00-04 · Pass `model` through CLI reviewers (bug fix)
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** —
 
+**Status: ✅ done.** Shipped in `932bc38` + `ec249d0`. Sonnet review PASS, no required changes; planner mutation check confirmed the three leak tests fail without the fix. Decisions:
+- CLI-transport reviewers use only an explicitly configured model (`backend.model`, `fallback.model`); they never inherit `models.default/gemini/openai`. API reviewers unchanged.
+- A CLI fallback with no `fallback.model` passes `"AUTO"` (not undefined), because `createReviewer` does `fallback.model ?? options.model` and would otherwise inherit the primary's model.
+- Blank/AUTO add no flag (shared `requestedModel` from `cli-print/recipes.ts`). An injected test transport ignores `model` (test-only path).
+
 **Goal** — A reviewer configured as `{ provider: claude, transport: cli, model: opus }` actually runs Opus. Today `model` is silently dropped for CLI transport.
 
 **Context to read**
@@ -171,7 +176,7 @@ Phase exit criteria:
 - `tests/unit/cli-reviewer.test.ts`
 
 **Allowed files**
-- modify: `src/providers/reviewers/cli/index.ts`, `src/cli/commands.ts` (only `createReviewerTransport` CLI branch), `tests/unit/cli-reviewer.test.ts`
+- modify: `src/providers/reviewers/cli/index.ts`, `src/cli/commands.ts` (only `createReviewerTransport` CLI branch, plus — added after Haiku's escalation — the two reviewer-model resolution call sites so CLI reviewers never inherit `models.default/gemini/openai`), `tests/unit/cli-reviewer.test.ts`
 
 **Spec**
 1. Add `model?: string` to the `CliReviewer` constructor options; store it.
