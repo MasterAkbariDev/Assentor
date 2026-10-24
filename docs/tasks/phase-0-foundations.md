@@ -245,6 +245,11 @@ Phase exit criteria:
 ### T00-06 · Output-delta coalescer
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T00-01
 
+**Status: ✅ done.** Shipped in `8d491d8` + `2973e0c`. Sonnet review PASS; planner required an error-routing round. Decisions:
+- Timer-path emit errors (sync throws and rejected Promises) go to `onError` (default: one stderr line); nothing throws out of a timer callback. Explicit `push` overflow / `flush(seatId)` rethrow sync errors to the caller.
+- `dispose()` is atomic: marks disposed, flushes every seat, clears all timers, then throws the first error or an `AggregateError`. `push` after dispose throws.
+- `now` is accepted but unused (timer-driven); empty pushes are no-ops. Callers must pass an `onError` that does not throw (T00-07 does).
+
 **Goal** — Batch high-frequency `seat.output.delta` text per seat into frames so UIs stay smooth.
 
 **Context to read** — `src/protocol/events.ts` (T00-01), desktop design §4.2.
