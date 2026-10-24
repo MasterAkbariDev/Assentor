@@ -1,7 +1,10 @@
 /**
  * Test-tamper detection for TDD mode (T02B-12). Pure functions, no I/O.
  *
- * Paths are repo-relative. Backslashes are normalized to "/" before matching.
+ * Paths are repo-relative. Backslashes are normalized to "/" and a leading "./"
+ * is stripped before matching. Glob matching (isTestFile, lockTests) is case-sensitive;
+ * the tamper comparison in detectTamper is case-insensitive, because macOS and
+ * Windows filesystems are. Tampered entries keep the coder's spelling.
  * Glob rules:
  * - `**` followed by `/` matches zero or more path segments.
  * - A trailing `/**` matches anything under that directory.
@@ -36,7 +39,7 @@ export interface TamperResult {
 }
 
 export function normalizePath(filePath: string): string {
-  return filePath.replace(/\\/g, "/");
+  return filePath.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
 }
 
 /** Whether a repo-relative path matches any test pattern (default: DEFAULT_TEST_PATTERNS). */
@@ -56,14 +59,21 @@ export function lockTests(
   return testWriterChangedFiles.filter((file) => isTestFile(file, patterns));
 }
 
-/** A locked test changed by the coder and not in `approvedChanges` is tampered. */
+/**
+ * A locked test changed by the coder and not in `approvedChanges` is tampered.
+ * Comparison is case-insensitive; each file is reported once, with the coder's spelling.
+ */
 export function detectTamper(input: TamperInput): TamperResult {
-  const locked = new Set(input.lockedTests.map(normalizePath));
-  const approved = new Set((input.approvedChanges ?? []).map(normalizePath));
+  const key = (filePath: string) => normalizePath(filePath).toLowerCase();
+  const locked = new Set(input.lockedTests.map(key));
+  const approved = new Set((input.approvedChanges ?? []).map(key));
 
   const tampered: string[] = [];
+  const reported = new Set<string>();
   for (const changed of input.coderChangedFiles.map(normalizePath)) {
-    if (locked.has(changed) && !approved.has(changed) && !tampered.includes(changed)) {
+    const id = changed.toLowerCase();
+    if (locked.has(id) && !approved.has(id) && !reported.has(id)) {
+      reported.add(id);
       tampered.push(changed);
     }
   }

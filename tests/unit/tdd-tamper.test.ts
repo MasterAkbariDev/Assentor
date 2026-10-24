@@ -4,6 +4,7 @@ import {
   detectTamper,
   isTestFile,
   lockTests,
+  normalizePath,
 } from "../../src/modes/tdd/tamper.js";
 
 describe("isTestFile default patterns", () => {
@@ -132,5 +133,108 @@ describe("detectTamper", () => {
         coderChangedFiles: ["tests/a.ts", "tests/a.ts"],
       }),
     ).toEqual({ tampered: ["tests/a.ts"], ok: false });
+  });
+});
+
+describe("leading ./ is stripped", () => {
+  it("normalizePath strips one, repeated, and backslash-form ./ prefixes", () => {
+    expect(normalizePath("./tests/a.ts")).toBe("tests/a.ts");
+    expect(normalizePath("././tests/a.ts")).toBe("tests/a.ts");
+    expect(normalizePath(".\\tests\\a.ts")).toBe("tests/a.ts");
+    expect(normalizePath(".github/x.yml")).toBe(".github/x.yml");
+  });
+
+  it("isTestFile matches single, repeated, and backslash ./ paths", () => {
+    expect(isTestFile("./tests/a.ts")).toBe(true);
+    expect(isTestFile("././tests/a.ts")).toBe(true);
+    expect(isTestFile(".\\tests\\a.ts")).toBe(true);
+    expect(isTestFile("./src/footest.ts")).toBe(false);
+  });
+
+  it("detectTamper treats ./ forms of a locked test as the same file", () => {
+    expect(
+      detectTamper({ lockedTests: ["tests/a.ts"], coderChangedFiles: ["./tests/a.ts"] }),
+    ).toEqual({ tampered: ["tests/a.ts"], ok: false });
+    expect(
+      detectTamper({ lockedTests: ["tests/a.ts"], coderChangedFiles: ["././tests/a.ts"] }),
+    ).toEqual({ tampered: ["tests/a.ts"], ok: false });
+    expect(
+      detectTamper({ lockedTests: ["tests/a.ts"], coderChangedFiles: [".\\tests\\a.ts"] }),
+    ).toEqual({ tampered: ["tests/a.ts"], ok: false });
+  });
+
+  it("a ./ prefix on lockedTests or approvedChanges still matches", () => {
+    expect(
+      detectTamper({
+        lockedTests: ["./tests/a.ts"],
+        coderChangedFiles: ["tests/a.ts"],
+        approvedChanges: ["././tests/a.ts"],
+      }),
+    ).toEqual({ tampered: [], ok: true });
+  });
+});
+
+describe("case-insensitive tamper comparison", () => {
+  it("a case variant of a locked test is tampered and keeps the coder's spelling", () => {
+    expect(
+      detectTamper({
+        lockedTests: ["tests/a.test.ts"],
+        coderChangedFiles: ["Tests/A.test.ts"],
+      }),
+    ).toEqual({ tampered: ["Tests/A.test.ts"], ok: false });
+  });
+
+  it("an approval in a different case approves the locked test", () => {
+    expect(
+      detectTamper({
+        lockedTests: ["tests/a.test.ts"],
+        coderChangedFiles: ["tests/a.test.ts"],
+        approvedChanges: ["TESTS/a.test.ts"],
+      }),
+    ).toEqual({ tampered: [], ok: true });
+  });
+
+  it("case variants are de-duplicated, keeping the first spelling in coder order", () => {
+    expect(
+      detectTamper({
+        lockedTests: ["tests/a.test.ts", "tests/b.test.ts"],
+        coderChangedFiles: ["Tests/A.test.ts", "tests/a.test.ts", "TESTS/B.TEST.TS", "tests/b.test.ts"],
+      }),
+    ).toEqual({ tampered: ["Tests/A.test.ts", "TESTS/B.TEST.TS"], ok: false });
+  });
+
+  it("glob matching stays case-sensitive", () => {
+    expect(isTestFile("Tests/a.ts")).toBe(false);
+    expect(isTestFile("Tests/a.ts", ["tests/**"])).toBe(false);
+  });
+});
+
+describe("backslash paths in lockedTests and approvedChanges", () => {
+  it("a backslash locked test matches a slash change", () => {
+    expect(
+      detectTamper({ lockedTests: ["tests\\a.ts"], coderChangedFiles: ["tests/a.ts"] }),
+    ).toEqual({ tampered: ["tests/a.ts"], ok: false });
+  });
+
+  it("a backslash approval matches a slash change", () => {
+    expect(
+      detectTamper({
+        lockedTests: ["tests/a.ts"],
+        coderChangedFiles: ["tests/a.ts"],
+        approvedChanges: ["tests\\a.ts"],
+      }),
+    ).toEqual({ tampered: [], ok: true });
+  });
+});
+
+describe("literal . and [ in custom patterns", () => {
+  it("a . in a pattern matches only a literal dot", () => {
+    expect(isTestFile("spec.d/a.ts", ["spec.d/**"])).toBe(true);
+    expect(isTestFile("specXd/a.ts", ["spec.d/**"])).toBe(false);
+  });
+
+  it("a [ in a pattern is literal, not a character class", () => {
+    expect(isTestFile("fixtures[1]/a.ts", ["fixtures[1]/**"])).toBe(true);
+    expect(isTestFile("fixtures1/a.ts", ["fixtures[1]/**"])).toBe(false);
   });
 });
