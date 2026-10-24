@@ -58,6 +58,12 @@ Phase exit criteria:
 ### T00-02 · Config schema: `teams`, `modes`, legacy mapping
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T00-01
 
+**Status: ✅ done.** Shipped in `3bf3337` with fixes in `5ae96a6` (`src/config/teams.ts`, `src/config/schema.ts`, `tests/unit/config-teams.test.ts`). Re-review passed. Decisions:
+- Legacy `gemini` reviewers on `cli` map to `antigravity`, as v0.3.19 ran them.
+- An unsupported legacy transport throws a readable error naming the reviewer index and supported transport; no coercion.
+- `modes.negotiate.team` is validated in `resolveTeams` as well as `modes.review.team`.
+- The plan §3 `modes.review.strategy` key is not in `ReviewModeSchema`, so it is stripped. Planner to decide whether to add it.
+
 **Goal** — Users can declare teams in config. Configs without teams keep working exactly as before by being mapped to equivalent teams.
 
 **Context to read**
