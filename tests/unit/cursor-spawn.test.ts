@@ -1,5 +1,46 @@
 import { describe, expect, it } from "vitest";
-import { defaultSpawn } from "../../src/providers/executors/cursor/index.js";
+import { createEmptyContract } from "../../src/index.js";
+import {
+  CursorExecutor,
+  defaultSpawn,
+} from "../../src/providers/executors/cursor/index.js";
+
+async function cursorArgs(options: { model?: string; extraArgs?: string[] }): Promise<string[]> {
+  let args: string[] = [];
+  const executor = new CursorExecutor({
+    binary: "/tmp/cursor",
+    outputFormat: "text",
+    ...options,
+    spawnFn: async (request) => {
+      args = request.args;
+      return { code: 0, stdout: "ok", stderr: "" };
+    },
+  });
+  await executor.run({
+    taskId: "t1",
+    projectPath: process.cwd(),
+    contract: createEmptyContract("goal"),
+    prompt: "goal",
+  });
+  return args;
+}
+
+describe("CursorExecutor model flag", () => {
+  it("passes --model right before the prompt", async () => {
+    const args = await cursorArgs({ model: "opus" });
+    expect(args.slice(-3)).toEqual(["--model", "opus", "goal"]);
+  });
+
+  it("places --model immediately before extraArgs", async () => {
+    const args = await cursorArgs({ model: "opus", extraArgs: ["--x"] });
+    expect(args.slice(-4)).toEqual(["--model", "opus", "--x", "goal"]);
+  });
+
+  it("adds no --model for AUTO or an unset model", async () => {
+    expect(await cursorArgs({ model: "AUTO" })).not.toContain("--model");
+    expect(await cursorArgs({})).not.toContain("--model");
+  });
+});
 
 describe("defaultSpawn", () => {
   it("returns after a stream result even if the child ignores SIGTERM", async () => {

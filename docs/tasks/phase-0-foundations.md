@@ -112,6 +112,11 @@ Phase exit criteria:
 ### T00-03 · Model flag for CLI executor recipes
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** —
 
+**Status: ✅ done.** Shipped in `02ef4c1` + `4e12bc8`. Sonnet review PASS, no required changes. Decisions:
+- `src/executors/adapters.ts` was added to Allowed files mid-task (the registry builder lives there); only the `model` field and its forwarding changed.
+- Precedence: `--executor-model` flag > `config.executor.model` > unset, on both run and resume, via exported `resolveExecutorModel`. Values are trimmed; a blank flag falls back to config; an explicit `AUTO` flag overrides config and passes no model flag.
+- Permission/unattended flags unchanged and still first. Follow-ups (optional, not scheduled): a `continue()` model test and a `createExecutor("cursor")` model test.
+
 **Goal** — Executors launched through CLIs can be told which model to use.
 
 **Verified flags (dev machine, 2026-10-24)** — `claude --model <m>`, `codex exec -m <m>` (also `--model`), `agy --model <m>`, `cursor agent --model <m>`. Qwen/OpenCode: **unverified** — leave `modelFlag` undefined for them.
@@ -125,7 +130,7 @@ Phase exit criteria:
 - `tests/unit/print-cli-executor.test.ts`, `tests/unit/cursor-spawn.test.ts`
 
 **Allowed files**
-- modify: `recipes.ts`, `cli-print/index.ts`, `cursor/index.ts` (only `CursorExecutorOptions` + `buildArgs`), `src/executors/registry.ts`, `src/cli/commands.ts` (only `createExecutor` options + its call sites in `runRun`/resume), `src/cli/index.ts` (only `run`/`resume` options), `src/config/schema.ts` (only `executor` object)
+- modify: `recipes.ts`, `cli-print/index.ts`, `cursor/index.ts` (only `CursorExecutorOptions` + `buildArgs`), `src/executors/registry.ts`, `src/executors/adapters.ts` (only `ExecutorRuntimeOptions.model` and forwarding it through the adapter constructors / `buildExecutorRegistry` — added after Haiku's escalation; the original card missed that the registry builder lives here), `src/cli/commands.ts` (only `createExecutor` options + its call sites in `runRun`/resume), `src/cli/index.ts` (only `run`/`resume` options), `src/config/schema.ts` (only `executor` object)
 - modify tests: `tests/unit/print-cli-executor.test.ts`, `tests/unit/cursor-spawn.test.ts`
 
 **Spec**

@@ -27,6 +27,7 @@ import type {
 import {
   buildPrintCliArgs,
   PRINT_CLI_RECIPES,
+  requestedModel,
   type PrintCliRecipe,
 } from "./recipes.js";
 import { TextLineStreamParser } from "./text-stream.js";
@@ -66,6 +67,8 @@ export type PrintCliSpawnFn = (
 
 export interface PrintCliExecutorOptions {
   recipe: PrintCliRecipe;
+  /** Model id passed as the recipe's `modelFlag`. `AUTO`, empty, or unset means the CLI default. */
+  model?: string;
   binary?: string;
   timeoutMs?: number;
   resultGraceMs?: number;
@@ -77,6 +80,8 @@ export interface PrintCliExecutorOptions {
 export class PrintCliExecutor implements Executor {
   readonly name: string;
   private readonly recipe: PrintCliRecipe;
+  private readonly model?: string;
+  private modelWarningSent = false;
   private readonly timeoutMs: number;
   private readonly resultGraceMs: number;
   private readonly spawnFn: PrintCliSpawnFn;
@@ -91,6 +96,7 @@ export class PrintCliExecutor implements Executor {
 
   constructor(options: PrintCliExecutorOptions) {
     this.recipe = options.recipe;
+    this.model = options.model;
     this.name = options.recipe.name;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.resultGraceMs = options.resultGraceMs ?? DEFAULT_RESULT_GRACE_MS;
@@ -165,7 +171,16 @@ export class PrintCliExecutor implements Executor {
         options.isContinuation === true &&
         !this.sessionId &&
         Boolean(this.recipe.continueFlag),
+      model: this.model,
     });
+
+    if (requestedModel(this.model) && !this.recipe.modelFlag && !this.modelWarningSent) {
+      this.modelWarningSent = true;
+      this.onStatus?.({
+        activity: "warning",
+        detail: `${this.name} does not support model selection; using CLI default`,
+      });
+    }
 
     const useStreamJson = this.recipe.outputFormat === "stream-json";
     const streamParser = useStreamJson

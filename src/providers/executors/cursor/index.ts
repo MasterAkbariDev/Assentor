@@ -76,6 +76,8 @@ export interface CursorExecutorOptions {
    */
   outputFormat?: CursorOutputFormat;
   apiKey?: string;
+  /** Model id passed as `--model`. `AUTO`, empty, or unset means the CLI default. */
+  model?: string;
   /** Extra CLI args appended before the prompt. */
   extraArgs?: string[];
   /** Injectable process runner for tests. */
@@ -117,6 +119,7 @@ export class CursorExecutor implements Executor {
   private readonly outputFormat: CursorOutputFormat;
   private readonly apiKey?: string;
   private readonly extraArgs: string[];
+  private readonly model?: string;
   private readonly spawnFn: CursorSpawnFn;
   private readonly onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   private readonly onStatus?: (status: AgentStatusUpdate) => void;
@@ -144,6 +147,7 @@ export class CursorExecutor implements Executor {
       "stream-json";
     this.apiKey = options.apiKey ?? process.env.CURSOR_API_KEY;
     this.extraArgs = options.extraArgs ?? [];
+    this.model = options.model;
     this.spawnFn = options.spawnFn ?? defaultSpawn;
     this.onOutput = options.onOutput;
     this.onStatus = options.onStatus;
@@ -444,6 +448,11 @@ export class CursorExecutor implements Executor {
 
     if (isContinuation) {
       args.push("--resume", this.sessionId);
+    }
+
+    const model = this.model?.trim();
+    if (model && model !== "AUTO") {
+      args.push("--model", model);
     }
 
     args.push(...this.extraArgs);

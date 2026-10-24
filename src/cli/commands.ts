@@ -53,6 +53,8 @@ export interface RunAssentorInput {
   projectPath: string;
   prompt: string;
   executor?: string;
+  /** Executor model; overrides `config.executor.model`. */
+  executorModel?: string;
   reviewer?: string;
   maxRounds?: number;
   maxMessages?: number;
@@ -74,6 +76,7 @@ export async function createExecutor(
       detail: string;
     }) => void;
     timeoutMs?: number;
+    model?: string;
   } = {},
 ): Promise<Executor> {
   const { withAssentorGitignore } = await import(
@@ -93,6 +96,7 @@ export async function createExecutor(
       onOutput: options.onOutput,
       onStatus: options.onStatus,
       timeoutMs: options.timeoutMs,
+      model: options.model,
     });
     const adapter = registry.get(id);
     if (!adapter) {
@@ -108,6 +112,18 @@ export async function createExecutor(
   }
 
   return withAssentorGitignore(executor);
+}
+
+/**
+ * Executor model precedence: the `--executor-model` flag, then
+ * `config.executor.model`, then unset (the CLI default). A flag of `AUTO`
+ * still wins over config and adds no model flag.
+ */
+export function resolveExecutorModel(
+  flag: string | undefined,
+  configModel: string | undefined,
+): string | undefined {
+  return flag?.trim() || configModel?.trim() || undefined;
 }
 
 export interface CreateReviewerOptions {
@@ -464,6 +480,7 @@ async function runAssentorTaskBody(
   const executor = await createExecutor(executorProvider, projectPath, {
     onStatus: (status) => reporter.onExecutorStatus(status),
     timeoutMs: config.limits.maxRuntimeMinutes * 60_000,
+    model: resolveExecutorModel(input.executorModel, config.executor.model),
   });
   slots.setExecutor(executor);
 
@@ -575,6 +592,8 @@ export async function resumeAssentorTask(input: {
   verbose?: boolean;
   maxRounds?: number;
   maxMessages?: number;
+  /** Executor model; overrides `config.executor.model`. */
+  executorModel?: string;
 }) {
   const projectPath = path.resolve(input.projectPath);
   const reporter = new RunReporter({
@@ -668,6 +687,7 @@ export async function resumeAssentorTask(input: {
     executor = await createExecutor(executorProvider, projectPath, {
       onStatus: (status) => reporter.onExecutorStatus(status),
       timeoutMs: config.limits.maxRuntimeMinutes * 60_000,
+      model: resolveExecutorModel(input.executorModel, config.executor.model),
     });
 
     const { members: memberReviewers, reviewStrategy } =

@@ -22,6 +22,8 @@ export interface ExecutorRuntimeOptions {
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   onStatus?: (status: { activity: string; detail: string }) => void;
   timeoutMs?: number;
+  /** Model id for the CLI's model flag. `AUTO`, empty, or unset means the CLI default. */
+  model?: string;
 }
 
 export class CursorExecutorAdapter implements ExecutorAdapter {
@@ -204,6 +206,7 @@ export function createPrintCliExecutor(
   }
   return new PrintCliExecutor({
     recipe,
+    model: options.model,
     timeoutMs: options.timeoutMs,
     onOutput: options.onOutput,
     onStatus: options.onStatus,

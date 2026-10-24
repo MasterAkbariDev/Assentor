@@ -91,7 +91,7 @@ Legend: 🟢 H · 🟡 S · 🔴 O · Size S/M/L (≈ <150 / 150–500 / >500 ch
 |---|---|---|---|---|---|
 | T00-01 | Seat/Team/Session contract + event envelope ✅ | 🔴 O | O2 + human | M | — |
 | T00-02 | Config schema: `teams`, `modes`, legacy mapping ✅ | 🟢 H | S | M | T00-01 |
-| T00-03 | Model flag for CLI executor recipes | 🟢 H | S | S | — |
+| T00-03 | Model flag for CLI executor recipes ✅ | 🟢 H | S | S | — |
 | T00-04 | Pass `model` through CLI reviewers (bug fix) | 🟢 H | S | S | — |
 | T00-05 | Append-only session event log (NDJSON + seq) ✅ | 🟢 H | S | M | T00-01 |
 | T00-06 | Output-delta coalescer | 🟢 H | S | S | T00-01 |

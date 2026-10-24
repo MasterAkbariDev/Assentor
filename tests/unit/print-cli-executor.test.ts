@@ -1,10 +1,40 @@
-import { describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildPrintCliArgs,
   PRINT_CLI_RECIPES,
   PrintCliExecutor,
   createEmptyContract,
 } from "../../src/index.js";
+import {
+  createExecutor,
+  resolveExecutorModel,
+} from "../../src/cli/commands.js";
+
+// Captures what the real default spawn would launch, without starting any CLI.
+const spawned = vi.hoisted(() => [] as Array<{ command: string; args: string[] }>);
+
+vi.mock("../../src/executors/cli-locator.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/executors/cli-locator.js")>();
+  return {
+    ...actual,
+    locateBinary: () => "/fake/bin",
+    spawnCliProcess: (command: string, args: string[]) => {
+      spawned.push({ command, args });
+      const child = new EventEmitter() as unknown as EventEmitter & {
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+      };
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      setImmediate(() => child.emit("close", 0, null));
+      return child;
+    },
+  };
+});
 
 describe("print-mode CLI recipes", () => {
   it("builds Antigravity print args with stream-json and attached prompt", () => {
@@ -205,5 +235,172 @@ describe("print-mode CLI recipes", () => {
 
     expect(result.status).toBe("completed");
     expect(statuses.some((s) => s.includes("Running lint"))).toBe(true);
+  });
+});
+
+describe("print-mode CLI model selection", () => {
+  it("claude-code puts --model before the prompt, which stays last", () => {
+    const args = buildPrintCliArgs(PRINT_CLI_RECIPES["claude-code"]!, "Implement average", {
+      model: "opus",
+    });
+    expect(args).toEqual([
+      "--dangerously-skip-permissions",
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--model",
+      "opus",
+      "Implement average",
+    ]);
+  });
+
+  it("codex builds exec, skip-git-repo-check, -m, then the prompt", () => {
+    expect(
+      buildPrintCliArgs(PRINT_CLI_RECIPES.codex!, "Do it", { model: "gpt-5" }),
+    ).toEqual([
+      "--dangerously-bypass-approvals-and-sandbox",
+      "exec",
+      "--skip-git-repo-check",
+      "-m",
+      "gpt-5",
+      "Do it",
+    ]);
+  });
+
+  it("antigravity puts --model right before the attached -p= prompt", () => {
+    const args = buildPrintCliArgs(PRINT_CLI_RECIPES.antigravity!, "Fix the tests", {
+      model: "opus",
+    });
+    expect(args.slice(-4)).toEqual([
+      "stream-json",
+      "--model",
+      "opus",
+      "-p=Fix the tests",
+    ]);
+  });
+
+  it("AUTO, blank, whitespace-only, and undefined add no model flag", () => {
+    const recipe = PRINT_CLI_RECIPES["claude-code"]!;
+    const plain = buildPrintCliArgs(recipe, "Task");
+    for (const model of ["AUTO", "", "   ", undefined]) {
+      expect(buildPrintCliArgs(recipe, "Task", { model })).toEqual(plain);
+    }
+    expect(plain).not.toContain("--model");
+  });
+
+  it("passes the model through run() to the spawned args", async () => {
+    let captured: string[] = [];
+    const executor = new PrintCliExecutor({
+      recipe: PRINT_CLI_RECIPES["claude-code"]!,
+      binary: "/tmp/claude",
+      model: "opus",
+      spawnFn: async (request) => {
+        captured = request.args;
+        return { code: 0, stdout: "done", stderr: "" };
+      },
+    });
+    await executor.run({
+      taskId: "t1",
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("goal"),
+      prompt: "goal",
+    });
+    expect(captured.slice(-3)).toEqual(["--model", "opus", "goal"]);
+  });
+
+  it("warns once and leaves args unchanged for a recipe without a model flag", async () => {
+    const warnings: string[] = [];
+    const argsSeen: string[][] = [];
+    const executor = new PrintCliExecutor({
+      recipe: PRINT_CLI_RECIPES.qwen!,
+      binary: "/tmp/qwen",
+      model: "qwen-max",
+      onStatus: (status) => {
+        if (status.activity === "warning") {
+          warnings.push(status.detail);
+        }
+      },
+      spawnFn: async (request) => {
+        argsSeen.push(request.args);
+        return { code: 0, stdout: "done", stderr: "" };
+      },
+    });
+    const task = {
+      taskId: "t1",
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("goal"),
+      prompt: "goal",
+    };
+    await executor.run(task);
+    await executor.run({ ...task, taskId: "t2" });
+
+    expect(warnings).toEqual([
+      "Qwen Code does not support model selection; using CLI default",
+    ]);
+    expect(argsSeen[0]).toEqual(buildPrintCliArgs(PRINT_CLI_RECIPES.qwen!, "goal"));
+    expect(argsSeen[1]).toEqual(argsSeen[0]);
+  });
+});
+
+describe("executor model through createExecutor", () => {
+  let projectDir: string;
+
+  beforeEach(async () => {
+    spawned.length = 0;
+    projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "model-flag-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(projectDir, { recursive: true, force: true });
+  });
+
+  async function runWithModel(provider: string, model: string | undefined) {
+    const executor = await createExecutor(provider, projectDir, { model });
+    await executor.run({
+      taskId: "t1",
+      projectPath: projectDir,
+      contract: createEmptyContract("goal"),
+      prompt: "goal",
+    });
+    return spawned.at(-1)!.args;
+  }
+
+  it("claude-code gets --model before the prompt", async () => {
+    const args = await runWithModel("claude-code", "opus");
+    expect(args.slice(-3)).toEqual(["--model", "opus", "goal"]);
+  });
+
+  it("codex gets -m before the prompt, after exec", async () => {
+    const args = await runWithModel("codex", "gpt-5");
+    expect(args.slice(-5)).toEqual(["exec", "--skip-git-repo-check", "-m", "gpt-5", "goal"]);
+  });
+
+  it("AUTO and unset add no model flag", async () => {
+    for (const model of ["AUTO", undefined]) {
+      const args = await runWithModel("claude-code", model);
+      expect(args).not.toContain("--model");
+      expect(args.at(-1)).toBe("goal");
+    }
+  });
+
+  it("the --executor-model flag overrides config.executor.model", async () => {
+    const model = resolveExecutorModel("opus", "sonnet");
+    const args = await runWithModel("claude-code", model);
+    expect(args.slice(-3)).toEqual(["--model", "opus", "goal"]);
+    expect(args).not.toContain("sonnet");
+  });
+
+  it("config.executor.model is used when there is no flag", async () => {
+    const model = resolveExecutorModel(undefined, "sonnet");
+    const args = await runWithModel("claude-code", model);
+    expect(args.slice(-3)).toEqual(["--model", "sonnet", "goal"]);
+  });
+
+  it("resolveExecutorModel: flag, then config, then unset; blank flag falls back", () => {
+    expect(resolveExecutorModel("opus", "sonnet")).toBe("opus");
+    expect(resolveExecutorModel("AUTO", "sonnet")).toBe("AUTO");
+    expect(resolveExecutorModel(undefined, "sonnet")).toBe("sonnet");
+    expect(resolveExecutorModel("   ", "sonnet")).toBe("sonnet");
+    expect(resolveExecutorModel(undefined, undefined)).toBeUndefined();
   });
 });
