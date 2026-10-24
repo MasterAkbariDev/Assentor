@@ -8,6 +8,8 @@ import {
   EXECUTOR_PROVIDER_IDS,
   normalizeExecutorProvider,
 } from "../executors/providers.js";
+import { NegotiateModeSchema, ReviewModeSchema } from "./teams.js";
+import { TeamSchema } from "../core/seats.js";
 
 const ExecutorProviderSchema = z.preprocess(
   (value) =>
@@ -83,6 +85,13 @@ export const AssentorConfigSchema = z.object({
       }),
     )
     .default([{ provider: "mock", role: "general", transport: "api" }]),
+  teams: z.record(z.string().min(1), TeamSchema).default({}),
+  modes: z
+    .object({
+      negotiate: NegotiateModeSchema.optional(),
+      review: ReviewModeSchema.optional(),
+    })
+    .default({}),
   routing: z
     .object({
       strategy: z
