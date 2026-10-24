@@ -115,7 +115,7 @@ Phase exit criteria:
 **Status: ✅ done.** Shipped in `02ef4c1` + `4e12bc8`. Sonnet review PASS, no required changes. Decisions:
 - `src/executors/adapters.ts` was added to Allowed files mid-task (the registry builder lives there); only the `model` field and its forwarding changed.
 - Precedence: `--executor-model` flag > `config.executor.model` > unset, on both run and resume, via exported `resolveExecutorModel`. Values are trimmed; a blank flag falls back to config; an explicit `AUTO` flag overrides config and passes no model flag.
-- Permission/unattended flags unchanged and still first. Follow-ups (optional, not scheduled): a `continue()` model test and a `createExecutor("cursor")` model test.
+- Permission/unattended flags unchanged and still first. Follow-ups: a `continue()` model test and a `createExecutor("cursor")` model test — ✅ done in FU-01 (`4f71d0b`).
 
 **Goal** — Executors launched through CLIs can be told which model to use.
 
