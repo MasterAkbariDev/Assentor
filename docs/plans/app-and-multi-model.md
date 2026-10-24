@@ -90,7 +90,7 @@ teams:
 
 modes:
   negotiate: { team: heavy-negotiators, strategy: debate, maxRounds: 3, consensus: 0.7 }
-  review:    { team: review-panel, strategy: panel, tiebreak: negotiate }
+  review:    { team: review-panel, policy: security-veto, tiebreak: negotiate }
 ```
 
 ---

@@ -271,6 +271,20 @@ Phase exit criteria:
 
 ---
 
+### T00-09 · Config save must keep `teams`, `modes` and new fields
+**Tier:** 🔴 O · **Review:** O2 + human · **Size:** S · **Depends:** T00-02 (and T00-03 for `executor.model`)
+
+**Goal** — Saving config from the TUI (`saveAssentorConfig` → `toSerializable` in `src/config/load.ts`) rebuilds the YAML from a fixed list of fields, so it **silently deletes** a user's `teams`, `modes` and (after T00-03) `executor.model`. Danger #10: user config rewrite.
+
+**Deliverables**
+1. `toSerializable` writes `teams`, `modes` and `executor.model` (only when set), in a stable order.
+2. Round-trip test: parse → save → load yields an equal config for a file containing every schema section, so the next added field without a serializer change fails CI.
+3. Saving at user scope must not copy project-only teams into `~/.assentor/config.yaml` (document what the TUI passes today and test it).
+
+**Acceptance** — round-trip test green; a config with teams survives a TUI "Configure → Save".
+
+---
+
 ### T00-08 · CI matrix: macOS + Windows + Linux
 **Tier:** 🟡 S · **Review:** O · **Size:** S–M · **Depends:** —
 
