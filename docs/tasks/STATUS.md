@@ -44,7 +44,7 @@ For each Haiku card:
 
 ## 4. Progress
 
-**Phase 0 — 7 of 9 done · Phase 1 — 2 of 7 done · Phase 2 — 1 done · Phase 2b — 1 done · overall 11 of 80 cards (plus 11 backlog, FU-01 follow-ups done).**
+**Phase 0 — 8 of 9 done · Phase 1 — 2 of 7 · Phase 2 — 1 of 10 · Phase 2b — 1 of 19 · Phases 3–5 — 0 of 35 · overall 12 of 80 cards (plus 11 backlog; FU-01 done).**
 
 | Card | Status | Where |
 |---|---|---|
@@ -60,18 +60,19 @@ For each Haiku card:
 | T02-10 Pre-run cost estimator | ✅ merged | `cec0e47` |
 | T02B-12 Test-tamper detector | ✅ merged | `03f4d15` |
 | FU-01 Follow-ups: T00-03 `continue()`/cursor model tests + T02-10 `reviewTeam` input | ✅ merged | `48d02f7` |
-| **T00-07** Supervisor emits seat-scoped events | 🔶 planner, **uncommitted** in the integration worktree (`src/orchestrator/seat-events.ts`, `supervisor.ts`, `commands.ts`, two tests). O2 round 1 NEEDS_WORK (per-line tool calls for plain-text executors; phantom `panel` seat) — fixed, plus flush caps, `rawOutput` stripped, redaction, `onEngineEvent` hook; 482/482 pass. O2 re-review running; then **user sign-off** | planner |
-| **FU-02** Fail-closed tamper detector (`./` prefix, case-insensitive compare) | 🔶 assigned to Haiku | Haiku |
+| T00-07 Supervisor emits seat-scoped events | ✅ merged (O2 PASS after one round; user signed off) | `572618c` |
+| **FU-02** Fail-closed tamper detector (`./` prefix, case-insensitive compare) | 🔶 done by Haiku (`461547f`), Sonnet review running | Haiku |
 | T00-08 CI matrix macOS/Windows/Linux | ⏳ unassigned (Sonnet card) | — |
 
 **Haiku queue:** after FU-01 → T01-06 (seat board, needs T00-07 merged). Most other 🟢 cards wait on 🔴/🟡 contracts: T02B-01 (modes), T02-03 (negotiation), T03-01 (prompts, 🟡), T04-06 (UI scaffold, 🟡). Unblocked 🟡 cards: T00-08, T01-02, T03-01.
 
 ## 5. Next actions (in order)
 
-1. **T00-07:** read the O2 re-review, ask the user for sign-off, commit via `~/commit.sh`, mark ✅, add Status note.
-2. **FU-02:** Sonnet review when Haiku reports; merge; fast-forward Haiku; then send T01-06 (needs T00-07).
-3. Start 🟡 work so Haiku has cards: T03-01 (prompt format) and T01-02 (seat factory) via Sonnet; T00-08 CI matrix.
-4. Update this file after every merge.
+1. **FU-02:** read the Sonnet review; merge `461547f`; fast-forward Haiku; then send **T01-06** (seat board; use `onEngineEvent` from T00-07).
+2. Start 🟡 work so Haiku has cards: T03-01 (prompt format) and T01-02 (seat factory) via Sonnet; T00-08 CI matrix.
+3. Update this file after every merge.
+
+**Flaky test (unidentified):** one full-suite run on 2026-10-24 had 1 failure while Haiku ran its gate at the same time; 6 reruns were green. If it recurs, capture the test name (`pnpm test 2>&1 | grep -E "FAIL|×"`) — suspect timing under CPU load. Gate commands must not be piped through `grep` without `set -o pipefail`.
 
 ## 6. Known follow-ups (not scheduled)
 
