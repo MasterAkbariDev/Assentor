@@ -74,6 +74,10 @@ program
     "-e, --executor <provider>",
     "Executor (mock|cursor|claude-code|antigravity|codex|qwen|opencode)",
   )
+  .option(
+    "--executor-model <model>",
+    "Model for the executor CLI (overrides config executor.model)",
+  )
   .option("-r, --reviewer <provider>", "Reviewer provider (mock|openai|gemini)")
   .option("--max-rounds <n>", "Maximum rounds", (v: string) => Number(v))
   .option("--max-messages <n>", "Maximum messages", (v: string) => Number(v))
@@ -87,6 +91,7 @@ program
       options: {
         project: string;
         executor?: string;
+        executorModel?: string;
         reviewer?: string;
         maxRounds?: number;
         maxMessages?: number;
@@ -114,6 +119,7 @@ program
         projectPath: options.project,
         prompt,
         executor: options.executor,
+        executorModel: options.executorModel,
         reviewer: options.reviewer,
         maxRounds: options.maxRounds,
         maxMessages: options.maxMessages,
@@ -145,13 +151,18 @@ program
   .option("--max-messages <n>", "Raise message budget for this resume", (v: string) =>
     Number(v),
   )
-  .action(async (taskId: string | undefined, options: { project: string; verbose?: boolean; maxRounds?: number; maxMessages?: number }) => {
+  .option(
+    "--executor-model <model>",
+    "Model for the executor CLI (overrides config executor.model)",
+  )
+  .action(async (taskId: string | undefined, options: { project: string; verbose?: boolean; maxRounds?: number; maxMessages?: number; executorModel?: string }) => {
     const result = await resumeAssentorTask({
       projectPath: options.project,
       taskId,
       verbose: options.verbose,
       maxRounds: options.maxRounds,
       maxMessages: options.maxMessages,
+      executorModel: options.executorModel,
     });
     console.log(`Task ${result.taskId} finished: ${result.status}`);
     if (result.status !== "DONE") {
