@@ -8,3 +8,5 @@ export { Progress, Spinner, ProgressBar, useSpinner } from "./progress.js";
 export { ScrollList } from "./scroll-list.js";
 export type { ScrollListItem } from "./scroll-list.js";
 export { CycleSelector } from "./cycle-selector.js";
+export { SeatBoard } from "./seat-board.js";
+export type { SeatBoardProps } from "./seat-board.js";
