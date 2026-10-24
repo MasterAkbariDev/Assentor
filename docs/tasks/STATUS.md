@@ -61,14 +61,15 @@ For each Haiku card:
 | T02B-12 Test-tamper detector | ✅ merged | `03f4d15` |
 | FU-01 Follow-ups: T00-03 `continue()`/cursor model tests + T02-10 `reviewTeam` input | ✅ merged | `48d02f7` |
 | T00-07 Supervisor emits seat-scoped events | ✅ merged (O2 PASS after one round; user signed off) | `572618c` |
-| **FU-02** Fail-closed tamper detector (`./` prefix, case-insensitive compare) | 🔶 done by Haiku (`461547f`), Sonnet review running | Haiku |
+| FU-02 Fail-closed tamper detector | ✅ merged | `4da3636` |
+| **T01-06** Status icon map + seat event reducer + TUI seat board | 🔶 assigned to Haiku (with planner clarifications on SeatState, reducer mapping, `now` input, width) | Haiku |
 | T00-08 CI matrix macOS/Windows/Linux | ⏳ unassigned (Sonnet card) | — |
 
 **Haiku queue:** after FU-01 → T01-06 (seat board, needs T00-07 merged). Most other 🟢 cards wait on 🔴/🟡 contracts: T02B-01 (modes), T02-03 (negotiation), T03-01 (prompts, 🟡), T04-06 (UI scaffold, 🟡). Unblocked 🟡 cards: T00-08, T01-02, T03-01.
 
 ## 5. Next actions (in order)
 
-1. **FU-02:** read the Sonnet review; merge `461547f`; fast-forward Haiku; then send **T01-06** (seat board; use `onEngineEvent` from T00-07).
+1. **T01-06:** Sonnet review when Haiku reports; merge; fast-forward Haiku. Next Haiku card after that: none unblocked until a 🟡/🔴 contract lands — start **T01-02** (seat factory, 🟡) and **T03-01** (prompt format, 🟡) so T01-07 and T03-02…06 open up; T00-08 CI matrix is also open.
 2. Start 🟡 work so Haiku has cards: T03-01 (prompt format) and T01-02 (seat factory) via Sonnet; T00-08 CI matrix.
 3. Update this file after every merge.
 
