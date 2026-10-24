@@ -11,7 +11,10 @@ import type { NegotiateMode, ReviewMode } from "../config/teams.js";
  *   synthesize = 1 (+1 aggregator turn on the team's first seat),
  *   best-of-n = 1 and divide = 1 (not in the card; assumed one turn per seat).
  * - Review turns per seat: low = 1 round, high = maxRounds.
- * - Only teams referenced by `modes` are estimated.
+ * - Teams estimated: `modes.negotiate.team`, and the review team, which is
+ *   `modes.review.team` when set. When `modes.review` is unset, the optional
+ *   `reviewTeam` (e.g. the legacy `resolveTeams(config).review`) is estimated
+ *   instead; it is ignored whenever `modes.review` is set.
  */
 
 export const EXTRA_INPUT_TOKENS = 2_000;
@@ -31,6 +34,8 @@ export type PricingTable = Record<string, ModelPricing>;
 export interface EstimateInput {
   teams: Record<string, Team>;
   modes: { negotiate?: NegotiateMode; review?: ReviewMode };
+  /** Review team for configs without `modes.review`; ignored when `modes.review` is set. */
+  reviewTeam?: Team;
   /** Tokens of shared context sent on every turn. */
   contextTokens: number;
   /** `limits.maxRounds`; used as the high-end review round count. */
@@ -90,13 +95,12 @@ export function estimateSession(input: EstimateInput): SessionEstimate {
     }
   }
 
-  if (input.modes.review) {
-    const team = input.teams[input.modes.review.team];
-    if (team) {
-      const seats = expandSeatSpecs(team.seats, { teamName: input.modes.review.team });
-      for (const seat of seats) {
-        addTurns(seat, 1, input.maxRounds);
-      }
+  const review = input.modes.review;
+  const reviewTeam = review ? input.teams[review.team] : input.reviewTeam;
+  if (reviewTeam) {
+    const seats = expandSeatSpecs(reviewTeam.seats, { teamName: review?.team });
+    for (const seat of seats) {
+      addTurns(seat, 1, input.maxRounds);
     }
   }
 

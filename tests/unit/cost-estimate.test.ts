@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { parseAssentorConfig } from "../../src/config/schema.js";
+import { resolveTeams, type ReviewMode } from "../../src/config/teams.js";
 import { TeamSchema } from "../../src/core/seats.js";
 import { estimateSession, type PricingTable } from "../../src/estimate/cost.js";
 
@@ -140,6 +142,57 @@ describe("estimateSession", () => {
     const estimate = estimateSession({
       teams: {},
       modes: { negotiate: { team: "missing", strategy: "debate", maxRounds: 3, consensus: 0.7 } },
+      contextTokens: 10_000,
+      maxRounds: 3,
+    });
+
+    expect(estimate.perSeat).toEqual([]);
+    expect(estimate.totalLow).toBe(0);
+    expect(estimate.totalHigh).toBe(0);
+  });
+});
+
+describe("estimateSession reviewTeam", () => {
+  // contextTokens 0 → inPerTurn 2_000. One review turn per seat for low, maxRounds for high:
+  // low  1 × (2_000 + 1_500) = 3_500
+  // high 4 × (2_000 + 4_000) = 24_000   (maxRounds 4)
+
+  it("legacy config with no modes estimates the resolved review team", () => {
+    const config = parseAssentorConfig({
+      reviewers: [{ provider: "mock", transport: "api", model: "m1" }],
+    });
+    const estimate = estimateSession({
+      teams: {},
+      modes: {},
+      reviewTeam: resolveTeams(config).review,
+      contextTokens: 0,
+      maxRounds: 4,
+    });
+
+    expect(estimate.perSeat.map((s) => [s.low, s.high])).toEqual([[3_500, 24_000]]);
+    expect(estimate.totalLow).toBe(3_500);
+    expect(estimate.totalHigh).toBe(24_000);
+  });
+
+  it("is ignored when modes.review is set", () => {
+    const review: ReviewMode = { team: "r", policy: "security-veto", tiebreak: "adjudicator" };
+    const teams = { r: TeamSchema.parse({ seats: [{ provider: "mock" }] }) };
+    const base = { teams, modes: { review }, contextTokens: 0, maxRounds: 4 };
+
+    const withoutReviewTeam = estimateSession(base);
+    const withReviewTeam = estimateSession({
+      ...base,
+      reviewTeam: TeamSchema.parse({ seats: [{ provider: "mock", count: 3 }] }),
+    });
+
+    expect(withReviewTeam).toEqual(withoutReviewTeam);
+    expect(withReviewTeam.perSeat).toHaveLength(1);
+  });
+
+  it("with no modes and no reviewTeam, review cost is zero", () => {
+    const estimate = estimateSession({
+      teams: {},
+      modes: {},
       contextTokens: 10_000,
       maxRounds: 3,
     });
