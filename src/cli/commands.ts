@@ -192,6 +192,7 @@ async function createReviewerTransport(
       transport: options.cliTransport,
       onStatus: options.onStatus,
       specialtyAddendum: options.specialtyAddendum,
+      model: options.model,
     });
   }
 

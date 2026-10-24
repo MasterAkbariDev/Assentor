@@ -4,6 +4,7 @@ import {
   spawnCliProcess,
   type HostEnv,
 } from "../../../executors/cli-locator.js";
+import { requestedModel } from "../../executors/cli-print/recipes.js";
 import { isCursorAppBinary } from "../../executors/cursor/index.js";
 import {
   asReviewInput,
@@ -120,6 +121,8 @@ export interface ProcessCliTransportOptions {
   extraArgs?: string[];
   spawnFn?: CliSpawnFn;
   env?: NodeJS.ProcessEnv;
+  /** Model id passed as the CLI's model flag. `AUTO`, blank, or unset means the CLI default. */
+  model?: string;
 }
 
 /**
@@ -131,6 +134,7 @@ export class ProcessCliTransport implements CliTransport {
   private readonly extraArgs: string[];
   private readonly spawnFn: CliSpawnFn;
   private readonly env?: NodeJS.ProcessEnv;
+  private readonly model?: string;
   lastCommand?: { command: string; args: string[]; cwd: string };
 
   constructor(options: ProcessCliTransportOptions) {
@@ -139,6 +143,7 @@ export class ProcessCliTransport implements CliTransport {
     this.extraArgs = options.extraArgs ?? [];
     this.spawnFn = options.spawnFn ?? defaultCliSpawn;
     this.env = options.env;
+    this.model = options.model;
   }
 
   async run(input: {
@@ -150,6 +155,7 @@ export class ProcessCliTransport implements CliTransport {
     const args = buildCliArgs(this.adapter, input.prompt, this.extraArgs, {
       cwd: input.cwd,
       binary: this.binary,
+      model: this.model,
     });
     this.lastCommand = { command: this.binary, args, cwd: input.cwd };
     return this.spawnFn({
@@ -173,6 +179,8 @@ export interface CliReviewerOptions {
   timeoutMs?: number;
   specialtyAddendum?: string;
   onStatus?: (message: string) => void;
+  /** Model id for the CLI's model flag. `AUTO`, blank, or unset means the CLI default. */
+  model?: string;
 }
 
 /**
@@ -219,6 +227,7 @@ export class CliReviewer implements Reviewer {
         binary: options.binary,
         extraArgs: options.extraArgs,
         spawnFn: options.spawnFn,
+        model: options.model,
       });
     }
   }
@@ -343,10 +352,12 @@ function buildCliArgs(
   adapter: Exclude<CliReviewerAdapter, "mock">,
   prompt: string,
   extraArgs: string[],
-  context: { cwd?: string; binary?: string } = {},
+  context: { cwd?: string; binary?: string; model?: string } = {},
 ): string[] {
+  const model = requestedModel(context.model);
+  const modelArgs = model ? ["--model", model] : [];
   if (adapter === "claude") {
-    return ["-p", "--output-format", "text", ...extraArgs, prompt];
+    return ["-p", "--output-format", "text", ...modelArgs, ...extraArgs, prompt];
   }
   if (adapter === "cursor") {
     const args: string[] = [];
@@ -357,10 +368,10 @@ function buildCliArgs(
     if (context.cwd) {
       args.push("--workspace", context.cwd);
     }
-    args.push("--output-format", "text", ...extraArgs, prompt);
+    args.push("--output-format", "text", ...modelArgs, ...extraArgs, prompt);
     return args;
   }
-  return [...extraArgs, `-p=${prompt}`];
+  return [...modelArgs, ...extraArgs, `-p=${prompt}`];
 }
 
 export async function defaultCliSpawn(
