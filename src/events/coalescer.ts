@@ -9,7 +9,15 @@ export interface DeltaCoalescerOptions {
   intervalMs?: number;
   /** A seat's buffer longer than this is emitted immediately. Default 8192. */
   maxChars?: number;
-  emit: (delta: CoalescedDelta) => void;
+  /**
+   * Receives each batch. May return a Promise; a rejection is routed to `onError`.
+   */
+  emit: (delta: CoalescedDelta) => unknown;
+  /**
+   * Called when an emit fails on a timer, or when an emit's Promise rejects.
+   * Default: one line on stderr. Explicit calls throw synchronously instead.
+   */
+  onError?: (error: unknown, seatId: string) => void;
   /** Accepted for parity with the other injectable clocks; batching is timer-driven, so it is unused. */
   now?: () => number;
   setTimer?: (callback: () => void, ms: number) => unknown;
@@ -21,13 +29,21 @@ export interface DeltaCoalescer {
   push(seatId: string, text: string): void;
   /** Emit one seat's buffer now, or every seat's buffer when no id is given. Empty buffers never emit. */
   flush(seatId?: string): void;
-  /** Flush everything and clear all timers. Throws if `push` is called afterwards. */
+  /**
+   * Flush every seat and clear all timers, even if an emit throws. Throws the
+   * first error (or an AggregateError for several) after everything is flushed.
+   * Throws if `push` is called afterwards.
+   */
   dispose(): void;
 }
 
 interface SeatBuffer {
   text: string;
   timer?: unknown;
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return typeof (value as { then?: unknown } | null)?.then === "function";
 }
 
 /**
@@ -39,6 +55,11 @@ export function createDeltaCoalescer(options: DeltaCoalescerOptions): DeltaCoale
   const intervalMs = options.intervalMs ?? 40;
   const maxChars = options.maxChars ?? 8_192;
   const emit = options.emit;
+  const onError =
+    options.onError ??
+    ((error: unknown, seatId: string) => {
+      console.error(`[assentor] delta coalescer emit failed for ${seatId}:`, error);
+    });
   const setTimer =
     options.setTimer ?? ((callback: () => void, ms: number) => setTimeout(callback, ms));
   const clearTimer =
@@ -47,17 +68,50 @@ export function createDeltaCoalescer(options: DeltaCoalescerOptions): DeltaCoale
   const buffers = new Map<string, SeatBuffer>();
   let disposed = false;
 
-  function emitSeat(seatId: string): void {
+  /** Remove a seat's buffer, clear its timer, and return the text (if any). */
+  function take(seatId: string): CoalescedDelta | undefined {
     const buffer = buffers.get(seatId);
     if (!buffer) {
-      return;
+      return undefined;
     }
     if (buffer.timer !== undefined) {
       clearTimer(buffer.timer);
     }
     buffers.delete(seatId);
-    if (buffer.text.length > 0) {
-      emit({ seatId, text: buffer.text });
+    return buffer.text.length > 0 ? { seatId, text: buffer.text } : undefined;
+  }
+
+  /** Hand a batch to `emit`. Sync errors propagate; a rejected Promise goes to `onError`. */
+  function send(delta: CoalescedDelta): void {
+    const result = emit(delta);
+    if (isThenable(result)) {
+      result.then(undefined, (error: unknown) => onError(error, delta.seatId));
+    }
+  }
+
+  /** Explicit flush of one seat: a synchronous emit error reaches the caller. */
+  function flushSeat(seatId: string): void {
+    const delta = take(seatId);
+    if (delta) {
+      send(delta);
+    }
+  }
+
+  /** Flush every seat even if some emits throw, then throw the collected errors. */
+  function flushAll(): void {
+    const errors: unknown[] = [];
+    for (const id of [...buffers.keys()]) {
+      try {
+        flushSeat(id);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length === 1) {
+      throw errors[0];
+    }
+    if (errors.length > 1) {
+      throw new AggregateError(errors, `${errors.length} delta emits failed`);
     }
   }
 
@@ -77,29 +131,36 @@ export function createDeltaCoalescer(options: DeltaCoalescerOptions): DeltaCoale
       buffer.text += text;
 
       if (buffer.text.length > maxChars) {
-        emitSeat(seatId);
+        flushSeat(seatId);
         return;
       }
       if (buffer.timer === undefined) {
-        buffer.timer = setTimer(() => emitSeat(seatId), intervalMs);
+        buffer.timer = setTimer(() => {
+          // Never throw out of a timer callback: an uncaught error would crash the process.
+          const delta = take(seatId);
+          if (!delta) {
+            return;
+          }
+          try {
+            send(delta);
+          } catch (error) {
+            onError(error, seatId);
+          }
+        }, intervalMs);
       }
     },
 
     flush(seatId) {
       if (seatId !== undefined) {
-        emitSeat(seatId);
+        flushSeat(seatId);
         return;
       }
-      for (const id of [...buffers.keys()]) {
-        emitSeat(id);
-      }
+      flushAll();
     },
 
     dispose() {
-      for (const id of [...buffers.keys()]) {
-        emitSeat(id);
-      }
       disposed = true;
+      flushAll();
     },
   };
 }
