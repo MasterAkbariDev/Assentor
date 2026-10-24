@@ -308,6 +308,30 @@ describe("print-mode CLI model selection", () => {
     expect(captured.slice(-3)).toEqual(["--model", "opus", "goal"]);
   });
 
+  it("passes the model through continue() to the spawned args, prompt still last", async () => {
+    let captured: string[] = [];
+    const executor = new PrintCliExecutor({
+      recipe: PRINT_CLI_RECIPES["claude-code"]!,
+      binary: "/tmp/claude",
+      model: "opus",
+      spawnFn: async (request) => {
+        captured = request.args;
+        return { code: 0, stdout: "done", stderr: "" };
+      },
+    });
+    await executor.continue({
+      taskId: "t1",
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("goal"),
+      sessionId: "abc",
+      mode: "supervised",
+      messages: [],
+    });
+    expect(captured).toContain("--resume");
+    expect(captured.at(-3)).toBe("--model");
+    expect(captured.at(-2)).toBe("opus");
+  });
+
   it("warns once and leaves args unchanged for a recipe without a model flag", async () => {
     const warnings: string[] = [];
     const argsSeen: string[][] = [];
@@ -394,6 +418,19 @@ describe("executor model through createExecutor", () => {
     const model = resolveExecutorModel(undefined, "sonnet");
     const args = await runWithModel("claude-code", model);
     expect(args.slice(-3)).toEqual(["--model", "sonnet", "goal"]);
+  });
+
+  it("cursor gets --model right before the prompt", async () => {
+    const args = await runWithModel("cursor", "gpt-5");
+    expect(args.slice(-3)).toEqual(["--model", "gpt-5", "goal"]);
+  });
+
+  it("cursor adds no --model for AUTO or an unset model", async () => {
+    for (const model of ["AUTO", undefined]) {
+      const args = await runWithModel("cursor", model);
+      expect(args).not.toContain("--model");
+      expect(args.at(-1)).toBe("goal");
+    }
   });
 
   it("resolveExecutorModel: flag, then config, then unset; blank flag falls back", () => {
