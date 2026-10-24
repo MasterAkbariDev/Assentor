@@ -33,7 +33,14 @@ Phase exit criteria:
 6. `expandSeatSpecs(specs): Seat[]` — deterministic ids and display names (`<ModelShort>#<n>`; collision-free across providers).
 7. `SeatStatus` enum: `queued | starting | thinking | writing | tool | editing | waiting | rate_limited | done | failed | dissent`.
 8. `EngineEvent` envelope `{ seq, sessionId, seatId?, stageId?, at, type, data }` + zod schema + `EngineEventType` catalog (plan §4.6) with a typed `data` map per type.
-9. `fromSupervisorEvent(event, ctx): EngineEvent` mapping for every existing `SupervisorEventType` (used by T00-07).
+9. `fromSupervisorEvent(event, ctx): EngineEventDraft` mapping for every existing `SupervisorEventType` (used by T00-07).
+
+**Status: ✅ done.** Shipped as `src/core/seats.ts`, `src/protocol/events.ts`, `src/orchestrator/engine-events.ts`, `tests/unit/seat-contract.test.ts`. Decisions:
+- The mapping lives in `src/orchestrator/engine-events.ts` (not `protocol/`), so the protocol layer has no engine imports (needed for the T04-01 split).
+- Producers create `EngineEventDraft` (no `seq`, optional `at`); only the event log assigns `seq`.
+- `SeatSpec.transport` is optional (provider default applied in `expandSeatSpecs`); `permissions` defaults to `read-only`; `role` defaults to `general`.
+- Display names are always numbered (`Opus#1` even when count is 1); ids are path-safe slugs (`opus-1`, or `<team>.opus-1` with a team prefix).
+- Legacy events keep all their fields and add `data.legacyType`.
 
 **Constraints**
 - No behavior change; nothing imports these from existing runtime code yet.
@@ -195,7 +202,7 @@ Phase exit criteria:
 1. `sessionPaths(projectPath, sessionId)` → `{ root: .assentor/sessions/<id>, events: <root>/events.ndjson }`. Validate `sessionId` with `isId` from `src/core/ids.ts` (UUID); throw `Error("Invalid session id: <id>")` otherwise. New ids come from `createId()`.
 2. `class EventLog`:
    - `static async open(projectPath, sessionId): Promise<EventLog>` — ensures directory + gitignore; reads existing file to recover `lastSeq` (0 if new).
-   - `async append(event: Omit<EngineEvent, "seq" | "at"> & { at?: string }): Promise<EngineEvent>` — assigns `seq = lastSeq + 1`, `at` default now (ISO), validates with the zod schema, appends one line, returns the full event. Appends are **serialized** (internal promise chain) so concurrent callers never interleave or reuse seq.
+   - `async append(event: EngineEventDraft): Promise<EngineEvent>` — assigns `seq = lastSeq + 1`, `at` default now (ISO), validates with `parseEngineEvent` (both from `src/protocol/events.ts`), appends one line, returns the full event. Appends are **serialized** (internal promise chain) so concurrent callers never interleave or reuse seq.
    - `async readFrom(fromSeq: number): Promise<EngineEvent[]>` — events with `seq > fromSeq`, in order.
    - `get lastSeq(): number`.
 3. Tolerate a truncated final line (crash mid-write): skip it when reading, log nothing, and continue numbering after the last valid event.
@@ -251,7 +258,7 @@ Phase exit criteria:
 **Deliverables**
 1. `SupervisorConfig.onEngineEvent?` + optional `eventLog?: EventLog` + `seats?: { executor: Seat; reviewers: Seat[] }` (default: derive single seats from adapter names).
 2. Emit `seat.spawned/status/output.delta/tool_call/done/error` from existing executor `onOutput`/`onStatus` and stream-status parsing; reviewer seats from `PanelReviewer` member calls.
-3. Every legacy `SupervisorEvent` also emitted via `fromSupervisorEvent`.
+3. Every legacy `SupervisorEvent` also emitted via `fromSupervisorEvent` (`src/orchestrator/engine-events.ts`).
 4. Persist through `EventLog` when provided; event emission must never throw into the supervisor loop (log and continue).
 5. Resume: new events continue the same session log (`seq` keeps increasing).
 

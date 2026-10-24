@@ -38,3 +38,17 @@ export {
 } from "./parse.js";
 
 export { ProtocolBus, type MessageHandler } from "./bus.js";
+
+export {
+  EngineEventDataSchemas,
+  EngineEventSchema,
+  ENGINE_EVENT_TYPES,
+  parseEngineEvent,
+  safeParseEngineEvent,
+  isEngineEventType,
+  type EngineEvent,
+  type EngineEventOf,
+  type EngineEventDraft,
+  type EngineEventType,
+  type EngineEventData,
+} from "./events.js";

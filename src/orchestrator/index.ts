@@ -40,3 +40,9 @@ export {
   type SupervisorEventType,
   type SupervisorResult,
 } from "./supervisor.js";
+
+export {
+  fromSupervisorEvent,
+  engineTypeForSupervisorEvent,
+  type SupervisorEventContext,
+} from "./engine-events.js";
