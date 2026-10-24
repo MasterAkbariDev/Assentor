@@ -2,6 +2,8 @@
 
 Source plans: [app-and-multi-model.md](../plans/app-and-multi-model.md) · [desktop-app-system-design.md](../plans/desktop-app-system-design.md)
 
+**Picking this up in a new session? Start with [STATUS.md](./STATUS.md)** — current progress, branches, the review/merge loop, and next actions.
+
 This folder turns those plans into **task cards** sized for a model team:
 
 | Tier | Model | Does | Never does |
