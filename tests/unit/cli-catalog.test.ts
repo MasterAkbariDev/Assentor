@@ -8,6 +8,22 @@ import {
   type CliRunResult,
 } from "../../src/models/cli-catalog.js";
 
+// Lets a test make the real spawn throw synchronously, as Node does for a NUL byte in an argument.
+const spawnControl = vi.hoisted(() => ({ throwMessage: undefined as string | undefined }));
+
+vi.mock("../../src/executors/cli-locator.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/executors/cli-locator.js")>();
+  return {
+    ...actual,
+    spawnCliProcess: (...args: Parameters<typeof actual.spawnCliProcess>) => {
+      if (spawnControl.throwMessage !== undefined) {
+        throw new Error(spawnControl.throwMessage);
+      }
+      return actual.spawnCliProcess(...args);
+    },
+  };
+});
+
 // Copied from `agy models` on the dev machine. Tab characters checked with `od -c`.
 const AGY_OUTPUT = [
   "Fetching available models...",
@@ -371,6 +387,50 @@ describe("CliModelCatalog", () => {
     const catalog = new CliModelCatalog({ cachePath: cachePath() });
     await expect(catalog.addUserModel("claude-code", "x")).rejects.toThrow("refusing to overwrite");
     expect((await fs.stat(cachePath())).isDirectory()).toBe(true);
+  });
+
+  it("a spawn that throws synchronously becomes an error, not a rejection", async () => {
+    spawnControl.throwMessage = "The argument 'args[0]' must be a string without null bytes";
+    try {
+      const catalog = new CliModelCatalog({ cachePath: cachePath(), locate: () => "/fake/bin/agy" });
+
+      const result = await catalog.discover("antigravity");
+
+      expect(result.error).toContain("without null bytes");
+      expect(result.entries).toEqual([]);
+    } finally {
+      spawnControl.throwMessage = undefined;
+    }
+  });
+
+  it("a failed save rolls back add and remove, so a throw means nothing changed", async () => {
+    // A regular file where the cache directory should be makes every save fail.
+    const blocker = path.join(dir, "blocker");
+    await fs.writeFile(blocker, "x", "utf8");
+    const catalog = new CliModelCatalog({ cachePath: path.join(blocker, "models-cache.json") });
+
+    await expect(catalog.addUserModel("claude-code", "rolled-back")).rejects.toThrow();
+    expect(catalog.list("claude-code").map((e) => e.id)).not.toContain("rolled-back");
+
+    await expect(catalog.removeUserModel("claude-code", "opus")).rejects.toThrow();
+    expect(catalog.list("claude-code").map((e) => e.id)).toEqual(["AUTO", "opus", "sonnet", "haiku"]);
+  });
+
+  it("a discover save failure keeps the models in memory and returns them with an error", async () => {
+    const blocker = path.join(dir, "blocker");
+    await fs.writeFile(blocker, "x", "utf8");
+    const run = vi.fn(async (): Promise<CliRunResult> => ok(AGY_OUTPUT));
+    const catalog = new CliModelCatalog({
+      cachePath: path.join(blocker, "models-cache.json"),
+      run,
+      locate: () => "/fake/bin/agy",
+    });
+
+    const result = await catalog.discover("antigravity");
+
+    expect(result.error).toContain("could not be saved");
+    expect(result.entries).toHaveLength(6);
+    expect(catalog.list("antigravity").map((e) => e.id)).toContain("gemini-3.8-flash-high");
   });
 
   it("uses ASSENTOR_USER_DIR for the default cache path", async () => {

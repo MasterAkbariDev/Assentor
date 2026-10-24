@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import { copyFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
@@ -9,6 +10,7 @@ import { SEAT_PROVIDERS, type SeatCliProvider, type SeatProvider } from "../core
 import { userAssentorDir } from "../config/paths.js";
 import { writeJsonAtomic } from "../persistence/paths.js";
 import { killProcessTree } from "../process/kill-tree.js";
+import { trackChildProcess, untrackChildProcess } from "../process/tracker.js";
 import { isCursorAppBinary } from "../providers/executors/cursor/index.js";
 
 export interface CatalogEntry {
@@ -136,18 +138,29 @@ function defaultRunCli(
     let stderrBytes = 0;
     let timedOut = false;
     let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    const child = spawnCliProcess(binary, args, {
-      cwd: options.cwd,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
+    // spawn can throw synchronously (e.g. a NUL byte in an argument); report it, don't reject.
+    let child: ChildProcess;
+    try {
+      child = trackChildProcess(
+        spawnCliProcess(binary, args, {
+          cwd: options.cwd,
+          env: process.env,
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+        }),
+      );
+    } catch (error) {
+      resolve({ stdout: "", stderr: (error as Error).message, code: null, timedOut: false });
+      return;
+    }
 
     const finish = (code: number | null, extraStderr?: string) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
+      untrackChildProcess(child);
       resolve({
         stdout: Buffer.concat(stdoutChunks).toString("utf8"),
         stderr:
@@ -157,7 +170,7 @@ function defaultRunCli(
       });
     };
 
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       timedOut = true;
       killProcessTree(child);
       finish(null);
@@ -282,59 +295,86 @@ export class CliModelCatalog {
       return { entries: [], error: `${label} produced no model ids` };
     }
 
-    this.state = {
-      ...this.state,
-      discovered: { ...this.state.discovered, [provider]: models },
-    };
-    try {
-      await this.persist();
-    } catch (error) {
-      return {
-        entries: [],
-        error: `${label} succeeded but the cache could not be saved: ${(error as Error).message}`,
+    const entries = models.map((model) => ({
+      provider,
+      id: model.id,
+      label: model.label,
+      source: "discovered" as const,
+    }));
+    // A failed save keeps the models in memory and says so; nothing is rolled back here.
+    return this.enqueue(async () => {
+      this.state = {
+        ...this.state,
+        discovered: { ...this.state.discovered, [provider]: models },
       };
-    }
-    return {
-      entries: models.map((model) => ({
-        provider,
-        id: model.id,
-        label: model.label,
-        source: "discovered" as const,
-      })),
-    };
+      try {
+        await this.writeNow();
+        return { entries };
+      } catch (error) {
+        return {
+          entries,
+          error: `${label} succeeded but the cache could not be saved: ${(error as Error).message}`,
+        };
+      }
+    });
   }
 
-  /** Add or relabel a user model. Rejects invalid ids and `AUTO`. */
+  /** Add or relabel a user model. Rejects invalid ids and `AUTO`. A failed save changes nothing. */
   async addUserModel(provider: SeatProvider, id: string, label?: string): Promise<void> {
     assertUserModelId(id);
-    const current = this.state.user[provider] ?? [];
-    const next = [
-      ...current.filter((model) => model.id !== id),
-      { id, label: label?.trim() || id },
-    ];
-    this.state = { ...this.state, user: { ...this.state.user, [provider]: next } };
-    await this.persist();
-  }
-
-  async removeUserModel(provider: SeatProvider, id: string): Promise<void> {
-    const current = this.state.user[provider] ?? [];
-    const next = current.filter((model) => model.id !== id);
-    this.state = { ...this.state, user: { ...this.state.user, [provider]: next } };
-    await this.persist();
-  }
-
-  /** Writes run one at a time, each writing the latest state. */
-  private persist(): Promise<void> {
-    const write = this.writeQueue.then(() => {
-      if (!this.writable) {
-        throw new Error(
-          `refusing to overwrite ${this.cachePath}: the corrupt cache could not be backed up`,
-        );
-      }
-      return writeJsonAtomic(this.cachePath, this.state);
+    return this.mutate((state) => {
+      const current = state.user[provider] ?? [];
+      const next = [
+        ...current.filter((model) => model.id !== id),
+        { id, label: label?.trim() || id },
+      ];
+      return { ...state, user: { ...state.user, [provider]: next } };
     });
-    this.writeQueue = write.catch(() => undefined);
-    return write;
+  }
+
+  /** Remove a user model. A failed save changes nothing. */
+  async removeUserModel(provider: SeatProvider, id: string): Promise<void> {
+    return this.mutate((state) => {
+      const current = state.user[provider] ?? [];
+      const next = current.filter((model) => model.id !== id);
+      return { ...state, user: { ...state.user, [provider]: next } };
+    });
+  }
+
+  /** Apply a change and save it. If the save fails, the in-memory state is restored and the error rethrown. */
+  private mutate(change: (state: CatalogCache) => CatalogCache): Promise<void> {
+    return this.enqueue(async () => {
+      const previous = this.state;
+      this.state = change(previous);
+      try {
+        await this.writeNow();
+      } catch (error) {
+        this.state = previous;
+        throw error;
+      }
+    });
+  }
+
+  /** Every state change and save runs one at a time, in call order. */
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const result = this.writeQueue.then(task);
+    this.writeQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  /** Save the current state. Refuses when a corrupt cache could not be backed up. */
+  private writeNow(): Promise<void> {
+    if (!this.writable) {
+      return Promise.reject(
+        new Error(
+          `refusing to overwrite ${this.cachePath}: the corrupt cache could not be backed up`,
+        ),
+      );
+    }
+    return writeJsonAtomic(this.cachePath, this.state);
   }
 }
 
