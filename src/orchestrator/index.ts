@@ -46,3 +46,11 @@ export {
   engineTypeForSupervisorEvent,
   type SupervisorEventContext,
 } from "./engine-events.js";
+
+export {
+  SeatEventSink,
+  seatStatusFromActivity,
+  trackReviewerSeat,
+  type SeatEventSinkOptions,
+  type SeatInfo,
+} from "./seat-events.js";

@@ -276,6 +276,14 @@ Phase exit criteria:
 ### T00-07 · Supervisor emits seat-scoped events
 **Tier:** 🔴 O · **Review:** O2 · **Size:** M · **Depends:** T00-01, T00-05 (T00-06 optional)
 
+**Status: ✅ done.** Shipped by the planner. O2 review: round 1 NEEDS_WORK (fixed), round 2 PASS; user signed off. Decisions:
+- Instead of `onEngineEvent`/`eventLog`/`seats` on `SupervisorConfig`, one `SeatEventSink` (`src/orchestrator/seat-events.ts`) is passed as `seatEvents` + `seatScope`. It sequences events (via `EventLog` when given), batches output per seat with the coalescer, never throws, and reports its own failures once per kind. `RunSeatEvents` in `commands.ts` wires it for `run` and `resume`; `onEngineEvent` on both inputs gives live events (T01-06 uses it).
+- Seats: `executor`, `reviewer-N` (wrapped by `trackReviewerSeat`), and `panel` when there is more than one reviewer; reviewer-scoped legacy events go to `panel`. Every seat is spawned before use. On resume `session.created` is skipped (log not empty) and seats are spawned again — consumers treat `seat.spawned` as insert-or-update.
+- Only plain-text executors (codex, opencode, cursor with text output) forward raw stdout as `seat.output.delta`; their per-line "running" status becomes one `writing` status. A repeated identical `seat.status` is dropped together with its tool call (collapses cursor started/completed; two identical back-to-back tool calls count once — T02 budgets must count from the executor, not `seat.tool_call`).
+- Mirrored legacy events keep all fields except `rawOutput`, replaced by `rawOutputChars`. Event data is redacted with `redactSecrets` when `security.redactSecrets` is on (per coalesced batch; a secret split across batches can slip — best effort).
+- `Supervisor.run` waits at most 2 s for the sink to flush; `RunSeatEvents.close()` at most 5 s. Output kept per seat is capped at 2,000,000 chars with one `output_truncated` warning.
+- Follow-ups: command-level test for a successful resume appending to the log; redact on line boundaries; legacy `events.jsonl` is still unredacted (pre-existing).
+
 **Goal** — The existing supervisor run produces `EngineEvent`s with seat ids, persisted via `EventLog`, while the old `onEvent` callback and `RunReporter` keep working unchanged.
 
 **Context to read** — `src/orchestrator/supervisor.ts` (whole), `src/cli/ui/reporter.ts`, `src/cli/commands.ts:460-720`, `src/providers/executors/cursor/stream-status.ts`, `src/providers/executors/cli-print/text-stream.ts`, T00-01 contract.

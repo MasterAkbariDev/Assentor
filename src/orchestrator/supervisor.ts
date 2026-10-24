@@ -49,6 +49,7 @@ import {
   type VerificationCommands,
 } from "../config/detect-commands.js";
 import { LoopDetector } from "./loop-detector.js";
+import type { SeatEventSink } from "./seat-events.js";
 import {
   applyPhaseProgressToContract,
   buildAutonomousTaskPrompt,
@@ -140,6 +141,31 @@ export interface SupervisorConfig {
   autopilot?: boolean;
   /** Retry transient executor/reviewer failures with debounce. Default 3. */
   maxFailureRetries?: number;
+  /**
+   * Seat-scoped engine events (T00-07). Every supervisor event is mirrored
+   * here; the run flushes it before returning. The caller owns `close()`.
+   */
+  seatEvents?: SeatEventSink;
+  /** Seat ids used when mirroring executor- and reviewer-scoped events. */
+  seatScope?: { executorSeatId?: string; reviewerSeatId?: string };
+}
+
+const SEAT_EVENTS_FLUSH_MS = 2_000;
+
+/** Wait for `work` (which never rejects), but at most `ms`. */
+async function settleWithin(work: Promise<void> | undefined, ms: number): Promise<void> {
+  if (!work) {
+    return;
+  }
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([
+    work,
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms);
+      timer.unref?.();
+    }),
+  ]);
+  clearTimeout(timer);
 }
 
 export interface SupervisorResult {
@@ -320,6 +346,9 @@ export class Supervisor {
 
     await this.flushPersist();
     await this.persistRoundHistory();
+    // A stalled event-log write must not hold back the result; the caller's
+    // close() drains whatever is left.
+    await settleWithin(this.config.seatEvents?.flush(), SEAT_EVENTS_FLUSH_MS);
 
     return {
       taskId,
@@ -1247,6 +1276,8 @@ export class Supervisor {
     } catch {
       // Observability must never break the supervisor.
     }
+    // The sink never throws; it reports its own failures.
+    this.config.seatEvents?.supervisor(event, this.config.seatScope ?? {});
     void this.config.store?.appendEvent(event).catch(() => undefined);
   }
 }

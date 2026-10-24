@@ -13,6 +13,14 @@ import {
   type TaskContract,
 } from "../core/task-contract.js";
 import { Supervisor } from "../orchestrator/supervisor.js";
+import {
+  SeatEventSink,
+  trackReviewerSeat,
+  type SeatInfo,
+} from "../orchestrator/seat-events.js";
+import { EventLog } from "../events/log.js";
+import type { EngineEvent } from "../protocol/events.js";
+import { PRINT_CLI_RECIPES } from "../providers/executors/cli-print/recipes.js";
 import { isTerminalState, TaskState } from "../orchestrator/state-machine.js";
 import { TaskStore, loadTaskForResume, findLatestResumableTask } from "../persistence/index.js";
 import { killAllTrackedProcesses } from "../providers/executors/cursor/index.js";
@@ -64,6 +72,8 @@ export interface RunAssentorInput {
   skipGates?: boolean;
   mode?: RunMode;
   autopilot?: boolean;
+  /** Live seat-scoped engine events (T00-07), in log order. Errors thrown here are reported, not propagated. */
+  onEngineEvent?: (event: EngineEvent) => void;
 }
 
 export async function createExecutor(
@@ -264,13 +274,190 @@ function reviewerNeedsApiKey(
   return provider === "openai" || provider === "gemini";
 }
 
+const EXECUTOR_SEAT_ID = "executor";
+/** Seat for the review panel as a whole, spawned only when there is more than one reviewer. */
+const PANEL_SEAT_ID = "panel";
+/** Longest `close()` waits for queued event-log writes before giving up on them. */
+const SEAT_EVENTS_CLOSE_MS = 5_000;
+
+function reviewerSeatId(index: number): string {
+  return `reviewer-${index + 1}`;
+}
+
+/**
+ * Seat event wiring for one run (T00-07). Callbacks exist before the task id
+ * is known; `open` attaches the session event log once it is. Nothing here
+ * throws into the run: a log that can't be opened only disables persistence.
+ * Exported for tests.
+ */
+export class RunSeatEvents {
+  private sink?: SeatEventSink;
+  private forwardOutput = false;
+
+  constructor(private readonly onEngineEvent?: (event: EngineEvent) => void) {}
+
+  /**
+   * Only plain-text executor output becomes `seat.output.delta`. Stream-json
+   * executors print protocol NDJSON that the status parser already turns into
+   * status/tool events; persisting it again would be megabytes of noise.
+   */
+  setExecutorProvider(provider: string): void {
+    this.forwardOutput = executorEmitsPlainText(provider);
+  }
+
+  readonly executorStatus = (status: { activity: string; detail: string }): void => {
+    // Plain-text parsers report every output line as "running <line>". The line
+    // is already in seat.output.delta, so it is one "writing" status, not a
+    // status and a tool call per line (which would also defeat batching).
+    if (this.forwardOutput && status.activity === "running") {
+      this.sink?.status(EXECUTOR_SEAT_ID, "writing");
+      return;
+    }
+    this.sink?.activity(EXECUTOR_SEAT_ID, status.activity, status.detail);
+  };
+
+  readonly executorOutput = (chunk: string, stream: "stdout" | "stderr"): void => {
+    if (this.forwardOutput && stream === "stdout") {
+      this.sink?.output(EXECUTOR_SEAT_ID, chunk);
+    }
+  };
+
+  readonly memberStatus = (index: number, message: string): void => {
+    this.sink?.status(reviewerSeatId(index), "thinking", message);
+  };
+
+  trackMembers(members: Reviewer[]): Reviewer[] {
+    return members.map((member, index) =>
+      trackReviewerSeat(member, reviewerSeatId(index), () => this.sink),
+    );
+  }
+
+  scope(memberCount: number): { executorSeatId: string; reviewerSeatId: string } {
+    return {
+      executorSeatId: EXECUTOR_SEAT_ID,
+      reviewerSeatId: memberCount > 1 ? PANEL_SEAT_ID : reviewerSeatId(0),
+    };
+  }
+
+  get events(): SeatEventSink | undefined {
+    return this.sink;
+  }
+
+  async open(input: {
+    projectPath: string;
+    taskId: string;
+    title: string;
+    executor: { name: string; provider: string; model?: string };
+    reviewers: Array<{ name: string; backend?: ReviewerBackend }>;
+    redactSecrets: boolean;
+  }): Promise<void> {
+    let log: EventLog | undefined;
+    try {
+      log = await EventLog.open(input.projectPath, input.taskId);
+    } catch (error) {
+      console.error("[assentor] seat events: could not open session log:", error);
+    }
+    const sink = new SeatEventSink({
+      sessionId: input.taskId,
+      log,
+      onEvent: this.onEngineEvent,
+      redactSecrets: input.redactSecrets,
+    });
+    this.sink = sink;
+
+    if ((log?.lastSeq ?? 0) === 0) {
+      sink.emit({
+        type: "session.created",
+        sessionId: input.taskId,
+        data: { title: input.title },
+      });
+    }
+    sink.spawned(executorSeatInfo(input.executor));
+    if (input.reviewers.length > 1) {
+      sink.spawned({
+        seatId: PANEL_SEAT_ID,
+        displayName: "Review panel",
+        provider: "panel",
+        transport: "api",
+        model: "AUTO",
+        role: "panel",
+        permissions: "read-only",
+      });
+    }
+    input.reviewers.forEach((reviewer, index) => {
+      sink.spawned(reviewerSeatInfo(index, reviewer.name, reviewer.backend));
+    });
+  }
+
+  /** Never rejects; gives up on writes still queued after a few seconds. */
+  async close(): Promise<void> {
+    const closing = this.sink?.close();
+    if (!closing) {
+      return;
+    }
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      closing,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, SEAT_EVENTS_CLOSE_MS);
+        timer.unref?.();
+      }),
+    ]);
+    clearTimeout(timer);
+  }
+}
+
+/** Exported for tests. */
+export function executorEmitsPlainText(provider: string): boolean {
+  if (provider === "cursor") {
+    return process.env.ASSENTOR_CURSOR_OUTPUT_FORMAT === "text";
+  }
+  return PRINT_CLI_RECIPES[provider]?.outputFormat === "text";
+}
+
+function executorSeatInfo(executor: {
+  name: string;
+  provider: string;
+  model?: string;
+}): SeatInfo {
+  return {
+    seatId: EXECUTOR_SEAT_ID,
+    displayName: executor.name,
+    provider: executor.provider,
+    transport: executor.provider === "mock" ? "api" : "cli",
+    model: executor.model?.trim() || "AUTO",
+    role: "engineer",
+    permissions: "edit",
+  };
+}
+
+function reviewerSeatInfo(
+  index: number,
+  name: string,
+  backend?: ReviewerBackend,
+): SeatInfo {
+  return {
+    seatId: reviewerSeatId(index),
+    displayName: name,
+    provider: backend?.provider ?? "unknown",
+    transport: backend?.transport ?? "api",
+    model: backend?.model?.trim() || "AUTO",
+    role: backend?.role ?? "general",
+    permissions: "read-only",
+  };
+}
+
 async function createMembersFromBackends(input: {
   config: AssentorConfig;
   projectPath: string;
   prompt: string;
   onStatus?: (message: string) => void;
+  /** Raw status message for the member at this index (one member per backend). */
+  onMemberStatus?: (index: number, message: string) => void;
 }): Promise<{
   members: Reviewer[];
+  /** `members[i]` was built from `backends[i]`. */
+  backends: ReviewerBackend[];
   complexity: ReturnType<TaskComplexityAnalyzer["analyze"]>;
   reviewStrategy: ReviewStrategy;
 }> {
@@ -309,10 +496,12 @@ async function createMembersFromBackends(input: {
     const profile = profiles[i % profiles.length];
     members.push(
       await instantiateBackend(backend, input.config, input.projectPath, {
-        onStatus: (message) =>
+        onStatus: (message) => {
           input.onStatus?.(
             `[${backend.name ?? backend.provider}${profile ? `/${profile.id}` : ""}] ${message}`,
-          ),
+          );
+          input.onMemberStatus?.(i, message);
+        },
         specialtyAddendum: profile
           ? specialtyAddendum(profile.specialty)
           : undefined,
@@ -321,7 +510,7 @@ async function createMembersFromBackends(input: {
     );
   }
 
-  return { members, complexity, reviewStrategy };
+  return { members, backends, complexity, reviewStrategy };
 }
 
 async function instantiateBackend(
@@ -403,6 +592,7 @@ export async function runAssentorTask(input: RunAssentorInput) {
   let executor: Executor | undefined;
   let supervisor: Supervisor | undefined;
   let taskId: string | undefined;
+  const seatEvents = new RunSeatEvents(input.onEngineEvent);
   const detachInterrupt = attachRunInterrupt({
     reporter,
     getExecutor: () => executor,
@@ -412,6 +602,7 @@ export async function runAssentorTask(input: RunAssentorInput) {
 
   try {
     return await runAssentorTaskBody(input, projectPath, reporter, {
+      seatEvents,
       setExecutor: (value) => {
         executor = value;
       },
@@ -424,6 +615,7 @@ export async function runAssentorTask(input: RunAssentorInput) {
     });
   } finally {
     detachInterrupt();
+    await seatEvents.close();
     reporter.dispose();
   }
 }
@@ -433,6 +625,7 @@ async function runAssentorTaskBody(
   projectPath: string,
   reporter: RunReporter,
   slots: {
+    seatEvents: RunSeatEvents;
     setExecutor: (executor: Executor) => void;
     setSupervisor: (supervisor: Supervisor) => void;
     setTaskId: (taskId: string) => void;
@@ -486,20 +679,36 @@ async function runAssentorTaskBody(
 
   reporter.updatePreparing("starting executor and reviewers…");
 
+  const seatEvents = slots.seatEvents;
+  seatEvents.setExecutorProvider(executorProvider);
+  const executorModel = resolveExecutorModel(
+    input.executorModel,
+    config.executor.model,
+  );
   const executor = await createExecutor(executorProvider, projectPath, {
-    onStatus: (status) => reporter.onExecutorStatus(status),
+    onStatus: (status) => {
+      reporter.onExecutorStatus(status);
+      seatEvents.executorStatus(status);
+    },
+    onOutput: seatEvents.executorOutput,
     timeoutMs: config.limits.maxRuntimeMinutes * 60_000,
-    model: resolveExecutorModel(input.executorModel, config.executor.model),
+    model: executorModel,
   });
   slots.setExecutor(executor);
 
-  const { members: memberReviewers, complexity, reviewStrategy } =
-    await createMembersFromBackends({
-      config,
-      projectPath,
-      prompt: input.prompt,
-      onStatus: (message) => reporter.onReviewerStatus(message),
-    });
+  const {
+    members: builtReviewers,
+    backends: memberBackends,
+    complexity,
+    reviewStrategy,
+  } = await createMembersFromBackends({
+    config,
+    projectPath,
+    prompt: input.prompt,
+    onStatus: (message) => reporter.onReviewerStatus(message),
+    onMemberStatus: seatEvents.memberStatus,
+  });
+  const memberReviewers = seatEvents.trackMembers(builtReviewers);
 
   const reviewer: Reviewer =
     reviewStrategy === "SINGLE" || memberReviewers.length <= 1
@@ -542,6 +751,18 @@ async function runAssentorTaskBody(
   );
   reporter.note(`state dir: ${store.paths.taskDir}`);
 
+  await seatEvents.open({
+    projectPath,
+    taskId,
+    title: contract.goal,
+    executor: { name: executor.name, provider: executorProvider, model: executorModel },
+    reviewers: builtReviewers.map((member, index) => ({
+      name: member.name,
+      backend: memberBackends[index],
+    })),
+    redactSecrets: config.security.redactSecrets,
+  });
+
   const supervisor = new Supervisor({
     projectPath,
     contract,
@@ -558,6 +779,8 @@ async function runAssentorTaskBody(
     onEvent: (event) => {
       reporter.onEvent(event);
     },
+    seatEvents: seatEvents.events,
+    seatScope: seatEvents.scope(memberReviewers.length),
   });
   slots.setSupervisor(supervisor);
 
@@ -603,6 +826,8 @@ export async function resumeAssentorTask(input: {
   maxMessages?: number;
   /** Executor model; overrides `config.executor.model`. */
   executorModel?: string;
+  /** Live seat-scoped engine events; see `RunAssentorInput.onEngineEvent`. */
+  onEngineEvent?: (event: EngineEvent) => void;
 }) {
   const projectPath = path.resolve(input.projectPath);
   const reporter = new RunReporter({
@@ -612,6 +837,7 @@ export async function resumeAssentorTask(input: {
   });
   reporter.preparing("loading task to continue…");
 
+  const seatEvents = new RunSeatEvents(input.onEngineEvent);
   let executor: Executor | undefined;
   let supervisor: Supervisor | undefined;
   let taskId: string | undefined;
@@ -693,19 +919,33 @@ export async function resumeAssentorTask(input: {
       `Resuming ${resume.snapshot.taskId} (${resume.snapshot.status}) · ${resume.snapshot.contract.goal}`,
     );
 
+    seatEvents.setExecutorProvider(executorProvider);
+    const executorModel = resolveExecutorModel(
+      input.executorModel,
+      config.executor.model,
+    );
     executor = await createExecutor(executorProvider, projectPath, {
-      onStatus: (status) => reporter.onExecutorStatus(status),
+      onStatus: (status) => {
+        reporter.onExecutorStatus(status);
+        seatEvents.executorStatus(status);
+      },
+      onOutput: seatEvents.executorOutput,
       timeoutMs: config.limits.maxRuntimeMinutes * 60_000,
-      model: resolveExecutorModel(input.executorModel, config.executor.model),
+      model: executorModel,
     });
 
-    const { members: memberReviewers, reviewStrategy } =
-      await createMembersFromBackends({
-        config,
-        projectPath,
-        prompt: resume.snapshot.contract.goal,
-        onStatus: (message) => reporter.onReviewerStatus(message),
-      });
+    const {
+      members: builtReviewers,
+      backends: memberBackends,
+      reviewStrategy,
+    } = await createMembersFromBackends({
+      config,
+      projectPath,
+      prompt: resume.snapshot.contract.goal,
+      onStatus: (message) => reporter.onReviewerStatus(message),
+      onMemberStatus: seatEvents.memberStatus,
+    });
+    const memberReviewers = seatEvents.trackMembers(builtReviewers);
 
     const reviewer: Reviewer =
       reviewStrategy === "SINGLE" || memberReviewers.length <= 1
@@ -723,6 +963,18 @@ export async function resumeAssentorTask(input: {
       reviewerName: formatReviewerRunLabel(reviewer.name, backends[0]),
     });
 
+    await seatEvents.open({
+      projectPath,
+      taskId: resume.snapshot.taskId,
+      title: resume.snapshot.contract.goal,
+      executor: { name: executor.name, provider: executorProvider, model: executorModel },
+      reviewers: builtReviewers.map((member, index) => ({
+        name: member.name,
+        backend: memberBackends[index],
+      })),
+      redactSecrets: config.security.redactSecrets,
+    });
+
     supervisor = new Supervisor({
       projectPath,
       contract: resume.snapshot.contract,
@@ -733,11 +985,14 @@ export async function resumeAssentorTask(input: {
       verification: config.verification,
       autopilot: config.run.mode === "autopilot",
       onEvent: (event) => reporter.onEvent(event),
+      seatEvents: seatEvents.events,
+      seatScope: seatEvents.scope(memberReviewers.length),
     });
 
     return await supervisor.run();
   } finally {
     detachInterrupt();
+    await seatEvents.close();
     reporter.dispose();
   }
 }
