@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { isId } from "../core/ids.js";
 
 export const ASSENTOR_DIR = ".assentor";
 
@@ -66,6 +67,21 @@ export async function ensureAssentorGitignored(
     // Never fail the executor/run because gitignore could not be updated.
     return false;
   }
+}
+
+/**
+ * Paths for one engine session under `.assentor/sessions/<id>/`.
+ * Throws when `sessionId` is not a UUID, so the id is always path-safe.
+ */
+export function sessionPaths(
+  projectPath: string,
+  sessionId: string,
+): { root: string; events: string } {
+  if (!isId(sessionId)) {
+    throw new Error(`Invalid session id: ${sessionId}`);
+  }
+  const root = path.join(assentorRoot(projectPath), "sessions", sessionId);
+  return { root, events: path.join(root, "events.ndjson") };
 }
 
 export function taskPaths(projectPath: string, taskId: string): TaskPaths {
