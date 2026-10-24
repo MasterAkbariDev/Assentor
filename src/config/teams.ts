@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   normalizeSeatProvider,
   TeamSchema,
+  transportsForSeatProvider,
   type SeatSpecInput,
   type Team,
 } from "../core/seats.js";
@@ -85,9 +86,26 @@ export function resolveTeams(config: AssentorConfig): ResolvedTeams {
 
 function legacyReviewerSeat(
   reviewer: AssentorConfig["reviewers"][number],
+  index: number,
 ): SeatSpecInput {
+  // v0.3.19 ran `gemini` over the CLI as the Antigravity CLI; keep that working.
+  const provider =
+    reviewer.provider === "gemini" && reviewer.transport === "cli"
+      ? "antigravity"
+      : reviewer.provider;
+  const seatProvider = seatProviderFor(
+    provider,
+    `reviewer "${reviewer.provider}"`,
+  );
+  const supported = transportsForSeatProvider(seatProvider);
+  if (!supported.includes(reviewer.transport)) {
+    throw new Error(
+      `reviewers[${index}] (${reviewer.provider}): transport "${reviewer.transport}" ` +
+        `is not supported; use "${supported.join('" or "')}"`,
+    );
+  }
   return {
-    provider: seatProviderFor(reviewer.provider, `reviewer "${reviewer.provider}"`),
+    provider: seatProvider,
     transport: reviewer.transport,
     model: reviewer.model ?? "AUTO",
     role: reviewer.role,
