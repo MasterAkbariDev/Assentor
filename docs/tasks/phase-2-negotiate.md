@@ -1,0 +1,170 @@
+# Phase 2 — Negotiate mode
+
+Phase exit criteria:
+- [ ] From the CLI: "3× Opus + 2× Codex debate a plan → best-of-N implement in worktrees → panel review" runs end-to-end with mock providers in tests and with real CLIs manually.
+- [ ] No seat ever edits the user's main checkout directly; all edits are in worktrees until an explicit merge.
+- [ ] Concurrency caps and budgets stop runaway spend.
+
+Strategy tasks (T02-04…08) implement against the **strategy contract** delivered by T02-03. Do not start them before T02-03 is merged.
+
+---
+
+### T02-01 · Worktree manager
+**Tier:** 🔴 O · **Review:** O2 + human · **Size:** L · **Depends:** T00-01
+
+**Goal** — Safe per-seat git worktrees: create, diff, merge into the task branch, discard, cleanup.
+
+**Context to read** — `src/git/local.ts`, `src/git/types.ts`, `src/persistence/paths.ts`, `src/security/paths.ts`, existing checkpoint/rollback in `supervisor.ts`.
+
+**Deliverables**
+1. `WorktreeManager` (`src/worktrees/`): `create(sessionId, seatId, baseRef)`, `list(sessionId)`, `diff(seatId)`, `applyTo(targetWorktreeOrMain, seatId, { strategy: "merge" | "squash" | "patch" })`, `discard(seatId)`, `cleanup(sessionId, { keepFailed })`.
+2. Location `.assentor/worktrees/<short-session>/<short-seat>` (short ids to avoid Windows MAX_PATH); branch names `assentor/<session>/<seat>`.
+3. Refuse when the main checkout is dirty unless the user opted in; never force-delete branches with unmerged commits unless `discard` was explicit.
+4. Recovery: on startup, detect orphaned worktrees (`git worktree list --porcelain`) and report, don't auto-delete.
+5. All git calls via `execFile` with timeouts (no shell strings).
+
+**Acceptance** — integration tests on temp repos: create/diff/apply/discard/cleanup, dirty-main refusal, conflict reporting (no partial merge left behind), Windows path length test, interrupted cleanup is idempotent.
+
+**Reviewer focus** — data loss paths, branch deletion, path traversal, Windows.
+
+---
+
+### T02-02 · Seat scheduler: concurrency, rate limits, budgets
+**Tier:** 🔴 O · **Review:** O2 · **Size:** L · **Depends:** T00-07
+
+**Goal** — Run many seats safely: per-provider concurrency caps, queue with `queued` status, rate-limit backoff with countdown events, per-seat and per-session budgets, cancellation.
+
+**Context to read** — `src/core/budgets.ts`, `src/core/retry.ts`, `src/orchestrator/supervisor.ts` (retry logic), `src/process/tracker.ts`.
+
+**Deliverables**
+1. `SeatScheduler.run(seat, job, { signal })` — admits by `limits.concurrency[provider]` (defaults: CLI 2, API 4) and global cap.
+2. Rate-limit detection hooks (reuse executor error mapping) → `rate_limited` status with `retryAt`, exponential backoff with jitter, max attempts.
+3. Budgets: tokens/cost/runtime per seat and session; on exceed → stop seat, emit `budget.warning` at 80% and `budget.exceeded`.
+4. `cancelSeat`, `cancelAll` — propagate AbortSignal; integrates with kill-tree.
+5. Config: `limits.concurrency`, `limits.session` (schema change owned by this task).
+
+**Acceptance** — fake-clock tests: caps respected under 20 jobs, FIFO fairness per provider, backoff timing, budget stop, cancellation leaves no running jobs.
+
+---
+
+### T02-03 · Negotiation engine core + strategy contract
+**Tier:** 🔴 O · **Review:** O2 + human · **Size:** L · **Depends:** T02-02
+
+**Goal** — The framework all strategies plug into: rounds, anonymization, convergence, persistence, events.
+
+**Deliverables**
+1. `NegotiationStrategy` interface (exact, documented) e.g.:
+   - `id`, `validate(team, options)`, `async run(ctx): Promise<NegotiationResult>`
+   - `ctx` provides: `seats`, `askSeat(seatId, promptRef, vars, { readOnly, worktree? })` (goes through scheduler), `anonymize(proposals)` (stable labels `Proposal A/B/C`), `emit(event)`, `budget`, `signal`, `judge(...)`, `log`.
+2. `NegotiationResult { decision, rationale, proposals[], votes?, dissent[], rounds, transcriptRef }` + zod schema, persisted under `.assentor/sessions/<id>/negotiation.json`.
+3. Events: `negotiation.proposal/critique/vote/consensus` with anonymized labels plus seat id (UI may reveal).
+4. Consensus helper: `agreementScore(responses)` — structured: each seat answers `{ agree: boolean, preferred: label, confidence }`; score = weighted share for the top label.
+5. A `MockSeat` harness for strategy tests (deterministic scripted responses).
+6. Prompt refs for proposal/critique/revise/vote/judge (placeholders until T03-02/03 ship real prompts).
+7. File layout later cards rely on: `src/negotiation/strategy.ts` (contract), `src/negotiation/engine.ts`, `src/negotiation/strategies/index.ts` (registry), `src/negotiation/testing/mock-seat.ts`, plus a `src/negotiation/README.md` with one worked example strategy.
+
+**Acceptance** — engine tests with a trivial strategy; anonymization never leaks seat names into prompts; cancellation mid-round; persistence round-trip.
+
+---
+
+### T02-04 · Strategy: Vote (ranked / Borda)
+**Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T02-03
+
+**Goal** — Each seat proposes; each seat ranks all proposals; Borda count picks the winner.
+
+**Context to read** — `src/negotiation/strategy.ts` (contract from T02-03), `src/negotiation/testing/mock-seat.ts`, one existing strategy test if present.
+
+**Allowed files** — create: `src/negotiation/strategies/vote.ts`, `tests/unit/strategy-vote.test.ts`; modify: `src/negotiation/strategies/index.ts` (register).
+
+**Spec**
+1. Round 1: `askSeat(seat, "negotiate.propose", { goal })` for every seat in parallel → proposals; anonymize.
+2. Round 2: `askSeat(seat, "negotiate.rank", { goal, proposals })` → expects `{ ranking: string[] }` (labels, best first). Invalid/missing labels → ignore that seat's ballot and record in `dissent` with reason `"invalid ballot"`.
+3. Borda: with `n` proposals, position `i` (0-based) scores `n - 1 - i`. A seat may not rank its own proposal first — if it does, move it to last place before scoring (document this rule in code).
+4. Ties → lowest label alphabetically wins, and `rationale` says it was a tie-break.
+5. `NegotiationResult.votes` = per-seat ranking + per-label total.
+6. Emit `negotiation.vote` per ballot and `negotiation.consensus` at the end with `score = winnerPoints / maxPossible`.
+
+**Acceptance / Tests** — 3 seats clear winner; tie-break; invalid ballot; self-vote demotion; cancellation before round 2 returns a cancelled error from the engine (don't catch it).
+
+---
+
+### T02-05 · Strategy: Debate
+**Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** T02-03
+
+**Goal** — Propose → anonymized critique (evidence-required) → revise → consensus check, up to `maxRounds`; moderator/judge decides if no consensus; dissent recorded.
+
+**Deliverables** — strategy implementation, devil's-advocate seat support (role `devils-advocate` never counts toward consensus), critique quality rule (critiques without file/line or reasoning citations get weight 0.5), tests with scripted seats covering convergence in round 1, round 3, and no convergence → judge.
+
+---
+
+### T02-06 · Strategy: Best-of-N
+**Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** T02-01, T02-03
+
+**Goal** — Each editing seat implements in its own worktree; verification gates run per worktree; judge panel (review seats) picks the winner; winner is applied to the task worktree (not main).
+
+**Deliverables** — strategy; reuse `maybeRunVerificationGates` logic per worktree; judge prompt gets diffs + gate results (anonymized); losers' worktrees kept until session cleanup; tests with mock executor writing different files.
+
+**Reviewer focus** — only `WorktreeManager` APIs used for git; no direct git calls.
+
+---
+
+### T02-07 · Strategy: Synthesize
+**Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T02-03
+
+**Goal** — All seats propose; one aggregator seat writes a merged answer that cites which proposal each part came from.
+
+**Allowed files** — create: `src/negotiation/strategies/synthesize.ts`, `tests/unit/strategy-synthesize.test.ts`; modify: strategies `index.ts`.
+
+**Spec**
+1. Options: `aggregator: seatId` (required; must be in team → else `validate` returns error `"synthesize requires an aggregator seat in the team"`).
+2. Round 1: all non-aggregator seats propose in parallel (anonymized).
+3. Round 2: `askSeat(aggregator, "negotiate.synthesize", { goal, proposals })` → expects `{ answer: string, sources: Array<{ label: string; used: string }> }`.
+4. Validate every `sources[].label` exists; unknown labels → add a `dissent` entry `"aggregator cited unknown proposal <label>"` (don't fail).
+5. Proposals never cited → listed in `rationale` as "not used".
+6. `decision = answer`; `consensus` event score = cited proposals / total proposals.
+
+**Tests** — happy path; missing aggregator; unknown label; uncited proposals.
+
+---
+
+### T02-08 · Strategy: Divide & conquer
+**Tier:** 🟡 S · **Review:** O · **Size:** L · **Depends:** T02-01, T02-03
+
+**Goal** — Planner seat splits the task into independent subtasks with file ownership; subtasks assigned to seats in separate worktrees in parallel; integrator seat merges; conflicts escalate to the user.
+
+**Deliverables** — subtask schema (id, description, ownedPaths[], dependsOn[]), overlap check on `ownedPaths` (reject plan with overlaps), dependency-ordered scheduling, integration via `WorktreeManager.applyTo` in order, conflict → `waiting` status with user prompt event.
+
+---
+
+### T02-09 · Stage-graph runner (plan → execute → review, tiebreak)
+**Tier:** 🔴 O · **Review:** O2 + human · **Size:** L · **Depends:** T02-03, T01-03
+
+**Goal** — Sessions run as a graph of stages: `negotiate` output can feed `execute`; `review` NEEDS_WORK loops back; review disagreement can trigger a reviewer negotiation (`tiebreak: negotiate`).
+
+**Deliverables**
+1. `SessionRunner` over `SessionSpec` (from T00-01): stage transitions, loop limits, persistence + resume of a partially completed graph.
+2. Wraps existing `Supervisor` for `execute`+`review` loop, passing negotiated plan as contract context.
+3. Implements `onDisagreement` hook from T01-03 using Debate among reviewer seats.
+4. Human-approval gates between stages (`requireApproval: true`) → `waiting` event + `session.approve` API.
+5. `assentor run --playbook <id>` (CLI wiring).
+
+**Acceptance** — mock end-to-end: plan(debate) → execute(best-of-n) → review(panel, NEEDS_WORK once) → PASS; resume after crash mid-stage; approval gate blocks until approved.
+
+---
+
+### T02-10 · Pre-run cost estimator
+**Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T00-02
+
+**Goal** — Show an estimated token/cost range before a session starts.
+
+**Context to read** — `src/core/seats.ts`, `src/config/teams.ts`, `src/models/registry.ts` (`ModelInfo` pricing fields, if present).
+
+**Allowed files** — create: `src/estimate/cost.ts`, `tests/unit/cost-estimate.test.ts`.
+
+**Spec**
+1. `estimateSession({ teams, modes, contextTokens, pricing }): { perSeat: Array<{ seatId, low, high, unit: "tokens" }>, totalLow, totalHigh, usd?: { low, high } }`.
+2. Heuristic (document in code as rough): per seat-turn input = `contextTokens + 2_000`, output = 1_500–4_000. Turns: negotiate debate = `maxRounds × 2` per seat (propose/revise + critique), vote = 2, synthesize = 1 (+1 for aggregator), review = `1 × limits.maxRounds` (low uses 1 round, high uses maxRounds).
+3. `usd` only if every seat has pricing in `pricing` map (`{ "<provider>/<model>": { inPerMTok, outPerMTok } }`); CLI subscription seats with no pricing → omit usd and add `notes: ["<seat> billed by subscription; no $ estimate"]`.
+4. Pure function; no I/O.
+
+**Tests** — single seat; 5-seat debate; mixed pricing → usd omitted with notes; numbers match hand-computed expectations in the test.

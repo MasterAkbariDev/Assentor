@@ -1,0 +1,285 @@
+# Phase 0 — Foundations
+
+Goal of the phase: introduce seats, teams and seat-scoped events **without changing any existing behavior**. After Phase 0, `assentor run` with an old config behaves exactly as v0.3.19.
+
+Phase exit criteria:
+- [ ] All existing tests green on ubuntu, macOS, Windows (T00-08).
+- [ ] Old configs (no `teams`) produce identical runs; snapshot test in T00-02.
+- [ ] Every supervisor event also exists as a seat-scoped event in `.assentor/sessions/<id>/events.ndjson`.
+
+---
+
+### T00-01 · Seat / Team / Session contract + event envelope
+**Tier:** 🔴 O · **Review:** O2 + human · **Size:** M · **Depends:** —
+
+**Goal** — Define the shared types every later task builds on. Contract only: types, zod schemas, doc comments, tiny pure helpers. No runtime wiring.
+
+**Context to read**
+- `docs/plans/app-and-multi-model.md` §3, §4.6
+- `docs/plans/desktop-app-system-design.md` §4
+- `src/orchestrator/supervisor.ts:83-170` (current `SupervisorEvent`)
+- `src/protocol/messages.ts`, `src/config/schema.ts`, `src/executors/providers.ts`, `src/review/backends.ts`
+
+**Allowed files**
+- create: `src/core/seats.ts`, `src/protocol/events.ts`, `tests/unit/seat-contract.test.ts`
+- modify: `src/core/index.ts`, `src/protocol/index.ts`, `src/index.ts` (exports only)
+
+**Deliverables**
+1. `SeatProvider` — union of CLI providers (`claude-code`, `codex`, `antigravity`, `cursor`, `qwen`, `opencode`, `mock`) and API providers (`gemini`, `openai`), with `transport: "cli" | "api"` and a validator for allowed combinations (reuse `transportsForProvider` semantics).
+2. `SeatRole` (string id referencing a prompt; built-ins enumerated as constants, user ids allowed).
+3. `SeatPermissions = "read-only" | "edit"`.
+4. `SeatSpecSchema` (config shape: provider, transport, model, role, promptRef?, count 1–8, permissions, name?, budget?) and `Seat` (runtime: `id`, `displayName` e.g. `Opus#2`, resolved fields, `worktreePath?`, `sessionId?`).
+5. `TeamSchema`, `StageKind = "plan" | "negotiate" | "execute" | "review"`, `StageSpec`, `SessionSpec` (types only; runner comes in T02-09).
+6. `expandSeatSpecs(specs): Seat[]` — deterministic ids and display names (`<ModelShort>#<n>`; collision-free across providers).
+7. `SeatStatus` enum: `queued | starting | thinking | writing | tool | editing | waiting | rate_limited | done | failed | dissent`.
+8. `EngineEvent` envelope `{ seq, sessionId, seatId?, stageId?, at, type, data }` + zod schema + `EngineEventType` catalog (plan §4.6) with a typed `data` map per type.
+9. `fromSupervisorEvent(event, ctx): EngineEvent` mapping for every existing `SupervisorEventType` (used by T00-07).
+
+**Constraints**
+- No behavior change; nothing imports these from existing runtime code yet.
+- Keep `data` payloads JSON-serializable; no class instances.
+- Document every exported type — Haiku tasks will implement against these comments.
+
+**Acceptance**
+- [ ] Types exported from `src/index.ts`.
+- [ ] `expandSeatSpecs` tested: counts, naming, mixed providers, determinism.
+- [ ] Every `SupervisorEventType` has a mapping (exhaustiveness checked at compile time).
+- [ ] Event schema round-trips through JSON.
+
+---
+
+### T00-02 · Config schema: `teams`, `modes`, legacy mapping
+**Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T00-01
+
+**Goal** — Users can declare teams in config. Configs without teams keep working exactly as before by being mapped to equivalent teams.
+
+**Context to read**
+- `src/config/schema.ts` (whole file)
+- `src/config/load.ts:48-135` (`mergeConfigLayers`, `loadAssentorConfig`)
+- `src/core/seats.ts` (from T00-01: `SeatSpecSchema`, `TeamSchema`)
+- `tests/unit/cli-config.test.ts` (test style)
+
+**Allowed files**
+- modify: `src/config/schema.ts`, `src/config/index.ts` if it exists (exports)
+- create: `src/config/teams.ts`, `tests/unit/config-teams.test.ts`
+
+**Spec**
+1. In `AssentorConfigSchema` add, after `reviewers`:
+   - `teams: z.record(z.string().min(1), TeamSchema).default({})`
+   - `modes: z.object({ negotiate: NegotiateModeSchema.optional(), review: ReviewModeSchema.optional() }).default({})`
+   where (define in `src/config/teams.ts`):
+   - `NegotiateModeSchema = { team: string, strategy: "debate"|"vote"|"best-of-n"|"synthesize"|"divide" default "debate", maxRounds: int 1–10 default 3, consensus: number 0–1 default 0.7 }`
+   - `ReviewModeSchema = { team: string, policy: "majority"|"unanimous"|"weighted"|"security-veto"|"adjudicator" default "security-veto", tiebreak: "adjudicator"|"negotiate" default "adjudicator" }`
+2. Create `resolveTeams(config): { executor: Team; review: Team }` in `src/config/teams.ts`:
+   - If `config.modes.review?.team` is set and exists in `config.teams` → use it for `review`.
+   - Otherwise build the review team from `config.reviewers` (one seat per entry, `count: 1`, `permissions: "read-only"`, keep `provider`, `transport`, `model`, `role`, `name`).
+   - Executor team: always one seat from `config.executor.provider`, `permissions: "edit"`, `role: "engineer"`.
+3. If a mode references a team name that doesn't exist → throw `Error` with message: `Unknown team "<name>" in modes.<mode>. Defined teams: <list or "(none)">`.
+4. Do **not** change any existing default or field.
+
+**Acceptance**
+- [ ] `parseAssentorConfig({})` output equals the v0.3.19 output plus `teams: {}` and `modes: {}` only.
+- [ ] Legacy config with 2 reviewers → review team with 2 read-only seats, same providers/transports/models.
+- [ ] Teams with `count: 3` validate; `count: 0` and `count: 9` fail.
+- [ ] Unknown team reference throws the exact message.
+
+**Tests** (`tests/unit/config-teams.test.ts`)
+- default config shape (no teams) unchanged except new keys
+- legacy reviewers → review team mapping
+- explicit team used by `modes.review`
+- the YAML example from plan §3 parses (paste it as a string, parse with `yaml`)
+- invalid counts; unknown team error message
+
+**Out of scope** — using teams at runtime (T01-02), TUI editing, saving teams.
+
+**Escalate if** — `TeamSchema` from T00-01 is missing a field this spec needs, or `mergeConfigLayers` merges records in a way that would merge two teams with the same name field-by-field (ask whether project teams should replace user teams wholesale).
+
+---
+
+### T00-03 · Model flag for CLI executor recipes
+**Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** —
+
+**Goal** — Executors launched through CLIs can be told which model to use.
+
+**Verified flags (dev machine, 2026-10-24)** — `claude --model <m>`, `codex exec -m <m>` (also `--model`), `agy --model <m>`, `cursor agent --model <m>`. Qwen/OpenCode: **unverified** — leave `modelFlag` undefined for them.
+
+**Context to read**
+- `src/providers/executors/cli-print/recipes.ts` (whole)
+- `src/providers/executors/cli-print/index.ts:60-200`
+- `src/providers/executors/cursor/index.ts:55-110` and `:420-455` (`buildArgs`)
+- `src/executors/registry.ts` (`buildExecutorRegistry`)
+- `src/cli/commands.ts:67-110` (`createExecutor`), `src/cli/index.ts:69-135` (`run` command)
+- `tests/unit/print-cli-executor.test.ts`, `tests/unit/cursor-spawn.test.ts`
+
+**Allowed files**
+- modify: `recipes.ts`, `cli-print/index.ts`, `cursor/index.ts` (only `CursorExecutorOptions` + `buildArgs`), `src/executors/registry.ts`, `src/cli/commands.ts` (only `createExecutor` options + its call sites in `runRun`/resume), `src/cli/index.ts` (only `run`/`resume` options), `src/config/schema.ts` (only `executor` object)
+- modify tests: `tests/unit/print-cli-executor.test.ts`, `tests/unit/cursor-spawn.test.ts`
+
+**Spec**
+1. `PrintCliRecipe.modelFlag?: string`. Set `"--model"` for `claude-code`, `antigravity`; `"-m"` for `codex`. Leave `qwen`, `opencode` unset.
+2. `buildPrintCliArgs(recipe, prompt, { …, model?: string })`: when `model` is a non-empty string, not `"AUTO"`, and `recipe.modelFlag` is set:
+   - attached style: push `[modelFlag, model]` right before `-p=<prompt>`
+   - positional style: push `[modelFlag, model]` right before the prompt (after `printArgs` and format args) — for codex this lands after `exec`, which is required.
+   - when `model` is set but `modelFlag` is not → do **not** add args; return normally (caller warns, see 4).
+3. `PrintCliExecutorOptions.model?: string` stored and passed to `buildPrintCliArgs` on both `run` and `continue`.
+4. If a model was requested but the recipe has no `modelFlag`, call `onStatus?.({ activity: "warning", detail: "<name> does not support model selection; using CLI default" })` once.
+5. Cursor: `CursorExecutorOptions.model?: string`; in `buildArgs`, push `"--model", model` immediately before `...this.extraArgs` when set and not `"AUTO"`.
+6. Config: `executor.model: z.string().optional()`. CLI: `assentor run --executor-model <model>` and the same on `resume`; flag overrides config. Thread through `createExecutor(..., { model })` → registry → adapter.
+
+**Acceptance**
+- [ ] `claude-code` args contain `--model opus` before the prompt; prompt is still last.
+- [ ] `codex` args are `[...unattended, "exec", "--skip-git-repo-check", "-m", "<m>", prompt]`.
+- [ ] `antigravity` args contain `--model <m>` before `-p=<prompt>`.
+- [ ] `AUTO`, empty string, undefined → no model flag.
+- [ ] No-flag recipe + model → warning emitted once, args unchanged.
+- [ ] Existing tests pass unchanged.
+
+**Tests** — add cases for each bullet above to the two existing test files.
+
+**Out of scope** — reviewer side (T00-04), model catalogs (T01-01), switching models mid-run (T01-05).
+
+**Escalate if** — any existing test asserts exact arg arrays that your change breaks for the *no-model* case (that means placement is wrong).
+
+---
+
+### T00-04 · Pass `model` through CLI reviewers (bug fix)
+**Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** —
+
+**Goal** — A reviewer configured as `{ provider: claude, transport: cli, model: opus }` actually runs Opus. Today `model` is silently dropped for CLI transport.
+
+**Context to read**
+- `src/cli/commands.ts:113-200` (`CreateReviewerOptions`, `createReviewer`, `createReviewerTransport`)
+- `src/providers/reviewers/cli/index.ts` (whole; `buildCliArgs` at ~line 342)
+- `tests/unit/cli-reviewer.test.ts`
+
+**Allowed files**
+- modify: `src/providers/reviewers/cli/index.ts`, `src/cli/commands.ts` (only `createReviewerTransport` CLI branch), `tests/unit/cli-reviewer.test.ts`
+
+**Spec**
+1. Add `model?: string` to the `CliReviewer` constructor options; store it.
+2. `buildCliArgs(adapter, prompt, extraArgs, context)` gains `context.model?: string`. When set and not `"AUTO"`:
+   - `claude`: insert `"--model", model` after `"--output-format", "text"` and before `...extraArgs`.
+   - `cursor`: insert `"--model", model` before `...extraArgs`.
+   - `antigravity`: insert `"--model", model` before `...extraArgs`.
+3. In `createReviewerTransport`, pass `model: options.model` into `new CliReviewer({...})`.
+4. Do not change any other flag. Do not add permission/bypass flags.
+
+**Acceptance**
+- [ ] With `MockCliTransport`/captured spawn, args include `--model <m>` for each adapter.
+- [ ] `AUTO`/undefined → identical args to today.
+- [ ] Fallback reviewer path (`options.fallback.model`) also reaches the CLI reviewer.
+
+**Tests** — extend `tests/unit/cli-reviewer.test.ts` with one case per adapter + AUTO + fallback.
+
+**Out of scope** — adding a Codex reviewer adapter (T01-02).
+
+**Escalate if** — the `CliTransport` abstraction hides args so tests can't observe them (then ask whether to expose `lastCommand` in tests — it exists on the default transport).
+
+---
+
+### T00-05 · Append-only session event log (NDJSON + seq)
+**Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T00-01
+
+**Goal** — Persist every `EngineEvent` so sessions can be replayed and clients can resume from a sequence number.
+
+**Context to read**
+- `src/protocol/events.ts` (T00-01)
+- `src/persistence/paths.ts` (`appendJsonl`, `readJsonl`, `ensureAssentorGitignored`, `writeJsonAtomic`)
+- `tests/unit/persistence.test.ts`
+
+**Allowed files**
+- create: `src/events/log.ts`, `src/events/index.ts`, `tests/unit/event-log.test.ts`
+- modify: `src/persistence/paths.ts` (add `sessionPaths(projectPath, sessionId)` only), `src/index.ts` (exports)
+
+**Spec**
+1. `sessionPaths(projectPath, sessionId)` → `{ root: .assentor/sessions/<id>, events: <root>/events.ndjson }`. Validate `sessionId` with `isId` from `src/core/ids.ts` (UUID); throw `Error("Invalid session id: <id>")` otherwise. New ids come from `createId()`.
+2. `class EventLog`:
+   - `static async open(projectPath, sessionId): Promise<EventLog>` — ensures directory + gitignore; reads existing file to recover `lastSeq` (0 if new).
+   - `async append(event: Omit<EngineEvent, "seq" | "at"> & { at?: string }): Promise<EngineEvent>` — assigns `seq = lastSeq + 1`, `at` default now (ISO), validates with the zod schema, appends one line, returns the full event. Appends are **serialized** (internal promise chain) so concurrent callers never interleave or reuse seq.
+   - `async readFrom(fromSeq: number): Promise<EngineEvent[]>` — events with `seq > fromSeq`, in order.
+   - `get lastSeq(): number`.
+3. Tolerate a truncated final line (crash mid-write): skip it when reading, log nothing, and continue numbering after the last valid event.
+4. Use `\n` line endings; parse lines with `trimEnd()` so CRLF files also read.
+
+**Acceptance**
+- [ ] 100 concurrent `append` calls → seq 1..100 with no gaps or duplicates, file has 100 valid lines.
+- [ ] Reopen after writes → `lastSeq` correct; next append continues.
+- [ ] Truncated last line ignored.
+- [ ] `readFrom(n)` returns exactly the tail.
+
+**Tests** — one per acceptance bullet, using a temp dir (`fs.mkdtemp(os.tmpdir())`), cleaned up in `afterEach`.
+
+**Out of scope** — emitting events from the supervisor (T00-07), streaming to clients (Phase 4).
+
+---
+
+### T00-06 · Output-delta coalescer
+**Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T00-01
+
+**Goal** — Batch high-frequency `seat.output.delta` text per seat into frames so UIs stay smooth.
+
+**Context to read** — `src/protocol/events.ts` (T00-01), desktop design §4.2.
+
+**Allowed files** — create: `src/events/coalescer.ts`, `tests/unit/event-coalescer.test.ts`; modify: `src/events/index.ts` (export) — if T00-05 hasn't landed, create `src/events/index.ts`.
+
+**Spec**
+1. `createDeltaCoalescer({ intervalMs = 40, maxChars = 8_192, emit, now?, setTimer?, clearTimer? })` returns `{ push(seatId, text), flush(seatId?), dispose() }`.
+2. `push` appends text to that seat's buffer; schedules one timer per seat if none pending.
+3. When the timer fires → `emit({ seatId, text })` with the concatenated buffer, buffer cleared.
+4. If a seat's buffer exceeds `maxChars` → emit immediately (don't wait for the timer) and cancel its timer.
+5. `flush(seatId)` emits that seat now; `flush()` emits all seats; empty buffers never emit.
+6. `dispose()` flushes all and clears timers.
+7. Inject `now/setTimer/clearTimer` for tests (default to globals); use `vi.useFakeTimers()` in tests.
+
+**Acceptance / Tests**
+- [ ] Two seats pushing interleaved text → separate emits, order preserved within a seat.
+- [ ] Many pushes within interval → one emit.
+- [ ] `maxChars` overflow → immediate emit.
+- [ ] `flush`/`dispose` behavior; no emit for empty buffers; no timers left after dispose.
+
+---
+
+### T00-07 · Supervisor emits seat-scoped events
+**Tier:** 🔴 O · **Review:** O2 · **Size:** M · **Depends:** T00-01, T00-05 (T00-06 optional)
+
+**Goal** — The existing supervisor run produces `EngineEvent`s with seat ids, persisted via `EventLog`, while the old `onEvent` callback and `RunReporter` keep working unchanged.
+
+**Context to read** — `src/orchestrator/supervisor.ts` (whole), `src/cli/ui/reporter.ts`, `src/cli/commands.ts:460-720`, `src/providers/executors/cursor/stream-status.ts`, `src/providers/executors/cli-print/text-stream.ts`, T00-01 contract.
+
+**Allowed files** — modify: `supervisor.ts`, `commands.ts` (wiring), executor/reviewer adapters only to surface existing status/output callbacks as seat events; create tests `tests/unit/supervisor-seat-events.test.ts`.
+
+**Deliverables**
+1. `SupervisorConfig.onEngineEvent?` + optional `eventLog?: EventLog` + `seats?: { executor: Seat; reviewers: Seat[] }` (default: derive single seats from adapter names).
+2. Emit `seat.spawned/status/output.delta/tool_call/done/error` from existing executor `onOutput`/`onStatus` and stream-status parsing; reviewer seats from `PanelReviewer` member calls.
+3. Every legacy `SupervisorEvent` also emitted via `fromSupervisorEvent`.
+4. Persist through `EventLog` when provided; event emission must never throw into the supervisor loop (log and continue).
+5. Resume: new events continue the same session log (`seq` keeps increasing).
+
+**Acceptance**
+- [ ] Mock executor + 2 mock reviewers run → ordered events with 3 distinct seat ids; legacy reporter output identical (snapshot).
+- [ ] Event-log write failure doesn't fail the run.
+- [ ] Resume appends to the same log.
+
+**Reviewer focus** — no changes to round/budget/state-machine semantics; ordering guarantees; memory (no unbounded buffers).
+
+---
+
+### T00-08 · CI matrix: macOS + Windows + Linux
+**Tier:** 🟡 S · **Review:** O · **Size:** S–M · **Depends:** —
+
+**Goal** — "Works on all OS" is enforced by CI.
+
+**Context to read** — `.github/workflows/ci.yml`, `vitest.config.ts`, tests touching paths/processes (`cli-locator`, `process-tracker`, `cursor-spawn`, `persistence`, `git-artifacts`, `e2e-average`).
+
+**Allowed files** — modify: `.github/workflows/ci.yml`; test files that fail only due to platform assumptions (fix the **test**, not product code). Product-code fixes → separate escalation (they may be Danger-list: process/paths).
+
+**Spec**
+1. `strategy.matrix.os: [ubuntu-latest, macos-latest, windows-latest]`, `fail-fast: false`.
+2. Ensure git is configured in CI for tests that commit (`git config --global user.email/name`).
+3. Windows: set `core.autocrlf false` before checkout; use `shell: bash` only where needed.
+4. Keep Node 24 per existing comment.
+5. Report per-OS failures in the PR with a short root-cause note each.
+
+**Acceptance**
+- [ ] Three green jobs, or failing jobs each have an escalation linked with root cause.
+- [ ] No test skipped on an OS without a written reason in the test (`it.skipIf(process.platform === "win32")` + comment).
