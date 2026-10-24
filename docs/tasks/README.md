@@ -141,7 +141,7 @@ Design: [modes.md](../plans/modes.md)
 | T02B-09 | Playbooks: Pipeline, Explore, Plan | 🟢 H | S | S | T02B-01, T03-01, T03-04 |
 | T02B-10 | Mode prompts (lead, navigator, attacker, …) | 🟢 H | O (quality) | M | T03-01, T02B-01 |
 | T02B-11 | TDD mode | 🟡 S | O | M | T02B-01, T02B-12, T02-01 |
-| T02B-12 | Test-tamper detector | 🟢 H | S | S | — |
+| T02B-12 | Test-tamper detector ✅ | 🟢 H | S | S | — |
 | T02B-13 | Pair mode | 🟡 S | O | M | T02B-01, T01-05, T00-06 |
 | T02B-14 | Red-team mode | 🟡 S | O | M | T02B-01, T02-01 |
 | T02B-15 | Swarm mode | 🟡 S | O | L | T02B-01, T02-01, T02-02, T02B-06 |

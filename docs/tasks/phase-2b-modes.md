@@ -198,6 +198,9 @@ Order: **T02B-01 → (T02B-03, 04, 05, 08, 12, 17 in parallel for Haiku) → T02
 ### T02B-12 · Test-tamper detector
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** —
 
+**Status: ✅ done.** Shipped in `db3d680`. Sonnet review PASS. Decisions: hand-rolled glob → RegExp (`**/` = zero or more segments, trailing `/**` = anything below, `*`/`?` never cross `/`, all else literal); paths normalized to `/` on every input to `detectTamper`; output keeps the coder's order, de-duplicated.
+- **Follow-up (fail closed, do before T02B-11 uses it):** strip a leading `./` in `normalizePath`; compare case-folded paths in `detectTamper` (macOS/Windows filesystems are case-insensitive); add tests for backslash `approvedChanges`/`lockedTests` and a pattern with a literal `.`/`[`. Paths are assumed repo-relative (callers must relativize absolute paths).
+
 **Allowed files** — create: `src/modes/tdd/tamper.ts`, `tests/unit/tdd-tamper.test.ts`.
 
 **Spec**
