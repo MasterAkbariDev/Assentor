@@ -2,7 +2,7 @@
 
 **Read this first if you are a Claude session picking up this work.** It says where things stand, how the work is run, and what to do next. The planner updates it after every merge.
 
-_Last updated: 2026-10-24 by the planner session "Multi-model CLI app architecture" (Opus)._
+_Last updated: 2026-10-24 by the planner session "Repository status review" (Opus), which took over from "Multi-model CLI app architecture"._
 
 ---
 
@@ -11,7 +11,7 @@ _Last updated: 2026-10-24 by the planner session "Multi-model CLI app architectu
 | What | Branch | Worktree |
 |---|---|---|
 | **Integration branch** (all accepted work is merged here) | `claude/multi-model-cli-app-9319c3` | `.claude/worktrees/multi-model-cli-app-9319c3` |
-| Haiku implementer branch (fast-forwarded to integration after each merge) | `claude/templates-phase-0-foundations-06d4b4` | `.claude/worktrees/templates-phase-0-foundations-06d4b4` |
+| Haiku implementer branch (fast-forwarded to integration after each merge). Haiku session: **"Haiku implementer: Assentor task cards"** (the older "Templates and phase 0 foundations" session is retired) | `claude/templates-phase-0-foundations-06d4b4` | `.claude/worktrees/templates-phase-0-foundations-06d4b4` |
 | `main` | `main` at `0fdb990` (v0.3.19) | repo root |
 
 Nothing has been pushed to a remote. No PR exists yet.
@@ -30,7 +30,7 @@ Ignore the worktree `tidy-emerald-isle`. It sits on `f920db6`, an orphaned older
 Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every Haiku card (and does S cards) · 🔴 **Opus** (planner) writes contracts and Danger-list cards, decides escalations, and merges.
 
 For each Haiku card:
-1. The planner sends the card to the Haiku session ("Templates and phase 0 foundations") by cross-session message, with pointers and gotchas.
+1. The planner sends the card to the Haiku session ("Haiku implementer: Assentor task cards") by cross-session message, with pointers and gotchas.
 2. Haiku implements it on its branch, runs `pnpm typecheck && pnpm test && pnpm build`, commits via `~/commit.sh`, and messages back a completion report. It does not start another card until told.
 3. The planner runs a **Sonnet review** subagent (read-only, checklist in templates.md §2) against Haiku's worktree.
 4. On PASS, the planner checks anything risky itself, then merges into the integration branch:
@@ -44,7 +44,7 @@ For each Haiku card:
 
 ## 4. Progress
 
-**Phase 0 — 6 of 9 done · Phase 1 — 1 of 7 done · overall 7 of 80 cards (plus 11 backlog).**
+**Phase 0 — 7 of 9 done · Phase 1 — 2 of 7 done · Phase 2 — 1 done · overall 10 of 80 cards (plus 11 backlog).**
 
 | Card | Status | Where |
 |---|---|---|
@@ -54,25 +54,29 @@ For each Haiku card:
 | T00-04 CLI reviewers pass `model` (no default leak) | ✅ merged | `40c1937` |
 | T00-05 Session event log | ✅ merged | `7ecda0c` |
 | T00-06 Output-delta coalescer | ✅ merged | `c4efdd6` |
+| T00-09 Config save keeps `teams`/`modes`/`executor.model` | ✅ merged | `58a5a35` |
 | T01-04 Finding agreement counts | ✅ merged | `7cfedb6` |
-| **T00-09** Config save keeps `teams`/`modes`/`executor.model` | 🔶 **implemented, uncommitted** in the integration worktree (`src/config/load.ts`, `src/services/app.ts`, `tests/unit/config-save.test.ts`); 391/391 tests pass; **O2 review running; needs user sign-off** | planner |
-| **T01-01** Model catalog + discovery | 🔶 assigned to Haiku | Haiku |
-| T00-07 Supervisor emits seat-scoped events | ⏭ next for planner, after T00-09 is committed | planner |
+| T01-01 Model catalog + discovery | ✅ merged | `cec0e47` |
+| T02-10 Pre-run cost estimator | ✅ merged | `cec0e47` |
+| **T00-07** Supervisor emits seat-scoped events | 🔶 implemented by planner, **uncommitted** in the integration worktree (`src/orchestrator/seat-events.ts`, `supervisor.ts`, `commands.ts`, two tests); 455/455 tests pass; O2 review running; then user sign-off | planner |
+| **T02B-12** Test-tamper detector | 🔶 done by Haiku (`db3d680`), Sonnet review running | Haiku |
+| **FU-01** Follow-ups: T00-03 `continue()`/cursor model tests + T02-10 `reviewTeam` input | 🔶 assigned to Haiku | Haiku |
 | T00-08 CI matrix macOS/Windows/Linux | ⏳ unassigned (Sonnet card) | — |
 
-**Haiku queue after T01-01:** T02-10 (cost estimator) → T02B-12 (test-tamper detector). After T00-07 merges, T01-06 (seat board) opens up. After T00-02 + T00-04, T01-02 (Sonnet) opens up.
+**Haiku queue:** after FU-01 → T01-06 (seat board, needs T00-07 merged). Most other 🟢 cards wait on 🔴/🟡 contracts: T02B-01 (modes), T02-03 (negotiation), T03-01 (prompts, 🟡), T04-06 (UI scaffold, 🟡). Unblocked 🟡 cards: T00-08, T01-02, T03-01.
 
 ## 5. Next actions (in order)
 
-1. **T00-09:** read the O2 review result. Fix any required changes. Ask the user for sign-off, then commit via `~/commit.sh`, mark ✅ and add a Status note to the card.
-2. **T00-07** (planner, 🔴): wire `fromSupervisorEvent` + `EventLog` + the delta coalescer into `Supervisor`. Pass a coalescer `onError` that never throws. Event writes must never break the run loop. Then O2 review and user sign-off.
-3. Keep running the Haiku loop: T01-01 → T02-10 → T02B-12, then T01-06 once T00-07 lands.
-4. Assign T00-08 (CI matrix) to a Sonnet session or subagent.
-5. Update this file after every merge.
+1. **T02B-12:** read the Sonnet review; on PASS merge `db3d680` (not the Haiku tip) into integration, mark ✅, add Status note.
+2. **T00-07:** read the O2 review, fix required changes, ask the user for sign-off, commit via `~/commit.sh`, mark ✅.
+3. Fast-forward Haiku's branch once integration contains its tip; then send T01-06.
+4. **FU-01:** Sonnet review when Haiku reports.
+5. Start 🟡 work so Haiku has cards: T03-01 (prompt format) and T01-02 (seat factory) via Sonnet; T00-08 CI matrix.
+6. Update this file after every merge.
 
 ## 6. Known follow-ups (not scheduled)
 
-- T00-03: add a `continue()` model test and a `createExecutor("cursor")` model test.
+- T00-03: `continue()` / `createExecutor("cursor")` model tests — assigned as FU-01.
 - T01-04: re-export `rankCorrelatedFindings` from `src/review/index.ts` when the web Review view (T04-10) needs it.
 - Config writes are not atomic (`fs.writeFile`). Pre-existing behavior; consider temp+rename with a Windows-safe fallback.
 - The TUI saves the merged user + project config at user scope, so project overrides for sections other than teams/modes are still copied into `~/.assentor`. This is pre-existing behavior (T00-09 only protects teams/modes).
