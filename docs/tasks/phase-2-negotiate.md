@@ -155,6 +155,11 @@ Strategy tasks (T02-04…08) implement against the **strategy contract** deliver
 ### T02-10 · Pre-run cost estimator
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T00-02
 
+**Status: ✅ done.** Shipped in `7ace455`. Sonnet review PASS (arithmetic hand-verified). Decisions:
+- `maxRounds` is an explicit input (keeps the function pure). best-of-n and divide are assumed 1 turn per seat (lower bound) until their strategies define turn counts.
+- Pricing keys are literal `<provider>/<model>` (`claude-code/AUTO` stays unpriced).
+- **Gap (follow-up):** only teams referenced by `modes` are estimated, so a default config with legacy `reviewers` shows zero review cost. Add an optional `reviewTeam` input fed from `resolveTeams(config).review` when this is wired to the CLI/UI.
+
 **Goal** — Show an estimated token/cost range before a session starts.
 
 **Context to read** — `src/core/seats.ts`, `src/config/teams.ts`, `src/models/registry.ts` (`ModelInfo` pricing fields, if present).

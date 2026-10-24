@@ -9,6 +9,12 @@ Phase exit criteria:
 ### T01-01 · Model catalog + discovery (verified CLIs only)
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T00-03
 
+**Status: ✅ done.** Shipped in `c03b2ad` + `570554c` + `6108fd2`. Two Sonnet review rounds; final PASS. Decisions:
+- Discovery spawns **without a shell** (`spawnCliProcess` with fixed args, tracked child, 15 s timeout via `killProcessTree`, 1 MB/stream cap); binary paths with shell metacharacters are rejected before spawning; a synchronous spawn throw becomes an error result.
+- Parser per the revised rule above (separator-based, drops `auto`).
+- A corrupt cache is backed up to `models-cache.json.corrupt-<ts>` before continuing empty; if the backup fails, writes are refused. Writes are serialized; `addUserModel`/`removeUserModel` roll back on a failed save; `discover` keeps in-memory results and returns an error if the save fails.
+- Extra `locate` constructor option for tests. Callers wiring add/remove (UI/CLI) must surface thrown save errors.
+
 **Goal** — For every seat provider, list selectable models: seeded defaults + discovered + user-added.
 
 **Context to read**
@@ -27,7 +33,7 @@ Phase exit criteria:
 3. Discovery commands (only these — verified on 2026-10-24):
    - `antigravity`: `agy models`
    - `cursor`: `agent --list-models` (or `cursor agent --list-models` when the located binary is the Cursor app)
-   Run via `runShellCommand(command, cwd, { timeoutMs: 15_000 })` — it uses a shell, so build the command as `"<binary path>" models` with the located binary path in **double quotes** (paths may contain spaces, e.g. on Windows) and no user-supplied text. Parse one model id per non-empty line; strip leading bullets/whitespace; ignore header lines that contain a colon followed by nothing or the word "Available". Timeout 15 s. On failure return `[]` and an `error` string — never throw.
+   Run via `runShellCommand(command, cwd, { timeoutMs: 15_000 })` — it uses a shell, so build the command as `"<binary path>" models` with the located binary path in **double quotes** (paths may contain spaces, e.g. on Windows) and no user-supplied text. **Parser (revised after Haiku's escalation with real output — `agy models` prints `id<TAB>label`, `agent --list-models` prints `id - label` plus an `auto` entry):** a line is a model line only if it has a separator (first TAB, else first ` - `); id = text before it (trimmed), label = text after it (or the id); keep ids matching `^[A-Za-z0-9][A-Za-z0-9._/:-]*$`; lines without a separator (headers like "Fetching available models...") are skipped. Only if no line has a separator, fall back to bare ids (one per line, no spaces). Drop a discovered `auto` (case-insensitive) — the catalog's AUTO entry already means CLI default. De-duplicate by id (first wins). Timeout 15 s. On failure return `[]` and an `error` string — never throw.
 4. `class CliModelCatalog` with:
    - `constructor({ cachePath?, run? })` — `cachePath` default `<userAssentorDir>/models-cache.json`; `run` injectable for tests.
    - `list(provider): CatalogEntry[]` — seed ∪ cached discovered ∪ user, de-duplicated by id (user > discovered > seed for label).

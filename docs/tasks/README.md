@@ -104,7 +104,7 @@ Legend: 🟢 H · 🟡 S · 🔴 O · Size S/M/L (≈ <150 / 150–500 / >500 ch
 ### Phase 1 — Multi-seat review & model selection · [phase-1-review-models.md](./phase-1-review-models.md)
 | ID | Title | Tier | Review | Size | Depends |
 |---|---|---|---|---|---|
-| T01-01 | Model catalog + discovery (verified CLIs only) | 🟢 H | S | M | T00-03 |
+| T01-01 | Model catalog + discovery (verified CLIs only) ✅ | 🟢 H | S | M | T00-03 |
 | T01-02 | Seat factory: expand teams into reviewer seats | 🟡 S | O | M | T00-02, T00-04 |
 | T01-03 | Panel decision policies | 🟡 S | O | M | T01-02 |
 | T01-04 | Finding agreement counts ✅ | 🟢 H | S | S | — |
@@ -124,7 +124,7 @@ Legend: 🟢 H · 🟡 S · 🔴 O · Size S/M/L (≈ <150 / 150–500 / >500 ch
 | T02-07 | Strategy: Synthesize | 🟢 H | S | S | T02-03 |
 | T02-08 | Strategy: Divide & conquer | 🟡 S | O | L | T02-01, T02-03 |
 | T02-09 | Stage-graph runner (plan → execute → review, tiebreak) | 🔴 O | O2 + human | L | T02-03, T01-03 |
-| T02-10 | Pre-run cost estimator | 🟢 H | S | S | T00-02 |
+| T02-10 | Pre-run cost estimator ✅ | 🟢 H | S | S | T00-02 |
 
 ### Phase 2b — Lead (Supervisor), Cascade & more modes · [phase-2b-modes.md](./phase-2b-modes.md)
 Design: [modes.md](../plans/modes.md)
