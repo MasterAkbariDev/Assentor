@@ -18,6 +18,14 @@ export interface PrintCliRecipe {
   outputFormat?: PrintCliOutputFormat;
   /** How `-p` CLIs accept the task prompt. */
   promptStyle?: "attached" | "positional";
+  /** Flag that selects the model, e.g. `--model`. Unset when the CLI has none (or it is unverified). */
+  modelFlag?: string;
+}
+
+/** Trimmed model id, or `undefined` when none was requested (empty or `AUTO`). */
+export function requestedModel(model: string | undefined): string | undefined {
+  const trimmed = model?.trim();
+  return trimmed && trimmed !== "AUTO" ? trimmed : undefined;
 }
 
 export const PRINT_CLI_RECIPES: Record<string, PrintCliRecipe> = {
@@ -30,6 +38,7 @@ export const PRINT_CLI_RECIPES: Record<string, PrintCliRecipe> = {
     resumeFlag: "--resume",
     outputFormat: "stream-json",
     promptStyle: "positional",
+    modelFlag: "--model",
   },
   antigravity: {
     id: "antigravity",
@@ -41,6 +50,7 @@ export const PRINT_CLI_RECIPES: Record<string, PrintCliRecipe> = {
     continueFlag: "--continue",
     outputFormat: "stream-json",
     promptStyle: "attached",
+    modelFlag: "--model",
   },
   codex: {
     id: "codex",
@@ -49,6 +59,7 @@ export const PRINT_CLI_RECIPES: Record<string, PrintCliRecipe> = {
     printArgs: ["exec", "--skip-git-repo-check"],
     unattendedArgs: ["--dangerously-bypass-approvals-and-sandbox"],
     outputFormat: "text",
+    modelFlag: "-m",
   },
   qwen: {
     id: "qwen",
@@ -71,7 +82,7 @@ export const PRINT_CLI_RECIPES: Record<string, PrintCliRecipe> = {
 export function buildPrintCliArgs(
   recipe: PrintCliRecipe,
   prompt: string,
-  options: { sessionId?: string; continueRecent?: boolean } = {},
+  options: { sessionId?: string; continueRecent?: boolean; model?: string } = {},
 ): string[] {
   const args: string[] = [...(recipe.unattendedArgs ?? [])];
 
@@ -86,13 +97,18 @@ export function buildPrintCliArgs(
       ? ["--output-format", recipe.outputFormat]
       : [];
 
+  // Model flag goes right before the prompt so codex gets `exec ... -m <m> <prompt>`.
+  const model = requestedModel(options.model);
+  const modelArgs: string[] =
+    model && recipe.modelFlag ? [recipe.modelFlag, model] : [];
+
   const attachPrompt = recipe.promptStyle === "attached";
 
   if (attachPrompt) {
-    args.push(...formatArgs, `-p=${prompt}`);
+    args.push(...formatArgs, ...modelArgs, `-p=${prompt}`);
     return args;
   }
 
-  args.push(...recipe.printArgs, ...formatArgs, prompt);
+  args.push(...recipe.printArgs, ...formatArgs, ...modelArgs, prompt);
   return args;
 }

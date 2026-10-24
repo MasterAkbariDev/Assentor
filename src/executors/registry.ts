@@ -75,6 +75,8 @@ export interface CliExecutorOptions {
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   onStatus?: (status: { activity: string; detail: string }) => void;
   timeoutMs?: number;
+  /** Model id for the CLI's model flag. `AUTO`, empty, or unset means the CLI default. */
+  model?: string;
 }
 
 export abstract class CliExecutorAdapter implements ExecutorAdapter {
@@ -165,6 +167,7 @@ export abstract class CliExecutorAdapter implements ExecutorAdapter {
     }
     this.inner = new PrintCliExecutor({
       recipe,
+      model: this.options.model,
       timeoutMs: this.options.timeoutMs,
       onOutput: this.options.onOutput,
       onStatus: this.options.onStatus,

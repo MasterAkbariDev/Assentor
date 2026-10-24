@@ -207,3 +207,107 @@ describe("print-mode CLI recipes", () => {
     expect(statuses.some((s) => s.includes("Running lint"))).toBe(true);
   });
 });
+
+describe("print-mode CLI model selection", () => {
+  it("claude-code puts --model before the prompt, which stays last", () => {
+    const args = buildPrintCliArgs(PRINT_CLI_RECIPES["claude-code"]!, "Implement average", {
+      model: "opus",
+    });
+    expect(args).toEqual([
+      "--dangerously-skip-permissions",
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--model",
+      "opus",
+      "Implement average",
+    ]);
+  });
+
+  it("codex builds exec, skip-git-repo-check, -m, then the prompt", () => {
+    expect(
+      buildPrintCliArgs(PRINT_CLI_RECIPES.codex!, "Do it", { model: "gpt-5" }),
+    ).toEqual([
+      "--dangerously-bypass-approvals-and-sandbox",
+      "exec",
+      "--skip-git-repo-check",
+      "-m",
+      "gpt-5",
+      "Do it",
+    ]);
+  });
+
+  it("antigravity puts --model right before the attached -p= prompt", () => {
+    const args = buildPrintCliArgs(PRINT_CLI_RECIPES.antigravity!, "Fix the tests", {
+      model: "opus",
+    });
+    expect(args.slice(-4)).toEqual([
+      "stream-json",
+      "--model",
+      "opus",
+      "-p=Fix the tests",
+    ]);
+  });
+
+  it("AUTO, blank, whitespace-only, and undefined add no model flag", () => {
+    const recipe = PRINT_CLI_RECIPES["claude-code"]!;
+    const plain = buildPrintCliArgs(recipe, "Task");
+    for (const model of ["AUTO", "", "   ", undefined]) {
+      expect(buildPrintCliArgs(recipe, "Task", { model })).toEqual(plain);
+    }
+    expect(plain).not.toContain("--model");
+  });
+
+  it("passes the model through run() to the spawned args", async () => {
+    let captured: string[] = [];
+    const executor = new PrintCliExecutor({
+      recipe: PRINT_CLI_RECIPES["claude-code"]!,
+      binary: "/tmp/claude",
+      model: "opus",
+      spawnFn: async (request) => {
+        captured = request.args;
+        return { code: 0, stdout: "done", stderr: "" };
+      },
+    });
+    await executor.run({
+      taskId: "t1",
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("goal"),
+      prompt: "goal",
+    });
+    expect(captured.slice(-3)).toEqual(["--model", "opus", "goal"]);
+  });
+
+  it("warns once and leaves args unchanged for a recipe without a model flag", async () => {
+    const warnings: string[] = [];
+    const argsSeen: string[][] = [];
+    const executor = new PrintCliExecutor({
+      recipe: PRINT_CLI_RECIPES.qwen!,
+      binary: "/tmp/qwen",
+      model: "qwen-max",
+      onStatus: (status) => {
+        if (status.activity === "warning") {
+          warnings.push(status.detail);
+        }
+      },
+      spawnFn: async (request) => {
+        argsSeen.push(request.args);
+        return { code: 0, stdout: "done", stderr: "" };
+      },
+    });
+    const task = {
+      taskId: "t1",
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("goal"),
+      prompt: "goal",
+    };
+    await executor.run(task);
+    await executor.run({ ...task, taskId: "t2" });
+
+    expect(warnings).toEqual([
+      "Qwen Code does not support model selection; using CLI default",
+    ]);
+    expect(argsSeen[0]).toEqual(buildPrintCliArgs(PRINT_CLI_RECIPES.qwen!, "goal"));
+    expect(argsSeen[1]).toEqual(argsSeen[0]);
+  });
+});

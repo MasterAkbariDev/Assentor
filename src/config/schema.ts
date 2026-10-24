@@ -54,6 +54,8 @@ export const AssentorConfigSchema = z.object({
   executor: z
     .object({
       provider: ExecutorProviderSchema.default("mock"),
+      /** Model id for the executor CLI. `AUTO` or unset means the CLI default. */
+      model: z.string().optional(),
     })
     .default({ provider: "mock" }),
   run: z
