@@ -5,6 +5,7 @@ export * from "./artifacts/index.js";
 export * from "./security/index.js";
 export * from "./git/index.js";
 export * from "./persistence/index.js";
+export * from "./events/index.js";
 export {
   detectVerificationCommands,
   resolveVerificationCommands,

@@ -193,6 +193,12 @@ Phase exit criteria:
 ### T00-05 · Append-only session event log (NDJSON + seq)
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T00-01
 
+**Status: ✅ done.** Shipped in `739cfa6` + `fb04270` (`src/events/log.ts`, `src/events/index.ts`, `sessionPaths` in `src/persistence/paths.ts`, `tests/unit/event-log.test.ts`). Sonnet review PASS; planner required a hardening round. Decisions:
+- Single writer per session (one instance, one process); no file lock.
+- Tail repair is in place (no temp files): an unterminated valid tail is kept and newline-terminated; an unterminated invalid tail is truncated at the byte offset after the last newline; a complete (newline-terminated) invalid line is never deleted — `open`/`readFrom` throw `Corrupt event log <file>: line N …` with the real file line number.
+- A failed append marks the log for tail repair before the next append/read and recomputes `lastSeq` from disk. Delivery is at-least-once: if the write landed but the call threw, that event is kept.
+- `append` rejects drafts for another session. `readFrom` re-reads the file (O(n)); add an index only if Phase 4 streaming needs it.
+
 **Goal** — Persist every `EngineEvent` so sessions can be replayed and clients can resume from a sequence number.
 
 **Context to read**
