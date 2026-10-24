@@ -1,10 +1,14 @@
-import { readFileSync } from "node:fs";
+import { copyFileSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { locateBinary, type BinaryTool } from "../executors/cli-locator.js";
-import type { SeatCliProvider, SeatProvider } from "../core/seats.js";
+import {
+  locateBinary,
+  spawnCliProcess,
+  type BinaryTool,
+} from "../executors/cli-locator.js";
+import { SEAT_PROVIDERS, type SeatCliProvider, type SeatProvider } from "../core/seats.js";
 import { userAssentorDir } from "../config/paths.js";
 import { writeJsonAtomic } from "../persistence/paths.js";
-import { runShellCommand } from "../process/run-shell.js";
+import { killProcessTree } from "../process/kill-tree.js";
 import { isCursorAppBinary } from "../providers/executors/cursor/index.js";
 
 export interface CatalogEntry {
@@ -19,7 +23,7 @@ export interface DiscoveredModel {
   label: string;
 }
 
-/** Meaning: the CLI's own default model. Always the first entry for a provider. */
+/** The CLI's own default model. Always the first entry for a provider. */
 export const AUTO_MODEL_ID = "AUTO";
 const AUTO_LABEL = "Auto (CLI default)";
 
@@ -43,6 +47,9 @@ export const SEED_MODELS: Record<SeatCliProvider, DiscoveredModel[]> = {
 
 const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/:-]*$/;
 const DISCOVERY_TIMEOUT_MS = 15_000;
+const OUTPUT_CAP_BYTES = 1024 * 1024;
+/** A binary path with any of these is refused before spawning. Paths with spaces are fine. */
+const UNSAFE_PATH_CHARS = /["`$%^&|<>!\r\n]/;
 
 /** Parse one model id per line from a discovery command's stdout. See T01-01. */
 export function parseDiscoveryOutput(output: string): DiscoveredModel[] {
@@ -80,7 +87,7 @@ export function parseDiscoveryOutput(output: string): DiscoveredModel[] {
   return result;
 }
 
-/** Split `id<TAB>label` or `id - label` at the first TAB, else the first " - ". */
+/** Split at the first TAB if the line has one, else at the first " - ". */
 function splitModelLine(line: string): DiscoveredModel | undefined {
   const tab = line.indexOf("\t");
   let idPart: string;
@@ -98,24 +105,97 @@ function splitModelLine(line: string): DiscoveredModel | undefined {
   return { id, label: labelPart.trim() || id };
 }
 
-type RunShell = (
-  command: string,
-  cwd: string,
-  options: { timeoutMs?: number },
-) => Promise<{ stdout: string; stderr: string; code: number }>;
+export interface CliRunResult {
+  stdout: string;
+  stderr: string;
+  /** Null when the process was killed or failed to start. */
+  code: number | null;
+  timedOut: boolean;
+}
+
+/** Runs a CLI binary with an args array. Never goes through a shell. */
+export type RunCli = (
+  binary: string,
+  args: string[],
+  options: { cwd: string; timeoutMs: number },
+) => Promise<CliRunResult>;
+
+/**
+ * Spawn without a shell, collect output (each stream capped at 1 MB), and kill
+ * the process tree on timeout.
+ */
+function defaultRunCli(
+  binary: string,
+  args: string[],
+  options: { cwd: string; timeoutMs: number },
+): Promise<CliRunResult> {
+  return new Promise((resolve) => {
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let timedOut = false;
+    let settled = false;
+
+    const child = spawnCliProcess(binary, args, {
+      cwd: options.cwd,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+
+    const finish = (code: number | null, extraStderr?: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+        stderr:
+          extraStderr ?? Buffer.concat(stderrChunks).toString("utf8"),
+        code,
+        timedOut,
+      });
+    };
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killProcessTree(child);
+      finish(null);
+    }, options.timeoutMs);
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      if (stdoutBytes < OUTPUT_CAP_BYTES) {
+        const kept = chunk.subarray(0, OUTPUT_CAP_BYTES - stdoutBytes);
+        stdoutChunks.push(kept);
+        stdoutBytes += kept.length;
+      }
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      if (stderrBytes < OUTPUT_CAP_BYTES) {
+        const kept = chunk.subarray(0, OUTPUT_CAP_BYTES - stderrBytes);
+        stderrChunks.push(kept);
+        stderrBytes += kept.length;
+      }
+    });
+    child.on("error", (error) => finish(null, error.message));
+    child.on("close", (code) => finish(code));
+  });
+}
 
 export interface CliModelCatalogOptions {
   /** Defaults to `<userAssentorDir>/models-cache.json`. */
   cachePath?: string;
-  /** Injectable shell runner; tests never spawn. */
-  run?: RunShell;
+  /** Injectable process runner; tests never spawn. */
+  run?: RunCli;
   /** Injectable binary locator; defaults to `locateBinary`. */
   locate?: (tool: BinaryTool) => string | undefined;
 }
 
+type ModelRecord = Partial<Record<SeatProvider, DiscoveredModel[]>>;
+
 interface CatalogCache {
-  discovered: Partial<Record<SeatProvider, DiscoveredModel[]>>;
-  user: Partial<Record<SeatProvider, DiscoveredModel[]>>;
+  discovered: ModelRecord;
+  user: ModelRecord;
 }
 
 const DISCOVERY_TOOL: Partial<Record<SeatProvider, BinaryTool>> = {
@@ -129,16 +209,21 @@ const DISCOVERY_TOOL: Partial<Record<SeatProvider, BinaryTool>> = {
  */
 export class CliModelCatalog {
   private readonly cachePath: string;
-  private readonly run: RunShell;
+  private readonly run: RunCli;
   private readonly locate: (tool: BinaryTool) => string | undefined;
   private state: CatalogCache;
+  /** False when a corrupt cache could not be backed up, so it must not be overwritten. */
+  private readonly writable: boolean;
+  private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(options: CliModelCatalogOptions = {}) {
     this.cachePath =
       options.cachePath ?? path.join(userAssentorDir(), "models-cache.json");
-    this.run = options.run ?? runShellCommand;
+    this.run = options.run ?? defaultRunCli;
     this.locate = options.locate ?? ((tool) => locateBinary(tool));
-    this.state = readCache(this.cachePath);
+    const loaded = loadCache(this.cachePath);
+    this.state = loaded.state;
+    this.writable = loaded.writable;
   }
 
   /** Seed ∪ discovered ∪ user, de-duplicated by id. User beats discovered beats seed for the label. */
@@ -174,26 +259,41 @@ export class CliModelCatalog {
     if (!binary) {
       return { entries: [], error: `${provider} CLI not found; cannot discover models` };
     }
+    if (UNSAFE_PATH_CHARS.test(binary)) {
+      return { entries: [], error: "binary path contains unsafe characters" };
+    }
 
-    const command = discoveryCommand(provider, binary);
-    const result = await this.run(command, process.cwd(), {
+    const args = discoveryArgs(provider, binary);
+    const label = `${provider} model discovery`;
+    const result = await this.run(binary, args, {
+      cwd: process.cwd(),
       timeoutMs: DISCOVERY_TIMEOUT_MS,
     });
+    if (result.timedOut) {
+      return { entries: [], error: `${label} timed out after ${DISCOVERY_TIMEOUT_MS} ms` };
+    }
     if (result.code !== 0) {
       const detail = (result.stderr || result.stdout).trim() || `exit ${result.code}`;
-      return { entries: [], error: `${command} failed: ${detail}` };
+      return { entries: [], error: `${label} failed: ${detail}` };
     }
 
     const models = parseDiscoveryOutput(result.stdout);
     if (models.length === 0) {
-      return { entries: [], error: `${command} produced no model ids` };
+      return { entries: [], error: `${label} produced no model ids` };
     }
 
     this.state = {
       ...this.state,
       discovered: { ...this.state.discovered, [provider]: models },
     };
-    await writeJsonAtomic(this.cachePath, this.state);
+    try {
+      await this.persist();
+    } catch (error) {
+      return {
+        entries: [],
+        error: `${label} succeeded but the cache could not be saved: ${(error as Error).message}`,
+      };
+    }
     return {
       entries: models.map((model) => ({
         provider,
@@ -213,14 +313,28 @@ export class CliModelCatalog {
       { id, label: label?.trim() || id },
     ];
     this.state = { ...this.state, user: { ...this.state.user, [provider]: next } };
-    await writeJsonAtomic(this.cachePath, this.state);
+    await this.persist();
   }
 
   async removeUserModel(provider: SeatProvider, id: string): Promise<void> {
     const current = this.state.user[provider] ?? [];
     const next = current.filter((model) => model.id !== id);
     this.state = { ...this.state, user: { ...this.state.user, [provider]: next } };
-    await writeJsonAtomic(this.cachePath, this.state);
+    await this.persist();
+  }
+
+  /** Writes run one at a time, each writing the latest state. */
+  private persist(): Promise<void> {
+    const write = this.writeQueue.then(() => {
+      if (!this.writable) {
+        throw new Error(
+          `refusing to overwrite ${this.cachePath}: the corrupt cache could not be backed up`,
+        );
+      }
+      return writeJsonAtomic(this.cachePath, this.state);
+    });
+    this.writeQueue = write.catch(() => undefined);
+    return write;
   }
 }
 
@@ -228,13 +342,12 @@ function seedFor(provider: SeatProvider): DiscoveredModel[] {
   return (SEED_MODELS as Partial<Record<SeatProvider, DiscoveredModel[]>>)[provider] ?? [];
 }
 
-function discoveryCommand(provider: SeatProvider, binary: string): string {
+/** Fixed argument lists per provider. No user text is ever placed in them. */
+function discoveryArgs(provider: SeatProvider, binary: string): string[] {
   if (provider === "cursor") {
-    return isCursorAppBinary(binary)
-      ? `"${binary}" agent --list-models`
-      : `"${binary}" --list-models`;
+    return isCursorAppBinary(binary) ? ["agent", "--list-models"] : ["--list-models"];
   }
-  return `"${binary}" models`;
+  return ["models"];
 }
 
 function assertUserModelId(id: string): void {
@@ -246,15 +359,86 @@ function assertUserModelId(id: string): void {
   }
 }
 
-function readCache(cachePath: string): CatalogCache {
-  const empty: CatalogCache = { discovered: {}, user: {} };
+function emptyCache(): CatalogCache {
+  return { discovered: {}, user: {} };
+}
+
+/**
+ * Read the cache. A missing file is empty. A file that cannot be read or parsed,
+ * or whose top-level shape is wrong, is backed up (best effort) and treated as
+ * empty. Individual invalid entries are dropped.
+ */
+function loadCache(cachePath: string): { state: CatalogCache; writable: boolean } {
+  let raw: string;
   try {
-    const parsed = JSON.parse(readFileSync(cachePath, "utf8")) as Partial<CatalogCache>;
-    return {
-      discovered: parsed.discovered ?? {},
-      user: parsed.user ?? {},
-    };
-  } catch {
-    return empty;
+    raw = readFileSync(cachePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { state: emptyCache(), writable: true };
+    }
+    return backupCorrupt(cachePath);
   }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return backupCorrupt(cachePath);
+  }
+  if (!isPlainObject(parsed)) {
+    return backupCorrupt(cachePath);
+  }
+  if (
+    (parsed.discovered !== undefined && !isPlainObject(parsed.discovered)) ||
+    (parsed.user !== undefined && !isPlainObject(parsed.user))
+  ) {
+    return backupCorrupt(cachePath);
+  }
+  return {
+    state: {
+      discovered: sanitizeRecord(parsed.discovered),
+      user: sanitizeRecord(parsed.user),
+    },
+    writable: true,
+  };
+}
+
+function backupCorrupt(cachePath: string): { state: CatalogCache; writable: boolean } {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  try {
+    copyFileSync(cachePath, `${cachePath}.corrupt-${stamp}`);
+    return { state: emptyCache(), writable: true };
+  } catch {
+    return { state: emptyCache(), writable: false };
+  }
+}
+
+const KNOWN_PROVIDERS = new Set<string>(SEAT_PROVIDERS);
+
+function sanitizeRecord(value: unknown): ModelRecord {
+  const out: ModelRecord = {};
+  if (!isPlainObject(value)) {
+    return out;
+  }
+  for (const [provider, models] of Object.entries(value)) {
+    if (!KNOWN_PROVIDERS.has(provider) || !Array.isArray(models)) {
+      continue;
+    }
+    out[provider as SeatProvider] = models.filter(isModelEntry);
+  }
+  return out;
+}
+
+function isModelEntry(value: unknown): value is DiscoveredModel {
+  return (
+    isPlainObject(value) &&
+    typeof value.id === "string" &&
+    typeof value.label === "string" &&
+    MODEL_ID_PATTERN.test(value.id) &&
+    value.id.toUpperCase() !== AUTO_MODEL_ID
+  );
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

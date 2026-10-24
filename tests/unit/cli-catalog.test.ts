@@ -5,9 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CliModelCatalog,
   parseDiscoveryOutput,
+  type CliRunResult,
 } from "../../src/models/cli-catalog.js";
 
-// Real output of `agy models` on the dev machine, verbatim (tab-separated).
+// Copied from `agy models` on the dev machine. Tab characters checked with `od -c`.
 const AGY_OUTPUT = [
   "Fetching available models...",
   "gemini-3.8-flash-high\tGemini 3.8 Flash (High)",
@@ -19,7 +20,7 @@ const AGY_OUTPUT = [
   "",
 ].join("\n");
 
-// Excerpt of `agent --list-models`, lines verbatim (" - " separated).
+// Excerpt of `agent --list-models` on the dev machine, lines copied verbatim.
 const AGENT_OUTPUT = [
   "Available models",
   "",
@@ -31,7 +32,9 @@ const AGENT_OUTPUT = [
   "",
 ].join("\n");
 
-type Result = { stdout: string; stderr: string; code: number };
+function ok(stdout: string): CliRunResult {
+  return { stdout, stderr: "", code: 0, timedOut: false };
+}
 
 describe("parseDiscoveryOutput", () => {
   it("parses agy's tab-separated format and skips the header", () => {
@@ -58,6 +61,14 @@ describe("parseDiscoveryOutput", () => {
 
   it("skips header lines that have no separator", () => {
     expect(parseDiscoveryOutput("Available models\n\nFetching available models...\n")).toEqual([]);
+  });
+
+  it("uses TAB over ' - ' when a line has both", () => {
+    expect(parseDiscoveryOutput("id\tLabel - x\n")).toEqual([{ id: "id", label: "Label - x" }]);
+  });
+
+  it("skips a trailing-tab line in separator mode", () => {
+    expect(parseDiscoveryOutput("a\tA\nid\t\n")).toEqual([{ id: "a", label: "A" }]);
   });
 
   it("falls back to bare ids only when no line has a separator", () => {
@@ -120,8 +131,8 @@ describe("CliModelCatalog", () => {
     expect(catalog.list("antigravity").map((e) => e.id)).toEqual(["AUTO"]);
   });
 
-  it("discover runs the agy command with the located path in quotes, caches, and lists the models", async () => {
-    const run = vi.fn(async (): Promise<Result> => ({ stdout: AGY_OUTPUT, stderr: "", code: 0 }));
+  it("discover runs agy with fixed args and the binary path passed directly, then caches", async () => {
+    const run = vi.fn(async (): Promise<CliRunResult> => ok(AGY_OUTPUT));
     const catalog = new CliModelCatalog({
       cachePath: cachePath(),
       run,
@@ -130,7 +141,8 @@ describe("CliModelCatalog", () => {
 
     const result = await catalog.discover("antigravity");
 
-    expect(run).toHaveBeenCalledWith(`"/opt/my tools/agy" models`, process.cwd(), {
+    expect(run).toHaveBeenCalledWith("/opt/my tools/agy", ["models"], {
+      cwd: process.cwd(),
       timeoutMs: 15_000,
     });
     expect(result.error).toBeUndefined();
@@ -141,8 +153,8 @@ describe("CliModelCatalog", () => {
     expect(reopened.list("antigravity").map((e) => e.id)).toContain("gemini-3.8-flash-high");
   });
 
-  it("cursor uses agent --list-models for the agent binary", async () => {
-    const run = vi.fn(async (): Promise<Result> => ({ stdout: AGENT_OUTPUT, stderr: "", code: 0 }));
+  it("cursor uses --list-models for the agent binary", async () => {
+    const run = vi.fn(async (): Promise<CliRunResult> => ok(AGENT_OUTPUT));
     const catalog = new CliModelCatalog({
       cachePath: cachePath(),
       run,
@@ -151,13 +163,61 @@ describe("CliModelCatalog", () => {
 
     await catalog.discover("cursor");
 
-    expect(run).toHaveBeenCalledWith(`"/fake/bin/agent" --list-models`, process.cwd(), {
+    expect(run).toHaveBeenCalledWith("/fake/bin/agent", ["--list-models"], {
+      cwd: process.cwd(),
       timeoutMs: 15_000,
     });
   });
 
+  it("cursor uses agent --list-models for the Cursor app binary", async () => {
+    const run = vi.fn(async (): Promise<CliRunResult> => ok(AGENT_OUTPUT));
+    const catalog = new CliModelCatalog({
+      cachePath: cachePath(),
+      run,
+      locate: () => "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+    });
+
+    await catalog.discover("cursor");
+
+    expect(run).toHaveBeenCalledWith(
+      "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+      ["agent", "--list-models"],
+      { cwd: process.cwd(), timeoutMs: 15_000 },
+    );
+  });
+
+  it.each([
+    ['/x/a"b;touch pwn/agy'],
+    ["/x/$(id)/agy"],
+    ["/x/`id`/agy"],
+    ["/x/%PATH%/agy"],
+    ["/x/a|b/agy"],
+  ])("refuses an unsafe binary path without running it: %s", async (binary) => {
+    const run = vi.fn(async (): Promise<CliRunResult> => ok(AGY_OUTPUT));
+    const catalog = new CliModelCatalog({ cachePath: cachePath(), run, locate: () => binary });
+
+    const result = await catalog.discover("antigravity");
+
+    expect(result.error).toBe("binary path contains unsafe characters");
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("a path with spaces is allowed", async () => {
+    const run = vi.fn(async (): Promise<CliRunResult> => ok(AGY_OUTPUT));
+    const catalog = new CliModelCatalog({
+      cachePath: cachePath(),
+      run,
+      locate: () => "/Users/Some User/bin/agy",
+    });
+
+    const result = await catalog.discover("antigravity");
+
+    expect(result.error).toBeUndefined();
+    expect(run).toHaveBeenCalledWith("/Users/Some User/bin/agy", ["models"], expect.any(Object));
+  });
+
   it("a failed discovery returns an error and keeps the previous cache", async () => {
-    let next: Result = { stdout: AGY_OUTPUT, stderr: "", code: 0 };
+    let next: CliRunResult = ok(AGY_OUTPUT);
     const run = vi.fn(async () => next);
     const catalog = new CliModelCatalog({
       cachePath: cachePath(),
@@ -167,7 +227,7 @@ describe("CliModelCatalog", () => {
     await catalog.discover("antigravity");
     const before = await fs.readFile(cachePath(), "utf8");
 
-    next = { stdout: "", stderr: "not logged in", code: 1 };
+    next = { stdout: "", stderr: "not logged in", code: 1, timedOut: false };
     const failed = await catalog.discover("antigravity");
 
     expect(failed.error).toContain("not logged in");
@@ -177,21 +237,26 @@ describe("CliModelCatalog", () => {
   });
 
   it("a timeout returns an error and keeps the previous cache", async () => {
-    const run = vi.fn(async (): Promise<Result> => ({ stdout: "", stderr: "(timed out)", code: 124 }));
+    let next: CliRunResult = ok(AGY_OUTPUT);
+    const run = vi.fn(async () => next);
     const catalog = new CliModelCatalog({
       cachePath: cachePath(),
       run,
       locate: () => "/fake/bin/agy",
     });
+    await catalog.discover("antigravity");
+    const before = await fs.readFile(cachePath(), "utf8");
 
+    next = { stdout: "", stderr: "", code: null, timedOut: true };
     const result = await catalog.discover("antigravity");
 
     expect(result.error).toContain("timed out");
-    await expect(fs.access(cachePath())).rejects.toThrow();
+    expect(await fs.readFile(cachePath(), "utf8")).toEqual(before);
+    expect(catalog.list("antigravity").map((e) => e.id)).toContain("gemini-3.8-flash-high");
   });
 
   it("does not run a command when the binary is missing or the provider has no discovery", async () => {
-    const run = vi.fn(async (): Promise<Result> => ({ stdout: "", stderr: "", code: 0 }));
+    const run = vi.fn(async (): Promise<CliRunResult> => ok(""));
     const catalog = new CliModelCatalog({ cachePath: cachePath(), run, locate: () => undefined });
 
     expect((await catalog.discover("antigravity")).error).toContain("not found");
@@ -216,6 +281,19 @@ describe("CliModelCatalog", () => {
     expect(third.list("claude-code").map((e) => e.id)).not.toContain("my-model");
   });
 
+  it("user models survive a successful discover", async () => {
+    const run = vi.fn(async (): Promise<CliRunResult> => ok(AGY_OUTPUT));
+    const catalog = new CliModelCatalog({ cachePath: cachePath(), run, locate: () => "/fake/bin/agy" });
+    await catalog.addUserModel("antigravity", "my-agy-model", "Mine");
+
+    await catalog.discover("antigravity");
+
+    const reopened = new CliModelCatalog({ cachePath: cachePath() });
+    const ids = reopened.list("antigravity").map((e) => e.id);
+    expect(ids).toContain("my-agy-model");
+    expect(ids).toContain("gemini-3.8-flash-high");
+  });
+
   it("a user model overrides the seed label for the same id", async () => {
     const catalog = new CliModelCatalog({ cachePath: cachePath() });
     await catalog.addUserModel("claude-code", "opus", "Opus (mine)");
@@ -230,6 +308,69 @@ describe("CliModelCatalog", () => {
     const catalog = new CliModelCatalog({ cachePath: cachePath() });
     await expect(catalog.addUserModel("claude-code", "auto")).rejects.toThrow("reserved");
     await expect(catalog.addUserModel("claude-code", "bad id")).rejects.toThrow("Invalid model id");
+  });
+
+  it("corrupt JSON is backed up, the catalog still works, and the next write succeeds", async () => {
+    await fs.writeFile(cachePath(), "{not json", "utf8");
+
+    const catalog = new CliModelCatalog({ cachePath: cachePath() });
+    expect(catalog.list("claude-code").map((e) => e.id)).toEqual(["AUTO", "opus", "sonnet", "haiku"]);
+
+    const backups = (await fs.readdir(dir)).filter((name) => name.startsWith("models-cache.json.corrupt-"));
+    expect(backups).toHaveLength(1);
+    expect(await fs.readFile(path.join(dir, backups[0]!), "utf8")).toBe("{not json");
+
+    await catalog.addUserModel("claude-code", "after-corrupt");
+    expect(new CliModelCatalog({ cachePath: cachePath() }).list("claude-code").map((e) => e.id)).toContain(
+      "after-corrupt",
+    );
+  });
+
+  it("a wrong top-level shape is backed up and treated as empty", async () => {
+    await fs.writeFile(cachePath(), JSON.stringify({ discovered: [], user: {} }), "utf8");
+
+    const catalog = new CliModelCatalog({ cachePath: cachePath() });
+    expect(catalog.list("claude-code").map((e) => e.id)).toEqual(["AUTO", "opus", "sonnet", "haiku"]);
+    const backups = (await fs.readdir(dir)).filter((name) => name.startsWith("models-cache.json.corrupt-"));
+    expect(backups).toHaveLength(1);
+  });
+
+  it("drops invalid entries instead of throwing later", async () => {
+    await fs.writeFile(
+      cachePath(),
+      JSON.stringify({
+        discovered: {},
+        user: {
+          "claude-code": [
+            { id: "ok", label: "Ok" },
+            { id: 5, label: "number id" },
+            "not an object",
+            { id: "bad id", label: "space" },
+            { id: "auto", label: "reserved" },
+          ],
+          "not-a-provider": [{ id: "x", label: "x" }],
+        },
+      }),
+      "utf8",
+    );
+
+    const catalog = new CliModelCatalog({ cachePath: cachePath() });
+    expect(catalog.list("claude-code").map((e) => e.id)).toEqual(["AUTO", "opus", "sonnet", "haiku", "ok"]);
+    expect(catalog.list("claude-code").some((e) => e.id === "bad id")).toBe(false);
+  });
+
+  it("a missing cache file is empty and creates no backup", async () => {
+    new CliModelCatalog({ cachePath: cachePath() });
+    expect((await fs.readdir(dir)).some((name) => name.includes(".corrupt-"))).toBe(false);
+  });
+
+  it("refuses to overwrite a corrupt cache that could not be backed up", async () => {
+    // A directory at the cache path cannot be read as a file or copied, so no backup exists.
+    await fs.mkdir(cachePath());
+
+    const catalog = new CliModelCatalog({ cachePath: cachePath() });
+    await expect(catalog.addUserModel("claude-code", "x")).rejects.toThrow("refusing to overwrite");
+    expect((await fs.stat(cachePath())).isDirectory()).toBe(true);
   });
 
   it("uses ASSENTOR_USER_DIR for the default cache path", async () => {
