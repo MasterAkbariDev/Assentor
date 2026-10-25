@@ -8,6 +8,7 @@ import { parseEngineEvent } from "../../src/protocol/events.js";
 import {
   assertReviewerOrTeam,
   doctorAssentor,
+  resumeAssentorTask,
   runAssentorTask,
   withReviewTeam,
 } from "../../src/cli/commands.js";
@@ -164,6 +165,46 @@ describe("run --team end to end", () => {
     await expect(fs.stat(path.join(projectDir, ".assentor", "tasks"))).rejects.toThrow();
   });
 
+  it("resume with an unknown --team fails with the same message, before the task is looked up", async () => {
+    await expect(
+      resumeAssentorTask({ projectPath: projectDir, team: "nope" }),
+    ).rejects.toThrow('Unknown team "nope" in modes.review. Defined teams: panel');
+  });
+
+  it("a stdout write that throws while printing seats is reported, and the run still completes", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    const reported: unknown[][] = [];
+    const error = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      reported.push(args);
+    });
+    const log = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      if (args.map(String).join(" ").includes("Review seats")) {
+        throw new Error("EPIPE: broken pipe");
+      }
+    });
+    try {
+      const { result } = await runAssentorTask({
+        projectPath: projectDir,
+        prompt: "goal",
+        team: "panel",
+        skipPreflight: true,
+        skipGates: true,
+      });
+      expect(result.status).toBe("DONE");
+    } finally {
+      error.mockRestore();
+      log.mockRestore();
+      process.off("unhandledRejection", onUnhandled);
+    }
+
+    expect(unhandled).toEqual([]);
+    expect(reported.some((args) => String(args[0]).includes("event listener"))).toBe(true);
+  });
+
   it("--team runs a two-seat mock team: both seats spawn and the Review seats section prints", async () => {
     const { value, text } = await captureOutput(() =>
       runAssentorTask({
@@ -224,6 +265,19 @@ describe("run --team end to end", () => {
 
     expect(without).not.toContain("Review seats");
     expect(withListener).toBe(without);
+
+    // Structural golden: no reviewer-seat output, and a fixed list of section headers.
+    const plain = without.replace(/\x1b\[[0-9;]*m/g, "");
+    const lines = plain.split("\n");
+    expect(lines.filter((line) => line.includes("Review seats") || line.includes("reviewer-"))).toEqual([]);
+    const headers = lines.filter((line) => line.startsWith("▸ ")).map((line) => line.slice(2));
+    expect(headers).toEqual([
+      "Setup",
+      "Round 1",
+      "Executor · mock",
+      "Evidence",
+      "Reviewer · Mock (general-reviewer)",
+    ]);
   });
 });
 

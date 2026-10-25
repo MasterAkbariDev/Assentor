@@ -700,15 +700,6 @@ function seatEventListener(
   };
 }
 
-/**
- * Seat events are written asynchronously, so when a review finishes its reviewer
- * seats may not be folded yet. `fn` runs once the events queued so far are in.
- */
-function afterQueuedSeatEvents(seatEvents: RunSeatEvents, fn: () => void): void {
-  const queued = seatEvents.events?.flush() ?? Promise.resolve();
-  void queued.then(fn);
-}
-
 export async function runAssentorTask(input: RunAssentorInput) {
   assertReviewerOrTeam(input);
   const projectPath = path.resolve(input.projectPath);
@@ -913,9 +904,6 @@ async function runAssentorTaskBody(
     autopilot,
     onEvent: (event) => {
       reporter.onEvent(event);
-      if (event.type === "review.completed" && memberReviewers.length > 1) {
-        afterQueuedSeatEvents(seatEvents, () => reporter.printReviewSeats());
-      }
     },
     seatEvents: seatEvents.events,
     seatScope: seatEvents.scope(memberReviewers.length),
@@ -991,6 +979,11 @@ export async function resumeAssentorTask(input: {
   });
 
   try {
+    // Config first: a bad --team fails here, before the task is even looked up.
+    reporter.updatePreparing("loading config…");
+    const loaded = await loadAssentorConfig(projectPath);
+    const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
+
     const resume = input.taskId
       ? await loadTaskForResume(projectPath, input.taskId)
       : await findLatestResumableTask(projectPath);
@@ -1004,9 +997,6 @@ export async function resumeAssentorTask(input: {
     }
     taskId = resume.snapshot.taskId;
 
-    reporter.updatePreparing("loading config…");
-    const loaded = await loadAssentorConfig(projectPath);
-    const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
     if (
       resume.snapshot.status === TaskState.BudgetExceeded ||
       input.maxRounds ||
@@ -1128,12 +1118,7 @@ export async function resumeAssentorTask(input: {
       resumeFrom: resume.snapshot,
       verification: config.verification,
       autopilot: config.run.mode === "autopilot",
-      onEvent: (event) => {
-        reporter.onEvent(event);
-        if (event.type === "review.completed" && memberReviewers.length > 1) {
-          afterQueuedSeatEvents(seatEvents, () => reporter.printReviewSeats());
-        }
-      },
+      onEvent: (event) => reporter.onEvent(event),
       seatEvents: seatEvents.events,
       seatScope: seatEvents.scope(memberReviewers.length),
     });

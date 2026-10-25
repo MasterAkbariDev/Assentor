@@ -115,17 +115,31 @@ export class RunReporter {
     this.writeln(`  ${c.dim}${message}${c.reset}`);
   }
 
-  /** Folds one seat event into the reviewer seat state. Prints nothing by itself. */
+  /**
+   * Folds reviewer seat events into the seat state. After the `review.completed`
+   * event (sent as `review.verdict` with `legacyType`), prints the seats. The
+   * stream is strictly ordered, so every reviewer `seat.done` before it is folded.
+   */
   onEngineEvent(event: EngineEvent): void {
-    if (!event.seatId?.startsWith("reviewer-")) {
-      return;
+    if (event.seatId?.startsWith("reviewer-")) {
+      this.reviewerSeats = reduceSeatEvents(this.reviewerSeats, event);
     }
-    this.reviewerSeats = reduceSeatEvents(this.reviewerSeats, event);
+    if (
+      event.type === "review.verdict" &&
+      (event.data as { legacyType?: string }).legacyType === "review.completed"
+    ) {
+      this.printReviewSeats();
+    }
   }
 
   /**
    * "Review seats" section: one line per reviewer seat. Prints only when the
    * run has more than one reviewer seat, so single-reviewer output is unchanged.
+   *
+   * Written with `writeln`, not `section()`: that would end the live status line
+   * and reset the section state, and this can run while the next phase is drawing.
+   * On the final round the section can appear after "Task passed review"; that
+   * ordering is known and accepted.
    */
   printReviewSeats(): void {
     const seats = Object.values(this.reviewerSeats);
@@ -135,7 +149,7 @@ export class RunReporter {
     const ascii = useAsciiIcons(this.isTty);
     const width = process.stdout.columns ?? 80;
     const now = Date.now();
-    this.section("Review seats");
+    this.writeln(`\n${c.bold}${c.cyan}▸ Review seats${c.reset}`);
     for (const seat of seats) {
       this.writeln(fitSeatLine(seatLineModel(seat, now, ascii), width, 2));
     }
