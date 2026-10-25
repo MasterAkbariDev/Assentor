@@ -70,10 +70,10 @@ For each Haiku card:
 | Executor handoff parser + cmd quoting (planner) | ✅ merged (Sonnet PASS) | `2db1e16` |
 | T03-02 Built-in builder prompts | ✅ merged (Opus NEEDS_WORK → fixed → PASS) | `143358e` |
 | T03-05 `assentor prompts` CLI | ✅ merged (Sonnet PASS) | `143358e` |
-| **T03-03a** Reviewer role prompts (moderator/judge/negotiate-* deferred: gated) + **FU-03** builder prompt follow-ups | 🔶 assigned to Haiku | Haiku |
+| T03-03a Reviewer role prompts + FU-03 builder prompt follow-ups | ✅ merged (Opus NEEDS_WORK ×2 → fixed; last fix by planner) — T03-03 stays open for moderator/judge/negotiate-* (gated) | `2f92d0f` |
 | T00-08 CI matrix macOS/Windows/Linux | ⏳ unassigned (Sonnet card) | — |
 
-**Haiku released (user, 2026-10-25) for prompt work only:** T03-02, T03-05 done → T03-03a + FU-03 assigned. Still gated: new seats, modes, negotiation (incl. moderator/judge/negotiate-* prompts), browser control.
+**Haiku released (user, 2026-10-25) for prompt work only:** T03-02, T03-05, T03-03a, FU-03 done. Next candidate: T03-06 (TUI Agents screen for prompts; depends on T03-01 + T03-05). Still gated: new seats, modes, negotiation (incl. moderator/judge/negotiate-*, T03-04 playbooks needs T02-09), browser control.
 
 ## 5. Next actions (in order)
 
