@@ -1,5 +1,12 @@
 import * as readline from "node:readline";
+import type { EngineEvent } from "../../protocol/events.js";
 import type { SupervisorEvent } from "../../orchestrator/supervisor.js";
+import {
+  reduceSeatEvents,
+  seatLineModel,
+  type SeatLineModel,
+  type SeatState,
+} from "../../ui-shared/status.js";
 import {
   isExecutorStreamBlob,
   summarizeExecutorStreamOutput,
@@ -54,6 +61,8 @@ export class RunReporter {
   private round = 0;
   private lastNonTtySec = -1;
   private lastToolDetail = "";
+  /** Reviewer seats folded from seat events (`reviewer-*` only). */
+  private reviewerSeats: Record<string, SeatState> = {};
 
   constructor(
     private readonly options: {
@@ -104,6 +113,32 @@ export class RunReporter {
 
   note(message: string): void {
     this.writeln(`  ${c.dim}${message}${c.reset}`);
+  }
+
+  /** Folds one seat event into the reviewer seat state. Prints nothing by itself. */
+  onEngineEvent(event: EngineEvent): void {
+    if (!event.seatId?.startsWith("reviewer-")) {
+      return;
+    }
+    this.reviewerSeats = reduceSeatEvents(this.reviewerSeats, event);
+  }
+
+  /**
+   * "Review seats" section: one line per reviewer seat. Prints only when the
+   * run has more than one reviewer seat, so single-reviewer output is unchanged.
+   */
+  printReviewSeats(): void {
+    const seats = Object.values(this.reviewerSeats);
+    if (seats.length <= 1) {
+      return;
+    }
+    const ascii = useAsciiIcons(this.isTty);
+    const width = process.stdout.columns ?? 80;
+    const now = Date.now();
+    this.section("Review seats");
+    for (const seat of seats) {
+      this.writeln(fitSeatLine(seatLineModel(seat, now, ascii), width, 2));
+    }
   }
 
   onEvent(event: SupervisorEvent): void {
@@ -787,6 +822,74 @@ function preferPlainExecutorText(summary: string, raw: string): string {
     return fromRaw;
   }
   return "";
+}
+
+/** Icon column width in a seat line: the longest ASCII icon (`...`) plus a space. */
+const ICON_CELL = 4;
+/** Narrowest detail worth showing in a seat line. */
+const MIN_DETAIL_COLUMNS = 8;
+
+/** ASCII icons when unicode may not draw: ASSENTOR_ASCII=1, legacy Windows console, or no TTY. */
+function useAsciiIcons(isTty: boolean): boolean {
+  return (
+    process.env.ASSENTOR_ASCII === "1" ||
+    (process.platform === "win32" && !process.env.WT_SESSION) ||
+    !isTty
+  );
+}
+
+/** Columns a string takes in a terminal. 🛠, ⏳ and ⏸ take two; the rest of the icons take one. */
+function displayWidth(text: string): number {
+  let width = 0;
+  for (const ch of text) {
+    width += charColumns(ch);
+  }
+  return width;
+}
+
+function charColumns(ch: string): number {
+  const cp = ch.codePointAt(0)!;
+  return cp >= 0x1f000 || (cp >= 0x23e9 && cp <= 0x23fa) ? 2 : 1;
+}
+
+/** `text` cut to `columns`, ending in "…" when it does not fit. */
+function cutToWidth(text: string, columns: number): string {
+  if (columns <= 0) {
+    return "";
+  }
+  if (displayWidth(text) <= columns) {
+    return text;
+  }
+  let out = "";
+  let used = 0;
+  for (const ch of text) {
+    const next = charColumns(ch);
+    if (used + next > columns - 1) {
+      break;
+    }
+    out += ch;
+    used += next;
+  }
+  return `${out}…`;
+}
+
+/**
+ * One reviewer seat line, `icon label  name · model · role  detail  elapsed`,
+ * fitted to `width` columns with one column to spare. The detail is cut first;
+ * the elapsed time stays.
+ */
+function fitSeatLine(line: SeatLineModel, width: number, indent: number): string {
+  const budget = Math.max(0, width - indent - 1);
+  const who = [line.name, line.model, line.role].filter(Boolean).join(" · ");
+  const icon = `${line.icon}${" ".repeat(Math.max(1, ICON_CELL - displayWidth(line.icon)))}`;
+  const tail = line.elapsed ? `  ${line.elapsed}` : "";
+  const head = cutToWidth(`${icon}${line.label}  ${who}`, budget - displayWidth(tail));
+  const detailRoom = budget - displayWidth(tail) - displayWidth(head) - 2;
+  const detail =
+    line.detail && detailRoom >= MIN_DETAIL_COLUMNS
+      ? `  ${cutToWidth(line.detail, detailRoom)}`
+      : "";
+  return `${" ".repeat(indent)}${head}${detail}${tail}`;
 }
 
 function labelEvent(type: string): string {
