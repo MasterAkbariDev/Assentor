@@ -158,6 +158,10 @@ Phase exit criteria:
 ### T01-06 · Shared status icon map + TUI seat board
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T00-07
 
+**Status: ✅ done.** Shipped in `2e79368` + `08ce336`. Sonnet review round 1 NEEDS_WORK (test gap), fixes verified by the planner. Decisions:
+- `src/ui-shared/status.ts` (framework-free): `STATUS_META`, `reduceSeatEvents` (pure; insert-or-update on `seat.spawned`, keeps tokens on resume; placeholder for unknown seats; `outputTail` ≤ 1000 chars; a pending `seat.model.changed` does not change the model), `seatLineModel(seat, now, ascii?)`.
+- `<SeatBoard seats width ascii? now?>` uses explicit column widths (Ink flex shrink doesn't clip). Ink 5.2.1 pads ⏸ and ⏳ as one column while drawing two, so each row keeps one spare column. ASCII icons get 4 columns.
+
 **Goal** — Terminal users see one live line per seat with status icon, model, role, last activity, elapsed time.
 
 **Context to read**
