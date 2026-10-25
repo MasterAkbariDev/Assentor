@@ -158,7 +158,7 @@ Design: [modes.md](../plans/modes.md)
 | T03-03 | Built-in reviewer & meta roles | 🟢 H | O (quality) | M | T03-01 |
 | T03-04 | Built-in playbooks | 🟢 H | S | S | T03-01, T02-09 |
 | T03-05 | `assentor prompts` CLI commands ✅ | 🟢 H | S | S | T03-01 |
-| T03-06 | TUI Agents screen: fork/edit prompts | 🟢 H | S | M | T03-01, T03-05 |
+| T03-06 | TUI Agents screen: fork/edit prompts ✅ | 🟢 H | S | M | T03-01, T03-05 |
 
 ### Phase 4 — Engine server & Web UI · [phase-4-serve-web-ui.md](./phase-4-serve-web-ui.md)
 | ID | Title | Tier | Review | Size | Depends |

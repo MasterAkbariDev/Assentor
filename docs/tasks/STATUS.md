@@ -44,7 +44,7 @@ For each Haiku card:
 
 ## 4. Progress
 
-**Phase 0 — 8 of 9 · Phase 1 — 5 of 7 · Phase 2 — 1 of 10 · Phase 2b — 1 of 19 · Phase 3 — 3 of 6 · Phases 4–5 — 0 of 29 · overall 18 of 80 cards (plus 11 backlog; FU-01, FU-02, G-1 done). By tier: 🟢 Haiku 13/41 · 🟡 Sonnet 2/17 · 🔴 Opus 3/22.**
+**Phase 0 — 8 of 9 · Phase 1 — 5 of 7 · Phase 2 — 1 of 10 · Phase 2b — 1 of 19 · Phase 3 — 4 of 6 (+T03-03a) · Phases 4–5 — 0 of 29 · overall 19 of 80 cards (plus 11 backlog; FU-01–03, G-1, T03-03a done). By tier: 🟢 Haiku 14/41 · 🟡 Sonnet 2/17 · 🔴 Opus 3/22.**
 
 | Card | Status | Where |
 |---|---|---|
@@ -71,10 +71,10 @@ For each Haiku card:
 | T03-02 Built-in builder prompts | ✅ merged (Opus NEEDS_WORK → fixed → PASS) | `143358e` |
 | T03-05 `assentor prompts` CLI | ✅ merged (Sonnet PASS) | `143358e` |
 | T03-03a Reviewer role prompts + FU-03 builder prompt follow-ups | ✅ merged (Opus NEEDS_WORK ×2 → fixed; last fix by planner) — T03-03 stays open for moderator/judge/negotiate-* (gated) | `2f92d0f` |
-| **T03-06** TUI Agents screen: prompts list, fork/edit/validate | 🔶 assigned to Haiku (planner: `app.tsx` allowed for key routing + an `edit-prompt` handoff loop in `startTui`) | Haiku |
+| T03-06 TUI Agents screen: prompts list, fork/edit/validate | ✅ merged (Sonnet NEEDS_WORK → fixed); real-terminal editor run still to verify | see log |
 | T00-08 CI matrix macOS/Windows/Linux | ⏳ unassigned (Sonnet card) | — |
 
-**Haiku released (user, 2026-10-25) for prompt work only:** T03-02, T03-05, T03-03a, FU-03 done. Next candidate: T03-06 (TUI Agents screen for prompts; depends on T03-01 + T03-05). Still gated: new seats, modes, negotiation (incl. moderator/judge/negotiate-*, T03-04 playbooks needs T02-09), browser control.
+**Haiku released (user, 2026-10-25) for prompt work only:** T03-02, T03-05, T03-03a, FU-03, T03-06 done. No more ungated Haiku cards in Phase 3; next work needs a gate decision (see the web-preview fast path in §5).
 
 ## 5. Next actions (in order)
 
@@ -97,6 +97,8 @@ Items 2–3 are being done in the repo-root checkout on `main` by session "Revie
 - Supervisor: `ReviewerTurnResult.retryable` overrides the text-based retry rule.
 - Follow-ups: the CLI never configures an adjudicator for `PanelReviewer`, so the adjudicator-PASS paths are covered only by library tests; a retry re-runs every member (cost); no resume hint after an inconclusive failure; an unsupported claim inside a non-PASS merge still goes to the executor; a claim is marked "verification requested" even if the request was never sent (fails safe to BLOCKED).
 - Remaining first-PR bullets not in G-1: honest requested-vs-verified model reporting; duplicate explicit seat ids failing validation.
+
+**Web preview options (raised with the user 2026-10-25):** the planned path reaches a browser view (T04-07) only after phases 0–3 incl. negotiate and modes (~38 cards). A fast path — T04-02 RPC core, T04-03 localhost token-secured `serve`, T04-06 UI scaffold, T04-07 session board, ahead of the T04-01 package split — is ~5 cards once gate items 2–3 are merged and item 5 (session storage owner) is decided. Awaiting the user's choice.
 
 **Then, after the gate (items 2–3 land from `main`, item 5 decided):**
 1. Release Haiku: T03-02 → T03-05 → T03-03 (reviewer roles), each Sonnet/Opus-reviewed.

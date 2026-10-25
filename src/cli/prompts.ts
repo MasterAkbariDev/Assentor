@@ -8,6 +8,7 @@ import {
   PromptLibrary,
   promptLayerDirs,
   type PromptDefinition,
+  type PromptLayer,
   type PromptLibraryLoadOptions,
 } from "../prompts/index.js";
 
@@ -224,6 +225,40 @@ function waitForExit(child: ChildProcess): Promise<number> {
   });
 }
 
+/** Which copy `edit` opens: the project copy, else the user copy. Shared with the TUI. */
+export type EditTarget =
+  | { kind: "copy"; file: string; layer: PromptLayer }
+  | { kind: "builtin-only" }
+  | { kind: "missing" };
+
+export function findEditTarget(library: PromptLibrary, id: string): EditTarget {
+  const versions = library.versions(id);
+  if (versions.length === 0) {
+    return { kind: "missing" };
+  }
+  const copy =
+    versions.find((version) => version.layer === "project") ??
+    versions.find((version) => version.layer === "user");
+  if (!copy) {
+    return { kind: "builtin-only" };
+  }
+  return { kind: "copy", file: copy.file, layer: copy.layer };
+}
+
+/**
+ * Open `file` in the configured editor and wait for it to exit, resolving with
+ * its exit code. No shell: the editor and its arguments are passed as they are.
+ * Rejects when the editor cannot start.
+ */
+export async function launchEditor(
+  file: string,
+  options: { spawn?: EditorSpawn; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform } = {},
+): Promise<number> {
+  const editor = resolveEditor(options.env ?? process.env, options.platform ?? process.platform);
+  const spawn = options.spawn ?? spawnCliProcess;
+  return waitForExit(spawn(editor.command, [...editor.args, file], { stdio: "inherit" }));
+}
+
 export async function editPrompt(
   options: PromptCommandOptions & {
     id: string;
@@ -233,29 +268,26 @@ export async function editPrompt(
   },
 ): Promise<number> {
   const library = await loadLibrary(options);
-  const versions = library.versions(options.id);
-  if (versions.length === 0) {
+  const target = findEditTarget(library, options.id);
+  if (target.kind === "missing") {
     options.err(`Unknown prompt "${options.id}"`);
     return 1;
   }
-
-  // The project copy wins over the user copy; a built-in alone cannot be edited in place.
-  const target =
-    versions.find((version) => version.layer === "project") ??
-    versions.find((version) => version.layer === "user");
-  if (!target) {
+  if (target.kind === "builtin-only") {
     options.err(
       `Only the built-in prompt "${options.id}" exists. Run "assentor prompts fork ${options.id}" first, then edit the copy.`,
     );
     return 1;
   }
 
-  const editor = resolveEditor(options.env ?? process.env, options.platform ?? process.platform);
-  const spawn = options.spawn ?? spawnCliProcess;
   try {
-    // No shell: the editor and its arguments are passed as they are.
-    return await waitForExit(spawn(editor.command, [...editor.args, target.file], { stdio: "inherit" }));
+    return await launchEditor(target.file, {
+      spawn: options.spawn,
+      env: options.env,
+      platform: options.platform,
+    });
   } catch (error) {
+    const editor = resolveEditor(options.env ?? process.env, options.platform ?? process.platform);
     options.err(
       `Could not start editor "${editor.command}": ${error instanceof Error ? error.message : String(error)}`,
     );

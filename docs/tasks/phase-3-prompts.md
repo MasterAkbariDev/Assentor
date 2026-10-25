@@ -127,6 +127,12 @@ Phase exit criteria:
 ### T03-06 · TUI Agents screen: fork/edit prompts
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T03-01, T03-05
 
+**Status: ✅ done (manual editor round-trip not yet verified).** Shipped in `51e5fd2` + `3368ef9`. Sonnet review round 1 NEEDS_WORK (unhandled fork/load rejections, stdin not paused for the editor) — fixes verified by the planner. Decisions:
+- Scope extended to `src/tui/app.tsx` (Agents key routing, prompt-library state, `edit-prompt` handoff) and exports in `src/cli/prompts.ts` (`findEditTarget`, `launchEditor`). `App` is exported with optional `initialUi`, `initialNotice`, `promptDirs`, `initialPromptId`, `loadPrompts`; `startTui(projectPath, { runEditor?, render? })`.
+- `e` hands off `{ kind: "edit-prompt", file }`; `startTui` unmounts, restores the terminal, pauses stdin, runs the editor (no shell), then re-renders on Agents with the prompt selected. Other handoffs unchanged.
+- Fork/load errors become notices; `v` retries a failed load. Selection is kept by id across reloads.
+- Not automated: a real-terminal run of `e` with a real editor (the sandbox pty did not deliver keys to Ink). Run `EDITOR=vi bin/assentor`, Agents (Tab, 3), `f` `u`, `e`, edit, `:wq`.
+
 **Context to read** — `src/tui/screens/agents.tsx`, `src/tui/keymap.ts`, `src/tui/components/*`, `src/cli/prompts.ts` (reuse fork/editor helpers), `tests/unit/tui-keyboard.test.ts`.
 
 **Allowed files** — modify: `src/tui/screens/agents.tsx`, `src/tui/keymap.ts` (new bindings only), `src/tui/screens/help.tsx` (document keys); create: `tests/unit/tui-agents-prompts.test.ts`.

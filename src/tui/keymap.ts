@@ -102,6 +102,10 @@ export type UiAction =
   | { type: "executors_use" }
   | { type: "cycle_mode" }
   | { type: "save_defaults" }
+  | { type: "agents_preview" }
+  | { type: "agents_fork" }
+  | { type: "agents_edit" }
+  | { type: "agents_validate" }
   | { type: "noop" };
 
 export function createInitialUiState(
@@ -194,6 +198,15 @@ export function mapKeyToAction(state: UiState, key: KeyEvent): UiAction {
     if (key.leftArrow) return { type: "cycle_left" };
     if (key.rightArrow) return { type: "cycle_right" };
     if (key.input === "s") return { type: "save_defaults" };
+  }
+
+  // Agents prompt rows: these keys come before the generic main-focus keys below,
+  // so Enter previews a prompt here instead of activating.
+  if (state.screen === "agents") {
+    if (key.return) return { type: "agents_preview" };
+    if (key.input === "f") return { type: "agents_fork" };
+    if (key.input === "e") return { type: "agents_edit" };
+    if (key.input === "v") return { type: "agents_validate" };
   }
 
   // main focus — arrows stay on this screen (Tab/Esc for nav).
@@ -366,6 +379,10 @@ export function reduceUi(state: UiState, action: UiAction): UiState {
     case "executors_install":
     case "executors_use":
     case "cycle_mode":
+    case "agents_preview":
+    case "agents_fork":
+    case "agents_edit":
+    case "agents_validate":
       return state;
     default: {
       const _exhaustive: never = action;
@@ -414,7 +431,7 @@ export function footerHints(state: UiState): string {
         ? "r Resume (failed/timeout) · d Delete · Esc Back"
         : "↑↓ Select · ↵ Open · r Resume · d Delete · n New task";
     case "agents":
-      return "↑↓ Browse specialties · Tab Nav · Add backends in Configure › Reviewers";
+      return "↑↓ Browse · ↵ Preview · f Fork · e Edit · v Validate · Tab Nav";
     case "review":
       return "↑↓ Action · ↵ Select · p Explain reviewers · Tab Nav";
     case "configuration":
