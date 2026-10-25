@@ -153,7 +153,7 @@ Design: [modes.md](../plans/modes.md)
 ### Phase 3 — Prompt library & playbooks · [phase-3-prompts.md](./phase-3-prompts.md)
 | ID | Title | Tier | Review | Size | Depends |
 |---|---|---|---|---|---|
-| T03-01 | Prompt format, layered loader, safe templating | 🟡 S | O | M | T00-01 |
+| T03-01 | Prompt format, layered loader, safe templating ✅ | 🟡 S | O | M | T00-01 |
 | T03-02 | Built-in builder roles (planner, coder, …) | 🟢 H | O (quality) | M | T03-01 |
 | T03-03 | Built-in reviewer & meta roles | 🟢 H | O (quality) | M | T03-01 |
 | T03-04 | Built-in playbooks | 🟢 H | S | S | T03-01, T02-09 |

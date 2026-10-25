@@ -14,7 +14,8 @@
   },
   "files": [
     "dist",
-    "bin"
+    "bin",
+    "prompts"
   ],
   "engines": {
     "node": ">=20"

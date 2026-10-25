@@ -10,6 +10,16 @@ Phase exit criteria:
 ### T03-01 · Prompt format, layered loader, safe templating
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** T00-01
 
+**Status: ✅ done.** Implemented by the planner (Opus); independent Opus review round 1 NEEDS_WORK (quadratic tag scan, error attribution, no override info) — fixed, round 2 PASS. Decisions (later cards build on these):
+- `src/prompts/`: `PromptLibrary.load({ projectPath, builtinDir?, userDir? })`, `PromptLibrary.loadBuiltinSync()`, `get/has/list(role?)/render(id, vars)/versions(id)`, `errors[]` (`{ file, layer, message }`, each failure once, against the file at fault).
+- Front-matter is `.strict()` (unknown keys are errors); `id` must equal the file name; required `id, role, title, version`. `PromptDefinition` adds `body, layer, file, overrides?` (the layer it replaced).
+- Layers: `prompts/builtin` → `~/.assentor/prompts` → `<project>/.assentor/prompts`. A failed override keeps the lower prompt. `extends` resolves to a same-layer prompt, else the effective lower one, so a prompt can extend its own id. A child's `variables` replaces the parent's. Cycles: every member reports `extends cycle: a → b → a`.
+- Templating: `{{name}}`, `{{#each list}}…{{/each}}` (`{{this}}`, item fields), `\{{` = literal `{{` (so a backslash right before a variable can't be written). Linear scanner; values literal; missing variables listed; syntax checked at load. `templateVariables` does not list names used inside each blocks.
+- Path safety: only `.md` (lowercase; `.MD` is reported) directly in a layer dir; symlinks must resolve inside it; 256 KB cap. Layer dirs hold prompt files only (no README). `/prompts/*.md` is git-ignored because `~/.assentor` is the install checkout.
+- `SPECIALTY_PROMPT_ADDENDA` reads `prompts/builtin/specialty-*.md` lazily on first access; parity is pinned by `tests/fixtures/specialty-addenda.json`. Only the built-in layer feeds it for now.
+- Open: `output` enum has no value for Lead/moderator JSON (decide in T02B-10/T03-03); symlinked `.assentor/prompts` dir not checked against the project root.
+- **Merge note:** `main` has an uncommitted edit to the architecture specialty text in `src/review/specialty-prompts.ts`; when merging, move it into `prompts/builtin/specialty-architecture.md` and the fixture.
+
 **Goal** — Load prompts from built-in → user → project layers with validated front-matter and a minimal, safe template engine.
 
 **Context to read** — plan §4.5, `src/review/specialty-prompts.ts`, `src/agents/index.ts` (`DEFAULT_AGENT_PROFILES`), `src/config/paths.ts`, `src/security/paths.ts`.

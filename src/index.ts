@@ -145,6 +145,7 @@ export * from "./routing/index.js";
 export * from "./executors/index.js";
 export * from "./agents/index.js";
 export * from "./review/index.js";
+export * from "./prompts/index.js";
 export {
   createAssentorServices,
   runFullDiagnostics,
