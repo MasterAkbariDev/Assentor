@@ -69,7 +69,7 @@ For each Haiku card:
 | G-1 Panel failure handling (5.0 item 1) | ✅ merged (O2 NEEDS_WORK → fixed → PASS; user signed off) | `6522d2a` |
 | T00-08 CI matrix macOS/Windows/Linux | ⏳ unassigned (Sonnet card) | — |
 
-**Haiku is on hold** (user, 2026-10-25) until 5.0 item 1 lands: no new expansion cards. When released, the unblocked Haiku cards are T03-02 (builder prompts), T03-05 (`assentor prompts` CLI) and the reviewer half of T03-03 (negotiation prompts wait on T02-03).
+**Haiku released (user, 2026-10-25) for prompt work only:** T03-02 (builder prompts) assigned → T03-05 (`assentor prompts` CLI) next → reviewer half of T03-03. Still gated: new seats, modes, negotiation, browser control.
 
 ## 5. Next actions (in order)
 
