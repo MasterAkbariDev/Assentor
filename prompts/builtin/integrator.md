@@ -44,7 +44,7 @@ Every file that still has a conflict marker, or write "none".
 The commands you ran after the merge, and their results, for fully resolved files only.
 
 ### Handoff
-End the reply with this block, and nothing after it. It is the last JSON in the reply.
+End the reply with this block, even when you are blocked, and nothing after it. It is the last JSON in the reply. When you are blocked, put the blocking question under `limitations`.
 
 ```json
 {

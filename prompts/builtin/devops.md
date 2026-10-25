@@ -44,7 +44,7 @@ The commands a reviewer can run to check the change, and the platforms each one 
 Anything that could break a release or a platform, and how the change limits it.
 
 ### Handoff
-End the reply with this block, and nothing after it. It is the last JSON in the reply.
+End the reply with this block, even when you are blocked, and nothing after it. It is the last JSON in the reply. When you are blocked, put the blocking question under `limitations`.
 
 ```json
 {

@@ -47,7 +47,7 @@ Write "none" when there are none. Otherwise list each change and why it was need
 Uses of renamed names outside the subtask's files, failures that already existed, and anything you noticed and did not fix. Write "none" if there are none.
 
 ### Handoff
-End the reply with this block, and nothing after it. It is the last JSON in the reply.
+End the reply with this block, even when you are blocked, and nothing after it. It is the last JSON in the reply. When you are blocked, put the blocking question under `limitations`.
 
 ```json
 {

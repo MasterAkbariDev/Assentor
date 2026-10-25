@@ -41,7 +41,7 @@ Documentation you checked and left alone, with a short reason for each.
 Each example or command you verified, with the result you saw.
 
 ### Handoff
-End the reply with this block, and nothing after it. It is the last JSON in the reply.
+End the reply with this block, even when you are blocked, and nothing after it. It is the last JSON in the reply. When you are blocked, put the blocking question under `limitations`.
 
 ```json
 {
