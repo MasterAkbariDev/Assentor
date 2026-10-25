@@ -9,12 +9,14 @@ import {
 
 /** Narrowest detail column worth showing. Below this the detail is dropped. */
 const MIN_DETAIL_COLS = 8;
-/** Columns for the status icon, padded. Wide icons (🛠, ⏳, ⏸) take two. */
+/** Columns for a unicode status icon, padded. Wide icons (🛠, ⏳, ⏸) take two. */
 const ICON_COLS = 3;
+/** Columns for an ASCII icon: the longest is `...`, so one space always follows. */
+const ASCII_ICON_COLS = 4;
 /**
- * Spare columns kept at the right edge of each row. With Ink 5.2.1 a row with a
- * ⏳ icon rendered one column past its width in testing (the icon was padded as
- * one column, but drawn as two), so one column is reserved.
+ * Spare columns kept at the right edge of each row. Ink 5.2.1 pads ⏸ (waiting)
+ * and ⏳ (rate limited) as one column, but string-width counts two, so a row with
+ * either icon renders one column past its width. One column is reserved for that.
  */
 const SPARE_COLS = 1;
 
@@ -76,6 +78,7 @@ function SeatRow({
   // Explicit column widths: Ink's flex shrink does not clip text, so it can
   // overlap columns. Each text column truncates to its own width. Elapsed is
   // always shown; the detail is dropped when there is no room for it.
+  const iconCols = ascii ? ASCII_ICON_COLS : ICON_COLS;
   const elapsedCols = line.elapsed ? line.elapsed.length + 1 : 0;
   const room = width - elapsedCols;
   let leftCols = Math.floor(room * 0.6);
@@ -89,12 +92,12 @@ function SeatRow({
   // with wide glyphs. Ink still pads ⏳ as one column, hence SPARE_COLS.
   return (
     <Box width={width}>
-      <Box width={ICON_COLS}>
+      <Box width={iconCols}>
         <Text color={color} bold>
           {line.icon}
         </Text>
       </Box>
-      <Box width={leftCols - ICON_COLS}>
+      <Box width={leftCols - iconCols}>
         <Text wrap="truncate-end">
           <Text color={color} bold>
             {line.label}

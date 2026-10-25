@@ -153,6 +153,20 @@ describe("reduceSeatEvents lifecycle", () => {
     expect(state.s1!.detail).toBe("retrying");
   });
 
+  it("a pending model switch does not show until it takes effect", () => {
+    const pending = reduceAll([
+      ev("seat.spawned", "s1", spawnData),
+      ev("seat.model.changed", "s1", { to: "sonnet", pending: true }),
+    ]);
+    expect(pending.s1!.model).toBe("opus");
+
+    const applied = reduceSeatEvents(
+      pending,
+      ev("seat.model.changed", "s1", { to: "sonnet", pending: false }),
+    );
+    expect(applied.s1!.model).toBe("sonnet");
+  });
+
   it("a respawn (resume) keeps tokens and output, and clears endedAt", () => {
     const state = reduceAll([
       ev("seat.spawned", "s1", spawnData, 0),
@@ -419,5 +433,61 @@ describe("SeatBoard render", () => {
     }
     expect(output).toContain(STATUS_META.rate_limited.label);
     expect(output).toContain(STATUS_META.tool.asciiIcon);
+  });
+});
+
+describe("SeatBoard render: every status", () => {
+  // One seat per status, in SEAT_STATUSES order, each with a detail too long to fit.
+  const every: Record<string, SeatState> = {};
+  SEAT_STATUSES.forEach((status, i) => {
+    every[`s${i}`] = seatFixture({
+      seatId: `s${i}`,
+      displayName: `Seat${i}`,
+      model: "claude-opus-5-5-with-a-long-model-name",
+      role: "security-reviewer",
+      status,
+      startedAt: at(0),
+      detail: "a very long detail that will never fit in a seat row of 40 or 80 columns at all",
+    });
+  });
+
+  const cases = [
+    { name: "80 columns", width: 80, ascii: false },
+    { name: "40 columns", width: 40, ascii: false },
+    { name: "40 columns, ascii", width: 40, ascii: true },
+  ] as const;
+
+  for (const { name, width, ascii } of cases) {
+    it(`every status fits in ${name}, with its icon before its label`, async () => {
+      const lines = (
+        await renderToLines(React.createElement(SeatBoard, { seats: every, width, ascii, now: NOW }), width)
+      ).filter((line) => line.trim().length > 0);
+
+      expect(lines).toHaveLength(SEAT_STATUSES.length);
+      SEAT_STATUSES.forEach((status, i) => {
+        const line = lines[i]!;
+        const meta = STATUS_META[status];
+        const icon = ascii ? meta.asciiIcon : meta.icon;
+        expect(displayWidth(line), `${status} row`).toBeLessThanOrEqual(width);
+        expect(line.startsWith(icon), `${status} row starts with its icon`).toBe(true);
+        expect(line.indexOf(meta.label), `${status} label after icon`).toBeGreaterThan(icon.length - 1);
+      });
+    });
+  }
+
+  it("an ascii icon is followed by at least one space before the label", async () => {
+    const lines = (
+      await renderToLines(
+        React.createElement(SeatBoard, { seats: every, width: 80, ascii: true, now: NOW }),
+        80,
+      )
+    ).filter((line) => line.trim().length > 0);
+
+    SEAT_STATUSES.forEach((status, i) => {
+      const meta = STATUS_META[status];
+      const line = lines[i]!;
+      const between = line.slice(meta.asciiIcon.length, line.indexOf(meta.label));
+      expect(between, `${status} spacing`).toMatch(/^ +$/);
+    });
   });
 });

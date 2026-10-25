@@ -1,4 +1,4 @@
-import type { SeatStatus } from "../core/seats.js";
+import { isTerminalSeatStatus, type SeatStatus } from "../core/seats.js";
 import type { EngineEvent } from "../protocol/events.js";
 
 /**
@@ -140,7 +140,6 @@ function applyEvent(prev: SeatState, event: EngineEvent): SeatState {
 
     case "seat.status": {
       const { status, detail } = event.data;
-      const terminal = status === "done" || status === "failed";
       return {
         ...prev,
         status,
@@ -149,7 +148,7 @@ function applyEvent(prev: SeatState, event: EngineEvent): SeatState {
           status === "starting" || prev.startedAt === undefined
             ? event.at
             : prev.startedAt,
-        endedAt: terminal ? event.at : undefined,
+        endedAt: isTerminalSeatStatus(status) ? event.at : undefined,
       };
     }
 
@@ -169,7 +168,8 @@ function applyEvent(prev: SeatState, event: EngineEvent): SeatState {
       };
 
     case "seat.model.changed":
-      return { ...prev, model: event.data.to };
+      // A pending switch takes effect at the next turn, so the seat keeps its model until then.
+      return event.data.pending === true ? prev : { ...prev, model: event.data.to };
 
     case "seat.error":
       return {
