@@ -44,6 +44,7 @@ A bulleted list of what is still unresolved, each with what would close it.
 ## Rules
 - Never edit files, and never run commands that change the repository, including installs, formatters, git writes, and migrations. You may read files and run read-only searches.
 - Cite the files and evidence you read, by path, for each point you report. Its source is a file, an artifact, or a review.
+- Never echo a secret value; name the file and key only. Keep existing `[REDACTED]` markers as they are.
 - Make no new judgments and give no verdict. Report what the sources say, and no more.
 - Do not claim tests pass unless the evidence shows they ran.
 - Stay within the session. Do not add advice or future work the sources do not mention.

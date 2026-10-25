@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { STALL_PATTERNS } from "../../src/orchestrator/phase-steering.js";
+import { EvidenceRequestItemSchema } from "../../src/protocol/messages.js";
 import { makeReviewResult } from "../../src/protocol/review-result.js";
 import {
   PromptLibrary,
@@ -201,7 +202,11 @@ describe("built-in reviewer prompt contract", () => {
     expect(body).toMatch(/never edit files, and never run commands that change the repository/i);
     expect(body).toContain("Cite the files and evidence you read");
     expect(body).toMatch(/do not claim tests pass/i);
-    expect(body).toContain("never ask permission to continue");
+    expect(body).toMatch(/never ask permission to continue/i);
+    if (REVIEWERS[id]!.output === "review-result") {
+      expect(body).toContain("If a file is not in the evidence pack, request it; never assume its contents.");
+      expect(body).toContain("below 0.5 means you want more evidence");
+    }
   });
 });
 
@@ -231,7 +236,20 @@ describe("review-result prompts", () => {
     const body = prompt(id).body;
     expect(body).toContain("PASS has no requiredChanges, no evidenceRequests, and no blocker or major issues");
     expect(body).toContain("NEEDS_WORK has at least one issue, requiredChange, or evidenceRequest");
-    expect(body).toContain("Use FAILED only when you could not review the change");
+    expect(body).toContain("Use FAILED only when the review could not be done at all.");
+    expect(body).toContain("Use BLOCKED when a human must decide, with the question in summary.");
+    expect(body).toContain(
+      "Missing evidence: return NEEDS_WORK with evidenceRequests. A human must decide: return BLOCKED with the question in summary. Use FAILED only when the review could not be done at all.",
+    );
+    expect(body).not.toContain("say the one specific question in summary, use FAILED");
+  });
+
+  it.each(reviewRoles)("%s describes a clean PASS and says how to read confidence", (id) => {
+    const body = prompt(id).body;
+    expect(body).toContain(
+      "A clean PASS has every acceptance criterion satisfied, only minor or info issues, and empty requiredChanges and evidenceRequests.",
+    );
+    expect(body).toContain("Confidence is a number from 0 to 1; below 0.5 means you want more evidence.");
   });
 
   it("the security example's blocker quotes the code it cites", () => {
@@ -269,5 +287,111 @@ describe("summarizer", () => {
     expect(def.role).toBe("meta");
     expect(def.output).toBe("text");
     expect(prompt("summarizer").body).toMatch(/Make no new judgments and give no verdict/);
+  });
+});
+
+const REVIEW_ROLE_IDS = Object.entries(REVIEWERS)
+  .filter(([, expected]) => expected.output === "review-result")
+  .map(([id]) => id);
+
+/** The evidence kinds the prompts list, with a sample item for each that must parse. */
+const KIND_SAMPLES: Array<{ kind: string; item: Record<string, unknown> }> = [
+  { kind: "file", item: { kind: "file", path: "src/a.ts" } },
+  { kind: "files", item: { kind: "files", paths: ["src/a.ts", "src/b.ts"] } },
+  { kind: "search", item: { kind: "search", query: "parseRange" } },
+  { kind: "symbol", item: { kind: "symbol", symbol: "parseRange" } },
+  { kind: "callers", item: { kind: "callers", symbol: "parseRange" } },
+  { kind: "config", item: { kind: "config", path: ".assentor/config.yaml" } },
+  { kind: "test", item: { kind: "test" } },
+  { kind: "screenshot", item: { kind: "screenshot", description: "settings page" } },
+  { kind: "architecture", item: { kind: "architecture" } },
+  { kind: "project_structure", item: { kind: "project_structure" } },
+];
+
+describe("evidence requests", () => {
+  it.each(REVIEW_ROLE_IDS)("%s's example evidence requests all parse with EvidenceRequestItemSchema", (id) => {
+    const example = jsonExample(prompt(id).body) as { evidenceRequests: unknown[] };
+    for (const item of example.evidenceRequests) {
+      expect(() => EvidenceRequestItemSchema.parse(item)).not.toThrow();
+    }
+  });
+
+  it.each(["architecture-reviewer", "security-reviewer", "ux-reviewer"])(
+    "%s's example carries at least one valid evidence request",
+    (id) => {
+      const example = jsonExample(prompt(id).body) as { evidenceRequests: unknown[] };
+      expect(example.evidenceRequests.length).toBeGreaterThan(0);
+    },
+  );
+
+  it("test-reviewer asks for the test kind, not a command", () => {
+    const example = jsonExample(prompt("test-reviewer").body) as { evidenceRequests: unknown[] };
+    expect(example.evidenceRequests).toEqual([{ kind: "test" }]);
+  });
+
+  it.each(KIND_SAMPLES)("the $kind kind parses with its listed fields", ({ item }) => {
+    expect(() => EvidenceRequestItemSchema.parse(item)).not.toThrow();
+  });
+
+  it.each(REVIEW_ROLE_IDS)("%s lists every kind it may request, and warns about invalid items", (id) => {
+    const body = prompt(id).body;
+    for (const { kind } of KIND_SAMPLES) {
+      expect(body, `${id} names ${kind}`).toContain(`\`${kind}\``);
+    }
+    expect(body).toContain("Any other kind, or a missing field, makes the whole review unreadable");
+  });
+});
+
+describe("redaction", () => {
+  it("the security reviewer quotes a leaked secret with the value replaced by [REDACTED]", () => {
+    expect(prompt("security-reviewer").body).toContain(
+      "For a leaked secret, the evidence is the file, the line and the key name, with the value replaced by `[REDACTED]`; that still counts as quoted evidence.",
+    );
+  });
+
+  it("the security example's evidence contains [REDACTED] and is a valid ReviewResult", () => {
+    const example = jsonExample(prompt("security-reviewer").body) as {
+      issues: Array<{ evidence: string[] }>;
+    };
+    expect(example.issues.some((issue) => issue.evidence.some((item) => item.includes("[REDACTED]")))).toBe(true);
+    expect(() => makeReviewResult(example as Parameters<typeof makeReviewResult>[0])).not.toThrow();
+  });
+
+  it.each(["security-reviewer", "devils-advocate", "summarizer"])(
+    "%s never echoes a secret value and keeps [REDACTED] markers",
+    (id) => {
+      expect(prompt(id).body).toContain(
+        "Never echo a secret value; name the file and key only. Keep existing `[REDACTED]` markers as they are.",
+      );
+    },
+  );
+});
+
+describe("ux-reviewer covers command-line tools", () => {
+  it("names the CLI checks next to the web checks", () => {
+    const body = prompt("ux-reviewer").body;
+    expect(body).toContain("For a command-line change, apply the same checks to the CLI:");
+    expect(body).toContain("`--help` and usage text");
+    expect(body).toContain("Error messages name the fix, not only the failure.");
+    expect(body).toContain("Exit codes:");
+    expect(body).toContain("stdout vs stderr:");
+    expect(body).toContain("`NO_COLOR`");
+    expect(body).toContain("Progress output for long operations:");
+  });
+
+  it("its example is a CLI case, not a web component", () => {
+    const example = jsonExample(prompt("ux-reviewer").body) as { summary: string; issues: Array<{ evidence: string[] }> };
+    expect(JSON.stringify(example)).toContain("assentor import");
+    expect(JSON.stringify(example)).not.toContain("SettingsForm");
+  });
+});
+
+describe("performance-reviewer covers Node hotspots", () => {
+  it("names the Node hotspots", () => {
+    const body = prompt("performance-reviewer").body;
+    expect(body).toContain("synchronous fs calls inside loops or request handlers");
+    expect(body).toContain("one subprocess spawned per file where one batched call would do");
+    expect(body).toContain("whole files read into memory where a stream would do");
+    expect(body).toContain("unbounded Promise.all over input that can grow");
   });
 });

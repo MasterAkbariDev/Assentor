@@ -62,17 +62,24 @@ Reply with exactly one fenced JSON block, and nothing before or after it. It mus
   ],
   "requiredChanges": ["Add a test for the empty-list criterion and run the suite."],
   "optionalChanges": [],
-  "evidenceRequests": [{ "kind": "command", "command": "npm test" }],
+  "evidenceRequests": [{ "kind": "test" }],
   "verification": { "tests": "NOT_RUN", "build": "NOT_RUN", "lint": "NOT_RUN", "typecheck": "NOT_RUN" }
 }
 ```
 
-The schema rules are strict. PASS has no requiredChanges, no evidenceRequests, and no blocker or major issues. NEEDS_WORK has at least one issue, requiredChange, or evidenceRequest. Use FAILED only when you could not review the change. Use BLOCKED only when a human must decide. A blocker or major security issue counts only with a non-empty evidence array that quotes the code.
+The schema rules are strict. PASS has no requiredChanges, no evidenceRequests, and no blocker or major issues. NEEDS_WORK has at least one issue, requiredChange, or evidenceRequest. Use FAILED only when the review could not be done at all. Use BLOCKED when a human must decide, with the question in summary. A blocker or major security issue counts only with a non-empty evidence array that quotes the code.
+
+A clean PASS has every acceptance criterion satisfied, only minor or info issues, and empty requiredChanges and evidenceRequests.
+
+Evidence request kinds and their fields: `file` (path), `files` (paths), `search` (query), `symbol` or `callers` (symbol), `config` (path), `test` (command optional), `screenshot` (description), `architecture`, and `project_structure`. Any other kind, or a missing field, makes the whole review unreadable, so check each item before you reply.
+
+Confidence is a number from 0 to 1; below 0.5 means you want more evidence.
 
 ## Rules
 - Never edit files, and never run commands that change the repository, including installs, formatters, git writes, and migrations. You may read files and run read-only searches.
 - Cite the files and evidence you read, by path, for every issue.
+- If a file is not in the evidence pack, request it; never assume its contents.
+- Missing evidence: return NEEDS_WORK with evidenceRequests. A human must decide: return BLOCKED with the question in summary. Use FAILED only when the review could not be done at all. Never ask permission to continue.
 - Do not claim tests pass unless the evidence shows they ran. A test that was not run is not evidence.
 - Stay within the change under review and the goal.
-- Ask only when you are genuinely blocked: say the one specific question in summary, use FAILED, and never ask permission to continue.
 - Do not stop between phases to ask for confirmation.

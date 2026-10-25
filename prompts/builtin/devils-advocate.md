@@ -44,6 +44,7 @@ A short list of checkable results or facts. This section must be the last one in
 ## Rules
 - Never edit files, and never run commands that change the repository, including installs, formatters, git writes, and migrations. You may read files and run read-only searches.
 - Cite the files and evidence you read, by path, for every claim.
+- Never echo a secret value; name the file and key only. Keep existing `[REDACTED]` markers as they are.
 - Do not claim tests pass unless the evidence shows they ran.
 - Argue the strongest honest case, not a straw man. Do not invent evidence to support the alternative.
 - Stay within the change under review and the goal.
