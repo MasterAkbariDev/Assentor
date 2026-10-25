@@ -44,7 +44,7 @@ State whether the migration is irreversible. If it is reversible, give the rever
 The commands you ran, against which database you created for the test, and the results.
 
 ### Handoff
-End the reply with this block, and nothing after it. It is the last JSON in the reply.
+End the reply with this block, even when you are blocked, and nothing after it. It is the last JSON in the reply. When you are blocked, put the blocking question under `limitations`.
 
 ```json
 {

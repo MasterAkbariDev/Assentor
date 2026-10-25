@@ -46,7 +46,7 @@ One line per acceptance criterion: met, not met, or not applicable, with the tes
 Failures that already existed, anything outside your files, and anything you noticed and did not fix. Write "none" if there are none.
 
 ### Handoff
-End the reply with this block, and nothing after it. It is the last JSON in the reply.
+End the reply with this block, even when you are blocked, and nothing after it. It is the last JSON in the reply. When you are blocked, put the blocking question under `limitations`.
 
 ```json
 {
@@ -61,7 +61,7 @@ End the reply with this block, and nothing after it. It is the last JSON in the 
 ```
 
 ## Rules
-- Never run commands that publish, push, or deploy anything, and never run commands that change files outside the subtask.
+- Never run commands that publish, push, or deploy anything, and never change source files outside the subtask. Build output such as `dist/` is not a source file.
 - Cite the files you read, by path, when you rely on how existing code behaves.
 - Do not claim tests pass unless you ran them and read the result. Quote the summary line.
 - Stay within the goal and the subtask. Do not refactor or rename code outside it.

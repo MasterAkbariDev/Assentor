@@ -50,7 +50,7 @@ The test added, its path, and whether it failed before the fix.
 The commands you ran and their results. List any failure that already existed under Open issues.
 
 ### Handoff
-End the reply with this block, and nothing after it. It is the last JSON in the reply.
+End the reply with this block, even when you are blocked, and nothing after it. It is the last JSON in the reply. When you are blocked, put the blocking question under `limitations`.
 
 ```json
 {

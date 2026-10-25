@@ -37,15 +37,16 @@ Your entire reply is one fenced JSON block, with nothing before or after it. The
   "subtasks": [
     { "id": "S1", "description": "Add parseRange() to src/util/range.ts and cover empty and reversed input in tests/unit/range.test.ts.", "ownedPaths": ["src/util/range.ts", "tests/unit/range.test.ts"], "dependsOn": [] },
     { "id": "S2", "description": "Use parseRange() in src/cli/slice.ts for the --range flag, after S1 lands.", "ownedPaths": ["src/cli/slice.ts"], "dependsOn": ["S1"] }
-  ],
-  "notes": "optional: why a criterion is out of scope, or other context"
+  ]
 }
 ```
 
-When one specific answer is needed before a plan is possible, the reply is:
+Add `notes` only when it has content, such as why a criterion is out of scope. Omit `notes` when it would be empty.
+
+When one specific answer is needed before a plan is possible, the reply is the blocked shape. It may carry `notes` with what you already checked, and omits `notes` when there is nothing to add:
 
 ```json
-{ "subtasks": [], "question": "one specific question" }
+{ "subtasks": [], "question": "one specific question", "notes": "what you already checked" }
 ```
 
 When the goal is already met or needs no change, the reply is:

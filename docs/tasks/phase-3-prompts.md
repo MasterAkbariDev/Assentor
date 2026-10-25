@@ -68,6 +68,12 @@ Phase exit criteria:
 ### T03-03 · Built-in reviewer & meta roles
 **Tier:** 🟢 H · **Review:** O (prompt quality) · **Size:** M · **Depends:** T03-01
 
+**Status: 🔶 partly done (T03-03a).** Reviewer half shipped in `cbb03b7` + `f4051cf` (+ two planner wording fixes in the merge: the ux example's evidence request is a `file` kind; the clean-PASS sentence says "where criteria are given"). Opus prompt-quality review: NEEDS_WORK → fixed → one contradiction left → fixed by the planner. **Not done (gated with negotiation):** `moderator`, `judge`, `negotiate-*`. Decisions:
+- Six reviewers contain every specialty "Required checks"/"Evidence rules" bullet verbatim; `output: review-result` with one fenced JSON example that passes `makeReviewResult`; valid evidence-request kinds listed; BLOCKED for a human decision, FAILED only when the review could not be done; leaked secrets cited with `[REDACTED]` (counts as evidence for the veto).
+- ux-reviewer covers CLI behaviour (help, exit codes, stdout/stderr, TTY/NO_COLOR, progress); performance-reviewer covers Node hotspots.
+- `devils-advocate` (text, "What would change my mind") and `summarizer` (meta, no verdict) both redact secrets.
+- FU-03 (`c98c190`): edit roles end with Handoff even when blocked; engineer may run builds; planner `notes` omitted when empty.
+
 **Allowed files** — create: `prompts/builtin/{code-reviewer,security-reviewer,performance-reviewer,ux-reviewer,test-reviewer,architecture-reviewer,devils-advocate,moderator,judge,summarizer}.md` and negotiation step prompts `prompts/builtin/{negotiate-propose,negotiate-critique,negotiate-revise,negotiate-rank,negotiate-synthesize}.md`, `tests/unit/builtin-prompts-reviewers.test.ts`.
 
 **Spec**

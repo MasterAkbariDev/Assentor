@@ -236,7 +236,8 @@ describe("planner output", () => {
     expect(empty).toBeDefined();
 
     const subtasks = (main!.subtasks as Array<{ id: string; ownedPaths: string[]; dependsOn: string[] }>);
-    expect(typeof main!.notes).toBe("string");
+    // The subtasks example carries no notes; notes are added only when they have content.
+    expect(main!.notes).toBeUndefined();
     const seen = new Set<string>();
     for (const subtask of subtasks) {
       expect(Array.isArray(subtask.ownedPaths)).toBe(true);
@@ -247,7 +248,11 @@ describe("planner output", () => {
       seen.add(subtask.id);
     }
 
-    expect(blocked).toEqual({ subtasks: [], question: "one specific question" });
+    expect(blocked).toEqual({
+      subtasks: [],
+      question: "one specific question",
+      notes: "what you already checked",
+    });
     expect(empty).toEqual({ subtasks: [], notes: "why no change is needed" });
   });
 
@@ -258,6 +263,40 @@ describe("planner output", () => {
 
   it("keeps the restatement private", () => {
     expect(body()).toMatch(/for yourself; do not output the restatement/);
+  });
+
+  it("omits notes when they would be empty, and says the blocked shape may carry what was checked", () => {
+    expect(body()).toMatch(/Omit `notes` when it would be empty/);
+    expect(body()).toMatch(/It may carry `notes` with what you already checked/);
+    expect(body()).not.toContain("optional: why a criterion");
+  });
+});
+
+describe("edit roles hand off even when blocked", () => {
+  const EDIT_ROLE_IDS = [
+    "engineer",
+    "refactorer",
+    "debugger",
+    "integrator",
+    "test-writer",
+    "docs-writer",
+    "devops",
+    "db-migrations",
+  ];
+
+  it.each(EDIT_ROLE_IDS)("%s ends with the handoff even when blocked, and puts the question under limitations", (id) => {
+    const body = prompt(id).body;
+    expect(body).toContain("End the reply with this block, even when you are blocked");
+    expect(body).toContain("When you are blocked, put the blocking question under `limitations`.");
+  });
+});
+
+describe("engineer's source-file rule", () => {
+  it("forbids changing source files outside the subtask, and says build output is not source", () => {
+    const body = prompt("engineer").body;
+    expect(body).toContain("never change source files outside the subtask");
+    expect(body).not.toContain("never run commands that change files outside the subtask");
+    expect(body).toContain("Build output such as `dist/` is not a source file.");
   });
 });
 
