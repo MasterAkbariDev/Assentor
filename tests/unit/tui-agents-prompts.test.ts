@@ -6,9 +6,11 @@ import { existsSync, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseAssentorConfig } from "../../src/config/schema.js";
-import { PromptLibrary } from "../../src/prompts/index.js";
+import { PromptLibrary, type PromptLibraryLoadOptions } from "../../src/prompts/index.js";
 import { createAssentorServices, type AssentorServices } from "../../src/services/app.js";
-import { App, type TuiHandoff } from "../../src/tui/app.js";
+import { App, startTui, type TuiHandoff } from "../../src/tui/app.js";
+
+type LoadPrompts = (options: PromptLibraryLoadOptions) => Promise<PromptLibrary>;
 import { createInitialUiState, mapKeyToAction } from "../../src/tui/keymap.js";
 import {
   AgentsScreen,
@@ -156,6 +158,7 @@ describe("tui agents prompts", () => {
           prompts,
           errors: [],
           loading: false,
+          loadError: null,
           preview: null,
           forkPending: false,
           notice: [],
@@ -189,6 +192,7 @@ describe("tui agents prompts", () => {
           prompts: orderedPrompts(library.list()),
           errors: [...library.errors],
           loading: false,
+          loadError: null,
           preview: null,
           forkPending: false,
           notice: [],
@@ -216,6 +220,7 @@ describe("tui agents prompts", () => {
           prompts,
           errors: [],
           loading: false,
+          loadError: null,
           preview: { scroll: 3 },
           forkPending: false,
           notice: [],
@@ -240,6 +245,7 @@ describe("tui agents prompts", () => {
           prompts,
           errors: [],
           loading: false,
+          loadError: null,
           preview: null,
           forkPending: true,
           notice: ['Prompt "alpha" already exists at /somewhere/alpha.md'],
@@ -268,6 +274,7 @@ describe("tui agents prompts", () => {
           prompts,
           errors: [{ file: "/a/very/long/path/that/keeps/going/broken.md", layer: "user", message: "missing front-matter, which is a long message to wrap" }],
           loading: false,
+          loadError: null,
           preview: { scroll: 0 },
           forkPending: false,
           notice: ["Forked a prompt to the user layer and wrote it to a long path"],
@@ -328,7 +335,7 @@ describe("tui agents prompts", () => {
     });
 
     /** Mount the real App on the Agents screen with a fake terminal. */
-    function mount() {
+    function mount(extra: { initialPromptId?: string; loadPrompts?: LoadPrompts } = {}) {
       const chunks: string[] = [];
       const stdout = new PassThrough() as PassThrough & { columns: number; rows: number };
       stdout.columns = 80;
@@ -342,6 +349,8 @@ describe("tui agents prompts", () => {
           initialConfig: parseAssentorConfig({}),
           initialUi: { screen: "agents", navIndex: 2 },
           promptDirs: { userDir, builtinDir },
+          initialPromptId: extra.initialPromptId,
+          loadPrompts: extra.loadPrompts,
           onHandoff: (handoff: TuiHandoff) => handoffs.push(handoff),
         }),
         { stdout: stdout as never, stdin: stdin as never, patchConsole: false, debug: true },
@@ -428,6 +437,71 @@ describe("tui agents prompts", () => {
       await waitFor(() => app.text().includes("1 prompt file(s) failed to load"), "the validate result");
     });
 
+    it("a fork the filesystem refuses shows the error, the run continues, and nothing rejects", async () => {
+      const rejections: unknown[] = [];
+      const onRejection = (reason: unknown) => {
+        rejections.push(reason);
+      };
+      process.on("unhandledRejection", onRejection);
+      await fs.chmod(userDir, 0o555);
+      try {
+        const app = mount();
+        await waitFor(() => app.text().includes("Builder prompts"), "the prompt list");
+
+        await app.press("f");
+        await app.press("u");
+        await waitFor(() => app.text().includes("Fork failed"), "the fork error");
+        expect(app.text()).toContain("EACCES");
+
+        // The TUI is still alive: validate still works.
+        await app.press("v");
+        await waitFor(() => app.text().includes("All prompts valid (2 loaded)"), "validate after the error");
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(rejections).toEqual([]);
+      } finally {
+        process.off("unhandledRejection", onRejection);
+        await fs.chmod(userDir, 0o755);
+      }
+    });
+
+    it("a library load that rejects shows the error instead of the spinner, and v retries", async () => {
+      let calls = 0;
+      const loadPrompts: LoadPrompts = (options) => {
+        calls += 1;
+        if (calls === 1) {
+          return Promise.reject(new Error("unreadable layer /locked"));
+        }
+        return PromptLibrary.load(options);
+      };
+      const app = mount({ loadPrompts });
+
+      await waitFor(() => app.text().includes("Could not load prompts: unreadable layer /locked"), "the load error");
+      expect(app.text()).not.toContain("Loading prompts…");
+
+      await app.press("v");
+      await waitFor(() => app.text().includes("All prompts valid (2 loaded)"), "the retry");
+      expect(app.text()).not.toContain("Could not load prompts");
+      expect(calls).toBe(2);
+    });
+
+    it("the selected prompt stays selected after a fork", async () => {
+      const app = mount();
+      await waitFor(() => app.text().includes("Builder prompts"), "the prompt list");
+
+      await app.press("j");
+      await waitFor(() => app.text().includes("› gamma"), "gamma selected");
+      await app.press("f");
+      await app.press("u");
+      await waitFor(() => app.text().includes('Forked "gamma"'), "the fork message");
+      expect(app.text()).toContain("› gamma");
+      expect(app.text()).not.toContain("› alpha");
+    });
+
+    it("mounting with an initial prompt id selects that prompt", async () => {
+      const app = mount({ initialPromptId: "gamma" });
+      await waitFor(() => app.text().includes("› gamma"), "gamma selected on mount");
+    });
+
     it("keeps every line of the App within 80 columns", async () => {
       const app = mount();
       await waitFor(() => app.text().includes("Builder prompts"), "the prompt list");
@@ -444,5 +518,121 @@ describe("tui agents prompts", () => {
       expect(validateSummary(3, 0)).toBe("All prompts valid (3 loaded)");
       expect(validateSummary(3, 2)).toBe("2 prompt file(s) failed to load; see the warning panel");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// startTui: the edit loop, with Ink's render and the editor both injected
+// ---------------------------------------------------------------------------
+
+describe("startTui edit loop", () => {
+  let root: string;
+  let projectDir: string;
+  const savedUserDir = process.env.ASSENTOR_USER_DIR;
+
+  beforeEach(async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), "tui-loop-"));
+    projectDir = path.join(root, "project");
+    await fs.mkdir(projectDir, { recursive: true });
+    process.env.ASSENTOR_USER_DIR = path.join(root, "user-root", ".assentor");
+  });
+
+  afterEach(async () => {
+    if (savedUserDir === undefined) {
+      delete process.env.ASSENTOR_USER_DIR;
+    } else {
+      process.env.ASSENTOR_USER_DIR = savedUserDir;
+    }
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  /**
+   * A stand-in for Ink's render. Each call records its props and then runs the
+   * step for that call; a step can call `onHandoff`, as the App does on exit.
+   */
+  function fakeRender(steps: Array<(props: Record<string, unknown>) => void>) {
+    const renders: Array<Record<string, unknown>> = [];
+    const fn = ((element: React.ReactElement) => {
+      const props = element.props as Record<string, unknown>;
+      renders.push(props);
+      steps[renders.length - 1]?.(props);
+      return {
+        waitUntilExit: async () => {},
+        unmount: () => {},
+      } as unknown as ReturnType<typeof render>;
+    }) as unknown as typeof render;
+    return { fn, renders };
+  }
+
+  const handOff = (props: Record<string, unknown>, handoff: TuiHandoff) =>
+    (props.onHandoff as (next: TuiHandoff) => void)(handoff);
+
+  it("an edit runs the editor on the file and re-renders on the Agents screen with the prompt selected", async () => {
+    const file = path.join(root, "user", "alpha.md");
+    const runEditor = async (opened: string) => {
+      expect(opened).toBe(file);
+      return 0;
+    };
+    const { fn, renders } = fakeRender([
+      (props) => handOff(props, { kind: "edit-prompt", file }),
+      (props) => handOff(props, { kind: "exit" }),
+    ]);
+
+    const result = await startTui(projectDir, { runEditor, render: fn });
+
+    expect(result).toEqual({ kind: "exit" });
+    expect(renders).toHaveLength(2);
+    expect(renders[1]!.initialUi).toMatchObject({ screen: "agents" });
+    expect(renders[1]!.initialPromptId).toBe("alpha");
+    expect(renders[1]!.initialNotice).toBeUndefined();
+  });
+
+  it("an editor that cannot start re-renders on Agents with an error notice", async () => {
+    const file = path.join(root, "user", "alpha.md");
+    const { fn, renders } = fakeRender([
+      (props) => handOff(props, { kind: "edit-prompt", file }),
+      (props) => handOff(props, { kind: "exit" }),
+    ]);
+
+    await startTui(projectDir, {
+      runEditor: async () => {
+        throw new Error("spawn vi ENOENT");
+      },
+      render: fn,
+    });
+
+    expect(renders).toHaveLength(2);
+    expect(renders[1]!.initialNotice).toEqual(["Could not start the editor: spawn vi ENOENT"]);
+    expect(renders[1]!.initialUi).toMatchObject({ screen: "agents" });
+  });
+
+  it("an editor that exits non-zero re-renders on Agents with its exit code in the notice", async () => {
+    const file = path.join(root, "user", "alpha.md");
+    const { fn, renders } = fakeRender([
+      (props) => handOff(props, { kind: "edit-prompt", file }),
+      (props) => handOff(props, { kind: "exit" }),
+    ]);
+
+    await startTui(projectDir, { runEditor: async () => 3, render: fn });
+
+    expect(renders[1]!.initialNotice).toEqual(["Editor exited with code 3."]);
+  });
+
+  it("any other handoff is returned unchanged, and no editor runs", async () => {
+    const handoff: TuiHandoff = { kind: "run", projectPath: projectDir, prompt: "Add average()" };
+    let editorRuns = 0;
+    const { fn, renders } = fakeRender([(props) => handOff(props, handoff)]);
+
+    const result = await startTui(projectDir, {
+      runEditor: async () => {
+        editorRuns += 1;
+        return 0;
+      },
+      render: fn,
+    });
+
+    expect(result).toBe(handoff);
+    expect(renders).toHaveLength(1);
+    expect(editorRuns).toBe(0);
   });
 });

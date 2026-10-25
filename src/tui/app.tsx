@@ -36,7 +36,11 @@ import type { UpdateCheckResult } from "../self/index.js";
 import type { TaskSnapshot } from "../persistence/store.js";
 import type { ComplexityAnalysis } from "../review/complexity.js";
 import { findEditTarget, forkPrompt, launchEditor, type EditTarget } from "../cli/prompts.js";
-import { PromptLibrary, type PromptDefinition } from "../prompts/index.js";
+import {
+  PromptLibrary,
+  type PromptDefinition,
+  type PromptLibraryLoadOptions,
+} from "../prompts/index.js";
 import { orderedPrompts, PREVIEW_LINES, validateSummary } from "./screens/agents.js";
 import { Dialog } from "./components/dialog.js";
 import {
@@ -110,6 +114,9 @@ export interface PromptDirs {
   builtinDir?: string;
 }
 
+/** Outcome of a library load: the library, or the message of the error that stopped it. */
+type LoadPromptsResult = { ok: true; library: PromptLibrary } | { ok: false; message: string };
+
 function isRetryableTaskStatus(status: string): boolean {
   return (
     status !== "DONE" &&
@@ -124,7 +131,9 @@ export function App({
   onHandoff,
   initialUi,
   initialNotice,
+  initialPromptId,
   promptDirs,
+  loadPrompts,
 }: {
   services: AssentorServices;
   initialConfig: AssentorConfig;
@@ -133,7 +142,11 @@ export function App({
   initialUi?: Partial<UiState>;
   /** Shown once on start, e.g. why an editor failed to open. */
   initialNotice?: string[];
+  /** Prompt to select once the library loads (the one just edited). */
+  initialPromptId?: string;
   promptDirs?: PromptDirs;
+  /** Loads the prompt library. Default `PromptLibrary.load`; tests inject failures here. */
+  loadPrompts?: (options: PromptLibraryLoadOptions) => Promise<PromptLibrary>;
 }) {
   const { exit } = useApp();
   const localVersion = useMemo(() => getLocalVersionSync(), []);
@@ -143,6 +156,7 @@ export function App({
   const [promptPreview, setPromptPreview] = useState<{ scroll: number } | null>(null);
   const [forkPending, setForkPending] = useState(false);
   const [promptNotice, setPromptNotice] = useState<string[]>(initialNotice ?? []);
+  const [promptLoadError, setPromptLoadError] = useState<string | null>(null);
   const [config, setConfig] = useState<AssentorConfig>(initialConfig);
   const [message, setMessage] = useState("");
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
@@ -873,40 +887,68 @@ export function App({
     }
   }
 
-  /** Load (or reload) the prompt library. Load errors stay in the library, so this does not throw. */
-  async function loadPromptLibrary(): Promise<PromptLibrary> {
-    const library = await PromptLibrary.load({
-      projectPath: services.projectPath,
-      userDir: promptDirs?.userDir,
-      builtinDir: promptDirs?.builtinDir,
-    });
-    setPromptLibrary(library);
-    return library;
+  /**
+   * Load (or reload) the prompt library. A rejected load does not throw: its
+   * message is kept for the screen, the spinner stops, and `v` retries. `keepId`
+   * is the prompt to select afterwards, so a fork or reload keeps the selection.
+   */
+  async function loadPromptLibrary(keepId?: string): Promise<LoadPromptsResult> {
+    try {
+      const library = await (loadPrompts ?? ((options) => PromptLibrary.load(options)))({
+        projectPath: services.projectPath,
+        userDir: promptDirs?.userDir,
+        builtinDir: promptDirs?.builtinDir,
+      });
+      setPromptLibrary(library);
+      setPromptLoadError(null);
+      selectPromptAfterLoad(library, keepId);
+      return { ok: true, library };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setPromptLoadError(message);
+      return { ok: false, message };
+    }
+  }
+
+  /** Select `id` in the new list; when it is gone, keep the old index within the list. */
+  function selectPromptAfterLoad(library: PromptLibrary, id: string | undefined): void {
+    const ids = orderedPrompts(library.list());
+    const index = id ? ids.findIndex((prompt) => prompt.id === id) : -1;
+    setUi((s) => ({
+      ...s,
+      mainIndex: index >= 0 ? index : Math.min(s.mainIndex, Math.max(0, ids.length - 1)),
+    }));
   }
 
   useEffect(() => {
-    if (ui.screen === "agents" && promptLibrary === null) {
-      void loadPromptLibrary();
+    if (ui.screen === "agents" && promptLibrary === null && promptLoadError === null) {
+      void loadPromptLibrary(initialPromptId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ui.screen, promptLibrary]);
+  }, [ui.screen, promptLibrary, promptLoadError]);
 
   /** `f` then `u` or `p`: same copy as `assentor prompts fork`, then reload. */
   async function forkSelectedPrompt(to: "user" | "project"): Promise<void> {
     if (!selectedPrompt) return;
+    const id = selectedPrompt.id;
     const out: string[] = [];
     const err: string[] = [];
-    const code = await forkPrompt({
-      projectPath: services.projectPath,
-      userDir: promptDirs?.userDir,
-      builtinDir: promptDirs?.builtinDir,
-      id: selectedPrompt.id,
-      to,
-      out: (line) => out.push(line),
-      err: (line) => err.push(line),
-    });
-    setPromptNotice(code === 0 ? out : err);
-    await loadPromptLibrary();
+    try {
+      const code = await forkPrompt({
+        projectPath: services.projectPath,
+        userDir: promptDirs?.userDir,
+        builtinDir: promptDirs?.builtinDir,
+        id,
+        to,
+        out: (line) => out.push(line),
+        err: (line) => err.push(line),
+      });
+      setPromptNotice(code === 0 ? out : err);
+    } catch (error) {
+      // Filesystem errors such as EACCES or EROFS come back as a rejection.
+      setPromptNotice([`Fork failed: ${error instanceof Error ? error.message : String(error)}`]);
+    }
+    await loadPromptLibrary(id);
   }
 
   /** `e`: the project copy, else the user copy. Leaves the TUI so the editor can run. */
@@ -925,8 +967,12 @@ export function App({
 
   /** `v`: reload and report. Load errors show in the warning panel. */
   async function validatePromptLibrary(): Promise<void> {
-    const library = await loadPromptLibrary();
-    setPromptNotice([validateSummary(library.list().length, library.errors.length)]);
+    const result = await loadPromptLibrary(selectedPrompt?.id);
+    setPromptNotice([
+      result.ok
+        ? validateSummary(result.library.list().length, result.library.errors.length)
+        : `Validation could not run: ${result.message}`,
+    ]);
   }
 
   useInput((input, key) => {
@@ -1486,7 +1532,8 @@ export function App({
               focused={ui.focus === "main"}
               prompts={promptList}
               errors={promptLibrary?.errors ? [...promptLibrary.errors] : []}
-              loading={promptLibrary === null}
+              loading={promptLibrary === null && promptLoadError === null}
+              loadError={promptLoadError}
               preview={promptPreview}
               forkPending={forkPending}
               notice={promptNotice}
@@ -1544,6 +1591,8 @@ export interface StartTuiOptions {
   /** Opens a prompt file in the editor and resolves with its exit code. Default: `launchEditor`. */
   runEditor?: (file: string) => Promise<number>;
   promptDirs?: PromptDirs;
+  /** Ink's `render`. Tests inject a stub; the default is Ink's own. */
+  render?: typeof render;
 }
 
 export async function startTui(
@@ -1559,6 +1608,7 @@ export async function startTui(
   const initialConfig = await loadAssentorConfig(projectPath);
   let initialUi: Partial<UiState> | undefined;
   let initialNotice: string[] | undefined;
+  let initialPromptId: string | undefined;
   for (;;) {
     const { handoff, relaunchArgs } = await renderApp({
       services,
@@ -1566,7 +1616,9 @@ export async function startTui(
       inkStdout,
       initialUi,
       initialNotice,
+      initialPromptId,
       promptDirs: options.promptDirs,
+      renderFn: options.render ?? render,
     });
 
     if (relaunchArgs) {
@@ -1577,8 +1629,10 @@ export async function startTui(
       return handoff;
     }
 
-    // The editor ran outside the TUI. Come back on the Agents screen, where the
-    // reloaded library shows the edit.
+    // The editor ran outside the TUI. Come back on the Agents screen with the
+    // edited prompt selected; the reloaded library shows the edit. A prompt file
+    // is named after its id, so the basename is the id.
+    initialPromptId = path.basename(handoff.file, ".md");
     initialNotice = await openPromptEditor(handoff.file, options.runEditor);
     initialUi = {
       screen: "agents",
@@ -1594,16 +1648,19 @@ async function renderApp(input: {
   inkStdout: ReturnType<typeof createInkStdout>;
   initialUi?: Partial<UiState>;
   initialNotice?: string[];
+  initialPromptId?: string;
   promptDirs?: PromptDirs;
+  renderFn: typeof render;
 }): Promise<{ handoff: TuiHandoff; relaunchArgs?: string[] }> {
   let handoff: TuiHandoff = { kind: "exit" };
   let relaunchArgs: string[] | undefined;
-  const instance = render(
+  const instance = input.renderFn(
     <App
       services={input.services}
       initialConfig={input.initialConfig}
       initialUi={input.initialUi}
       initialNotice={input.initialNotice}
+      initialPromptId={input.initialPromptId}
       promptDirs={input.promptDirs}
       onHandoff={(next) => {
         handoff = next;
@@ -1639,6 +1696,12 @@ async function openPromptEditor(
   file: string,
   runEditor: StartTuiOptions["runEditor"],
 ): Promise<string[] | undefined> {
+  // Ink keeps stdin in reading mode while the TUI is mounted. Pause it, so the
+  // editor is the only reader of the keyboard. Ink resumes stdin when the App
+  // mounts again, because its raw-mode setup adds a reader.
+  if (process.stdin.isTTY) {
+    process.stdin.pause();
+  }
   try {
     const code = await (runEditor ?? launchEditor)(file);
     return code === 0 ? undefined : [`Editor exited with code ${code}.`];

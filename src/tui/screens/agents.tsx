@@ -56,6 +56,8 @@ export interface AgentsScreenProps {
   prompts: PromptDefinition[];
   errors: PromptLoadError[];
   loading: boolean;
+  /** Message of the last load that failed outright; `v` retries. */
+  loadError: string | null;
   /** Set while the body preview is open; `scroll` is its first visible body line. */
   preview: { scroll: number } | null;
   forkPending: boolean;
@@ -70,6 +72,7 @@ export function AgentsScreen({
   prompts,
   errors,
   loading,
+  loadError,
   preview,
   forkPending,
   notice,
@@ -98,6 +101,9 @@ export function AgentsScreen({
         marginTop={1}
       >
         <Text bold>Prompt library</Text>
+        {loadError ? (
+          <Text color="red">Could not load prompts: {loadError}. Press v to retry.</Text>
+        ) : null}
         {loading ? (
           <Text dimColor>Loading prompts…</Text>
         ) : prompts.length === 0 ? (
