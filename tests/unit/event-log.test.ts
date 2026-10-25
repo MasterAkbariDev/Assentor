@@ -72,6 +72,7 @@ describe("EventLog", () => {
     for (let i = 0; i < 5; i += 1) {
       await first.append(draft(sessionId));
     }
+    await first.close();
 
     const reopened = await EventLog.open(projectPath, sessionId);
     expect(reopened.lastSeq).toBe(5);
@@ -90,6 +91,7 @@ describe("EventLog", () => {
     for (let i = 0; i < 3; i += 1) {
       await log.append(draft(sessionId));
     }
+    await log.close();
     // Simulate a crash mid-write: a partial JSON line with no newline.
     await fs.appendFile(
       sessionPaths(projectPath, sessionId).events,
@@ -103,6 +105,7 @@ describe("EventLog", () => {
 
     const next = await recovered.append(draft(sessionId));
     expect(next.seq).toBe(4);
+    await recovered.close();
 
     const reread = await EventLog.open(projectPath, sessionId);
     expect((await reread.readFrom(0)).map((event) => event.seq)).toEqual([1, 2, 3, 4]);
@@ -113,6 +116,7 @@ describe("EventLog", () => {
     const sessionId = createId();
     const log = await EventLog.open(projectPath, sessionId);
     await log.append(draft(sessionId));
+    await log.close();
     const file = sessionPaths(projectPath, sessionId).events;
     await fs.appendFile(file, "not json\n", "utf8");
     const before = await fs.readFile(file);
@@ -172,6 +176,7 @@ describe("EventLog", () => {
     const log = await EventLog.open(projectPath, sessionId);
     await log.append(draft(sessionId, "héllo ✓ 日本"));
     await log.append(draft(sessionId, "héllo ✓ 日本"));
+    await log.close();
     const paths = sessionPaths(projectPath, sessionId);
     const before = await fs.readFile(paths.events);
 

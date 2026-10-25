@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createId, EventLog, type EngineEvent } from "../../src/index.js";
+import { createId, EventLog,
+  readSessionEvents, type EngineEvent } from "../../src/index.js";
 import {
   executorEmitsPlainText,
   resumeAssentorTask,
@@ -38,7 +39,7 @@ describe("assentor run writes a seat event log", () => {
   });
 
   async function readSession(taskId: string): Promise<EngineEvent[]> {
-    return (await EventLog.open(projectDir, taskId)).readFrom(0);
+    return readSessionEvents(projectDir, taskId);
   }
 
   it("records the session, both seats and every supervisor event", async () => {
@@ -146,7 +147,7 @@ describe("RunSeatEvents with a plain-text executor", () => {
         .map((e) => (e.data as { text: string }).text)
         .join("");
       expect(text).toBe(Array.from({ length: 50 }, (_, i) => `line ${i}\n`).join(""));
-      expect(await (await EventLog.open(projectDir, taskId)).readFrom(0)).toEqual(events);
+      expect(await readSessionEvents(projectDir, taskId)).toEqual(events);
     } finally {
       await fs.rm(projectDir, { recursive: true, force: true });
     }

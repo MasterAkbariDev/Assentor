@@ -7,6 +7,7 @@ import {
   createEmptyContract,
   createId,
   EventLog,
+  readSessionEvents,
   PanelReviewer,
   ReviewStatus,
   SeatEventSink,
@@ -402,18 +403,17 @@ describe("Supervisor with seat events", () => {
     const projectPath = await tempProject();
     const sessionId = createId();
 
-    const first = await runWithSeats({
-      projectPath,
-      sessionId,
-      log: await EventLog.open(projectPath, sessionId),
-    });
+    const firstLog = await EventLog.open(projectPath, sessionId);
+    const first = await runWithSeats({ projectPath, sessionId, log: firstLog });
+    await firstLog.close();
     const reopened = await EventLog.open(projectPath, sessionId);
     expect(reopened.lastSeq).toBe(first.engine.length);
 
     const second = await runWithSeats({ projectPath, sessionId, log: reopened });
+    await reopened.close();
     expect(second.engine[0]!.seq).toBe(first.engine.length + 1);
 
-    const all = await (await EventLog.open(projectPath, sessionId)).readFrom(0);
+    const all = await readSessionEvents(projectPath, sessionId);
     expect(all).toHaveLength(first.engine.length + second.engine.length);
   });
 });

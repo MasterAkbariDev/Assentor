@@ -3,7 +3,8 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseAssentorConfig } from "../../src/config/schema.js";
-import { EventLog, type EngineEvent } from "../../src/index.js";
+import { EventLog,
+  readSessionEvents, type EngineEvent } from "../../src/index.js";
 import { parseEngineEvent } from "../../src/protocol/events.js";
 import {
   assertReviewerOrTeam,
@@ -216,7 +217,7 @@ describe("run --team end to end", () => {
       }),
     );
 
-    const events = await (await EventLog.open(projectDir, value.result.taskId)).readFrom(0);
+    const events = await readSessionEvents(projectDir, value.result.taskId);
     const spawned = events.filter((e) => e.type === "seat.spawned");
     expect(spawned.map((e) => (e.data as { displayName: string }).displayName)).toEqual(
       expect.arrayContaining(["Mock#1", "Mock#2"]),

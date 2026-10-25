@@ -6,6 +6,7 @@ import {
   CliReviewer,
   createEmptyContract,
   EventLog,
+  readSessionEvents,
   MockReviewer,
   TeamSchema,
   type CliSpawnRequest,
@@ -268,7 +269,7 @@ describe("assentor run with a review team", () => {
       skipPreflight: true,
       skipGates: true,
     });
-    const events = await (await EventLog.open(projectDir, result.taskId)).readFrom(0);
+    const events = await readSessionEvents(projectDir, result.taskId);
     return events
       .filter((e) => e.type === "seat.spawned" && e.seatId?.startsWith("reviewer-"))
       .map((e) => (e.data as { displayName: string }).displayName);
@@ -319,7 +320,7 @@ describe("assentor run with a review team", () => {
       skipPreflight: true,
       skipGates: true,
     });
-    const events = await (await EventLog.open(projectDir, result.taskId)).readFrom(0);
+    const events = await readSessionEvents(projectDir, result.taskId);
     const seats = events
       .filter((e) => e.type === "seat.spawned")
       .map((e) => ({ seatId: e.seatId, ...(e.data as Record<string, unknown>) }));

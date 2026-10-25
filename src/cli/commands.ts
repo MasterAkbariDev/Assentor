@@ -302,6 +302,7 @@ function reviewerSeatId(index: number): string {
  */
 export class RunSeatEvents {
   private sink?: SeatEventSink;
+  private log?: EventLog;
   private forwardOutput = false;
 
   constructor(private readonly onEngineEvent?: (event: EngineEvent) => void) {}
@@ -364,8 +365,12 @@ export class RunSeatEvents {
     let log: EventLog | undefined;
     try {
       log = await EventLog.open(input.projectPath, input.taskId);
+      this.log = log;
     } catch (error) {
-      console.error("[assentor] seat events: could not open session log:", error);
+      // One line, no stack: this can print while the TUI owns the screen.
+      console.error(
+        `[assentor] seat events: session log disabled: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
     const sink = new SeatEventSink({
       sessionId: input.taskId,
@@ -401,6 +406,15 @@ export class RunSeatEvents {
 
   /** Never rejects; gives up on writes still queued after a few seconds. */
   async close(): Promise<void> {
+    try {
+      await this.drainSink();
+    } finally {
+      // Release the session writer lock even when queued writes are stuck.
+      await this.log?.close({ timeoutMs: SEAT_EVENTS_CLOSE_MS }).catch(() => undefined);
+    }
+  }
+
+  private async drainSink(): Promise<void> {
     const closing = this.sink?.close();
     if (!closing) {
       return;

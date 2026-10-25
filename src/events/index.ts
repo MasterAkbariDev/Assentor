@@ -1,4 +1,4 @@
-export { EventLog } from "./log.js";
+export { EventLog, EventLogLockedError, readSessionEvents } from "./log.js";
 export { sessionPaths } from "../persistence/paths.js";
 export {
   createDeltaCoalescer,
