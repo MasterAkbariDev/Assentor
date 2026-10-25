@@ -10,6 +10,13 @@ import {
 } from "./commands.js";
 import { TaskStore } from "../persistence/store.js";
 import {
+  editPrompt,
+  forkPrompt,
+  listPrompts,
+  showPrompt,
+  validatePrompts,
+} from "./prompts.js";
+import {
   createAssentorServices,
   runFullDiagnostics,
 } from "../services/app.js";
@@ -235,6 +242,67 @@ program
       }
     },
   );
+
+const promptIo = {
+  out: (line: string) => console.log(line),
+  err: (line: string) => console.error(line),
+};
+
+const promptsCmd = program
+  .command("prompts")
+  .description("List, show, fork, edit and validate prompts");
+
+promptsCmd
+  .command("list")
+  .description("List prompts with their layer and whether they override a lower layer")
+  .option("-p, --project <path>", "Project directory", ".")
+  .option("--role <role>", "Only this role (builder|reviewer|meta)")
+  .action(async (options: { project: string; role?: string }) => {
+    process.exitCode = await listPrompts({ projectPath: options.project, role: options.role, ...promptIo });
+  });
+
+promptsCmd
+  .command("show")
+  .description("Show a prompt's front-matter and body")
+  .argument("<id>", "Prompt id")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(async (id: string, options: { project: string }) => {
+    process.exitCode = await showPrompt({ projectPath: options.project, id, ...promptIo });
+  });
+
+promptsCmd
+  .command("fork")
+  .description("Copy a prompt into the user or project layer so you can change it")
+  .argument("<id>", "Prompt id to copy")
+  .option("-p, --project <path>", "Project directory", ".")
+  .option("--to <layer>", "Where the copy goes: user or project", "user")
+  .option("--as <newId>", "Give the copy a different id")
+  .action(async (id: string, options: { project: string; to: string; as?: string }) => {
+    process.exitCode = await forkPrompt({
+      projectPath: options.project,
+      id,
+      to: options.to,
+      as: options.as,
+      ...promptIo,
+    });
+  });
+
+promptsCmd
+  .command("edit")
+  .description("Open the project or user copy of a prompt in $VISUAL, $EDITOR, or a fallback editor")
+  .argument("<id>", "Prompt id")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(async (id: string, options: { project: string }) => {
+    process.exitCode = await editPrompt({ projectPath: options.project, id, ...promptIo });
+  });
+
+promptsCmd
+  .command("validate")
+  .description("Check every prompt file and report load errors")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(async (options: { project: string }) => {
+    process.exitCode = await validatePrompts({ projectPath: options.project, ...promptIo });
+  });
 
 const keysCmd = program.command("keys").description("Manage API keys");
 

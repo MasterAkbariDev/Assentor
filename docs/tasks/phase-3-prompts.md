@@ -40,6 +40,13 @@ Phase exit criteria:
 ### T03-02 · Built-in builder roles
 **Tier:** 🟢 H · **Review:** O (prompt quality) · **Size:** M · **Depends:** T03-01
 
+**Status: ✅ done.** Shipped in `61448c1` + `61aa32b`. Opus prompt-quality review round 1 NEEDS_WORK (output parseability, safety rules, review handoff), round 2 PASS. Decisions:
+- 11 builder prompts, variables only `{{name}}` from a fixed vocabulary (goal, acceptanceCriteria, projectSummary, plan, subtask, diff, testOutput, errorLog, conflicts, reviewFeedback); no vendor names; no stall phrases (tests import `STALL_PATTERNS`, now exported from `src/orchestrator/phase-steering.ts` — the one change outside the card's files).
+- `planner` always outputs one JSON block `{ subtasks, notes?, question? }` (blocked / no-work shapes included); a directory in `ownedPaths` owns its subtree.
+- Read-only roles may not edit or run repo-changing commands. Edit roles end with a `### Handoff` fenced JSON block (`whatChanged, why, assumptions, unchanged, risks, limitations, architectureSummary`) read by `findExecutorHandoff`.
+- Safety rules: integrator never stages with markers and never uses ours/theirs shortcuts; devops never publishes/pushes/deploys; db-migrations never edits an applied migration or touches non-test databases.
+- Follow-ups (FU-03): Handoff when blocked; engineer "outside the subtask" wording vs build outputs; planner blocked shape may carry `notes`; the `expected-fail:` test prefix is not read by the review pipeline yet.
+
 **Goal** — Write the built-in prompts for roles that produce work.
 
 **Context to read** — `docs/plans/app-and-multi-model.md` §4.5; `prompts/builtin/` format from T03-01 (and its README/example); `src/review/specialty-prompts.ts` (tone & evidence rules); `src/orchestrator/phase-steering.ts` (how executor prompts are phrased today).
@@ -95,6 +102,8 @@ Phase exit criteria:
 
 ### T03-05 · `assentor prompts` CLI commands
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T03-01
+
+**Status: ✅ done.** Shipped in `bfabd77`. Sonnet review PASS. Decisions: `-p, --project <path>` everywhere; `fork --to <user|project> [--as <id>]` writes with `wx` (never overwrites) and only renames the front-matter `id:` line; `edit` opens the project copy, else the user copy, via `resolveEditor` (VISUAL → EDITOR → notepad/vi, whitespace-split, no shell) and `spawnCliProcess`; `validate` exits 1 on any load error. Follow-up: tests for CRLF/`id:`-in-body/traversal ids (behaviour already correct).
 
 **Allowed files** — modify: `src/cli/index.ts` (new `prompts` command group only); create: `src/cli/prompts.ts`, `tests/unit/cli-prompts.test.ts`.
 
