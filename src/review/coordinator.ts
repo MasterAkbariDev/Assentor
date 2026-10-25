@@ -19,7 +19,26 @@ import type {
   ReviewerTurnResult,
   ReviewInput,
 } from "../providers/reviewers/types.js";
-import { MessageType, type ProtocolMessage } from "../protocol/messages.js";
+import {
+  EvidenceKind,
+  MessageType,
+  type ProtocolMessage,
+} from "../protocol/messages.js";
+
+/**
+ * What one panel member did in a turn. Every configured member gets one, so a
+ * failure is recorded instead of silently shrinking the panel.
+ */
+export type MemberOutcome =
+  | { agentId: string; kind: "result"; result: ReviewResult }
+  /** Asked for evidence or a clarification without concluding. */
+  | { agentId: string; kind: "pending"; messages: ProtocolMessage[] }
+  /** Threw, errored, or returned nothing usable. */
+  | { agentId: string; kind: "failed"; error: string; retryable: boolean };
+
+/** Auth/permission problems do not go away on retry; everything else may. */
+const NON_RETRYABLE_MEMBER_ERROR =
+  /\bauth(?:entication|orization)?\b|unauthori[sz]ed|api key|invalid key|permission denied|\b40[13]\b/i;
 
 export interface CorrelatedFinding {
   key: string;
@@ -30,7 +49,7 @@ export interface CorrelatedFinding {
   issueIds: string[];
   affectedFiles: string[];
   evidence: string[];
-  /** How many reviewers flagged this finding, out of all reviewers in the run. */
+  /** How many reviewers flagged this finding, out of all configured reviewers. */
   agreement: { count: number; total: number; ratio: number };
 }
 
@@ -62,37 +81,99 @@ export class ReviewCoordinator {
     this.acceptanceCriteria = options.acceptanceCriteria ?? [];
   }
 
+  /** Number of configured reviewers (the panel size, whether or not they answer). */
+  get size(): number {
+    return this.reviewers.length;
+  }
+
+  /**
+   * Run every reviewer. A reviewer that throws is recorded as a failed member,
+   * never a panel-wide rejection. Members with the same name get `#2`, `#3`…
+   * so agreement counts and outcomes stay per member.
+   */
   async runIndependentReviews(
     input: ReviewInput | ReviewContinuation,
     method: "review" | "continue" = "review",
   ): Promise<{
     findings: ReviewerFinding[];
     turns: Array<{ agentId: string; turn: ReviewerTurnResult }>;
+    outcomes: MemberOutcome[];
   }> {
-    const turns = await Promise.all(
-      this.reviewers.map(async (reviewer) => {
-        const turn =
-          method === "review"
-            ? await reviewer.review(input as ReviewInput)
-            : await reviewer.continue(input as ReviewContinuation);
-        return { agentId: reviewer.name, turn };
-      }),
+    const ids = uniqueMemberIds(this.reviewers.map((reviewer) => reviewer.name));
+    const settled = await Promise.allSettled(
+      this.reviewers.map((reviewer) =>
+        method === "review"
+          ? reviewer.review(input as ReviewInput)
+          : reviewer.continue(input as ReviewContinuation),
+      ),
     );
 
+    const turns = settled.map((entry, index) => ({
+      agentId: ids[index]!,
+      turn:
+        entry.status === "fulfilled"
+          ? entry.value
+          : ({ error: errorText(entry.reason) } satisfies ReviewerTurnResult),
+    }));
+
     const findings: ReviewerFinding[] = [];
+    const outcomes: MemberOutcome[] = [];
     for (const { agentId, turn } of turns) {
+      // A FAILED verdict is the reviewer saying it could not review: an
+      // operational failure, not a finding.
+      if (turn.result?.status === ReviewStatus.Failed) {
+        const error = turn.result.summary || "reviewer returned FAILED";
+        outcomes.push({
+          agentId,
+          kind: "failed",
+          error,
+          retryable: !NON_RETRYABLE_MEMBER_ERROR.test(error),
+        });
+        continue;
+      }
       if (turn.result) {
         findings.push({ agentId, result: turn.result });
+        outcomes.push({ agentId, kind: "result", result: turn.result });
+        continue;
       }
+      const communication = collectCommunication([{ agentId, turn }]);
+      if (!turn.error && communication.length > 0) {
+        outcomes.push({ agentId, kind: "pending", messages: communication });
+        continue;
+      }
+      const error = turn.error ?? "returned no structured result";
+      outcomes.push({
+        agentId,
+        kind: "failed",
+        error,
+        retryable: !NON_RETRYABLE_MEMBER_ERROR.test(error),
+      });
     }
-    return { findings, turns };
+    return { findings, turns, outcomes };
   }
 
   correlate(findings: ReviewerFinding[]): CorrelatedFinding[] {
-    return correlateFindings(findings);
+    return correlateFindings(findings, this.reviewers.length);
   }
 
-  async decide(findings: ReviewerFinding[]): Promise<ReviewResult> {
+  /**
+   * Merge member results. `totalReviewers` (default: the configured panel
+   * size) is the denominator for agreement counts. Whatever the merge says,
+   * a PASS never survives an evidenced blocker/major security finding, and an
+   * unevidenced one turns the PASS into a verification request.
+   */
+  async decide(
+    findings: ReviewerFinding[],
+    options: {
+      totalReviewers?: number;
+      /**
+       * Keys of unevidenced security claims already sent for verification.
+       * The same claim coming back unsupported blocks for a human instead of
+       * asking again. Updated in place.
+       */
+      verificationRequested?: Set<string>;
+    } = {},
+  ): Promise<ReviewResult> {
     if (findings.length === 0) {
       return makeReviewResult({
         status: ReviewStatus.Failed,
@@ -104,18 +185,21 @@ export class ReviewCoordinator {
         evidenceRequests: [],
       });
     }
+    const total = options.totalReviewers ?? (this.reviewers.length || undefined);
+    const base = await this.mergeFindings(findings, total);
+    return enforceSecurityAuthority(base, findings, options.verificationRequested);
+  }
 
+  private async mergeFindings(
+    findings: ReviewerFinding[],
+    total: number | undefined,
+  ): Promise<ReviewResult> {
     if (findings.length === 1) {
       return normalizeResult(findings[0]!.result);
     }
 
-    const veto = securityVeto(findings);
-    if (veto) {
-      return veto;
-    }
-
     if (!reviewersDisagree(findings)) {
-      return mergeAgreeing(findings);
+      return mergeAgreeing(findings, total);
     }
 
     if (this.routing && this.adjudicatorProfile) {
@@ -136,12 +220,12 @@ export class ReviewCoordinator {
         evidenceSummary,
       });
       if (decision.raw) {
-        return applySecurityVetoToResult(normalizeResult(decision.raw), findings);
+        return normalizeResult(decision.raw);
       }
-      return decisionToResult(decision.decision, decision.summary, findings);
+      return decisionToResult(decision.decision, decision.summary, findings, total);
     }
 
-    return weightedMerge(findings);
+    return weightedMerge(findings, total);
   }
 }
 
@@ -153,6 +237,8 @@ export class PanelReviewer implements Reviewer {
   readonly name: string;
   private readonly coordinator: ReviewCoordinator;
   private readonly members: Reviewer[];
+  /** Unevidenced security claims already sent for verification in this task. */
+  private readonly verificationRequested = new Set<string>();
   callCount = 0;
 
   constructor(
@@ -182,16 +268,26 @@ export class PanelReviewer implements Reviewer {
     method: "review" | "continue",
   ): Promise<ReviewerTurnResult> {
     this.callCount += 1;
-    const { findings, turns } = await this.coordinator.runIndependentReviews(
+    const { findings, turns, outcomes } = await this.coordinator.runIndependentReviews(
       input,
       method,
     );
+    const failed = outcomes.filter(
+      (o): o is Extract<MemberOutcome, { kind: "failed" }> => o.kind === "failed",
+    );
+    const pending = outcomes.filter((o) => o.kind === "pending");
+    const rawOutput = (correlated: CorrelatedFinding[]) =>
+      JSON.stringify({
+        panel: this.name,
+        members: outcomes.map(describeOutcomeForRaw),
+        correlated,
+      });
 
-    const errors = turns.filter((t) => t.turn.error && !t.turn.result);
-    if (errors.length === turns.length && turns.length > 0) {
+    if (failed.length === outcomes.length && outcomes.length > 0) {
       return {
-        error: errors.map((e) => `${e.agentId}: ${e.turn.error}`).join("; "),
-        rawOutput: errors.map((e) => e.turn.rawOutput).filter(Boolean).join("\n"),
+        error: failed.map((f) => `${f.agentId}: ${f.error}`).join("; "),
+        retryable: failed.every((f) => f.retryable),
+        rawOutput: turns.map((t) => t.turn.rawOutput).filter(Boolean).join("\n"),
       };
     }
 
@@ -234,25 +330,83 @@ export class PanelReviewer implements Reviewer {
       };
     }
 
-    const result = await this.coordinator.decide(findings);
+    const result = await this.coordinator.decide(findings, {
+      totalReviewers: outcomes.length,
+      verificationRequested: this.verificationRequested,
+    });
+
+    // PASS needs every configured member. Members still asking get their
+    // evidence first; failed members make the turn inconclusive. That is an
+    // operational problem, so it is retried rather than sent to the executor
+    // as NEEDS_WORK. Non-PASS results stand: they rest on real findings.
+    if (result.status === ReviewStatus.Pass && (failed.length > 0 || pending.length > 0)) {
+      if (failed.length === 0) {
+        return { messages: communication };
+      }
+      return {
+        error: inconclusiveSummary(outcomes),
+        retryable: failed.every((f) => f.retryable),
+        rawOutput: rawOutput(this.coordinator.correlate(findings)),
+      };
+    }
+
     return {
       result,
       messages: communication.length > 0 ? communication : undefined,
-      rawOutput: JSON.stringify({
-        panel: this.name,
-        members: turns.map((t) => ({
-          agentId: t.agentId,
-          status: t.turn.result?.status ?? "error",
-          summary: t.turn.result?.summary ?? t.turn.error,
-        })),
-        correlated: this.coordinator.correlate(findings),
-      }),
+      rawOutput: rawOutput(this.coordinator.correlate(findings)),
     };
   }
 }
 
+function uniqueMemberIds(names: string[]): string[] {
+  const seen = new Map<string, number>();
+  return names.map((name) => {
+    const count = (seen.get(name) ?? 0) + 1;
+    seen.set(name, count);
+    return count === 1 ? name : `${name}#${count}`;
+  });
+}
+
+function errorText(reason: unknown): string {
+  const text = reason instanceof Error ? reason.message : String(reason);
+  return text.trim() || "reviewer threw";
+}
+
+function describeOutcomeForRaw(outcome: MemberOutcome) {
+  switch (outcome.kind) {
+    case "result":
+      return {
+        agentId: outcome.agentId,
+        status: outcome.result.status,
+        summary: outcome.result.summary,
+      };
+    case "pending":
+      return { agentId: outcome.agentId, status: "pending", summary: "asked for evidence" };
+    case "failed":
+      return { agentId: outcome.agentId, status: "error", summary: outcome.error };
+  }
+}
+
+function inconclusiveSummary(outcomes: MemberOutcome[]): string {
+  const answered = outcomes.filter((o) => o.kind === "result").length;
+  const parts = outcomes.map((o) =>
+    o.kind === "result"
+      ? `${o.agentId} ${o.result.status}`
+      : o.kind === "pending"
+        ? `${o.agentId} asked for evidence`
+        : `${o.agentId} failed: ${truncate(o.error, 160)}`,
+  );
+  return `Panel inconclusive: ${answered} of ${outcomes.length} reviewers returned a result (${parts.join("; ")})`;
+}
+
+/**
+ * Group overlapping issues across reviewers. `totalReviewers` is the agreement
+ * denominator: pass the configured panel size so a reviewer that failed still
+ * counts. It never goes below the number of distinct reviewers in `findings`.
+ */
 export function correlateFindings(
   findings: ReviewerFinding[],
+  totalReviewers?: number,
 ): CorrelatedFinding[] {
   type ResultIssue = NonNullable<ReviewResult["issues"]>[number];
   type Item = { agentId: string; issue: ResultIssue };
@@ -263,7 +417,10 @@ export function correlateFindings(
     }
   }
 
-  const totalAgents = new Set(findings.map((f) => f.agentId)).size;
+  const totalAgents = Math.max(
+    totalReviewers ?? 0,
+    new Set(findings.map((f) => f.agentId)).size,
+  );
   const clusters: CorrelatedFinding[] = [];
   const used = new Set<number>();
 
@@ -319,112 +476,159 @@ export function rankCorrelatedFindings(
   );
 }
 
-export function securityVeto(
-  findings: ReviewerFinding[],
-): ReviewResult | undefined {
-  const securityIssues = findings.flatMap((f) =>
+type ResultIssue = NonNullable<ReviewResult["issues"]>[number];
+type SecurityClaim = { agentId: string; issue: ResultIssue };
+
+/** Blocker/major security issues from every reviewer, whatever its own verdict. */
+function securityClaims(findings: ReviewerFinding[]): SecurityClaim[] {
+  return findings.flatMap((f) =>
     (f.result.issues ?? [])
       .filter(
         (issue) =>
           issue.category === IssueCategory.Security &&
-          (issue.severity === Severity.Blocker ||
-            issue.severity === Severity.Major),
+          (issue.severity === Severity.Blocker || issue.severity === Severity.Major),
       )
       .map((issue) => ({ agentId: f.agentId, issue })),
   );
-
-  const securityBlocked = findings.filter(
-    (f) =>
-      f.result.status === ReviewStatus.Blocked &&
-      (f.agentId.includes("security") ||
-        (f.result.issues ?? []).some(
-          (i) => i.category === IssueCategory.Security,
-        )),
-  );
-
-  const majorityPass =
-    findings.filter((f) => f.result.status === ReviewStatus.Pass).length >
-    findings.length / 2;
-
-  if (
-    (securityIssues.length > 0 || securityBlocked.length > 0) &&
-    majorityPass
-  ) {
-    const issues = securityIssues.map((s) => s.issue);
-    for (const blocked of securityBlocked) {
-      for (const issue of blocked.result.issues ?? []) {
-        issues.push(issue);
-      }
-    }
-    return makeReviewResult({
-      status: ReviewStatus.NeedsWork,
-      confidence: 0.95,
-      summary:
-        "Security veto: blocker/critical security findings override majority PASS",
-      issues:
-        issues.length > 0
-          ? issues
-          : [
-              {
-                id: "SEC-VETO",
-                severity: Severity.Blocker,
-                category: IssueCategory.Security,
-                description:
-                  securityBlocked[0]?.result.summary ??
-                  "Security reviewer blocked the change",
-                evidence: [],
-              },
-            ],
-      requiredChanges: [
-        ...new Set(
-          findings.flatMap((f) => f.result.requiredChanges ?? []),
-        ),
-      ],
-      optionalChanges: [],
-      evidenceRequests: [],
-    });
-  }
-
-  return undefined;
 }
 
-function applySecurityVetoToResult(
+/** A claim is evidenced when it cites evidence (a file listing alone is not enough). */
+function isEvidenced(issue: ResultIssue): boolean {
+  return (issue.evidence ?? []).some((item) => item.trim().length > 0);
+}
+
+function claimKey(claim: SecurityClaim): string {
+  return `${claim.agentId}|${claim.issue.id}|${claim.issue.description}`;
+}
+
+/**
+ * Security veto. Authority comes from the finding itself — security category,
+ * blocker/major severity and cited evidence — not from the reviewer's name or
+ * from how many others passed. Returns a NEEDS_WORK result when any reviewer
+ * has such a finding, else undefined.
+ */
+export function securityVeto(
+  findings: ReviewerFinding[],
+): ReviewResult | undefined {
+  const evidenced = securityClaims(findings).filter((c) => isEvidenced(c.issue));
+  if (evidenced.length === 0) {
+    return undefined;
+  }
+  const issues = evidenced.map((c) => c.issue);
+  const raisedBy = new Set(evidenced.map((c) => c.agentId));
+  return makeReviewResult({
+    status: ReviewStatus.NeedsWork,
+    confidence: 0.95,
+    summary: `Security veto: evidenced blocker/major security findings from ${[...raisedBy].join(", ")} override PASS`,
+    issues,
+    requiredChanges: [
+      ...new Set([
+        ...issues.map((i) => i.requiredChange ?? i.description),
+        ...findings
+          .filter((f) => raisedBy.has(f.agentId))
+          .flatMap((f) => f.result.requiredChanges ?? []),
+      ]),
+    ],
+    optionalChanges: [],
+    evidenceRequests: [],
+  });
+}
+
+/**
+ * Applied to every merged panel result: a PASS cannot clear a severe security
+ * claim. Evidenced claims veto. Unevidenced ones first ask for verification
+ * (the diff and the cited files, as an evidence request, so the executor is
+ * not sent to change code over an unsupported claim); if the same claim comes
+ * back still unsupported, the result is BLOCKED for a human.
+ */
+function enforceSecurityAuthority(
   result: ReviewResult,
   findings: ReviewerFinding[],
+  verificationRequested?: Set<string>,
 ): ReviewResult {
   if (result.status !== ReviewStatus.Pass) {
     return result;
   }
-  return securityVeto(findings) ?? result;
+  const veto = securityVeto(findings);
+  if (veto) {
+    return veto;
+  }
+  const unsupported = securityClaims(findings).filter((c) => !isEvidenced(c.issue));
+  if (unsupported.length === 0) {
+    return result;
+  }
+  const described = unsupported
+    .map((c) => `${c.agentId}: ${truncate(c.issue.description, 120)}`)
+    .join("; ");
+
+  const fresh = unsupported.filter((c) => !verificationRequested?.has(claimKey(c)));
+  if (fresh.length === 0) {
+    return makeReviewResult({
+      status: ReviewStatus.Blocked,
+      confidence: averageConfidence(findings),
+      summary: `Unverified security claim still unsupported after verification; a human must decide: ${described}`,
+      issues: unsupported.map((c) => c.issue),
+      requiredChanges: [],
+      optionalChanges: [],
+      evidenceRequests: [],
+    });
+  }
+  for (const claim of fresh) {
+    verificationRequested?.add(claimKey(claim));
+  }
+
+  const files = [...new Set(unsupported.flatMap((c) => c.issue.affectedFiles ?? []))];
+  return makeReviewResult({
+    status: ReviewStatus.NeedsWork,
+    confidence: averageConfidence(findings),
+    summary: `Unverified security claim blocks PASS; cite evidence or withdraw it: ${described}`,
+    issues: [],
+    requiredChanges: [],
+    optionalChanges: [],
+    evidenceRequests: [
+      {
+        kind: EvidenceKind.GitDiff,
+        description: `Verify security claim(s): ${described}`,
+      },
+      ...(files.length > 0
+        ? [
+            {
+              kind: EvidenceKind.Files,
+              paths: files,
+              description: "Files named by the unverified security claim",
+            },
+          ]
+        : []),
+    ],
+  });
 }
 
-function weightedMerge(findings: ReviewerFinding[]): ReviewResult {
-  const veto = securityVeto(findings);
-  if (veto) return veto;
-
+function weightedMerge(findings: ReviewerFinding[], total?: number): ReviewResult {
   const statuses = findings.map((f) => f.result.status);
   if (statuses.includes(ReviewStatus.Failed)) {
-    return mergeStatus(ReviewStatus.Failed, findings, "Panel: reviewer failed");
+    return mergeStatus(ReviewStatus.Failed, findings, "Panel: reviewer failed", total);
   }
   if (statuses.includes(ReviewStatus.Blocked)) {
-    return mergeStatus(ReviewStatus.Blocked, findings, "Panel: reviewer blocked");
+    return mergeStatus(ReviewStatus.Blocked, findings, "Panel: reviewer blocked", total);
   }
   if (statuses.includes(ReviewStatus.NeedsWork)) {
     return mergeStatus(
       ReviewStatus.NeedsWork,
       findings,
       "Panel: changes required after correlation",
+      total,
     );
   }
-  return mergeAgreeing(findings);
+  return mergeAgreeing(findings, total);
 }
 
-function mergeAgreeing(findings: ReviewerFinding[]): ReviewResult {
+function mergeAgreeing(findings: ReviewerFinding[], total?: number): ReviewResult {
   const status = findings[0]!.result.status;
   return mergeStatus(
     status,
     findings,
     findings.map((f) => f.result.summary).join(" | "),
+    total,
   );
 }
 
@@ -432,8 +636,9 @@ function mergeStatus(
   status: ReviewResult["status"],
   findings: ReviewerFinding[],
   summary: string,
+  total?: number,
 ): ReviewResult {
-  const correlated = correlateFindings(findings);
+  const correlated = correlateFindings(findings, total);
   const issues: ReviewIssue[] =
     status === ReviewStatus.Pass
       ? []
@@ -505,6 +710,7 @@ function decisionToResult(
   decision: AdjudicatorDecision,
   summary: string,
   findings: ReviewerFinding[],
+  total?: number,
 ): ReviewResult {
   const map: Record<AdjudicatorDecision, ReviewResult["status"]> = {
     PASS: ReviewStatus.Pass,
@@ -513,7 +719,7 @@ function decisionToResult(
     BLOCKED: ReviewStatus.Blocked,
   };
   const status = map[decision];
-  const base = mergeStatus(status, findings, summary);
+  const base = mergeStatus(status, findings, summary, total);
   if (decision === "MORE_EVIDENCE") {
     const requests = dedupeEvidenceRequests(
       findings.flatMap((f) => f.result.evidenceRequests ?? []),
@@ -529,7 +735,7 @@ function decisionToResult(
       issues: base.issues ?? [],
     });
   }
-  return applySecurityVetoToResult(base, findings);
+  return base;
 }
 
 function issuesLikelySame(

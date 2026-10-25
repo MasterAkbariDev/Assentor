@@ -187,7 +187,8 @@ type ReviewOutcome =
   | { kind: "pass"; review: ReviewResult }
   | { kind: "needs_work"; review: ReviewResult }
   | { kind: "blocked"; review: ReviewResult }
-  | { kind: "failed"; review: ReviewResult }
+  /** `retryable` comes from the reviewer when it knows (e.g. an inconclusive panel). */
+  | { kind: "failed"; review: ReviewResult; retryable?: boolean }
   | { kind: "communicating"; messages: ProtocolMessage[] };
 
 /**
@@ -684,7 +685,7 @@ export class Supervisor {
       const outcome = await this.runReviewer(taskId, conversationId);
       if (
         outcome.kind !== "failed" ||
-        !isRetryableReviewFailure(outcome.review)
+        !(outcome.retryable ?? isRetryableReviewFailure(outcome.review))
       ) {
         return outcome;
       }
@@ -836,6 +837,7 @@ export class Supervisor {
           optionalChanges: [],
           evidenceRequests: [],
         }),
+        ...(turn.retryable !== undefined ? { retryable: turn.retryable } : {}),
       };
     }
 

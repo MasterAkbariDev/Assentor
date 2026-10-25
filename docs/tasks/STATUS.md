@@ -66,7 +66,7 @@ For each Haiku card:
 | T01-06 Status icon map + seat event reducer + TUI seat board | ✅ merged (Sonnet NEEDS_WORK → fixed) | `e0cca77` |
 | T01-07 `run --team` + reporter seat section + doctor teams | ✅ merged (Sonnet NEEDS_WORK → fixed) | `d8b4d4c` |
 | T03-01 Prompt format, layered loader, safe templating | ✅ merged (planner-implemented; Opus review PASS after one round) | `c882420` |
-| **G-1** Panel failure handling (5.0 item 1) | 🔶 planner, in progress | planner |
+| G-1 Panel failure handling (5.0 item 1) | ✅ merged (O2 NEEDS_WORK → fixed → PASS; user signed off) | see log |
 | T00-08 CI matrix macOS/Windows/Linux | ⏳ unassigned (Sonnet card) | — |
 
 **Haiku is on hold** (user, 2026-10-25) until 5.0 item 1 lands: no new expansion cards. When released, the unblocked Haiku cards are T03-02 (builder prompts), T03-05 (`assentor prompts` CLI) and the reviewer half of T03-03 (negotiation prompts wait on T02-03).
@@ -77,7 +77,7 @@ For each Haiku card:
 
 This file is the one authoritative execution order. Where [../plans/](../plans/) or the consolidated plan (`docs/plans/app-product-review.md`, untracked on `main`; its "Delivery sequence" and "First implementation PR" are folded in here) imply a different order, this section wins. Those plans are design input only. **No new seats, modes, negotiation or browser control until items 1–3 are merged.**
 
-1. **Panel failure handling (integration branch, 🔴).** In `PanelReviewer.turn` / `ReviewCoordinator.decide`, a failed or malformed member is a recorded member outcome, not a dropped one. 3 reviewers with 2 failures and 1 PASS must not return PASS: the result is *inconclusive/retry*, not NeedsWork (NeedsWork would send the executor off making edits for a non-code problem). Agreement counts use all configured reviewers, not just respondents (`correlateFindings` `totalAgents`). See the consolidated plan's "First implementation PR" acceptance list.
+1. ✅ **Panel failure handling (integration branch, 🔴) — done.** In `PanelReviewer.turn` / `ReviewCoordinator.decide`, a failed or malformed member is a recorded member outcome, not a dropped one. 3 reviewers with 2 failures and 1 PASS must not return PASS: the result is *inconclusive/retry*, not NeedsWork (NeedsWork would send the executor off making edits for a non-code problem). Agreement counts use all configured reviewers, not just respondents (`correlateFindings` `totalAgents`). See the consolidated plan's "First implementation PR" acceptance list.
 2. **Decision signals survive the evidence budget; omitted evidence is disclosed (`main`, uncommitted).** `formatEvidencePackForPrompt` must not tail-truncate the stall signal, executor claims or architecture summary, and must list files it did not inline. (The supervisor already downgrades a stalled PASS when phases remain, via `downgradePassIfPhasesRemain`; a blanket "never PASS while stalled" rule was rejected because a false stall detection would loop forever.)
 3. **Architecture docs through guarded, redacted reads (`main`, uncommitted).** `loadProjectArchitectureDoc` uses the same symlink-guarded, `redactSecrets` path as other file evidence.
 4. **This file is authoritative** — adopted by the planner and the user on 2026-10-25.
@@ -85,7 +85,15 @@ This file is the one authoritative execution order. Where [../plans/](../plans/)
 
 Items 2–3 are being done in the repo-root checkout on `main` by session "Review reliability concerns"; they are not on this branch until merged. T01-07 and T03-01 finished before the gate (user decision); T01-03 waits behind item 1.
 
-**Then, after the gate:**
+**G-1 decisions (panel failure handling):**
+- Every configured member gets a `MemberOutcome` (`result` | `pending` | `failed`); throws (`Promise.allSettled`), errors, empty turns and FAILED verdicts are failed members. Duplicate member names get `#2`.
+- A PASS needs every member: a pending member gets its evidence first; any failed member makes the turn **inconclusive** (`error` + `retryable`, never NEEDS_WORK). Retryable unless a member failed on auth/permission. Non-PASS results backed by findings stand. Agreement counts use the configured panel size.
+- Security authority comes from the finding: an evidenced (non-empty `evidence[]`) blocker/major security issue from any reviewer vetoes a PASS; no name or majority precondition. An unevidenced one asks for `git_diff` (+ named files) once, then BLOCKS for a human (HumanRequired) if it comes back unsupported.
+- Supervisor: `ReviewerTurnResult.retryable` overrides the text-based retry rule.
+- Follow-ups: the CLI never configures an adjudicator for `PanelReviewer`, so the adjudicator-PASS paths are covered only by library tests; a retry re-runs every member (cost); no resume hint after an inconclusive failure; an unsupported claim inside a non-PASS merge still goes to the executor; a claim is marked "verification requested" even if the request was never sent (fails safe to BLOCKED).
+- Remaining first-PR bullets not in G-1: honest requested-vs-verified model reporting; duplicate explicit seat ids failing validation.
+
+**Then, after the gate (items 2–3 land from `main`, item 5 decided):**
 1. Release Haiku: T03-02 → T03-05 → T03-03 (reviewer roles), each Sonnet/Opus-reviewed.
 2. T01-03 panel policies (🟡) builds on item 1. T00-08 CI matrix.
 3. Update this file after every merge.

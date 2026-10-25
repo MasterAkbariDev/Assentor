@@ -62,6 +62,7 @@ export {
   correlateFindings,
   securityVeto,
   type CorrelatedFinding,
+  type MemberOutcome,
   type ReviewCoordinatorOptions,
 } from "./coordinator.js";
 export {

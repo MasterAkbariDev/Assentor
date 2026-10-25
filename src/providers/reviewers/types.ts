@@ -49,6 +49,12 @@ export interface ReviewerTurnResult {
   messages?: ProtocolMessage[];
   rawOutput?: string;
   error?: string;
+  /**
+   * With `error`: whether retrying the same turn may succeed (e.g. a panel that
+   * was inconclusive because a member timed out). Unset means the caller
+   * decides from the error text.
+   */
+  retryable?: boolean;
 }
 
 /**
