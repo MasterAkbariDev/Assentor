@@ -1,6 +1,7 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import { AssentorError } from "../core/errors.js";
+import { redactSecrets, type RedactionResult } from "./redact.js";
 
 export class PathSecurityError extends AssentorError {
   constructor(message: string) {
@@ -40,6 +41,55 @@ export function assertSafeProjectPath(
   }
 
   return resolved;
+}
+
+/**
+ * Like `assertSafeProjectPath`, but also resolves symlinks and rejects a path
+ * whose real location is outside the project. The target must exist.
+ * Returns the real path.
+ */
+export async function resolveContainedProjectPath(
+  projectRoot: string,
+  requested: string,
+): Promise<string> {
+  const absolute = assertSafeProjectPath(projectRoot, requested);
+  const [realRoot, realPath] = await Promise.all([
+    fs.realpath(projectRoot),
+    fs.realpath(absolute),
+  ]);
+  const relative = path.relative(realRoot, realPath);
+  if (
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
+    throw new PathSecurityError(
+      `Path resolves outside project root: ${requested}`,
+    );
+  }
+  return realPath;
+}
+
+/**
+ * Read a project text file for reviewer evidence: contained in the project
+ * (symlinks included), a regular file no larger than `maxBytes`, with secrets
+ * redacted. Returns undefined when the file is missing or unusable.
+ */
+export async function readGuardedProjectText(
+  projectRoot: string,
+  requested: string,
+  maxBytes = 200_000,
+): Promise<RedactionResult | undefined> {
+  try {
+    const realPath = await resolveContainedProjectPath(projectRoot, requested);
+    const stat = await fs.stat(realPath);
+    if (!stat.isFile() || stat.size > maxBytes) {
+      return undefined;
+    }
+    return redactSecrets(await fs.readFile(realPath, "utf8"));
+  } catch {
+    return undefined;
+  }
 }
 
 export async function readProjectFile(absolutePath: string): Promise<string> {

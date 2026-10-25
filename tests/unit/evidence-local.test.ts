@@ -10,6 +10,12 @@ import {
   parseExecutorExplanation,
 } from "../../src/review/pack-builder.js";
 import { emptyEvidencePack } from "../../src/review/evidence-pack.js";
+import {
+  ArtifactCollector,
+  EvidenceKind,
+  EvidencePackBuilder,
+  fulfillEvidenceRequests,
+} from "../../src/index.js";
 import { formatEvidencePackForPrompt } from "../../src/providers/reviewers/shared/prompt.js";
 
 describe("local evidence parsing", () => {
@@ -76,13 +82,58 @@ describe("architecture doc fallback", () => {
     expect(doc).not.toContain("supersecretvalue123");
   });
 
-  it("ignores an architecture doc symlinked from outside the project", async () => {
+  async function projectWithOutsideSymlink(): Promise<string> {
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), "assentor-outside-"));
     const target = path.join(outside, "notes.md");
     await fs.writeFile(target, layering, "utf8");
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "assentor-arch-"));
     await fs.symlink(target, path.join(dir, "ARCHITECTURE.md"));
+    return dir;
+  }
+
+  it("ignores an architecture doc symlinked from outside the project", async () => {
+    const dir = await projectWithOutsideSymlink();
     expect(await loadProjectArchitectureDoc(dir)).toBeUndefined();
+  });
+
+  it("does not fulfill architecture or file requests through an outside symlink", async () => {
+    const dir = await projectWithOutsideSymlink();
+    const collector = new ArtifactCollector();
+    const fulfillment = await fulfillEvidenceRequests(
+      [
+        { kind: EvidenceKind.Architecture },
+        { kind: EvidenceKind.File, path: "ARCHITECTURE.md" },
+      ],
+      { projectPath: dir, collector },
+    );
+    expect(fulfillment.fulfilled).toBe(0);
+    expect(collector.list()).toHaveLength(0);
+  });
+});
+
+describe("requested evidence delivery", () => {
+  it("puts requested files ahead of existing pack files in the prompt", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "assentor-req-"));
+    await fs.writeFile(
+      path.join(dir, "requested.ts"),
+      "export const REQUESTED_MARKER = 1;\n",
+      "utf8",
+    );
+    const pack = emptyEvidencePack(dir, { taskId: "t", round: 1 });
+    pack.relevantFiles = Array.from({ length: 24 }, (_, i) => ({
+      path: `src/existing${i}.ts`,
+      role: "changed" as const,
+      description: `changed: src/existing${i}.ts`,
+      content: "y".repeat(100),
+      truncated: false,
+    }));
+    const builder = new EvidencePackBuilder({ projectPath: dir, runCommands: false });
+    const merged = await builder.mergeRequests(pack, [
+      { kind: EvidenceKind.File, path: "requested.ts" },
+    ]);
+    expect(merged.fulfilled).toBe(1);
+    expect(merged.pack.relevantFiles[0]?.path).toBe("requested.ts");
+    expect(formatEvidencePackForPrompt(merged.pack)).toContain("REQUESTED_MARKER");
   });
 });
 
@@ -101,8 +152,29 @@ describe("evidence pack prompt budget", () => {
 
   it("lists files that were collected but not inlined", () => {
     const prompt = formatEvidencePackForPrompt(packWithFiles(18, 10));
-    expect(prompt).toContain("Inlined 16 of 18 collected files.");
-    expect(prompt).toContain("`src/file16.ts`, `src/file17.ts`");
+    expect(prompt).toContain(
+      "File bodies for 18 collected files: 16 delivered in full, 0 partially, 2 not delivered.",
+    );
+    expect(prompt).toContain(
+      "Not delivered (request via evidenceRequests if needed): `src/file16.ts`, `src/file17.ts`",
+    );
+  });
+
+  it("counts only file bodies that survive the evidence budget", () => {
+    const prompt = formatEvidencePackForPrompt(packWithFiles(16, 4_000), 20_000);
+    const coverage = prompt.match(
+      /File bodies for 16 collected files: (\d+) delivered in full, (\d+) partially, (\d+) not delivered\./,
+    );
+    expect(coverage).not.toBeNull();
+    const [full, partial, omitted] = coverage!.slice(1).map(Number);
+    expect(full).toBeLessThan(5);
+    expect(partial).toBe(1);
+    expect(full! + partial! + omitted!).toBe(16);
+    // Every file reported as delivered in full really is in the prompt.
+    for (let i = 0; i < full!; i += 1) {
+      expect(prompt).toContain(`### src/file${i}.ts`);
+    }
+    expect(prompt).toContain(`Partially delivered (cut off): \`src/file${full}.ts\``);
   });
 
   it("keeps the stall signal and executor claims when evidence is truncated", () => {

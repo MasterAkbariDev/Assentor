@@ -465,7 +465,15 @@ describe("supervisor", () => {
       };
     });
 
-    const reviewer = mockReviewer((_input, call) => {
+    let responseOnSecondCall = "";
+    const reviewer = mockReviewer((input, call) => {
+      if (call === 2) {
+        responseOnSecondCall = JSON.stringify(
+          (input.messages ?? []).filter(
+            (m) => m.type === MessageType.EvidenceResponse,
+          ),
+        );
+      }
       if (call === 1) {
         return {
           result: {
@@ -504,6 +512,9 @@ describe("supervisor", () => {
     expect(modes).toEqual(["run"]);
     expect(executor.calls).toBe(1);
     expect(reviewer.calls).toBe(2);
+    // The requested command output itself reaches the reviewer.
+    expect(responseOnSecondCall).toContain("npm test");
+    expect(responseOnSecondCall).toContain("delivered=1/1");
   });
 
   it("maps executor cancel (Ctrl+C) to FAILED so the task can be resumed", async () => {

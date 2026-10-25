@@ -48,6 +48,7 @@ import {
   resolveVerificationCommands,
   type VerificationCommands,
 } from "../config/detect-commands.js";
+import { ArtifactType } from "../artifacts/types.js";
 import { LoopDetector } from "./loop-detector.js";
 import {
   applyPhaseProgressToContract,
@@ -66,6 +67,8 @@ import {
 } from "./state-machine.js";
 
 const MAX_EVIDENCE_ITERATIONS = 3;
+const MAX_EVIDENCE_RESPONSE_ARTIFACTS = 20;
+const MAX_EVIDENCE_RESPONSE_CHARS = 8_000;
 
 /** True when the executor must implement reviewer-requested work (not evidence-only). */
 export function reviewRequiresExecutor(review: ReviewResult): boolean {
@@ -973,6 +976,7 @@ export class Supervisor {
     skipped: number;
     errors: string[];
     unfulfilled: EvidenceRequestItem[];
+    collected: ReviewArtifactRef[];
   } | null> {
     if (requests.length === 0) {
       return null;
@@ -992,11 +996,13 @@ export class Supervisor {
       // ignore
     }
 
-    for (const ref of builder.getCollector().toReviewRefs()) {
-      if (!this.artifacts.some((a) => a.id === ref.id && a.type === ref.type)) {
-        this.artifacts.push(ref);
-      }
-    }
+    // Requested evidence goes first so the prompt's artifact limit keeps it.
+    const collected = builder.getCollector().toReviewRefs();
+    const isCollected = (a: ReviewArtifactRef) =>
+      collected.some((ref) => ref.id === a.id && ref.type === a.type);
+    const rest = this.artifacts.filter((a) => !isCollected(a));
+    this.artifacts.length = 0;
+    this.artifacts.push(...collected, ...rest);
 
     this.emit("evidence.fulfilled", {
       fulfilled: merged.fulfilled,
@@ -1010,6 +1016,7 @@ export class Supervisor {
       skipped: merged.skipped,
       errors: merged.errors,
       unfulfilled: merged.unfulfilled,
+      collected,
     };
   }
 
@@ -1045,21 +1052,40 @@ export class Supervisor {
       const merged = await this.mergeEvidenceIntoPack(pending);
 
       if (merged && (await this.spendMessage())) {
-        const responseArtifacts = (this.evidencePack?.relevantFiles ?? [])
-          .filter((file) => file.content)
-          .slice(0, 20)
-          .map((file) => ({
-            kind: "file" as const,
-            path: file.path,
-            content: file.content?.slice(0, 8_000),
-            description: file.description,
-          }));
+        // Answer with what this request collected, not older pack context.
+        const collected = merged.collected.filter(
+          (ref) => ref.content || ref.path,
+        );
+        const delivered = collected.slice(0, MAX_EVIDENCE_RESPONSE_ARTIFACTS);
+        const notDelivered = collected.slice(MAX_EVIDENCE_RESPONSE_ARTIFACTS);
+        const cut = delivered.filter(
+          (ref) =>
+            ref.type !== ArtifactType.Screenshot &&
+            (ref.content?.length ?? 0) > MAX_EVIDENCE_RESPONSE_CHARS,
+        );
+        const label = (ref: ReviewArtifactRef) => ref.path ?? ref.description ?? ref.id;
+        const responseArtifacts = delivered.map((ref) => ({
+          kind: ref.type,
+          path: ref.path ?? ref.id,
+          // Images reach the reviewer as vision input, not as base64 text.
+          content:
+            ref.type === ArtifactType.Screenshot
+              ? undefined
+              : ref.content?.slice(0, MAX_EVIDENCE_RESPONSE_CHARS),
+          description: ref.description,
+        }));
         const notes = [
           merged.errors.length > 0 ? merged.errors.join("; ") : "",
           merged.unfulfilled.length > 0
             ? `${merged.unfulfilled.length} request(s) could not be fulfilled locally`
             : "",
-          `fulfilled=${merged.fulfilled} skipped=${merged.skipped}`,
+          cut.length > 0
+            ? `cut at ${MAX_EVIDENCE_RESPONSE_CHARS} chars: ${cut.map(label).join(", ")}`
+            : "",
+          notDelivered.length > 0
+            ? `collected but not delivered (over the ${MAX_EVIDENCE_RESPONSE_ARTIFACTS}-artifact limit; request again): ${notDelivered.map(label).join(", ")}`
+            : "",
+          `fulfilled=${merged.fulfilled} skipped=${merged.skipped} delivered=${delivered.length}/${collected.length}`,
         ]
           .filter(Boolean)
           .join("; ");

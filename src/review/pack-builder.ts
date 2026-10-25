@@ -3,7 +3,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { LocalGitService } from "../git/local.js";
 import { redactSecrets } from "../security/redact.js";
-import { assertSafeProjectPath } from "../security/paths.js";
+import { readGuardedProjectText } from "../security/paths.js";
 import {
   buildDirectoryTree,
   searchProject,
@@ -241,20 +241,22 @@ export class EvidencePackBuilder {
       pack.notes.push(formatUnfulfilledEvidenceNote(request));
     }
 
-    // Fold newly collected file artifacts into pack
-    for (const artifact of this.collector.list({ type: "file" })) {
-      if (!artifact.path || !artifact.content) continue;
-      const exists = pack.relevantFiles.some((f) => f.path === artifact.path);
-      if (!exists) {
-        pack.relevantFiles.push({
-          path: artifact.path,
-          role: "relevant",
-          description: artifact.description,
-          content: artifact.content.slice(0, MAX_FILE_BYTES),
-          truncated: artifact.content.length > MAX_FILE_BYTES,
-        });
-      }
-    }
+    // Fold requested files into the front of the pack so the prompt's file
+    // limit and evidence budget reach them before older context.
+    const requestedFiles = this.collector
+      .list({ type: "file" })
+      .filter((artifact) => artifact.path && artifact.content);
+    const requestedPaths = new Set(requestedFiles.map((a) => a.path));
+    pack.relevantFiles = [
+      ...requestedFiles.map((artifact) => ({
+        path: artifact.path!,
+        role: "relevant" as const,
+        description: artifact.description,
+        content: artifact.content!.slice(0, MAX_FILE_BYTES),
+        truncated: artifact.content!.length > MAX_FILE_BYTES,
+      })),
+      ...pack.relevantFiles.filter((f) => !requestedPaths.has(f.path)),
+    ];
 
     for (const artifact of this.collector.list()) {
       if (artifact.metadata?.kind === "search" || artifact.description?.includes("search")) {
@@ -677,7 +679,7 @@ export class EvidencePackBuilder {
     if (isImagePath(relative)) {
       return null;
     }
-    const text = await readGuardedProjectText(this.projectPath, relative);
+    const text = (await readGuardedProjectText(this.projectPath, relative))?.text;
     if (text === undefined) return null;
     const truncated = text.length > MAX_FILE_BYTES;
     return {
@@ -854,45 +856,12 @@ export async function loadProjectArchitectureDoc(
   projectPath: string,
 ): Promise<string | undefined> {
   for (const relative of ARCHITECTURE_DOC_CANDIDATES) {
-    const trimmed = (await readGuardedProjectText(projectPath, relative))?.trim();
+    const trimmed = (await readGuardedProjectText(projectPath, relative))?.text.trim();
     if (trimmed && trimmed.length > 80) {
       return trimmed.slice(0, 12_000);
     }
   }
   return undefined;
-}
-
-/**
- * Read a project file for reviewer evidence: rejects paths (including
- * symlinks) that resolve outside the project, skips non-files and files over
- * 200 KB, and redacts secrets. Returns undefined when the file is unusable.
- */
-async function readGuardedProjectText(
-  projectPath: string,
-  relative: string,
-): Promise<string | undefined> {
-  try {
-    const absolute = assertSafeProjectPath(projectPath, relative);
-    const [realRoot, realFile] = await Promise.all([
-      fs.realpath(projectPath),
-      fs.realpath(absolute),
-    ]);
-    const inside = path.relative(realRoot, realFile);
-    if (
-      inside === ".." ||
-      inside.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(inside)
-    ) {
-      return undefined;
-    }
-    const stat = await fs.stat(realFile);
-    if (!stat.isFile() || stat.size > 200_000) {
-      return undefined;
-    }
-    return redactSecrets(await fs.readFile(realFile, "utf8")).text;
-  } catch {
-    return undefined;
-  }
 }
 
 export function isArchitectureHeavyTask(text: string): boolean {
