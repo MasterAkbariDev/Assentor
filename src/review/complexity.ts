@@ -173,7 +173,11 @@ export class TaskComplexityAnalyzer {
             : "low";
 
     const evidenceDepth: EvidenceDepth =
-      score >= 65 ? "DEEP" : score >= 30 ? "STANDARD" : "QUICK";
+      score >= 65 || (roles.has("architecture") && score >= 40)
+        ? "DEEP"
+        : score >= 30
+          ? "STANDARD"
+          : "QUICK";
 
     const recommendedCount =
       score < 25 ? 1 : score < 45 ? 2 : score < 70 ? 4 : 6;

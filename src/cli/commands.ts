@@ -573,14 +573,16 @@ export async function resumeAssentorTask(input: {
   projectPath: string;
   taskId?: string;
   verbose?: boolean;
+  executor?: string;
+  reviewer?: string;
   maxRounds?: number;
   maxMessages?: number;
 }) {
   const projectPath = path.resolve(input.projectPath);
   const reporter = new RunReporter({
     verbose: input.verbose,
-    executorName: "executor",
-    reviewerName: "reviewer",
+    executorName: input.executor ?? "executor",
+    reviewerName: input.reviewer ?? "reviewer",
   });
   reporter.preparing("loading task to continue…");
 
@@ -609,7 +611,12 @@ export async function resumeAssentorTask(input: {
     taskId = resume.snapshot.taskId;
 
     reporter.updatePreparing("loading config…");
-    const config = await loadAssentorConfig(projectPath);
+    const config = await loadAssentorConfig(projectPath, {
+      executor: input.executor,
+      reviewer: input.reviewer,
+      maxRounds: input.maxRounds,
+      maxMessages: input.maxMessages,
+    });
     if (
       resume.snapshot.status === TaskState.BudgetExceeded ||
       input.maxRounds ||
@@ -642,6 +649,14 @@ export async function resumeAssentorTask(input: {
     }
     const executorProvider = config.executor.provider;
     const backends = selectReviewerBackends(config);
+
+    reporter.updateAgentLabels({
+      executorName: formatExecutorProvider(executorProvider),
+      reviewerName: formatReviewerRunLabel(
+        backends[0]?.provider ?? input.reviewer ?? "reviewer",
+        backends[0],
+      ),
+    });
 
     reporter.updatePreparing("checking environment…");
     const preflight = await runPreflight({

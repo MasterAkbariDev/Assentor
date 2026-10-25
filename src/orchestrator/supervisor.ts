@@ -461,9 +461,21 @@ export class Supervisor {
         return true;
       }
 
+      // Fulfill file/architecture evidence locally before burning an executor round.
+      let pendingEvidence = outcome.review.evidenceRequests ?? [];
+      if (pendingEvidence.length > 0) {
+        const merged = await this.mergeEvidenceIntoPack(pendingEvidence);
+        if (merged) {
+          pendingEvidence = merged.unfulfilled;
+        }
+      }
+
       await this.publishChangeRequest(conversationId, outcome.review);
-      if ((outcome.review.evidenceRequests?.length ?? 0) > 0) {
-        await this.publishEvidenceRequest(conversationId, outcome.review);
+      if (pendingEvidence.length > 0) {
+        await this.publishEvidenceRequest(conversationId, {
+          ...outcome.review,
+          evidenceRequests: pendingEvidence,
+        });
       }
       this.emit("round.completed", { round: this.round, state: this.state });
       await this.flushPersist();
@@ -951,6 +963,57 @@ export class Supervisor {
   }
 
   /**
+   * Fulfill reviewer evidence requests locally into the pack.
+   * Does not invoke the executor.
+   */
+  private async mergeEvidenceIntoPack(
+    requests: EvidenceRequestItem[],
+  ): Promise<{
+    fulfilled: number;
+    skipped: number;
+    errors: string[];
+    unfulfilled: EvidenceRequestItem[];
+  } | null> {
+    if (requests.length === 0) {
+      return null;
+    }
+
+    if (!this.evidencePack) {
+      const bootstrap = new EvidencePackBuilder(this.packBuilderOptions(false));
+      this.evidencePack = await bootstrap.build({});
+    }
+
+    const builder = new EvidencePackBuilder(this.packBuilderOptions(true));
+    const merged = await builder.mergeRequests(this.evidencePack, requests);
+    this.evidencePack = merged.pack;
+    try {
+      await builder.persist(this.evidencePack, this.taskId);
+    } catch {
+      // ignore
+    }
+
+    for (const ref of builder.getCollector().toReviewRefs()) {
+      if (!this.artifacts.some((a) => a.id === ref.id && a.type === ref.type)) {
+        this.artifacts.push(ref);
+      }
+    }
+
+    this.emit("evidence.fulfilled", {
+      fulfilled: merged.fulfilled,
+      skipped: merged.skipped,
+      errors: merged.errors,
+      unfulfilled: merged.unfulfilled.length,
+    });
+
+    return {
+      fulfilled: merged.fulfilled,
+      skipped: merged.skipped,
+      errors: merged.errors,
+      unfulfilled: merged.unfulfilled,
+    };
+  }
+
+  /**
    * Fulfill reviewer evidence requests locally. Never re-invokes the executor.
    * @returns false if the task became terminal
    */
@@ -979,44 +1042,17 @@ export class Supervisor {
 
     const pending = this.extractPendingEvidenceRequests();
     if (pending.length > 0) {
-      if (!this.evidencePack) {
-        const bootstrap = new EvidencePackBuilder(this.packBuilderOptions(false));
-        this.evidencePack = await bootstrap.build({});
-      }
+      const merged = await this.mergeEvidenceIntoPack(pending);
 
-      const builder = new EvidencePackBuilder(this.packBuilderOptions(true));
-      const merged = await builder.mergeRequests(this.evidencePack, pending);
-      this.evidencePack = merged.pack;
-      try {
-        await builder.persist(this.evidencePack, this.taskId);
-      } catch {
-        // ignore
-      }
-
-      for (const ref of builder.getCollector().toReviewRefs()) {
-        if (!this.artifacts.some((a) => a.id === ref.id && a.type === ref.type)) {
-          this.artifacts.push(ref);
-        }
-      }
-
-      this.emit("evidence.fulfilled", {
-        fulfilled: merged.fulfilled,
-        skipped: merged.skipped,
-        errors: merged.errors,
-        unfulfilled: merged.unfulfilled.length,
-      });
-
-      if (await this.spendMessage()) {
-        const responseArtifacts = builder
-          .getCollector()
-          .toReviewRefs()
-          .filter((ref) => ref.content || ref.path)
+      if (merged && (await this.spendMessage())) {
+        const responseArtifacts = (this.evidencePack?.relevantFiles ?? [])
+          .filter((file) => file.content)
           .slice(0, 20)
-          .map((ref) => ({
+          .map((file) => ({
             kind: "file" as const,
-            path: ref.path ?? ref.id,
-            content: ref.content?.slice(0, 8_000),
-            description: ref.description,
+            path: file.path,
+            content: file.content?.slice(0, 8_000),
+            description: file.description,
           }));
         const notes = [
           merged.errors.length > 0 ? merged.errors.join("; ") : "",

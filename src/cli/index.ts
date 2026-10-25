@@ -138,6 +138,14 @@ program
   .description("Resume a previously interrupted, failed, or timed-out task")
   .argument("[task-id]", "Task id (omit to resume the latest in this project)")
   .option("-p, --project <path>", "Project directory", ".")
+  .option(
+    "-e, --executor <provider>",
+    "Executor override (mock|cursor|claude-code|antigravity|codex|qwen|opencode)",
+  )
+  .option(
+    "-r, --reviewer <provider>",
+    "Reviewer override (mock|openai|gemini|claude|antigravity|cursor)",
+  )
   .option("-v, --verbose", "Verbose event logging", false)
   .option("--max-rounds <n>", "Raise round budget for this resume", (v: string) =>
     Number(v),
@@ -145,10 +153,23 @@ program
   .option("--max-messages <n>", "Raise message budget for this resume", (v: string) =>
     Number(v),
   )
-  .action(async (taskId: string | undefined, options: { project: string; verbose?: boolean; maxRounds?: number; maxMessages?: number }) => {
+  .action(
+    async (
+      taskId: string | undefined,
+      options: {
+        project: string;
+        executor?: string;
+        reviewer?: string;
+        verbose?: boolean;
+        maxRounds?: number;
+        maxMessages?: number;
+      },
+    ) => {
     const result = await resumeAssentorTask({
       projectPath: options.project,
       taskId,
+      executor: options.executor,
+      reviewer: options.reviewer,
       verbose: options.verbose,
       maxRounds: options.maxRounds,
       maxMessages: options.maxMessages,

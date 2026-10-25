@@ -78,6 +78,8 @@ export function buildReviewPrompt(input: {
     "Git / evidence rules:",
     "- Section G lists files changed since TASK START (later commits + uncommitted). A clean working tree with a non-empty changed list means the executor already committed — that is valid evidence.",
     "- Do NOT require git add, git commit, or staging unless the task contract explicitly asks for a commit.",
+    "- Section D lists file paths; inlined bodies appear under ## File contents below.",
+    "- Section C architecture, Section K executor explanation, and docs/architecture.md in File contents all count as architecture evidence.",
     "- If claimed files appear in the pack with contents (Section D / File contents), review those files. Only evidenceRequest a file that is still missing.",
     "- NOT_RUN for tests/build/lint is not by itself NEEDS_WORK unless the contract requires that verification.",
     "",
@@ -159,13 +161,16 @@ export function buildReviewPrompt(input: {
     .join("\n");
 }
 
+const MAX_INLINED_FILES = 16;
+
 export function formatEvidencePackForPrompt(
   pack: ProjectReviewEvidencePack,
   maxChars = 48_000,
 ): string {
   const md = evidencePackToMarkdown(pack);
-  const fileBodies = [...pack.relevantFiles, ...pack.unchangedImportant]
-    .slice(0, 16)
+  const files = [...pack.relevantFiles, ...pack.unchangedImportant];
+  const fileBodies = files
+    .slice(0, MAX_INLINED_FILES)
     .map((f) => {
       if (!f.content) return `- \`${f.path}\` (${f.role}) — content not inlined`;
       return [
@@ -176,6 +181,7 @@ export function formatEvidencePackForPrompt(
       ].join("\n");
     })
     .join("\n\n");
+  const omitted = files.slice(MAX_INLINED_FILES);
 
   const depExcerpt = pack.dependencies.manifestExcerpt
     ? `### package.json\n\`\`\`\n${truncate(pack.dependencies.manifestExcerpt, 3_000)}\n\`\`\``
@@ -185,7 +191,7 @@ export function formatEvidencePackForPrompt(
     ? `### Diff\n\`\`\`\n${truncate(pack.git.diff, 12_000)}\n\`\`\``
     : "";
 
-  const combined = [
+  const evidence = [
     md,
     "",
     "## File contents",
@@ -193,20 +199,40 @@ export function formatEvidencePackForPrompt(
     "",
     depExcerpt,
     gitDiff,
-    "",
-    "## Executor claims vs evidence",
-    `Explanation source: ${pack.executorExplanation.source}`,
-    pack.executorExplanation.whatChanged ||
-      pack.executorExplanation.raw ||
-      "(no executor explanation)",
-    `Architecture source: ${pack.architecture.source}`,
-    pack.architecture.summary || "(no architecture summary)",
-    pack.executorStalledWaitingForConfirmation
-      ? "\n## Stall signal\nExecutor appears stalled waiting for confirmation to proceed to the next phase. Do NOT PASS. Issue a nextPhaseDirective."
-      : "",
   ].join("\n");
 
-  return truncate(combined, maxChars);
+  // Decision-critical sections sit outside the evidence budget so truncating
+  // a large pack can never drop them.
+  const truncationNote =
+    "Evidence above was cut to fit the prompt budget; anything cut off was not reviewed.";
+  const decision = (evidenceTruncated: boolean) =>
+    [
+      "",
+      "## Evidence coverage",
+      `Inlined ${Math.min(files.length, MAX_INLINED_FILES)} of ${files.length} collected files.`,
+      omitted.length > 0
+        ? `Not inlined (request via evidenceRequests if needed): ${omitted.map((f) => `\`${f.path}\``).join(", ")}`
+        : "",
+      evidenceTruncated ? truncationNote : "",
+      "",
+      "## Executor claims vs evidence",
+      `Explanation source: ${pack.executorExplanation.source}`,
+      pack.executorExplanation.whatChanged ||
+        pack.executorExplanation.raw ||
+        "(no executor explanation)",
+      `Architecture source: ${pack.architecture.source}`,
+      pack.architecture.summary || "(no architecture summary)",
+      pack.executorStalledWaitingForConfirmation
+        ? "\n## Stall signal\nExecutor appears stalled waiting for confirmation to proceed to the next phase. Do NOT PASS. Issue a nextPhaseDirective."
+        : "",
+    ].join("\n");
+
+  const budget = Math.max(0, maxChars - decision(true).length);
+  const evidenceTruncated = evidence.length > budget;
+  const evidenceBlock = evidenceTruncated
+    ? truncate(evidence, budget)
+    : evidence;
+  return `${evidenceBlock}\n${decision(evidenceTruncated)}`;
 }
 
 export function reviewResultFromModelText(raw: string): ReviewerTurnResult {

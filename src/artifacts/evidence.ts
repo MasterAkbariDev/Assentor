@@ -41,6 +41,8 @@ export interface EvidenceCollectorDeps {
     cwd: string,
   ) => Promise<{ stdout: string; stderr: string; code: number }>;
   verificationCommands?: VerificationCommands;
+  /** Architecture summary from executor output or evidence pack. */
+  architectureFallback?: string;
 }
 
 /**
@@ -245,7 +247,43 @@ async function fulfillOne(
       });
       return true;
     }
-    case EvidenceKind.Architecture:
+    case EvidenceKind.Architecture: {
+      if (deps.architectureFallback?.trim()) {
+        deps.collector.add({
+          type: ArtifactType.Other,
+          description: "architecture summary",
+          content: deps.architectureFallback.trim().slice(0, 12_000),
+        });
+        return true;
+      }
+      for (const rel of [
+        "docs/architecture.md",
+        "ARCHITECTURE.md",
+        "architecture.md",
+        "docs/ARCHITECTURE.md",
+      ]) {
+        try {
+          const absolute = assertSafeProjectPath(deps.projectPath, rel);
+          const raw = await readProjectFile(absolute);
+          const redacted = redactSecrets(raw);
+          deps.collector.addFile(
+            rel,
+            redacted.text,
+            "architecture documentation",
+            { redacted: redacted.redacted },
+          );
+          deps.collector.add({
+            type: ArtifactType.Other,
+            description: "architecture summary",
+            content: redacted.text.slice(0, 12_000),
+          });
+          return true;
+        } catch {
+          // try next path
+        }
+      }
+      return false;
+    }
     case EvidenceKind.RuntimeInformation:
     case EvidenceKind.Log:
     case EvidenceKind.Logs:
