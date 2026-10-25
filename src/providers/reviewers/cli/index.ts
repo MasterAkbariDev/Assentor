@@ -18,7 +18,7 @@ import type {
   ReviewInput,
 } from "../types.js";
 
-export type CliReviewerAdapter = "claude" | "antigravity" | "cursor" | "mock";
+export type CliReviewerAdapter = "claude" | "antigravity" | "cursor" | "codex" | "mock";
 
 export interface CliSpawnRequest {
   command: string;
@@ -126,7 +126,24 @@ export interface ProcessCliTransportOptions {
 }
 
 /**
- * Spawns Claude Code, Antigravity, or Cursor CLI with a pack-aware review prompt.
+ * Reviewers are read-only (Danger list #3): no flag that skips approvals,
+ * lifts a sandbox or forces writes may reach a reviewer CLI.
+ */
+const FORBIDDEN_REVIEWER_ARG =
+  /dangerously|bypass|yolo|^--force\b|^-f$|full-auto|sandbox|danger-full-access|workspace-write|^-s$|approve-for-me|permission-mode|accept-?edits|allowed-?tools/i;
+
+/** Throws if any of `args` would grant a reviewer CLI edit or unattended rights. */
+export function assertReadOnlyReviewerArgs(args: readonly string[]): void {
+  const bad = args.filter((arg) => FORBIDDEN_REVIEWER_ARG.test(arg));
+  if (bad.length > 0) {
+    throw new Error(
+      `Refusing reviewer CLI flags that grant edit or unattended rights: ${bad.join(" ")}`,
+    );
+  }
+}
+
+/**
+ * Spawns Claude Code, Antigravity, Cursor or Codex CLI with a pack-aware review prompt.
  */
 export class ProcessCliTransport implements CliTransport {
   readonly adapter: Exclude<CliReviewerAdapter, "mock">;
@@ -141,6 +158,7 @@ export class ProcessCliTransport implements CliTransport {
     this.adapter = options.adapter;
     this.binary = options.binary ?? resolveCliBinary(options.adapter);
     this.extraArgs = options.extraArgs ?? [];
+    assertReadOnlyReviewerArgs(this.extraArgs);
     this.spawnFn = options.spawnFn ?? defaultCliSpawn;
     this.env = options.env;
     this.model = options.model;
@@ -184,7 +202,7 @@ export interface CliReviewerOptions {
 }
 
 /**
- * Reviewer that reaches a coding-agent CLI (Claude / Antigravity / Cursor / mock).
+ * Reviewer that reaches a coding-agent CLI (Claude / Antigravity / Cursor / Codex / mock).
  * Logical agent identity is owned by the caller (`name`); this class is transport only.
  */
 export class CliReviewer implements Reviewer {
@@ -262,8 +280,8 @@ export class CliReviewer implements Reviewer {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const hint = /ENOENT/i.test(message)
-        ? ` CLI binary for ${this.adapter} not found. Install it or set ASSENTOR_${this.adapter === "claude" ? "CLAUDE" : "GEMINI_CLI"}_BINARY.`
+      const hint = /ENOENT/i.test(message) && this.adapter !== "mock"
+        ? ` CLI binary for ${this.adapter} not found. Install it or set ${BINARY_ENV[this.adapter]}.`
         : "";
       return { error: message + hint };
     }
@@ -300,6 +318,14 @@ export class CliReviewer implements Reviewer {
   }
 }
 
+/** Env var that points at each adapter's binary (see `TOOL_ENV` in cli-locator). */
+const BINARY_ENV: Record<Exclude<CliReviewerAdapter, "mock">, string> = {
+  claude: "ASSENTOR_CLAUDE_BINARY",
+  antigravity: "ASSENTOR_AGY_BINARY",
+  cursor: "ASSENTOR_CURSOR_BINARY",
+  codex: "ASSENTOR_CODEX_BINARY",
+};
+
 export function resolveCliAdapter(
   provider: string,
 ): CliReviewerAdapter {
@@ -313,11 +339,14 @@ export function resolveCliAdapter(
   if (p === "cursor" || p === "cursor-agent" || p === "agent") {
     return "cursor";
   }
+  if (p === "codex") {
+    return "codex";
+  }
   if (p === "mock") {
     return "mock";
   }
   throw new Error(
-    `Provider "${provider}" does not support CLI transport. Use claude, antigravity, cursor, or mock.`,
+    `Provider "${provider}" does not support CLI transport. Use claude, antigravity, cursor, codex, or mock.`,
   );
 }
 
@@ -327,6 +356,9 @@ export function resolveCliBinary(adapter: Exclude<CliReviewerAdapter, "mock">): 
   }
   if (adapter === "cursor") {
     return locateBinary("cursor") ?? findOnPath("agent") ?? "agent";
+  }
+  if (adapter === "codex") {
+    return locateBinary("codex") ?? findOnPath("codex") ?? "codex";
   }
   return locateBinary("agy") ?? findOnPath("agy") ?? "agy";
 }
@@ -341,7 +373,13 @@ export function isCliReviewerAvailable(
       return true;
     }
     const tool =
-      adapter === "claude" ? "claude" : adapter === "cursor" ? "cursor" : "agy";
+      adapter === "claude"
+        ? "claude"
+        : adapter === "cursor"
+          ? "cursor"
+          : adapter === "codex"
+            ? "codex"
+            : "agy";
     return Boolean(locateBinary(tool, { ...options, persist: false }));
   } catch {
     return false;
@@ -370,6 +408,23 @@ function buildCliArgs(
     }
     args.push("--output-format", "text", ...modelArgs, ...extraArgs, prompt);
     return args;
+  }
+  if (adapter === "codex") {
+    // Reviewers must not edit the project. `codex exec` is read-only only by
+    // default: `sandbox_mode` in ~/.codex/config.toml or a profile can widen it,
+    // so pin the sandbox on the command line, which wins over config. Unlike the
+    // codex executor recipe, a reviewer never gets
+    // --dangerously-bypass-approvals-and-sandbox or --full-auto.
+    const codexModel = model ? ["-m", model] : [];
+    return [
+      "exec",
+      "--sandbox",
+      "read-only",
+      "--skip-git-repo-check",
+      ...codexModel,
+      ...extraArgs,
+      prompt,
+    ];
   }
   return [...modelArgs, ...extraArgs, `-p=${prompt}`];
 }

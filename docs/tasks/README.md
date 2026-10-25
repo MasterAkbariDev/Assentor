@@ -105,7 +105,7 @@ Legend: 🟢 H · 🟡 S · 🔴 O · Size S/M/L (≈ <150 / 150–500 / >500 ch
 | ID | Title | Tier | Review | Size | Depends |
 |---|---|---|---|---|---|
 | T01-01 | Model catalog + discovery (verified CLIs only) ✅ | 🟢 H | S | M | T00-03 |
-| T01-02 | Seat factory: expand teams into reviewer seats | 🟡 S | O | M | T00-02, T00-04 |
+| T01-02 | Seat factory: expand teams into reviewer seats ✅ | 🟡 S | O | M | T00-02, T00-04 |
 | T01-03 | Panel decision policies | 🟡 S | O | M | T01-02 |
 | T01-04 | Finding agreement counts ✅ | 🟢 H | S | S | — |
 | T01-05 | Model switch at turn boundary + interrupt-now | 🔴 O | O2 + human | M | T00-07 |

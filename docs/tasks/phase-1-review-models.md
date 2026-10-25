@@ -56,6 +56,15 @@ Phase exit criteria:
 ### T01-02 · Seat factory: expand teams into reviewer seats
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** T00-02, T00-04
 
+**Status: ✅ done.** Implemented by the planner (Opus) because no Sonnet implementer was running; independent Opus review: round 1 NEEDS_WORK (codex sandbox not pinned), fixed. Decisions:
+- `createReviewerSeats(team, deps)` in `src/seats/factory.ts` takes `createReviewer`, `resolveApiKey`, `defaultApiModel`, `specialtyAddendum`, `onStatus`, `onWarning` as injected deps (no import from `cli/`). Seat providers map to reviewer ids (`claude-code`→`claude`, `codex`, `antigravity`, `cursor`, `gemini`, `openai`, `mock`); `qwen`/`opencode` throw before any reviewer is built. Reviewer name = seat display name (`Opus#2`).
+- CLI seats use only an explicit model; API seats on `AUTO` fall back to `models.*` like the legacy path. API keys come from `resolveProviderApiKey` (seats have no `keyId`). Team seats have no fallback reviewer (the seat schema has no fallback field).
+- Edit review seats are downgraded to read-only with a warning. `assertReadOnlyReviewerArgs` rejects extra args that grant edit/unattended rights (`--dangerously-*`, `--yolo`, `--force`/`-f`, `--full-auto`, any sandbox flag, `--approve-for-me`, `--permission-mode`, `acceptEdits`, `--allowedTools`).
+- Codex reviewer: `codex exec --sandbox read-only --skip-git-repo-check [-m model] <prompt>` — the sandbox is pinned because `~/.codex/config.toml` / profiles can widen the default.
+- Team mode (`modes.review` set): members, preflight and labels come from the team (`reviewTargets`); `routing.reviewStrategy: SINGLE` does not cut a team to one seat; the panel is named `panel:team`. Event seat ids stay `reviewer-N`. Legacy path unchanged when `modes.review` is unset (test asserts the exact legacy seat data).
+- Scope extension: `src/cli/preflight.ts` learned the `codex` binary/hint (it fell through to `agy`). Fixed the reviewer ENOENT hint to name the real env var per adapter.
+- Follow-ups: codex prompt via stdin to avoid the Windows 8191-char cmd limit; a per-adapter allowlist instead of a denylist; run-level test of API-key wiring for a gemini team seat.
+
 **Goal** — Turn a `Team` into concrete `Reviewer` instances (one per seat) with stable seat ids and names, feeding `PanelReviewer`.
 
 **Context to read** — `src/cli/commands.ts:113-340, 460-530`, `src/review/coordinator.ts`, `src/review/backends.ts`, `src/providers/reviewers/cli/index.ts`, `src/core/seats.ts`, `src/config/teams.ts`.

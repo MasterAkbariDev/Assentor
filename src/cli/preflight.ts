@@ -106,7 +106,12 @@ async function checkReviewerEntry(
     return checkReviewerKey(provider, projectPath);
   }
 
-  if (provider === "claude" || provider === "antigravity" || provider === "cursor") {
+  if (
+    provider === "claude" ||
+    provider === "antigravity" ||
+    provider === "cursor" ||
+    provider === "codex"
+  ) {
     return {
       name: `reviewer:${provider}`,
       ok: false,
@@ -132,7 +137,13 @@ function checkReviewerCli(provider: string): PreflightCheck {
       };
     }
     const tool =
-      adapter === "claude" ? "claude" : adapter === "cursor" ? "cursor" : "agy";
+      adapter === "claude"
+        ? "claude"
+        : adapter === "cursor"
+          ? "cursor"
+          : adapter === "codex"
+            ? "codex"
+            : "agy";
     const resolved = locateBinary(tool);
     if (resolved) {
       return {
@@ -146,7 +157,9 @@ function checkReviewerCli(provider: string): PreflightCheck {
         ? "Install Claude Code CLI (`claude`) and log in once"
         : adapter === "cursor"
           ? "Install Cursor CLI (`agent` / `cursor`) and run `agent login`"
-          : "Install Antigravity CLI (`agy`) and log in once";
+          : adapter === "codex"
+            ? "Install Codex CLI (`codex`) and run `codex login`"
+            : "Install Antigravity CLI (`agy`) and log in once";
     return {
       name: `reviewer:${provider}`,
       ok: false,

@@ -53,6 +53,8 @@ import {
   type ReviewerBackend,
 } from "../review/index.js";
 import { loadAssentorConfig, type AssentorConfig } from "../config/load.js";
+import { resolveTeams } from "../config/teams.js";
+import { createReviewerSeats, reviewTeamTargets } from "../seats/index.js";
 import { printPreflight, runPreflight } from "./preflight.js";
 import { RunReporter } from "./ui/reporter.js";
 import { resolveProviderApiKey } from "../keys/resolve.js";
@@ -348,7 +350,7 @@ export class RunSeatEvents {
     taskId: string;
     title: string;
     executor: { name: string; provider: string; model?: string };
-    reviewers: Array<{ name: string; backend?: ReviewerBackend }>;
+    reviewers: Array<{ name: string; backend?: ReviewerMemberSource }>;
     redactSecrets: boolean;
   }): Promise<void> {
     let log: EventLog | undefined;
@@ -431,10 +433,34 @@ function executorSeatInfo(executor: {
   };
 }
 
+/** Where a review member came from: a legacy `reviewers` entry or a team seat. */
+interface ReviewerMemberSource {
+  provider: string;
+  transport?: "api" | "cli";
+  model?: string;
+  role?: string;
+}
+
+/**
+ * Reviewer `{ provider, transport }` pairs a run will use, for preflight and
+ * labels: the `modes.review` team's seats when set, else the legacy reviewers.
+ */
+function reviewTargets(
+  config: AssentorConfig,
+): Array<{ provider: string; transport: "api" | "cli" }> {
+  if (config.modes.review) {
+    return reviewTeamTargets(resolveTeams(config).review);
+  }
+  return selectReviewerBackends(config).map((b) => ({
+    provider: b.provider,
+    transport: b.transport ?? "api",
+  }));
+}
+
 function reviewerSeatInfo(
   index: number,
   name: string,
-  backend?: ReviewerBackend,
+  backend?: ReviewerMemberSource,
 ): SeatInfo {
   return {
     seatId: reviewerSeatId(index),
@@ -457,20 +483,31 @@ async function createMembersFromBackends(input: {
 }): Promise<{
   members: Reviewer[];
   /** `members[i]` was built from `backends[i]`. */
-  backends: ReviewerBackend[];
+  backends: ReviewerMemberSource[];
   complexity: ReturnType<TaskComplexityAnalyzer["analyze"]>;
   reviewStrategy: ReviewStrategy;
+  /**
+   * True when members come from the `modes.review` team (T01-02). The team
+   * defines the panel, so `routing.reviewStrategy: SINGLE` does not cut it to one.
+   */
+  teamMode: boolean;
 }> {
   const complexity = new TaskComplexityAnalyzer().analyze({
     taskText: input.prompt,
   });
   const reviewStrategy = input.config.routing.reviewStrategy as ReviewStrategy;
-  const backends = selectReviewerBackends(input.config);
-  if (backends.length === 0) {
+  const reviewTeam = input.config.modes.review
+    ? resolveTeams(input.config).review
+    : undefined;
+  const backends = reviewTeam ? [] : selectReviewerBackends(input.config);
+  if (!reviewTeam && backends.length === 0) {
     throw new Error(
       "No reviewers configured. Add Gemini (API) or Claude (CLI) in Configure → Reviewers.",
     );
   }
+  const memberCount = reviewTeam
+    ? reviewTeam.seats.reduce((total, spec) => total + spec.count, 0)
+    : backends.length;
 
   const selectedProfiles = selectReviewers(
     DEFAULT_AGENT_PROFILES,
@@ -481,7 +518,7 @@ async function createMembersFromBackends(input: {
       max:
         reviewStrategy === "FULL"
           ? 7
-          : Math.max(backends.length, complexity.recommendedCount),
+          : Math.max(memberCount, complexity.recommendedCount),
     },
     complexity,
   );
@@ -489,6 +526,49 @@ async function createMembersFromBackends(input: {
     selectedProfiles.length > 0
       ? selectedProfiles
       : DEFAULT_AGENT_PROFILES.filter((p) => p.kind === "reviewer");
+
+  if (reviewTeam) {
+    const config = input.config;
+    const seats = await createReviewerSeats(reviewTeam, {
+      teamName: config.modes.review!.team,
+      createReviewer: (request) =>
+        createReviewer(request.provider, {
+          onStatus: request.onStatus,
+          model: request.model,
+          apiKey: request.apiKey,
+          name: request.name,
+          transport: request.transport,
+          specialtyAddendum: request.specialtyAddendum,
+        }),
+      resolveApiKey: async (provider) =>
+        (await resolveProviderApiKey(provider, input.projectPath))?.secret,
+      defaultApiModel: (provider) => {
+        const model = resolveReviewerModel(config, provider);
+        return model && model !== "AUTO" ? model : undefined;
+      },
+      specialtyAddendum: (_seat, index) => {
+        const profile = profiles[index % profiles.length];
+        return profile ? specialtyAddendum(profile.specialty) : undefined;
+      },
+      onStatus: (seat, index, message) => {
+        input.onStatus?.(`[${seat.displayName}] ${message}`);
+        input.onMemberStatus?.(index, message);
+      },
+      onWarning: (message) => input.onStatus?.(`warning: ${message}`),
+    });
+    return {
+      members: seats.map(({ reviewer }) => reviewer),
+      backends: seats.map(({ seat }) => ({
+        provider: seat.provider,
+        transport: seat.transport,
+        model: seat.model,
+        role: seat.role,
+      })),
+      complexity,
+      reviewStrategy,
+      teamMode: true,
+    };
+  }
 
   const members: Reviewer[] = [];
   for (let i = 0; i < backends.length; i++) {
@@ -510,7 +590,7 @@ async function createMembersFromBackends(input: {
     );
   }
 
-  return { members, backends, complexity, reviewStrategy };
+  return { members, backends, complexity, reviewStrategy, teamMode: false };
 }
 
 async function instantiateBackend(
@@ -643,9 +723,6 @@ async function runAssentorTaskBody(
 
   const executorProvider = config.executor.provider;
   const backends = selectReviewerBackends(config);
-  const reviewerLabel =
-    backends.map((b) => `${b.provider}/${b.transport ?? "api"}`).join(", ") ||
-    "none";
 
   if (executorProvider === "project-mutating") {
     throw new Error(
@@ -653,14 +730,15 @@ async function runAssentorTaskBody(
     );
   }
 
+  const targets = reviewTargets(config);
+  const reviewerLabel =
+    targets.map((t) => `${t.provider}/${t.transport}`).join(", ") || "none";
+
   if (!input.skipPreflight) {
     reporter.updatePreparing("checking environment…");
     const preflight = await runPreflight({
       executor: executorProvider,
-      reviewers: backends.map((b) => ({
-        provider: b.provider,
-        transport: b.transport ?? "api",
-      })),
+      reviewers: targets,
       projectPath,
     });
     if (!preflight.ok) {
@@ -701,6 +779,7 @@ async function runAssentorTaskBody(
     backends: memberBackends,
     complexity,
     reviewStrategy,
+    teamMode,
   } = await createMembersFromBackends({
     config,
     projectPath,
@@ -711,10 +790,10 @@ async function runAssentorTaskBody(
   const memberReviewers = seatEvents.trackMembers(builtReviewers);
 
   const reviewer: Reviewer =
-    reviewStrategy === "SINGLE" || memberReviewers.length <= 1
+    (reviewStrategy === "SINGLE" && !teamMode) || memberReviewers.length <= 1
       ? memberReviewers[0]!
       : new PanelReviewer({
-          name: `panel:${reviewStrategy.toLowerCase()}`,
+          name: teamMode ? "panel:team" : `panel:${reviewStrategy.toLowerCase()}`,
           reviewers: memberReviewers,
           goal: input.prompt,
           acceptanceCriteria: input.acceptanceCriteria ?? [],
@@ -786,7 +865,7 @@ async function runAssentorTaskBody(
 
   const reviewerDisplay = formatReviewerRunLabel(
     reviewer.name,
-    backends[0],
+    teamMode ? undefined : backends[0],
   );
 
   reporter.updateAgentLabels({
@@ -900,10 +979,7 @@ export async function resumeAssentorTask(input: {
     reporter.updatePreparing("checking environment…");
     const preflight = await runPreflight({
       executor: executorProvider,
-      reviewers: backends.map((b) => ({
-        provider: b.provider,
-        transport: b.transport ?? "api",
-      })),
+      reviewers: reviewTargets(config),
       projectPath,
     });
     if (!preflight.ok) {
@@ -938,6 +1014,7 @@ export async function resumeAssentorTask(input: {
       members: builtReviewers,
       backends: memberBackends,
       reviewStrategy,
+      teamMode,
     } = await createMembersFromBackends({
       config,
       projectPath,
@@ -948,10 +1025,10 @@ export async function resumeAssentorTask(input: {
     const memberReviewers = seatEvents.trackMembers(builtReviewers);
 
     const reviewer: Reviewer =
-      reviewStrategy === "SINGLE" || memberReviewers.length <= 1
+      (reviewStrategy === "SINGLE" && !teamMode) || memberReviewers.length <= 1
         ? memberReviewers[0]!
         : new PanelReviewer({
-            name: `panel:${reviewStrategy.toLowerCase()}`,
+            name: teamMode ? "panel:team" : `panel:${reviewStrategy.toLowerCase()}`,
             reviewers: memberReviewers,
             goal: resume.snapshot.contract.goal,
             acceptanceCriteria:
@@ -960,7 +1037,10 @@ export async function resumeAssentorTask(input: {
 
     reporter.updateAgentLabels({
       executorName: executor.name,
-      reviewerName: formatReviewerRunLabel(reviewer.name, backends[0]),
+      reviewerName: formatReviewerRunLabel(
+        reviewer.name,
+        teamMode ? undefined : backends[0],
+      ),
     });
 
     await seatEvents.open({
