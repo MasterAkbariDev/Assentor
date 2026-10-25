@@ -194,6 +194,11 @@ Phase exit criteria:
 ### T01-07 · `assentor run --team` + doctor seat listing
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T01-02, T01-06
 
+**Status: ✅ done.** Shipped in `c79fd4b` + `ec305cd`. Sonnet review round 1 NEEDS_WORK (floating print promise), fixes verified by the planner. Decisions:
+- `--team` on run/resume builds a new config via `withReviewTeam` (never saved); unknown team fails before any executor/reviewer (resume now loads config before looking up the task). `--reviewer` + `--team` is rejected first.
+- The reporter does not render Ink: `RunReporter.onEngineEvent` folds reviewer seats with `reduceSeatEvents` and prints a plain-text "Review seats" section (via `writeln`, keeping the live status line) when the mirrored `review.verdict` (legacy `review.completed`) arrives and there is more than one reviewer seat. On the final round it can appear after "Task passed review" — accepted. Legacy multi-reviewer `reviewers:` configs now show this section too.
+- `doctorAssentor({ projectPath?, config?, locate? })` prints a Teams section (✓/✗ for CLI seats, `api` otherwise; `teams: unavailable (…)` if config can't load).
+
 **Goal** — Users can pick a configured team from the CLI and see seats live.
 
 **Context to read** — `src/cli/index.ts:69-135`, `src/cli/commands.ts:440-560` (`runRun`), `:754+` (`doctorAssentor`), `src/seats/factory.ts`, `src/tui/components/seat-board.tsx`, `src/cli/ui/reporter.ts`.

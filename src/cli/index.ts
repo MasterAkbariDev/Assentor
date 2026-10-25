@@ -79,6 +79,7 @@ program
     "Model for the executor CLI (overrides config executor.model)",
   )
   .option("-r, --reviewer <provider>", "Reviewer provider (mock|openai|gemini)")
+  .option("--team <name>", "Review with this configured team (overrides modes.review.team)")
   .option("--max-rounds <n>", "Maximum rounds", (v: string) => Number(v))
   .option("--max-messages <n>", "Maximum messages", (v: string) => Number(v))
   .option("-v, --verbose", "Verbose event logging", false)
@@ -93,6 +94,7 @@ program
         executor?: string;
         executorModel?: string;
         reviewer?: string;
+        team?: string;
         maxRounds?: number;
         maxMessages?: number;
         verbose?: boolean;
@@ -121,6 +123,7 @@ program
         executor: options.executor,
         executorModel: options.executorModel,
         reviewer: options.reviewer,
+        team: options.team,
         maxRounds: options.maxRounds,
         maxMessages: options.maxMessages,
         verbose: options.verbose,
@@ -155,7 +158,8 @@ program
     "--executor-model <model>",
     "Model for the executor CLI (overrides config executor.model)",
   )
-  .action(async (taskId: string | undefined, options: { project: string; verbose?: boolean; maxRounds?: number; maxMessages?: number; executorModel?: string }) => {
+  .option("--team <name>", "Review with this configured team (overrides modes.review.team)")
+  .action(async (taskId: string | undefined, options: { project: string; verbose?: boolean; maxRounds?: number; maxMessages?: number; executorModel?: string; team?: string }) => {
     const result = await resumeAssentorTask({
       projectPath: options.project,
       taskId,
@@ -163,6 +167,7 @@ program
       maxRounds: options.maxRounds,
       maxMessages: options.maxMessages,
       executorModel: options.executorModel,
+      team: options.team,
     });
     console.log(`Task ${result.taskId} finished: ${result.status}`);
     if (result.status !== "DONE") {
@@ -205,7 +210,7 @@ program
       reviewer: string;
       project: string;
     }) => {
-      for (const line of await doctorAssentor()) {
+      for (const line of await doctorAssentor({ projectPath: options.project })) {
         console.log(line);
       }
       console.log("");

@@ -36,9 +36,11 @@ import {
 import { type RunMode } from "../core/run-mode.js";
 import {
   CliReviewer,
+  isCliReviewerAvailable,
   resolveCliAdapter,
   type CliTransport,
 } from "../providers/reviewers/cli/index.js";
+import { expandSeatSpecs } from "../core/seats.js";
 import { FallbackReviewer } from "../providers/reviewers/fallback.js";
 import { GeminiReviewer } from "../providers/reviewers/gemini/index.js";
 import { MockReviewer } from "../providers/reviewers/mock/index.js";
@@ -53,8 +55,12 @@ import {
   type ReviewerBackend,
 } from "../review/index.js";
 import { loadAssentorConfig, type AssentorConfig } from "../config/load.js";
-import { resolveTeams } from "../config/teams.js";
-import { createReviewerSeats, reviewTeamTargets } from "../seats/index.js";
+import { resolveTeams, ReviewModeSchema } from "../config/teams.js";
+import {
+  createReviewerSeats,
+  reviewerProviderForSeat,
+  reviewTeamTargets,
+} from "../seats/index.js";
 import { printPreflight, runPreflight } from "./preflight.js";
 import { RunReporter } from "./ui/reporter.js";
 import { resolveProviderApiKey } from "../keys/resolve.js";
@@ -66,6 +72,8 @@ export interface RunAssentorInput {
   /** Executor model; overrides `config.executor.model`. */
   executorModel?: string;
   reviewer?: string;
+  /** Config `teams` entry to review with; overrides `modes.review.team`. Cannot be combined with `reviewer`. */
+  team?: string;
   maxRounds?: number;
   maxMessages?: number;
   acceptanceCriteria?: string[];
@@ -657,7 +665,43 @@ export function buildContract(
   return mergeAcceptanceCriteria(base, acceptanceCriteria);
 }
 
+/** `--reviewer` and `--team` both choose the reviewers, so only one may be given. */
+export function assertReviewerOrTeam(input: { reviewer?: string; team?: string }): void {
+  if (input.reviewer && input.team) {
+    throw new Error("Use either --reviewer or --team, not both.");
+  }
+}
+
+/**
+ * `config` with `modes.review.team` set to `team`, for one run. Returns a new
+ * object and writes nothing to disk. An unknown team throws the `resolveTeams`
+ * error here, before any executor or reviewer exists.
+ */
+export function withReviewTeam(config: AssentorConfig, team: string): AssentorConfig {
+  const next: AssentorConfig = {
+    ...config,
+    modes: {
+      ...config.modes,
+      review: ReviewModeSchema.parse({ ...config.modes.review, team }),
+    },
+  };
+  resolveTeams(next);
+  return next;
+}
+
+/** Seat events go to the reporter's reviewer seats, then to the caller's listener. */
+function seatEventListener(
+  reporter: RunReporter,
+  onEngineEvent?: (event: EngineEvent) => void,
+): (event: EngineEvent) => void {
+  return (event) => {
+    reporter.onEngineEvent(event);
+    onEngineEvent?.(event);
+  };
+}
+
 export async function runAssentorTask(input: RunAssentorInput) {
+  assertReviewerOrTeam(input);
   const projectPath = path.resolve(input.projectPath);
   const executorLabel = input.executor
     ? formatExecutorProvider(normalizeExecutorProvider(input.executor))
@@ -672,7 +716,9 @@ export async function runAssentorTask(input: RunAssentorInput) {
   let executor: Executor | undefined;
   let supervisor: Supervisor | undefined;
   let taskId: string | undefined;
-  const seatEvents = new RunSeatEvents(input.onEngineEvent);
+  const seatEvents = new RunSeatEvents(
+    seatEventListener(reporter, input.onEngineEvent),
+  );
   const detachInterrupt = attachRunInterrupt({
     reporter,
     getExecutor: () => executor,
@@ -711,13 +757,14 @@ async function runAssentorTaskBody(
     setTaskId: (taskId: string) => void;
   },
 ) {
-  const config = await loadAssentorConfig(projectPath, {
+  const loaded = await loadAssentorConfig(projectPath, {
     executor: input.executor,
     reviewer: input.reviewer,
     maxRounds: input.maxRounds,
     maxMessages: input.maxMessages,
     mode: input.autopilot ? "autopilot" : input.mode,
   });
+  const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
   const runMode = config.run.mode;
   const autopilot = runMode === "autopilot";
 
@@ -907,6 +954,8 @@ export async function resumeAssentorTask(input: {
   executorModel?: string;
   /** Live seat-scoped engine events; see `RunAssentorInput.onEngineEvent`. */
   onEngineEvent?: (event: EngineEvent) => void;
+  /** Config `teams` entry to review with; see `RunAssentorInput.team`. */
+  team?: string;
 }) {
   const projectPath = path.resolve(input.projectPath);
   const reporter = new RunReporter({
@@ -916,7 +965,9 @@ export async function resumeAssentorTask(input: {
   });
   reporter.preparing("loading task to continue…");
 
-  const seatEvents = new RunSeatEvents(input.onEngineEvent);
+  const seatEvents = new RunSeatEvents(
+    seatEventListener(reporter, input.onEngineEvent),
+  );
   let executor: Executor | undefined;
   let supervisor: Supervisor | undefined;
   let taskId: string | undefined;
@@ -928,6 +979,11 @@ export async function resumeAssentorTask(input: {
   });
 
   try {
+    // Config first: a bad --team fails here, before the task is even looked up.
+    reporter.updatePreparing("loading config…");
+    const loaded = await loadAssentorConfig(projectPath);
+    const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
+
     const resume = input.taskId
       ? await loadTaskForResume(projectPath, input.taskId)
       : await findLatestResumableTask(projectPath);
@@ -941,8 +997,6 @@ export async function resumeAssentorTask(input: {
     }
     taskId = resume.snapshot.taskId;
 
-    reporter.updatePreparing("loading config…");
-    const config = await loadAssentorConfig(projectPath);
     if (
       resume.snapshot.status === TaskState.BudgetExceeded ||
       input.maxRounds ||
@@ -1115,7 +1169,16 @@ export async function initAssentorProject(projectPath: string): Promise<string> 
   );
 }
 
-export async function doctorAssentor(): Promise<string[]> {
+export interface DoctorOptions {
+  /** Project whose config lists the teams. Ignored when `config` is given. */
+  projectPath?: string;
+  /** Config to list teams from. Tests inject this; otherwise it is loaded from `projectPath`. */
+  config?: AssentorConfig;
+  /** Whether a CLI reviewer is installed, by reviewer provider id. Default: `isCliReviewerAvailable`. */
+  locate?: (provider: string) => boolean;
+}
+
+export async function doctorAssentor(options: DoctorOptions = {}): Promise<string[]> {
   const lines: string[] = [];
   lines.push(`assentor: v${(await import("../self/version.js")).getLocalVersionSync()}`);
   lines.push(`node: ${process.version}`);
@@ -1141,6 +1204,43 @@ export async function doctorAssentor(): Promise<string[]> {
     `cursor invocation: ${isCursorAppBinary(binary) ? `${binary} agent ...` : `${binary} ...`}`,
   );
 
+  lines.push(...(await doctorTeamLines(options)));
+  return lines;
+}
+
+/** "Teams" section, one block per configured team. Empty when no teams are configured. */
+async function doctorTeamLines(options: DoctorOptions): Promise<string[]> {
+  let config = options.config;
+  if (!config && options.projectPath) {
+    try {
+      config = await loadAssentorConfig(path.resolve(options.projectPath));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return [`teams: unavailable (${message})`];
+    }
+  }
+  const teams = Object.entries(config?.teams ?? {});
+  if (teams.length === 0) {
+    return [];
+  }
+
+  const locate = options.locate ?? isCliReviewerAvailable;
+  const lines = ["", "Teams"];
+  for (const [name, team] of teams) {
+    lines.push(`  ${name}`);
+    for (const seat of expandSeatSpecs(team.seats)) {
+      // Only CLI seats need a binary on this machine; API and mock seats never do.
+      const found =
+        seat.transport === "cli"
+          ? locate(reviewerProviderForSeat(seat.provider) ?? seat.provider)
+            ? "✓"
+            : "✗"
+          : "api";
+      lines.push(
+        `    ${seat.displayName} · ${seat.provider}/${seat.transport} · ${seat.model} · ${seat.permissions} · ${found}`,
+      );
+    }
+  }
   return lines;
 }
 
