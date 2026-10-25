@@ -86,7 +86,7 @@ This file is the one authoritative execution order. Where [../plans/](../plans/)
 2. **Decision signals survive the evidence budget; omitted evidence is disclosed (`main`, uncommitted).** `formatEvidencePackForPrompt` must not tail-truncate the stall signal, executor claims or architecture summary, and must list files it did not inline. (The supervisor already downgrades a stalled PASS when phases remain, via `downgradePassIfPhasesRemain`; a blanket "never PASS while stalled" rule was rejected because a false stall detection would loop forever.)
 3. **Architecture docs through guarded, redacted reads (`main`, uncommitted).** `loadProjectArchitectureDoc` uses the same symlink-guarded, `redactSecrets` path as other file evidence.
 4. **This file is authoritative** — adopted by the planner and the user on 2026-10-25.
-5. **Storage ownership before browser control.** Decide who owns `.assentor/sessions` (T00-05 event log, no writer lock) versus the existing task store, and the migration, before T04 or any background execution depends on it. Import-based related-file discovery (replacing the Dart filename guesses in `expandRelatedModuleFiles`) comes after.
+5. 🔶 **Storage ownership before browser control — decided by the user 2026-10-25, implementation G-5 pending.** Split by purpose: `.assentor/sessions/<id>/events.ndjson` owns the live event stream (web UI and TUI read it) and gets a writer lock; `.assentor/tasks/<id>/` keeps state, history, artifacts and the legacy `events.jsonl` for resume/status. Old runs without a session log show as "no live log" (no backfill). Original text: Decide who owns `.assentor/sessions` (T00-05 event log, no writer lock) versus the existing task store, and the migration, before T04 or any background execution depends on it. Import-based related-file discovery (replacing the Dart filename guesses in `expandRelatedModuleFiles`) comes after.
 
 Items 2–3 are being done in the repo-root checkout on `main` by session "Review reliability concerns"; they are not on this branch until merged. T01-07 and T03-01 finished before the gate (user decision); T01-03 waits behind item 1.
 
@@ -98,7 +98,14 @@ Items 2–3 are being done in the repo-root checkout on `main` by session "Revie
 - Follow-ups: the CLI never configures an adjudicator for `PanelReviewer`, so the adjudicator-PASS paths are covered only by library tests; a retry re-runs every member (cost); no resume hint after an inconclusive failure; an unsupported claim inside a non-PASS merge still goes to the executor; a claim is marked "verification requested" even if the request was never sent (fails safe to BLOCKED).
 - Remaining first-PR bullets not in G-1: honest requested-vs-verified model reporting; duplicate explicit seat ids failing validation.
 
-**Web preview options (raised with the user 2026-10-25):** the planned path reaches a browser view (T04-07) only after phases 0–3 incl. negotiate and modes (~38 cards). A fast path — T04-02 RPC core, T04-03 localhost token-secured `serve`, T04-06 UI scaffold, T04-07 session board, ahead of the T04-01 package split — is ~5 cards once gate items 2–3 are merged and item 5 (session storage owner) is decided. Awaiting the user's choice.
+**Web preview fast path (chosen by the user 2026-10-25).** Watch-only first preview, ahead of the T04-01 package split; code stays in the single package (`src/rpc/`, `src/serve/`, `ui/`) and moves when T04-01 runs. Order:
+1. **G-5** (🔴 S, planner) — `EventLog` writer lock (`writer.lock` with pid + stale detection; a second writer gets a clear error, readers never lock). Can start now.
+2. *Wait:* gate items 2–3 committed on `main` and merged into this branch (user / session "Review reliability concerns"). Merge note: move `main`'s architecture-addendum edit into `prompts/builtin/specialty-architecture.md` + fixture.
+3. **T04-02p** (🔴 M, O2) — `src/rpc/`: typed method registry, in-process + stdio transports, `engine.hello`, read-only `sessions.list` and `events.subscribe(sessionId, fromSeq)` (log + live tail, bounded per-subscriber queue → `events.resync_required`). No write methods.
+4. **T04-03p** (🔴 M, O2 + user sign-off) — `assentor serve`: 127.0.0.1 only, 256-bit token via URL fragment, Origin + Host (DNS-rebinding) checks, CSP, auth-failure rate limit, serves the built UI; watch-only (no keys/runs methods).
+5. **T04-06p** (🟡 M) — `ui/` scaffold (Vite + React + TS), `Transport`/`WebSocketTransport`, event store reusing `reduceSeatEvents`, reconnect + resync, app shell (Sessions only), fixture stream.
+6. **T04-07p** (🟢 M, Haiku) — read-only session board: seat cards (status icon + label, model, role, last line, elapsed, tokens). No model picker, pause or cancel yet.
+Dependencies need user approval before steps 4–5 (none added yet).
 
 **Then, after the gate (items 2–3 land from `main`, item 5 decided):**
 1. Release Haiku: T03-02 → T03-05 → T03-03 (reviewer roles), each Sonnet/Opus-reviewed.
