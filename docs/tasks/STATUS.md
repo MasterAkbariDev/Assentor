@@ -102,6 +102,9 @@ Items 2–3 are being done in the repo-root checkout on `main` by session "Revie
 
 ## 6. Known follow-ups (not scheduled)
 
+- 🔴 **Windows `.cmd` shims and `%VAR%`** (Danger #1/#6): executors and reviewers reached through `agent.cmd`/`codex.cmd` etc. run via `cmd.exe /d /s /c`; `quoteCmdArg` now quotes `& | < > ^ ( )` and whitespace, but cmd still expands `%VAR%` inside quotes, so prompt text containing `%NAME%` is altered. Fix by passing prompts on stdin or a temp file for `.cmd` targets. Found in the T03-05 review.
+- Executor handoff: `findExecutorHandoff` (`src/review/pack-builder.ts`) prefers the last fenced ```json block with handoff keys; built-in edit-role prompts end with one (T03-02 review). Strategies that drive builders through other paths should keep that block.
+
 - T00-03: `continue()` / `createExecutor("cursor")` model tests — assigned as FU-01.
 - T01-04: re-export `rankCorrelatedFindings` from `src/review/index.ts` when the web Review view (T04-10) needs it.
 - Config writes are not atomic (`fs.writeFile`). Pre-existing behavior; consider temp+rename with a Windows-safe fallback.

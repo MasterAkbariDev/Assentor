@@ -711,51 +711,109 @@ export class EvidencePackBuilder {
   }
 }
 
+/** Keys of the executor "handoff" block (built-in builder prompts end with one). */
+const HANDOFF_KEYS = [
+  "whatChanged",
+  "what_changed",
+  "why",
+  "assumptions",
+  "unchanged",
+  "risks",
+  "limitations",
+  "architectureSummary",
+  "architecture_summary",
+] as const;
+
+/**
+ * The executor's structured handoff: the last fenced ```json block (or bare
+ * ``` block) that parses to an object with at least one handoff key. Falls
+ * back to the old rule — everything from the first `{` to the last `}` —
+ * which breaks as soon as the reply contains any other braces.
+ */
+export function findExecutorHandoff(text: string): Record<string, unknown> | undefined {
+  const blocks = fencedBlocks(text).filter(
+    (b) => b.info === "" || b.info === "json" || b.info === "jsonc",
+  );
+  for (let i = blocks.length - 1; i >= 0; i -= 1) {
+    const parsed = parseJsonObject(blocks[i]!.body);
+    if (parsed && HANDOFF_KEYS.some((key) => key in parsed)) {
+      return parsed;
+    }
+  }
+  const greedy = text.match(/\{[\s\S]*\}/);
+  return greedy ? parseJsonObject(greedy[0]) : undefined;
+}
+
+/**
+ * Fenced code blocks, line by line. A line of 3+ backticks opens a block (its
+ * info string's first word is the language; an info string containing a
+ * backtick is inline code, not a fence). A closing line is only backticks, at
+ * least as many as the opener. An unclosed block is dropped.
+ */
+function fencedBlocks(text: string): Array<{ info: string; body: string }> {
+  const blocks: Array<{ info: string; body: string }> = [];
+  let open: { ticks: number; info: string; lines: string[] } | undefined;
+  for (const line of text.split(/\r?\n/)) {
+    if (!open) {
+      const opener = /^\s*(`{3,})([^`]*)$/.exec(line);
+      if (opener) {
+        const info = (opener[2] ?? "").trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+        open = { ticks: opener[1]!.length, info, lines: [] };
+      }
+      continue;
+    }
+    const closer = /^\s*(`{3,})\s*$/.exec(line);
+    if (closer && closer[1]!.length >= open.ticks) {
+      blocks.push({ info: open.info, body: open.lines.join("\n") });
+      open = undefined;
+    } else {
+      open.lines.push(line);
+    }
+  }
+  return blocks;
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = JSON.parse(text.trim());
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function parseArchitectureSummary(text: string): string | undefined {
   const trimmed = text.trim();
   if (!trimmed) {
     return undefined;
   }
-  try {
-    const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
-      const summary = parsed.architectureSummary ?? parsed.architecture_summary;
-      if (typeof summary === "string" && summary.trim()) {
-        return summary.trim();
-      }
-    }
-  } catch {
-    // fall through
-  }
-  return undefined;
+  const parsed = findExecutorHandoff(trimmed);
+  const summary = parsed?.architectureSummary ?? parsed?.architecture_summary;
+  return typeof summary === "string" && summary.trim() ? summary.trim() : undefined;
 }
 
 export function parseExecutorExplanation(
   text: string,
 ): ProjectReviewEvidencePack["executorExplanation"] {
   const trimmed = text.trim();
-  try {
-    const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
-      return {
-        whatChanged: String(parsed.whatChanged ?? parsed.what_changed ?? ""),
-        why: String(parsed.why ?? ""),
-        assumptions: Array.isArray(parsed.assumptions)
-          ? parsed.assumptions.map(String)
-          : [],
-        unchanged: String(parsed.unchanged ?? ""),
-        risks: Array.isArray(parsed.risks) ? parsed.risks.map(String) : [],
-        limitations: Array.isArray(parsed.limitations)
-          ? parsed.limitations.map(String)
-          : [],
-        raw: trimmed.slice(0, 12_000),
-        source: "executor",
-      };
-    }
-  } catch {
-    // fall through
+  const parsed = findExecutorHandoff(trimmed);
+  if (parsed) {
+    return {
+      whatChanged: String(parsed.whatChanged ?? parsed.what_changed ?? ""),
+      why: String(parsed.why ?? ""),
+      assumptions: Array.isArray(parsed.assumptions)
+        ? parsed.assumptions.map(String)
+        : [],
+      unchanged: String(parsed.unchanged ?? ""),
+      risks: Array.isArray(parsed.risks) ? parsed.risks.map(String) : [],
+      limitations: Array.isArray(parsed.limitations)
+        ? parsed.limitations.map(String)
+        : [],
+      raw: trimmed.slice(0, 12_000),
+      source: "executor",
+    };
   }
   return {
     whatChanged: trimmed.slice(0, 4_000),

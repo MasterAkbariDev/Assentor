@@ -379,8 +379,15 @@ function binaryCachePath(): string {
   return process.env.ASSENTOR_BINARY_CACHE_PATH || userConfigPath();
 }
 
-function quoteCmdArg(value: string): string {
-  if (!/[ \t"]/.test(value)) {
+/**
+ * Quote one argument for `cmd.exe /d /s /c`. Inside double quotes cmd treats
+ * `& | < > ^ ( )` as text, so any argument with whitespace, a quote or one of
+ * those is quoted. `%VAR%` is still expanded by cmd even inside quotes; that
+ * is a known limit of running `.cmd` shims (tracked in docs/tasks/STATUS.md).
+ * Exported for tests.
+ */
+export function quoteCmdArg(value: string): string {
+  if (value.length > 0 && !/[\s"&|<>^()!,;=]/.test(value)) {
     return value;
   }
   return `"${value.replace(/"/g, '""')}"`;
