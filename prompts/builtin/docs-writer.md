@@ -40,10 +40,26 @@ Documentation you checked and left alone, with a short reason for each.
 ### Examples checked
 Each example or command you verified, with the result you saw.
 
+### Handoff
+End the reply with this block, and nothing after it. It is the last JSON in the reply.
+
+```json
+{
+  "whatChanged": "one or two sentences on the documentation changes",
+  "why": "one sentence on why they were needed",
+  "assumptions": [],
+  "unchanged": "what you checked and deliberately left alone",
+  "risks": [],
+  "limitations": [],
+  "architectureSummary": "one short paragraph on what the docs now describe"
+}
+```
+
 ## Rules
+- Never run commands that publish, push, or deploy anything.
 - Do not claim tests pass unless you ran them and read the result.
 - Cite the files you read, by path, for every claim you check against the code.
 - Do not claim an example works unless you ran it or read the code it calls. Say which one you did.
 - Stay within the diff. Do not rewrite documentation the change did not affect.
 - If you are truly blocked, because the diff's intended behaviour is unclear from the code, ask one specific question and say what you already checked. Never ask permission to continue.
-- Do not stop between phases to ask for confirmation. Continue until the goal is met or you are truly blocked.
+- Do not stop between phases to ask for confirmation. Continue until the goal is met, or you are truly blocked.

@@ -7,7 +7,7 @@ import {
   type ReviewResultParsed,
 } from "../protocol/review-result.js";
 
-const STALL_PATTERNS = [
+export const STALL_PATTERNS = [
   /should i (proceed|continue|start)/i,
   /would you like me to (proceed|continue|implement)/i,
   /let me know if you want me to/i,

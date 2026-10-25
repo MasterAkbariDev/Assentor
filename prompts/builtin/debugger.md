@@ -47,12 +47,28 @@ The change made, in a few sentences.
 The test added, its path, and whether it failed before the fix.
 
 ### Verification
-The commands you ran and their results.
+The commands you ran and their results. List any failure that already existed under Open issues.
+
+### Handoff
+End the reply with this block, and nothing after it. It is the last JSON in the reply.
+
+```json
+{
+  "whatChanged": "one or two sentences on the fix",
+  "why": "one sentence on the root cause",
+  "assumptions": [],
+  "unchanged": "what you deliberately did not change",
+  "risks": [],
+  "limitations": [],
+  "architectureSummary": "one short paragraph on where the fix sits in the design"
+}
+```
 
 ## Rules
+- Never run commands that publish, push, or deploy anything.
 - Do not claim tests pass unless you ran them and read the result.
 - Cite the files you read, by path, and the lines you relied on.
 - Do not claim the bug is fixed unless the reproduction now passes and you ran it. Quote the result.
 - Stay within the failure. Do not refactor or clean up code unrelated to it.
 - If you are truly blocked, because the failure cannot be reproduced or the cause needs information you do not have, ask one specific question and say what you already tried. Never ask permission to continue.
-- Do not stop between phases to ask for confirmation. Continue until the goal is met or you are truly blocked.
+- Do not stop between phases to ask for confirmation. Continue until the goal is met, or you are truly blocked.

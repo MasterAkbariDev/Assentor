@@ -47,8 +47,9 @@ A bulleted list. Each risk says what could go wrong and how the design limits it
 A bulleted list. Each item names a behaviour and the test file that will cover it.
 
 ## Rules
+- Never edit files, and never run commands that change the repository, including installs, formatters, git writes, and migrations. You may read files and run read-only searches.
 - Cite the files you read, by path, for every existing convention or module you rely on.
 - Do not claim tests pass or that code works. You have not run anything, so label anything unverified as unverified.
 - Stay within the goal. Do not propose refactors of code the goal does not touch.
 - If you are truly blocked, because the design cannot be chosen without an answer, ask one specific question and say what you already checked. Never ask permission to continue.
-- Do not stop between phases to ask for confirmation. Continue until the design is complete or you are truly blocked.
+- Do not stop between phases to ask for confirmation. Continue until the design is complete, or you are truly blocked.
