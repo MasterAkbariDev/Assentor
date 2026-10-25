@@ -44,7 +44,7 @@ For each Haiku card:
 
 ## 4. Progress
 
-**Phase 0 — 8 of 9 · Phase 1 — 5 of 7 · Phase 2 — 1 of 10 · Phase 2b — 1 of 19 · Phase 3 — 1 of 6 · Phases 4–5 — 0 of 29 · overall 16 of 80 cards (plus 11 backlog; FU-01, FU-02 done). By tier: 🟢 Haiku 11/41 · 🟡 Sonnet 2/17 · 🔴 Opus 3/22.**
+**Phase 0 — 8 of 9 · Phase 1 — 5 of 7 · Phase 2 — 1 of 10 · Phase 2b — 1 of 19 · Phase 3 — 3 of 6 · Phases 4–5 — 0 of 29 · overall 18 of 80 cards (plus 11 backlog; FU-01, FU-02, G-1 done). By tier: 🟢 Haiku 13/41 · 🟡 Sonnet 2/17 · 🔴 Opus 3/22.**
 
 | Card | Status | Where |
 |---|---|---|
@@ -67,9 +67,13 @@ For each Haiku card:
 | T01-07 `run --team` + reporter seat section + doctor teams | ✅ merged (Sonnet NEEDS_WORK → fixed) | `d8b4d4c` |
 | T03-01 Prompt format, layered loader, safe templating | ✅ merged (planner-implemented; Opus review PASS after one round) | `c882420` |
 | G-1 Panel failure handling (5.0 item 1) | ✅ merged (O2 NEEDS_WORK → fixed → PASS; user signed off) | `6522d2a` |
+| Executor handoff parser + cmd quoting (planner) | ✅ merged (Sonnet PASS) | `2db1e16` |
+| T03-02 Built-in builder prompts | ✅ merged (Opus NEEDS_WORK → fixed → PASS) | `143358e` |
+| T03-05 `assentor prompts` CLI | ✅ merged (Sonnet PASS) | `143358e` |
+| **T03-03a** Reviewer role prompts (moderator/judge/negotiate-* deferred: gated) + **FU-03** builder prompt follow-ups | 🔶 assigned to Haiku | Haiku |
 | T00-08 CI matrix macOS/Windows/Linux | ⏳ unassigned (Sonnet card) | — |
 
-**Haiku released (user, 2026-10-25) for prompt work only:** T03-02 (builder prompts) assigned → T03-05 (`assentor prompts` CLI) next → reviewer half of T03-03. Still gated: new seats, modes, negotiation, browser control.
+**Haiku released (user, 2026-10-25) for prompt work only:** T03-02, T03-05 done → T03-03a + FU-03 assigned. Still gated: new seats, modes, negotiation (incl. moderator/judge/negotiate-* prompts), browser control.
 
 ## 5. Next actions (in order)
 
