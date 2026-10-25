@@ -44,7 +44,7 @@ For each Haiku card:
 
 ## 4. Progress
 
-**Phase 0 — 8 of 9 · Phase 1 — 4 of 7 · Phase 2 — 1 of 10 · Phase 2b — 1 of 19 · Phases 3–5 — 0 of 35 · overall 14 of 80 cards (plus 11 backlog; FU-01, FU-02 done). By tier: 🟢 Haiku 10/41 · 🟡 Sonnet 1/17 · 🔴 Opus 3/22.**
+**Phase 0 — 8 of 9 · Phase 1 — 5 of 7 · Phase 2 — 1 of 10 · Phase 2b — 1 of 19 · Phase 3 — 1 of 6 · Phases 4–5 — 0 of 29 · overall 16 of 80 cards (plus 11 backlog; FU-01, FU-02 done). By tier: 🟢 Haiku 11/41 · 🟡 Sonnet 2/17 · 🔴 Opus 3/22.**
 
 | Card | Status | Where |
 |---|---|---|
@@ -64,16 +64,30 @@ For each Haiku card:
 | FU-02 Fail-closed tamper detector | ✅ merged | `4da3636` |
 | T01-02 Seat factory + read-only codex reviewer | ✅ merged (planner-implemented; Opus review PASS after one round) | `9f1620c` |
 | T01-06 Status icon map + seat event reducer + TUI seat board | ✅ merged (Sonnet NEEDS_WORK → fixed) | `e0cca77` |
-| **T01-07** `run --team` + reporter seat section + doctor teams | 🔶 assigned to Haiku (planner: plain-text seat lines from `seatLineModel`, not Ink, in `RunReporter`) | Haiku |
+| T01-07 `run --team` + reporter seat section + doctor teams | ✅ merged (Sonnet NEEDS_WORK → fixed) | `d8b4d4c` |
+| T03-01 Prompt format, layered loader, safe templating | ✅ merged (planner-implemented; Opus review PASS after one round) | `c882420` |
+| **G-1** Panel failure handling (5.0 item 1) | 🔶 planner, in progress | planner |
 | T00-08 CI matrix macOS/Windows/Linux | ⏳ unassigned (Sonnet card) | — |
 
-**Haiku queue:** after FU-01 → T01-06 (seat board, needs T00-07 merged). Most other 🟢 cards wait on 🔴/🟡 contracts: T02B-01 (modes), T02-03 (negotiation), T03-01 (prompts, 🟡), T04-06 (UI scaffold, 🟡). Unblocked 🟡 cards: T00-08, T01-02, T03-01.
+**Haiku is on hold** (user, 2026-10-25) until 5.0 item 1 lands: no new expansion cards. When released, the unblocked Haiku cards are T03-02 (builder prompts), T03-05 (`assentor prompts` CLI) and the reviewer half of T03-03 (negotiation prompts wait on T02-03).
 
 ## 5. Next actions (in order)
 
-1. **T01-07:** Sonnet review when Haiku reports; merge; fast-forward Haiku. That completes Phase 1 except T01-03 (🟡 panel policies) and T01-05 (🔴 model switch).
-   Next Haiku cards need a contract first: **T03-01** (🟡 prompt format) unblocks T03-02…06; **T02B-01** (🔴 modes, needs T02-09) is far off. Planner should do T03-01 or T01-03 next.
-2. Start 🟡 work so Haiku has cards: T03-01 (prompt format) and T01-02 (seat factory) via Sonnet; T00-08 CI matrix.
+### 5.0 Review-correctness gate (agreed with the user 2026-10-25, overrides older ordering)
+
+This file is the one authoritative execution order. Where [../plans/](../plans/) or the consolidated plan (`docs/plans/app-product-review.md`, untracked on `main`; its "Delivery sequence" and "First implementation PR" are folded in here) imply a different order, this section wins. Those plans are design input only. **No new seats, modes, negotiation or browser control until items 1–3 are merged.**
+
+1. **Panel failure handling (integration branch, 🔴).** In `PanelReviewer.turn` / `ReviewCoordinator.decide`, a failed or malformed member is a recorded member outcome, not a dropped one. 3 reviewers with 2 failures and 1 PASS must not return PASS: the result is *inconclusive/retry*, not NeedsWork (NeedsWork would send the executor off making edits for a non-code problem). Agreement counts use all configured reviewers, not just respondents (`correlateFindings` `totalAgents`). See the consolidated plan's "First implementation PR" acceptance list.
+2. **Decision signals survive the evidence budget; omitted evidence is disclosed (`main`, uncommitted).** `formatEvidencePackForPrompt` must not tail-truncate the stall signal, executor claims or architecture summary, and must list files it did not inline. (The supervisor already downgrades a stalled PASS when phases remain, via `downgradePassIfPhasesRemain`; a blanket "never PASS while stalled" rule was rejected because a false stall detection would loop forever.)
+3. **Architecture docs through guarded, redacted reads (`main`, uncommitted).** `loadProjectArchitectureDoc` uses the same symlink-guarded, `redactSecrets` path as other file evidence.
+4. **This file is authoritative** — adopted by the planner and the user on 2026-10-25.
+5. **Storage ownership before browser control.** Decide who owns `.assentor/sessions` (T00-05 event log, no writer lock) versus the existing task store, and the migration, before T04 or any background execution depends on it. Import-based related-file discovery (replacing the Dart filename guesses in `expandRelatedModuleFiles`) comes after.
+
+Items 2–3 are being done in the repo-root checkout on `main` by session "Review reliability concerns"; they are not on this branch until merged. T01-07 and T03-01 finished before the gate (user decision); T01-03 waits behind item 1.
+
+**Then, after the gate:**
+1. Release Haiku: T03-02 → T03-05 → T03-03 (reviewer roles), each Sonnet/Opus-reviewed.
+2. T01-03 panel policies (🟡) builds on item 1. T00-08 CI matrix.
 3. Update this file after every merge.
 
 **Flaky test (unidentified):** one full-suite run on 2026-10-24 had 1 failure while Haiku ran its gate at the same time; 6 reruns were green. If it recurs, capture the test name (`pnpm test 2>&1 | grep -E "FAIL|×"`) — suspect timing under CPU load. Gate commands must not be piped through `grep` without `set -o pipefail`.
