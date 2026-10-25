@@ -44,7 +44,7 @@ For each Haiku card:
 
 ## 4. Progress
 
-**Phase 0 — 8 of 9 done · Phase 1 — 2 of 7 · Phase 2 — 1 of 10 · Phase 2b — 1 of 19 · Phases 3–5 — 0 of 35 · overall 12 of 80 cards (plus 11 backlog; FU-01 done).**
+**Phase 0 — 8 of 9 · Phase 1 — 4 of 7 · Phase 2 — 1 of 10 · Phase 2b — 1 of 19 · Phases 3–5 — 0 of 35 · overall 14 of 80 cards (plus 11 backlog; FU-01, FU-02 done). By tier: 🟢 Haiku 10/41 · 🟡 Sonnet 1/17 · 🔴 Opus 3/22.**
 
 | Card | Status | Where |
 |---|---|---|
@@ -62,14 +62,17 @@ For each Haiku card:
 | FU-01 Follow-ups: T00-03 `continue()`/cursor model tests + T02-10 `reviewTeam` input | ✅ merged | `48d02f7` |
 | T00-07 Supervisor emits seat-scoped events | ✅ merged (O2 PASS after one round; user signed off) | `572618c` |
 | FU-02 Fail-closed tamper detector | ✅ merged | `4da3636` |
-| **T01-06** Status icon map + seat event reducer + TUI seat board | 🔶 assigned to Haiku (with planner clarifications on SeatState, reducer mapping, `now` input, width) | Haiku |
+| T01-02 Seat factory + read-only codex reviewer | ✅ merged (planner-implemented; Opus review PASS after one round) | `9f1620c` |
+| T01-06 Status icon map + seat event reducer + TUI seat board | ✅ merged (Sonnet NEEDS_WORK → fixed) | `e0cca77` |
+| **T01-07** `run --team` + reporter seat section + doctor teams | 🔶 assigned to Haiku (planner: plain-text seat lines from `seatLineModel`, not Ink, in `RunReporter`) | Haiku |
 | T00-08 CI matrix macOS/Windows/Linux | ⏳ unassigned (Sonnet card) | — |
 
 **Haiku queue:** after FU-01 → T01-06 (seat board, needs T00-07 merged). Most other 🟢 cards wait on 🔴/🟡 contracts: T02B-01 (modes), T02-03 (negotiation), T03-01 (prompts, 🟡), T04-06 (UI scaffold, 🟡). Unblocked 🟡 cards: T00-08, T01-02, T03-01.
 
 ## 5. Next actions (in order)
 
-1. **T01-06:** Sonnet review when Haiku reports; merge; fast-forward Haiku. Next Haiku card after that: none unblocked until a 🟡/🔴 contract lands — start **T01-02** (seat factory, 🟡) and **T03-01** (prompt format, 🟡) so T01-07 and T03-02…06 open up; T00-08 CI matrix is also open.
+1. **T01-07:** Sonnet review when Haiku reports; merge; fast-forward Haiku. That completes Phase 1 except T01-03 (🟡 panel policies) and T01-05 (🔴 model switch).
+   Next Haiku cards need a contract first: **T03-01** (🟡 prompt format) unblocks T03-02…06; **T02B-01** (🔴 modes, needs T02-09) is far off. Planner should do T03-01 or T01-03 next.
 2. Start 🟡 work so Haiku has cards: T03-01 (prompt format) and T01-02 (seat factory) via Sonnet; T00-08 CI matrix.
 3. Update this file after every merge.
 
