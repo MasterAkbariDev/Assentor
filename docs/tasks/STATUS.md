@@ -66,7 +66,7 @@ For each Haiku card:
 | T01-06 Status icon map + seat event reducer + TUI seat board | ✅ merged (Sonnet NEEDS_WORK → fixed) | `e0cca77` |
 | T01-07 `run --team` + reporter seat section + doctor teams | ✅ merged (Sonnet NEEDS_WORK → fixed) | `d8b4d4c` |
 | T03-01 Prompt format, layered loader, safe templating | ✅ merged (planner-implemented; Opus review PASS after one round) | `c882420` |
-| G-1 Panel failure handling (5.0 item 1) | ✅ merged (O2 NEEDS_WORK → fixed → PASS; user signed off) | see log |
+| G-1 Panel failure handling (5.0 item 1) | ✅ merged (O2 NEEDS_WORK → fixed → PASS; user signed off) | `6522d2a` |
 | T00-08 CI matrix macOS/Windows/Linux | ⏳ unassigned (Sonnet card) | — |
 
 **Haiku is on hold** (user, 2026-10-25) until 5.0 item 1 lands: no new expansion cards. When released, the unblocked Haiku cards are T03-02 (builder prompts), T03-05 (`assentor prompts` CLI) and the reviewer half of T03-03 (negotiation prompts wait on T02-03).
