@@ -62,6 +62,21 @@ export function HelpScreen() {
         </Card>
       </Box>
 
+      {/* Agents Screen Card */}
+      <Box marginTop={0}>
+        <Card title="🧩 Agents Screen · Prompts" tone="highlight">
+          <Box flexDirection="row">
+            <Text><Text color="yellow" bold>↵</Text> <Text dimColor>Preview</Text></Text>
+            <Text dimColor> · </Text>
+            <Text><Text color="yellow" bold>f</Text> <Text dimColor>Fork (u user / p project)</Text></Text>
+            <Text dimColor> · </Text>
+            <Text><Text color="yellow" bold>e</Text> <Text dimColor>Edit</Text></Text>
+            <Text dimColor> · </Text>
+            <Text><Text color="yellow" bold>v</Text> <Text dimColor>Validate</Text></Text>
+          </Box>
+        </Card>
+      </Box>
+
       {/* CLI Companion Card */}
       <Box marginTop={0}>
         <Card title="💻 CLI Companion Commands" tone="neutral">

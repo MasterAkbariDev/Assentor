@@ -1,139 +1,196 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { LogicalAgentProfile } from "../../agents/index.js";
-import { Badge } from "../components/badge.js";
-import { Card } from "../components/panel.js";
-import { ScrollList, type ScrollListItem } from "../components/scroll-list.js";
+import type { PromptDefinition, PromptLayer, PromptLoadError } from "../../prompts/index.js";
+
+/** Body lines the preview panel shows at once. */
+export const PREVIEW_LINES = 8;
+
+/** Load errors shown in the warning panel before "…and N more". */
+export const WARNING_LINES = 3;
+
+const ROLE_ORDER = ["builder", "reviewer", "meta"] as const;
+
+const ROLE_TITLES: Record<PromptDefinition["role"], string> = {
+  builder: "Builder prompts",
+  reviewer: "Reviewer prompts",
+  meta: "Meta prompts",
+};
+
+const LAYER_COLOR: Record<PromptLayer, string> = {
+  builtin: "gray",
+  user: "cyan",
+  project: "green",
+};
+
+/**
+ * Prompts in the order the screen lists them: by role, then id. Row selection
+ * indexes this list, so the screen and the key handlers agree.
+ */
+export function orderedPrompts(prompts: readonly PromptDefinition[]): PromptDefinition[] {
+  return ROLE_ORDER.flatMap((role) =>
+    prompts
+      .filter((prompt) => prompt.role === role)
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  );
+}
+
+/** Warning-panel lines: `<layer> <file>: <message>`, first entries only. */
+export function warningLines(errors: readonly PromptLoadError[], limit = WARNING_LINES): string[] {
+  return errors.slice(0, limit).map((error) => `${error.layer} ${error.file}: ${error.message}`);
+}
+
+/** The result line for `validate`, the same wording the CLI prints. */
+export function validateSummary(loaded: number, errorCount: number): string {
+  return errorCount === 0
+    ? `All prompts valid (${loaded} loaded)`
+    : `${errorCount} prompt file(s) failed to load; see the warning panel`;
+}
+
+export interface AgentsScreenProps {
+  agents: LogicalAgentProfile[];
+  /** Index into `prompts`. */
+  selected: number;
+  focused: boolean;
+  /** `orderedPrompts(library.list())`. */
+  prompts: PromptDefinition[];
+  errors: PromptLoadError[];
+  loading: boolean;
+  /** Set while the body preview is open; `scroll` is its first visible body line. */
+  preview: { scroll: number } | null;
+  forkPending: boolean;
+  /** Result lines from the last fork, edit or validate action. */
+  notice: string[];
+}
 
 export function AgentsScreen({
   agents,
   selected,
   focused,
-}: {
-  agents: LogicalAgentProfile[];
-  selected: number;
-  focused: boolean;
-}) {
-  if (agents.length === 0) {
-    return (
-      <Box flexDirection="column">
-        <Box marginBottom={1}>
-          <Text bold color="white">
-            🤖 Specialty Agent Intelligence Matrix
-          </Text>
-        </Box>
-        <Card title="No Agents Configured" tone="neutral">
-          <Text dimColor>
-            Agents are specialty roles Assentor assigns dynamically during task review cycles.
-          </Text>
-          <Box marginTop={1}>
-            <Text dimColor>
-              Add backend providers (Gemini, Claude, Cursor) under <Text color="cyan">Configure › Reviewers</Text>.
-            </Text>
-          </Box>
-        </Card>
-      </Box>
-    );
-  }
-
-  const selectedAgent = agents[selected];
-
-  const items: ScrollListItem[] = agents.map((a) => {
-    const isExec = a.kind === "executor";
-    const icon = isExec ? "💻" : specialtyIcon(a.specialty);
-    const kindTag = isExec ? "EXEC" : "REV";
-    const spec = a.specialty ? `[${a.specialty}]` : `[${a.kind}]`;
-
-    return {
-      id: a.id,
-      icon,
-      label: `${kindTag}  ${a.name}  ${spec}`,
-      badge: a.enabled ? "Active" : "Disabled",
-      badgeTone: a.enabled ? "ok" : "neutral",
-      description: `Backend: ${a.provider}/${a.model} · Transport: ${a.transport ?? "api"}`,
-    };
-  });
+  prompts,
+  errors,
+  loading,
+  preview,
+  forkPending,
+  notice,
+}: AgentsScreenProps) {
+  // No fixed width: the Shell gives this column the space beside the nav, and
+  // text inside it wraps or truncates to that space.
+  const specialties = [...new Set(agents.map((agent) => agent.specialty).filter(Boolean))];
+  const selectedPrompt = prompts[selected];
 
   return (
     <Box flexDirection="column">
-      <Box marginBottom={1} flexDirection="row" justifyContent="space-between" alignItems="center">
-        <Text bold color="white">
-          🤖 Specialty Agent Roles & Intelligence Matrix
-        </Text>
-        <Text dimColor>
-          Browse logical roles (add backends in <Text color="cyan">Configure › Reviewers</Text>)
-        </Text>
-      </Box>
+      <Text bold color="white">
+        🤖 Agents & Prompts
+      </Text>
+      <Text dimColor>
+        Specialty agents: {specialties.length > 0 ? specialties.join(", ") : "none configured"}
+      </Text>
 
-      {/* Agents Scrollable List */}
+      {errors.length > 0 ? <WarningPanel errors={errors} /> : null}
+
       <Box
+        flexDirection="column"
         borderStyle="round"
         borderColor={focused ? "green" : "gray"}
         paddingX={1}
-        marginBottom={1}
-        flexDirection="column"
+        marginTop={1}
       >
-        <ScrollList
-          items={items}
-          selected={selected}
-          focused={focused}
-          maxVisible={6}
-        />
+        <Text bold>Prompt library</Text>
+        {loading ? (
+          <Text dimColor>Loading prompts…</Text>
+        ) : prompts.length === 0 ? (
+          <Text dimColor>No prompts loaded.</Text>
+        ) : (
+          ROLE_ORDER.map((role) => {
+            const rows = prompts.filter((prompt) => prompt.role === role);
+            if (rows.length === 0) {
+              return null;
+            }
+            return (
+              <Box key={role} flexDirection="column">
+                <Text bold color="cyan">
+                  {ROLE_TITLES[role]}
+                </Text>
+                {rows.map((prompt) => (
+                  <PromptRow
+                    key={prompt.file}
+                    prompt={prompt}
+                    selected={focused && prompts.indexOf(prompt) === selected}
+                  />
+                ))}
+              </Box>
+            );
+          })
+        )}
       </Box>
 
-      {/* Selected Agent Inspector Card */}
-      {selectedAgent ? (
-        <Card
-          title={`${specialtyIcon(selectedAgent.specialty)} ${selectedAgent.name} (${selectedAgent.role})`}
-          badge={
-            <Badge
-              label={selectedAgent.enabled ? "Enabled" : "Disabled"}
-              tone={selectedAgent.enabled ? "ok" : "warn"}
-            />
-          }
-        >
-          <Box flexDirection="column" marginTop={0}>
-            <Box flexDirection="row" marginBottom={0}>
-              <Text dimColor>Role: </Text>
-              <Text color="cyan" bold>{selectedAgent.kind.toUpperCase()}</Text>
-              {selectedAgent.specialty ? (
-                <>
-                  <Text dimColor>   ·   Specialty: </Text>
-                  <Text color="green" bold>{selectedAgent.specialty}</Text>
-                </>
-              ) : null}
-              <Text dimColor>   ·   Default Model: </Text>
-              <Text color="yellow" bold>{selectedAgent.provider}/{selectedAgent.model}</Text>
-            </Box>
-            <Box marginTop={1} flexDirection="column">
-              <Text bold color="white">Verification Focus & Instructions:</Text>
-              <Text dimColor>
-                {selectedAgent.instructions.length > 240
-                  ? `${selectedAgent.instructions.slice(0, 240)}…`
-                  : selectedAgent.instructions}
-              </Text>
-            </Box>
-          </Box>
-        </Card>
+      {preview && selectedPrompt ? (
+        <PromptPreview prompt={selectedPrompt} scroll={preview.scroll} />
       ) : null}
+
+      {forkPending && selectedPrompt ? (
+        <Box marginTop={1}>
+          <Text color="yellow">
+            Fork &quot;{selectedPrompt.id}&quot; to: [u] user · [p] project · [Esc] cancel
+          </Text>
+        </Box>
+      ) : null}
+
+      {notice.slice(0, WARNING_LINES).map((line, index) => (
+        <Text key={`${index}-${line}`} color="cyan">
+          {line}
+        </Text>
+      ))}
     </Box>
   );
 }
 
-function specialtyIcon(specialty?: string): string {
-  switch (specialty?.toLowerCase()) {
-    case "security":
-      return "🔒";
-    case "testing":
-    case "qa":
-      return "🧪";
-    case "architecture":
-      return "🏗";
-    case "performance":
-      return "⚡";
-    case "adjudicator":
-      return "⚖";
-    default:
-      return "🛡";
-  }
+function PromptRow({ prompt, selected }: { prompt: PromptDefinition; selected: boolean }) {
+  return (
+    <Text wrap="truncate-end" bold={selected} color={selected ? "green" : undefined}>
+      {selected ? "› " : "  "}
+      {prompt.id}
+      <Text dimColor>{`  ${prompt.title}  `}</Text>
+      <Text color={LAYER_COLOR[prompt.layer]}>[{prompt.layer}]</Text>
+      {prompt.overrides ? <Text color="yellow">{`  overrides ${prompt.overrides}`}</Text> : null}
+    </Text>
+  );
+}
+
+function WarningPanel({ errors }: { errors: PromptLoadError[] }) {
+  const lines = warningLines(errors);
+  const more = errors.length - lines.length;
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginTop={1}>
+      <Text bold color="yellow">
+        ⚠ {errors.length} prompt file(s) failed to load
+      </Text>
+      {lines.map((line) => (
+        <Text key={line} dimColor>
+          {line}
+        </Text>
+      ))}
+      {more > 0 ? <Text dimColor>…and {more} more. Run assentor prompts validate.</Text> : null}
+    </Box>
+  );
+}
+
+function PromptPreview({ prompt, scroll }: { prompt: PromptDefinition; scroll: number }) {
+  const lines = prompt.body.split("\n");
+  const start = Math.min(scroll, Math.max(0, lines.length - PREVIEW_LINES));
+  const visible = lines.slice(start, start + PREVIEW_LINES);
+  const end = Math.min(lines.length, start + PREVIEW_LINES);
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1} marginTop={1}>
+      <Text bold color="cyan">
+        Preview: {prompt.id} (lines {start + 1}–{end} of {lines.length})
+      </Text>
+      {visible.map((line, index) => (
+        <Text key={start + index}>{line.length > 0 ? line : " "}</Text>
+      ))}
+      <Text dimColor>↑↓ scroll · ↵ close</Text>
+    </Box>
+  );
 }
