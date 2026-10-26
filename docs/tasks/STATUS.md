@@ -53,7 +53,7 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**19 of 80 cards done** (plus T03-03 half done, 3 follow-up cards FU-01…03, and gate fix G-1). By tier: 🟢 Haiku 14/41 · 🟡 Sonnet-tier 2/17 · 🔴 Opus-tier 3/22. Tests: 995 passing.
+**19 of 80 cards done** (plus T03-03 half done, 3 follow-up cards FU-01…03, and gate fix G-1). By tier: 🟢 Haiku 14/41 · 🟡 Sonnet-tier 2/17 · 🔴 Opus-tier 3/22. Tests: 1004 passing.
 
 | Phase | Done | Open |
 |---|---|---|
@@ -115,8 +115,8 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 2. ✅ **Merge `main`** (gate items 2–3) into integration.
 3. ✅ **T04-02p** (🔴 M, O2) — done, see commit log and the T04-02 card note. `src/rpc/`: typed method registry, in-process + stdio transports, `engine.hello`, read-only `sessions.list` and `events.subscribe(sessionId, fromSeq)` (`readSessionEvents` + live tail, bounded per-subscriber queue → `events.resync_required`). No write methods.
 4. ✅ **T04-03p** (🔴 M, O2 + user sign-off) — done, see the T04-03 card note. — `assentor serve`: 127.0.0.1 only, 256-bit token via URL fragment, Origin + Host (DNS-rebinding) checks, CSP, auth-failure rate limit, serves the built UI; watch-only.
-5. **T04-06p** *(next)* (🟡 M) — `ui/` scaffold (Vite + React + TS), `Transport` + `WebSocketTransport`, event store reusing `reduceSeatEvents` (`src/ui-shared/status.ts`), reconnect + resync, app shell (Sessions only), fixture stream.
-6. **T04-07p** (🟢 M, Haiku) — read-only session board: seat cards (status icon + label, model, role, last line, elapsed, tokens). No model picker, pause or cancel yet.
+5. 🔶 **T04-06p** (🟡 M) — built and committed; **Opus review still to do** (see §8 and the T04-06 card note). — `ui/` scaffold (Vite + React + TS), `Transport` + `WebSocketTransport`, event store reusing `reduceSeatEvents` (`src/ui-shared/status.ts`), reconnect + resync, app shell (Sessions only), fixture stream.
+6. **T04-07p** *(after the T04-06p review)* (🟢 M, Haiku) — read-only session board: seat cards (status icon + label, model, role, last line, elapsed, tokens). No model picker, pause or cancel yet.
 
 **Approved dependencies (lean set):** runtime `ws`; UI dev/build `vite`, `@vitejs/plugin-react`, `react`, `react-dom`, `zustand`, `tailwindcss`, `jsdom`, `@testing-library/react`. TanStack Router/Query/Virtual and Radix come later with the full UI. Nothing else without asking.
 
@@ -132,8 +132,13 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 
 ## 8. In flight right now
 
-- **T04-06p** (planner, 🟡, Opus review): `ui/` source and tests are written (uncommitted); next is installing the approved UI dev dependencies, wiring `build:ui`/typecheck/tests, building, and the review. Tailwind is not used (v4 needs an extra plugin package that is not on the approved list); plain CSS instead.
-- **Haiku is idle**, waiting for T04-07p (after T04-06p).
+**Paused by the user (2026-10-26) after T04-06p was committed.** Nothing uncommitted. When resuming, in order:
+
+1. **Opus review of T04-06p** (`ui/`, the `build`/`typecheck`/vitest wiring, the dependency set). Fix findings, then mark T04-06p ✅.
+2. **T04-07p to Haiku** — read-only session board replacing `SessionPanel`'s seat list (`ui/src/features/session-board/`). Include in the brief: the **"Review panel" seat stays at `starting` with a growing timer** (seen in the live preview): the panel seat gets `seat.status starting` from the mirrored `review.started` but no `seat.done`, because `review.completed` maps to `review.verdict`. Fix in the engine (`src/orchestrator/engine-events.ts` / `seat-events.ts`: end the reviewer-scoped seat on `review.completed`) or treat `review.verdict` as the panel's end in `reduceSeatEvents` — a planner decision before the card goes out.
+3. Then the preview milestone is done: `assentor serve` + a browser shows live runs.
+
+**Try the preview:** `pnpm build`, run something with `assentor run "…"`, then `bin/assentor serve -p <project>` and open the printed link.
 
 ## 9. Known follow-ups (not scheduled)
 

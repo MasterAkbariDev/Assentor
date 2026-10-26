@@ -89,6 +89,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-06 · UI scaffold, Transport interface, event store
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** T04-02
 
+**Status: 🔶 preview cut built as T04-06p — Opus review still to do.** `ui/` (Vite 7 + React 18 + TS + Zustand, plain CSS with light/dark/system; Tailwind left out — v4 needs a plugin package not on the approved list). `connectWebSocket` (token handshake), `takeToken` (fragment → sessionStorage, stripped from the URL), `createEngineStore` + `createFrameBatcher` (one apply per animation frame, `reduceSeatEvents` shared with the TUI), `EngineController` (hello, `sessions.list` refresh, one subscription for the selected session, reconnect with backoff, resubscribe from `lastSeq`, `unreadable_log` terminal, `io_error` with backoff), app shell (header, session list, placeholder seat list for T04-07p). Engine code is imported only through `@engine/…` browser-safe modules. Tests: store replay = identical state, 6×50 burst in one frame, controller against the real engine (reconnect without gaps, auth rejection stops retries), App shell, token handling. `pnpm build` now also builds `ui/dist`; `pnpm typecheck` checks `ui/` (app without Node types, tests with). Verified by hand: `assentor serve` on a mock run shows the run and its seats live. Not done: Router/Query/Radix/Virtual, transport contract suite, `/dev/fixtures` page, Prompts/Teams/Playbooks/Settings sections.
+
 **Deliverables**
 1. `packages/ui`: Vite + React 18 + TS, TanStack Router + Query, Zustand, Tailwind + Radix primitives, TanStack Virtual, Vitest + Testing Library.
 2. `Transport` interface (`call`, `subscribe`, `onStatus`) + `WebSocketTransport`; `useRpc()` hook.
