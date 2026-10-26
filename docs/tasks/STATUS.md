@@ -53,7 +53,7 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**19 of 80 cards done** (plus T03-03 half done, 3 follow-up cards FU-01…03, and gate fix G-1). By tier: 🟢 Haiku 14/41 · 🟡 Sonnet-tier 2/17 · 🔴 Opus-tier 3/22. Tests: 958 passing.
+**19 of 80 cards done** (plus T03-03 half done, 3 follow-up cards FU-01…03, and gate fix G-1). By tier: 🟢 Haiku 14/41 · 🟡 Sonnet-tier 2/17 · 🔴 Opus-tier 3/22. Tests: 978 passing.
 
 | Phase | Done | Open |
 |---|---|---|
@@ -113,8 +113,8 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 
 1. ✅ **G-5** — event log writer lock + read-only reader (`c30ea14`).
 2. ✅ **Merge `main`** (gate items 2–3) into integration.
-3. **T04-02p** *(next)* (🔴 M, O2) — `src/rpc/`: typed method registry, in-process + stdio transports, `engine.hello`, read-only `sessions.list` and `events.subscribe(sessionId, fromSeq)` (`readSessionEvents` + live tail, bounded per-subscriber queue → `events.resync_required`). No write methods.
-4. **T04-03p** (🔴 M, O2 + user sign-off) — `assentor serve`: 127.0.0.1 only, 256-bit token via URL fragment, Origin + Host (DNS-rebinding) checks, CSP, auth-failure rate limit, serves the built UI; watch-only.
+3. ✅ **T04-02p** (🔴 M, O2) — done, see commit log and the T04-02 card note. `src/rpc/`: typed method registry, in-process + stdio transports, `engine.hello`, read-only `sessions.list` and `events.subscribe(sessionId, fromSeq)` (`readSessionEvents` + live tail, bounded per-subscriber queue → `events.resync_required`). No write methods.
+4. **T04-03p** *(next)* (🔴 M, O2 + user sign-off) — `assentor serve`: 127.0.0.1 only, 256-bit token via URL fragment, Origin + Host (DNS-rebinding) checks, CSP, auth-failure rate limit, serves the built UI; watch-only.
 5. **T04-06p** (🟡 M) — `ui/` scaffold (Vite + React + TS), `Transport` + `WebSocketTransport`, event store reusing `reduceSeatEvents` (`src/ui-shared/status.ts`), reconnect + resync, app shell (Sessions only), fixture stream.
 6. **T04-07p** (🟢 M, Haiku) — read-only session board: seat cards (status icon + label, model, role, last line, elapsed, tokens). No model picker, pause or cancel yet.
 
@@ -132,7 +132,7 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 
 ## 8. In flight right now
 
-- Nothing uncommitted. Next: **T04-02p** (planner, 🔴, O2 review).
+- Nothing uncommitted. Next: **T04-03p** (planner, 🔴, O2 + user sign-off). Carry-overs from the T04-02p review that T04-03p must do: `FrameSender` resolves from `ws.send`'s callback; cap `bufferedAmount` + a send timeout → `slow_consumer`; `connection.close()` on `close`/`error`; ping/pong for dead peers; `maxPayload` = `RPC_MAX_FRAME_CHARS`; a connection cap; paginate or cache `sessions.list`.
 - **Haiku is idle**, waiting for T04-07p (after T04-06p) — no other ungated 🟢 card is open on the chosen path.
 
 ## 9. Known follow-ups (not scheduled)

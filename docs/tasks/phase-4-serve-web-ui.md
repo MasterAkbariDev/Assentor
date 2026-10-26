@@ -32,6 +32,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-02 · JSON-RPC core + stdio & in-process transports
 **Tier:** 🔴 O · **Review:** O2 · **Size:** M · **Depends:** T04-01
 
+**Status: 🔶 read-only cut done as T04-02p** (`src/rpc/`, single package, ahead of T04-01; planner, O2 two rounds + a final contract fix). Shipped: `src/protocol/rpc.ts` contract (methods `engine.hello`, `sessions.list`, `events.subscribe`, `events.unsubscribe`; notifications `events.event`, `events.resync_required` with reasons `log_replaced`/`io_error`/`slow_consumer` resumable and `unreadable_log` terminal; `RPC_MAX_FRAME_CHARS` 1 MiB), `RpcServer`/`RpcConnection` (zod-validated params and results, JSON-RPC error codes, no batches, paths scrubbed from internal errors, serialized writer = backpressure), `SessionTail` (reads `events.ndjson` from a committed offset in 64 KiB chunks, never buffers more than a chunk for a slow client, never locks or repairs the log), in-process + stdio NDJSON transports, browser-safe `RpcClient` (`src/rpc/browser.ts`) with `subscribeEvents`, `onClose`/`onDisconnect`. Remaining for full T04-02: write methods, typed client generation, move to `packages/engine` in T04-01.
+
 **Deliverables**
 1. `RpcServer` with a typed method registry (`method name → zod params/result → handler`) in `engine/rpc/`.
 2. Transports: in-process (CLI/TUI) and stdio (NDJSON framing; one JSON per line; stderr for logs only) — this is what the Tauri sidecar uses.

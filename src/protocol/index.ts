@@ -52,3 +52,4 @@ export {
   type EngineEventType,
   type EngineEventData,
 } from "./events.js";
+export * from "./rpc.js";

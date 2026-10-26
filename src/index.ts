@@ -146,6 +146,7 @@ export * from "./executors/index.js";
 export * from "./agents/index.js";
 export * from "./review/index.js";
 export * from "./prompts/index.js";
+export * from "./rpc/index.js";
 export {
   createAssentorServices,
   runFullDiagnostics,
