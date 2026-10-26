@@ -1,5 +1,5 @@
 import path from "node:path";
-import { RPC_PROTOCOL_VERSION } from "../protocol/rpc.js";
+import { RPC_PROTOCOL_VERSION, type SessionSummary } from "../protocol/rpc.js";
 import { getLocalVersionSync } from "../self/version.js";
 import { RpcServer } from "./server.js";
 import {
@@ -16,6 +16,8 @@ export interface EngineRpcOptions {
   subscriptions?: SubscriptionOptions;
   /** Defaults to the installed package version. */
   engineVersion?: string;
+  /** How long one `sessions.list` result is reused. Default 1 s; 0 disables. */
+  listCacheMs?: number;
 }
 
 /**
@@ -27,13 +29,30 @@ export function createEngineRpcServer(options: EngineRpcOptions): RpcServer {
   const server = new RpcServer();
   const engineVersion = options.engineVersion ?? getLocalVersionSync();
 
+  // sessions.list reads every task and log; share one result for a second so
+  // many clients (or a fast poller) cost one scan.
+  let listing: { at: number; promise: Promise<SessionSummary[]> } | undefined;
+  const cachedList = (): Promise<SessionSummary[]> => {
+    const now = Date.now();
+    if (!listing || now - listing.at >= (options.listCacheMs ?? 1_000)) {
+      const promise = listSessions(projectPath);
+      listing = { at: now, promise };
+      promise.catch(() => {
+        if (listing?.promise === promise) {
+          listing = undefined; // don't cache a failure
+        }
+      });
+    }
+    return listing.promise;
+  };
+
   server
     .register("engine.hello", () => ({
       engineVersion,
       protocolVersion: RPC_PROTOCOL_VERSION,
       capabilities: server.methodNames,
     }))
-    .register("sessions.list", async () => ({ sessions: await listSessions(projectPath) }))
+    .register("sessions.list", async () => ({ sessions: await cachedList() }))
     .register("events.subscribe", ({ sessionId, fromSeq }, { connection }) => ({
       subscriptionId: subscribeToSession(
         connection,

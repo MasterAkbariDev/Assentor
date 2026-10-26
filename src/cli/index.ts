@@ -62,6 +62,41 @@ program
   });
 
 program
+  .command("serve")
+  .description("Serve the web UI and a read-only engine API on this machine (watch runs live)")
+  .option("-p, --project <path>", "Project directory", ".")
+  .option("--port <n>", "Port (0 picks a free one)", (v: string) => Number(v), 4319)
+  .option("--host <address>", "Address to listen on", "127.0.0.1")
+  .option("--unsafe-listen", "Allow a non-loopback --host (anyone with the token could read your sessions)", false)
+  .option("--idle-timeout <minutes>", "Stop after this many minutes with no browser connected", (v: string) => Number(v))
+  .action(
+    async (options: {
+      project: string;
+      port: number;
+      host: string;
+      unsafeListen: boolean;
+      idleTimeout?: number;
+    }) => {
+      const { startServe } = await import("../serve/index.js");
+      const handle = await startServe({
+        projectPath: path.resolve(options.project),
+        port: options.port,
+        host: options.host,
+        unsafeListen: options.unsafeListen,
+        ...(options.idleTimeout ? { idleTimeoutMs: options.idleTimeout * 60_000 } : {}),
+      });
+      // The only place the token is shown: the user needs it to open the UI.
+      console.log(`Assentor is serving ${path.resolve(options.project)}`);
+      console.log(`Open: ${handle.url}`);
+      console.log("Read-only. Press Ctrl+C to stop.");
+      const stop = () => void handle.close();
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+      await handle.closed;
+    },
+  );
+
+program
   .command("init")
   .description(
     "Create an optional project .assentor/config.yaml override (global defaults live in ~/.assentor)",

@@ -191,6 +191,28 @@ describe("sessions.list", () => {
   });
 });
 
+describe("sessions.list cache", () => {
+  it("shares one scan for a second, and can be turned off", async () => {
+    const projectPath = await project();
+    const make = (listCacheMs?: number) => {
+      const server = createEngineRpcServer({ projectPath, engineVersion: "x", ...(listCacheMs === undefined ? {} : { listCacheMs }) });
+      const client = new RpcClient(createInProcessTransport(server).client);
+      cleanups.push(() => client.close());
+      return client;
+    };
+    const cached = make();
+    const uncached = make(0);
+    expect((await cached.call("sessions.list")).sessions).toEqual([]);
+    expect((await uncached.call("sessions.list")).sessions).toEqual([]);
+    const id = createId();
+    const log = await EventLog.open(projectPath, id);
+    await log.append(draft(id));
+    await log.close();
+    expect((await cached.call("sessions.list")).sessions).toEqual([]);
+    expect((await uncached.call("sessions.list")).sessions.map((x) => x.id)).toEqual([id]);
+  });
+});
+
 describe("events.subscribe", () => {
   it("delivers the backlog, then tails new events in order, without partial lines", async () => {
     const projectPath = await project();
