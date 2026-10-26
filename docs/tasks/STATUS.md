@@ -53,7 +53,7 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**19 of 80 cards done** (plus T03-03 half done, 3 follow-up cards FU-01…03, and gate fix G-1). By tier: 🟢 Haiku 14/41 · 🟡 Sonnet-tier 2/17 · 🔴 Opus-tier 3/22. Tests: 947 passing.
+**19 of 80 cards done** (plus T03-03 half done, 3 follow-up cards FU-01…03, and gate fix G-1). By tier: 🟢 Haiku 14/41 · 🟡 Sonnet-tier 2/17 · 🔴 Opus-tier 3/22. Tests: 958 passing.
 
 | Phase | Done | Open |
 |---|---|---|
@@ -98,10 +98,12 @@ Card-level decisions are in each card's **Status** note in `phase-*.md`.
 **No new seats, modes, negotiation or browser control until items 1–3 are merged.** Prompt work (Phase 3) and the watch-only web preview (§6) were released by the user.
 
 1. ✅ **Panel failure handling** (`6522d2a`). Every member gets a recorded outcome; a PASS needs every member; failures make the turn inconclusive and retryable (not NEEDS_WORK); agreement counts use the configured panel size; security veto comes from evidenced blocker/major security findings (no name or majority rule); an unevidenced claim asks for the diff once, then blocks for a human.
-2. 🔶 **Evidence budget keeps decision signals** — committed on `main` (`15e5494`, `fa31708`); **not yet merged here** (§8).
-3. 🔶 **Architecture docs through guarded, redacted reads** — same as 2.
+2. ✅ **Evidence budget keeps decision signals** — from `main` (`15e5494`, `fa31708`), merged here.
+3. ✅ **Architecture docs through guarded, redacted reads** — same merge.
 4. ✅ **This file is authoritative.**
-5. 🔶 **Storage ownership** — decided by the user: `.assentor/sessions/<id>/events.ndjson` owns the live event stream (read by web UI and TUI) with a writer lock; `.assentor/tasks/<id>/` keeps state, history, artifacts and the legacy `events.jsonl` for resume/status. Old runs show "no live log" (no backfill). Implementation **G-5** is in flight (§8).
+5. 🔶 **Storage ownership** — decided by the user: `.assentor/sessions/<id>/events.ndjson` owns the live event stream (read by web UI and TUI) with a writer lock; `.assentor/tasks/<id>/` keeps state, history, artifacts and the legacy `events.jsonl` for resume/status. Old runs show "no live log" (no backfill). Implemented as **G-5** (`c30ea14`, O2 PASS, user signed off). ✅
+
+**All gate items are now done (2026-10-26).** The gate's condition for new seats, modes, negotiation and browser control is met; the user's chosen order is still the web preview fast path (§6) first.
 
 G-1 follow-ups: the CLI never configures an adjudicator for `PanelReviewer` (adjudicator paths are library-only today); a retry re-runs every member; no resume hint after an inconclusive failure; an unsupported claim inside a non-PASS merge still goes to the executor. Plan bullets not covered yet: honest requested-vs-verified model reporting; duplicate explicit seat ids failing validation.
 
@@ -109,9 +111,9 @@ G-1 follow-ups: the CLI never configures an adjudicator for `PanelReviewer` (adj
 
 Watch-only first preview, ahead of the T04-01 package split. Code stays in the single package (`src/rpc/`, `src/serve/`, `ui/`) and moves when T04-01 runs.
 
-1. **G-5** (🔴 S, planner) — event log writer lock + read-only reader. *In flight.*
-2. **Merge `main`** (gate items 2–3) into integration. *Next.*
-3. **T04-02p** (🔴 M, O2) — `src/rpc/`: typed method registry, in-process + stdio transports, `engine.hello`, read-only `sessions.list` and `events.subscribe(sessionId, fromSeq)` (`readSessionEvents` + live tail, bounded per-subscriber queue → `events.resync_required`). No write methods.
+1. ✅ **G-5** — event log writer lock + read-only reader (`c30ea14`).
+2. ✅ **Merge `main`** (gate items 2–3) into integration.
+3. **T04-02p** *(next)* (🔴 M, O2) — `src/rpc/`: typed method registry, in-process + stdio transports, `engine.hello`, read-only `sessions.list` and `events.subscribe(sessionId, fromSeq)` (`readSessionEvents` + live tail, bounded per-subscriber queue → `events.resync_required`). No write methods.
 4. **T04-03p** (🔴 M, O2 + user sign-off) — `assentor serve`: 127.0.0.1 only, 256-bit token via URL fragment, Origin + Host (DNS-rebinding) checks, CSP, auth-failure rate limit, serves the built UI; watch-only.
 5. **T04-06p** (🟡 M) — `ui/` scaffold (Vite + React + TS), `Transport` + `WebSocketTransport`, event store reusing `reduceSeatEvents` (`src/ui-shared/status.ts`), reconnect + resync, app shell (Sessions only), fixture stream.
 6. **T04-07p** (🟢 M, Haiku) — read-only session board: seat cards (status icon + label, model, role, last line, elapsed, tokens). No model picker, pause or cancel yet.
@@ -130,11 +132,12 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 
 ## 8. In flight right now
 
-- **G-5 — uncommitted in the integration worktree:** `src/events/log.ts` (writer lock with atomic stale takeover, `close({ timeoutMs })`, `readSessionEvents`, `EventLogLockedError` naming the lock file), `src/events/index.ts`, `src/cli/commands.ts` (`RunSeatEvents` closes the log with a timeout; one-line open-failure message), tests switched to `readSessionEvents`, new `tests/unit/event-log-lock.test.ts`. 947 tests green. O2 round 1 NEEDS_WORK (takeover race, close hang, own-pid staleness) — fixed; **O2 re-review running; then user sign-off; then commit.**
-- **Merge `main` → integration** after G-5 is committed. A dry run (`git merge-tree --write-tree HEAD main`) shows conflicts in `src/cli/commands.ts`, `src/cli/index.ts`, `src/review/pack-builder.ts` (keep `findExecutorHandoff`), `src/review/specialty-prompts.ts` (now generated from files: move `main`'s new architecture "Evidence rules" bullets into `prompts/builtin/specialty-architecture.md` **and** `tests/fixtures/specialty-addenda.json`; the reviewer prompt `architecture-reviewer.md` must still contain every bullet — its test checks this).
-- **Haiku is idle**, waiting for T04-07p (after T04-06p) — no other ungated 🟢 card is open.
+- Nothing uncommitted. Next: **T04-02p** (planner, 🔴, O2 review).
+- **Haiku is idle**, waiting for T04-07p (after T04-06p) — no other ungated 🟢 card is open on the chosen path.
 
 ## 9. Known follow-ups (not scheduled)
+
+- From the `main` merge review: `resume --executor <other provider>` reuses the snapshot's executor session id (main's behaviour, unguarded); the new `mergeEvidenceIntoPack` call on the needs-work path has no try/catch (a pack bootstrap error fails the task); the shared reviewer prompt's evidence example lists only `file`/`search`/`command`.
 
 - 🔴 **Windows `.cmd` shims and `%VAR%`** (Danger #1/#6): CLIs reached through `agent.cmd`/`codex.cmd` run via `cmd.exe /d /s /c`; `quoteCmdArg` quotes `& | < > ^ ( )` and whitespace, but cmd still expands `%VAR%` inside quotes, so prompt text containing `%NAME%` is altered. Fix: pass prompts on stdin or a temp file for `.cmd` targets.
 - T03-06: run the real editor round-trip once in a real terminal (`EDITOR=vi bin/assentor` → Tab, 3 → `f` `u` → `e` → edit → `:wq`; expect Agents back with the prompt selected). Ink gets no keys under `expect` in the sandbox.
