@@ -154,6 +154,14 @@ program
   .description("Resume a previously interrupted, failed, or timed-out task")
   .argument("[task-id]", "Task id (omit to resume the latest in this project)")
   .option("-p, --project <path>", "Project directory", ".")
+  .option(
+    "-e, --executor <provider>",
+    "Executor override (mock|cursor|claude-code|antigravity|codex|qwen|opencode)",
+  )
+  .option(
+    "-r, --reviewer <provider>",
+    "Reviewer override (mock|openai|gemini|claude|antigravity|cursor)",
+  )
   .option("-v, --verbose", "Verbose event logging", false)
   .option("--max-rounds <n>", "Raise round budget for this resume", (v: string) =>
     Number(v),
@@ -166,21 +174,37 @@ program
     "Model for the executor CLI (overrides config executor.model)",
   )
   .option("--team <name>", "Review with this configured team (overrides modes.review.team)")
-  .action(async (taskId: string | undefined, options: { project: string; verbose?: boolean; maxRounds?: number; maxMessages?: number; executorModel?: string; team?: string }) => {
+  .action(
+    async (
+      taskId: string | undefined,
+      options: {
+        project: string;
+        executor?: string;
+        reviewer?: string;
+        verbose?: boolean;
+        maxRounds?: number;
+        maxMessages?: number;
+        executorModel?: string;
+        team?: string;
+      },
+    ) => {
     const result = await resumeAssentorTask({
       projectPath: options.project,
       taskId,
+      executor: options.executor,
+      reviewer: options.reviewer,
       verbose: options.verbose,
       maxRounds: options.maxRounds,
       maxMessages: options.maxMessages,
       executorModel: options.executorModel,
       team: options.team,
     });
-    console.log(`Task ${result.taskId} finished: ${result.status}`);
-    if (result.status !== "DONE") {
-      process.exitCode = 1;
-    }
-  });
+      console.log(`Task ${result.taskId} finished: ${result.status}`);
+      if (result.status !== "DONE") {
+        process.exitCode = 1;
+      }
+    },
+  );
 
 program
   .command("status")

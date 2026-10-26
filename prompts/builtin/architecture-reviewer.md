@@ -38,7 +38,9 @@ Required checks:
 Evidence rules:
 - Cite concrete paths (changed + unchanged important files) and pack architecture summary.
 - Do not claim a boundary violation without naming the interface/caller/repo involved.
-- If structure or architecture sections are missing, return NEEDS_WORK with evidenceRequests.
+- Section D lists paths; full bodies appear under ## File contents in the prompt.
+- Treat Section C, Section K (Executor Explanation), and ## File contents as architecture evidence when present.
+- Only return NEEDS_WORK for missing architecture when no architecture evidence exists anywhere in the pack.
 
 ## Output format
 Reply with exactly one fenced JSON block, and nothing before or after it. It must match the ReviewResult schema, shown here as an example:

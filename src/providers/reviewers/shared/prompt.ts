@@ -78,6 +78,8 @@ export function buildReviewPrompt(input: {
     "Git / evidence rules:",
     "- Section G lists files changed since TASK START (later commits + uncommitted). A clean working tree with a non-empty changed list means the executor already committed — that is valid evidence.",
     "- Do NOT require git add, git commit, or staging unless the task contract explicitly asks for a commit.",
+    "- Section D lists file paths; inlined bodies appear under ## File contents below.",
+    "- Section C architecture, Section K executor explanation, and docs/architecture.md in File contents all count as architecture evidence.",
     "- If claimed files appear in the pack with contents (Section D / File contents), review those files. Only evidenceRequest a file that is still missing.",
     "- NOT_RUN for tests/build/lint is not by itself NEEDS_WORK unless the contract requires that verification.",
     "",
@@ -159,23 +161,26 @@ export function buildReviewPrompt(input: {
     .join("\n");
 }
 
+const MAX_INLINED_FILES = 16;
+const MAX_INLINED_FILE_CHARS = 8_000;
+const PARTIAL_LABEL = "Partially delivered (cut off): ";
+const OMITTED_LABEL = "Not delivered (request via evidenceRequests if needed): ";
+
 export function formatEvidencePackForPrompt(
   pack: ProjectReviewEvidencePack,
   maxChars = 48_000,
 ): string {
   const md = evidencePackToMarkdown(pack);
-  const fileBodies = [...pack.relevantFiles, ...pack.unchangedImportant]
-    .slice(0, 16)
-    .map((f) => {
-      if (!f.content) return `- \`${f.path}\` (${f.role}) — content not inlined`;
-      return [
-        `### ${f.path} [${f.role}]`,
-        "```",
-        truncate(f.content, 8_000),
-        "```",
-      ].join("\n");
-    })
-    .join("\n\n");
+  const files = [...pack.relevantFiles, ...pack.unchangedImportant];
+  const sections = files.slice(0, MAX_INLINED_FILES).map((f) => {
+    if (!f.content) return `- \`${f.path}\` (${f.role}) — content not inlined`;
+    return [
+      `### ${f.path} [${f.role}]`,
+      "```",
+      truncate(f.content, MAX_INLINED_FILE_CHARS),
+      "```",
+    ].join("\n");
+  });
 
   const depExcerpt = pack.dependencies.manifestExcerpt
     ? `### package.json\n\`\`\`\n${truncate(pack.dependencies.manifestExcerpt, 3_000)}\n\`\`\``
@@ -185,14 +190,68 @@ export function formatEvidencePackForPrompt(
     ? `### Diff\n\`\`\`\n${truncate(pack.git.diff, 12_000)}\n\`\`\``
     : "";
 
-  const combined = [
-    md,
-    "",
-    "## File contents",
-    fileBodies || "(none)",
+  const beforeFiles = [md, "", "## File contents", ""].join("\n");
+  const evidence = [
+    beforeFiles + (sections.join("\n\n") || "(none)"),
     "",
     depExcerpt,
     gitDiff,
+  ].join("\n");
+
+  // Decision-critical sections sit outside the evidence budget so truncating
+  // a large pack can never drop them. Reserve room for the longest possible
+  // coverage report (every file listed once, both labels present).
+  const reserve =
+    decisionSections(pack, files.length, [], files.map((f) => f.path), true)
+      .length +
+    PARTIAL_LABEL.length +
+    32;
+  const budget = Math.max(0, maxChars - reserve);
+  const evidenceTruncated = evidence.length > budget;
+  const kept = evidenceTruncated ? budget : evidence.length;
+
+  // Classify each file by how much of its body survived the budget.
+  const partial: string[] = [];
+  const omitted: string[] = [];
+  let offset = beforeFiles.length;
+  files.forEach((f, i) => {
+    const section = sections[i];
+    if (section === undefined || !f.content) {
+      omitted.push(f.path);
+    } else if (offset >= kept) {
+      omitted.push(f.path);
+    } else if (
+      offset + section.length > kept ||
+      f.truncated ||
+      f.content.length > MAX_INLINED_FILE_CHARS
+    ) {
+      partial.push(f.path);
+    }
+    if (section !== undefined) offset += section.length + 2;
+  });
+
+  const evidenceBlock = evidenceTruncated ? truncate(evidence, budget) : evidence;
+  return `${evidenceBlock}\n${decisionSections(pack, files.length, partial, omitted, evidenceTruncated)}`;
+}
+
+function decisionSections(
+  pack: ProjectReviewEvidencePack,
+  fileCount: number,
+  partial: string[],
+  omitted: string[],
+  evidenceTruncated: boolean,
+): string {
+  const list = (paths: string[]) => paths.map((p) => `\`${p}\``).join(", ");
+  const full = fileCount - partial.length - omitted.length;
+  return [
+    "",
+    "## Evidence coverage",
+    `File bodies for ${fileCount} collected files: ${full} delivered in full, ${partial.length} partially, ${omitted.length} not delivered.`,
+    partial.length > 0 ? `${PARTIAL_LABEL}${list(partial)}` : "",
+    omitted.length > 0 ? `${OMITTED_LABEL}${list(omitted)}` : "",
+    evidenceTruncated
+      ? "Evidence above was cut to fit the prompt budget; anything cut off was not reviewed."
+      : "",
     "",
     "## Executor claims vs evidence",
     `Explanation source: ${pack.executorExplanation.source}`,
@@ -205,8 +264,6 @@ export function formatEvidencePackForPrompt(
       ? "\n## Stall signal\nExecutor appears stalled waiting for confirmation to proceed to the next phase. Do NOT PASS. Issue a nextPhaseDirective."
       : "",
   ].join("\n");
-
-  return truncate(combined, maxChars);
 }
 
 export function reviewResultFromModelText(raw: string): ReviewerTurnResult {

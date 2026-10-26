@@ -10,7 +10,9 @@ import {
 } from "./images.js";
 import {
   assertSafeProjectPath,
+  readGuardedProjectText,
   readProjectFile,
+  resolveContainedProjectPath,
   listProjectDirectory,
 } from "../security/paths.js";
 import { assertCommandAllowed } from "../security/commands.js";
@@ -41,6 +43,8 @@ export interface EvidenceCollectorDeps {
     cwd: string,
   ) => Promise<{ stdout: string; stderr: string; code: number }>;
   verificationCommands?: VerificationCommands;
+  /** Architecture summary from executor output or evidence pack. */
+  architectureFallback?: string;
 }
 
 /**
@@ -81,7 +85,7 @@ async function fulfillOne(
 ): Promise<boolean> {
   switch (request.kind) {
     case EvidenceKind.File: {
-      const absolute = assertSafeProjectPath(deps.projectPath, request.path);
+      assertSafeProjectPath(deps.projectPath, request.path);
       if (isImagePath(request.path)) {
         const image = await readProjectImageBase64(deps.projectPath, request.path);
         deps.collector.add({
@@ -96,7 +100,9 @@ async function fulfillOne(
         });
         return true;
       }
-      const raw = await readProjectFile(absolute);
+      const raw = await readProjectFile(
+        await resolveContainedProjectPath(deps.projectPath, request.path),
+      );
       const redacted = redactSecrets(raw);
       deps.collector.addFile(
         request.path,
@@ -110,7 +116,7 @@ async function fulfillOne(
       let any = false;
       for (const rel of request.paths) {
         try {
-          const absolute = assertSafeProjectPath(deps.projectPath, rel);
+          assertSafeProjectPath(deps.projectPath, rel);
           if (isImagePath(rel)) {
             const image = await readProjectImageBase64(deps.projectPath, rel);
             deps.collector.add({
@@ -126,7 +132,9 @@ async function fulfillOne(
             any = true;
             continue;
           }
-          const raw = await readProjectFile(absolute);
+          const raw = await readProjectFile(
+            await resolveContainedProjectPath(deps.projectPath, rel),
+          );
           const redacted = redactSecrets(raw);
           deps.collector.addFile(
             rel,
@@ -214,8 +222,9 @@ async function fulfillOne(
       const rel =
         "path" in request && request.path ? request.path : "package.json";
       try {
-        const absolute = assertSafeProjectPath(deps.projectPath, rel);
-        const raw = await readProjectFile(absolute);
+        const raw = await readProjectFile(
+          await resolveContainedProjectPath(deps.projectPath, rel),
+        );
         const redacted = redactSecrets(raw);
         deps.collector.addFile(rel, redacted.text, request.description ?? rel, {
           redacted: redacted.redacted,
@@ -245,7 +254,38 @@ async function fulfillOne(
       });
       return true;
     }
-    case EvidenceKind.Architecture:
+    case EvidenceKind.Architecture: {
+      if (deps.architectureFallback?.trim()) {
+        deps.collector.add({
+          type: ArtifactType.Other,
+          description: "architecture summary",
+          content: deps.architectureFallback.trim().slice(0, 12_000),
+        });
+        return true;
+      }
+      for (const rel of [
+        "docs/architecture.md",
+        "ARCHITECTURE.md",
+        "architecture.md",
+        "docs/ARCHITECTURE.md",
+      ]) {
+        const redacted = await readGuardedProjectText(deps.projectPath, rel);
+        if (!redacted) continue;
+        deps.collector.addFile(
+          rel,
+          redacted.text,
+          "architecture documentation",
+          { redacted: redacted.redacted },
+        );
+        deps.collector.add({
+          type: ArtifactType.Other,
+          description: "architecture summary",
+          content: redacted.text.slice(0, 12_000),
+        });
+        return true;
+      }
+      return false;
+    }
     case EvidenceKind.RuntimeInformation:
     case EvidenceKind.Log:
     case EvidenceKind.Logs:

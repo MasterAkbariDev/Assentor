@@ -3,6 +3,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { LocalGitService } from "../git/local.js";
 import { redactSecrets } from "../security/redact.js";
+import { readGuardedProjectText } from "../security/paths.js";
 import {
   buildDirectoryTree,
   searchProject,
@@ -34,6 +35,7 @@ import { runShellCommand } from "../process/run-shell.js";
 
 const MAX_FILE_BYTES = 80_000;
 const MAX_FILES = 24;
+const MAX_FILES_DEEP = 40;
 const MAX_DIFF_CHARS = 60_000;
 
 export interface EvidencePackBuilderOptions {
@@ -116,16 +118,49 @@ export class EvidencePackBuilder {
       (pack.depth === "STANDARD" || pack.depth === "DEEP");
     pack.tests = await this.collectCommandStatus(shouldRun && pack.depth === "DEEP");
 
-    if (extras.architecture) {
+    if (extras.architecture?.summary) {
       pack.architecture = extras.architecture;
     } else {
-      pack.architecture = {
-        summary: "",
-        modules: [],
-        boundaries: [],
-        abstractions: [],
-        source: "missing",
-      };
+      const goalText = this.options.contract?.goal ?? "";
+      let summary =
+        extras.architecture?.summary ??
+        parseArchitectureSummary(
+          extras.executorExplanation?.raw ??
+            extras.executorExplanation?.whatChanged ??
+            "",
+        ) ??
+        "";
+
+      if (!summary && isArchitectureHeavyTask(goalText)) {
+        summary = (await loadProjectArchitectureDoc(this.projectPath)) ?? "";
+      }
+
+      const architectureSource = extras.architecture?.source
+        ?? (summary
+          ? parseArchitectureSummary(
+              extras.executorExplanation?.raw ??
+                extras.executorExplanation?.whatChanged ??
+                "",
+            )
+            ? "executor"
+            : "assentor"
+          : "missing");
+
+      pack.architecture = summary
+        ? {
+            summary,
+            modules: extras.architecture?.modules ?? [],
+            boundaries: extras.architecture?.boundaries ?? [],
+            abstractions: extras.architecture?.abstractions ?? [],
+            source: architectureSource,
+          }
+        : {
+            summary: "",
+            modules: [],
+            boundaries: [],
+            abstractions: [],
+            source: "missing",
+          };
     }
 
     if (extras.executorExplanation) {
@@ -170,26 +205,58 @@ export class EvidencePackBuilder {
       git: (await git.isRepo()) ? git : undefined,
       runCommand: runShellCommand,
       verificationCommands: commands,
+      architectureFallback: pack.architecture.summary || undefined,
     });
+
+    if (!pack.architecture.summary) {
+      const doc = await loadProjectArchitectureDoc(this.projectPath);
+      if (doc) {
+        pack.architecture = {
+          summary: doc,
+          modules: pack.architecture.modules ?? [],
+          boundaries: pack.architecture.boundaries ?? [],
+          abstractions: pack.architecture.abstractions ?? [],
+          source: "assentor",
+        };
+      }
+    }
+
+    for (const artifact of this.collector.list()) {
+      if (
+        artifact.description === "architecture summary" &&
+        artifact.content &&
+        !pack.architecture.summary
+      ) {
+        pack.architecture = {
+          summary: artifact.content.slice(0, 12_000),
+          modules: pack.architecture.modules ?? [],
+          boundaries: pack.architecture.boundaries ?? [],
+          abstractions: pack.architecture.abstractions ?? [],
+          source: "assentor",
+        };
+      }
+    }
 
     for (const request of result.unfulfilled) {
       pack.notes.push(formatUnfulfilledEvidenceNote(request));
     }
 
-    // Fold newly collected file artifacts into pack
-    for (const artifact of this.collector.list({ type: "file" })) {
-      if (!artifact.path || !artifact.content) continue;
-      const exists = pack.relevantFiles.some((f) => f.path === artifact.path);
-      if (!exists) {
-        pack.relevantFiles.push({
-          path: artifact.path,
-          role: "relevant",
-          description: artifact.description,
-          content: artifact.content.slice(0, MAX_FILE_BYTES),
-          truncated: artifact.content.length > MAX_FILE_BYTES,
-        });
-      }
-    }
+    // Fold requested files into the front of the pack so the prompt's file
+    // limit and evidence budget reach them before older context.
+    const requestedFiles = this.collector
+      .list({ type: "file" })
+      .filter((artifact) => artifact.path && artifact.content);
+    const requestedPaths = new Set(requestedFiles.map((a) => a.path));
+    pack.relevantFiles = [
+      ...requestedFiles.map((artifact) => ({
+        path: artifact.path!,
+        role: "relevant" as const,
+        description: artifact.description,
+        content: artifact.content!.slice(0, MAX_FILE_BYTES),
+        truncated: artifact.content!.length > MAX_FILE_BYTES,
+      })),
+      ...pack.relevantFiles.filter((f) => !requestedPaths.has(f.path)),
+    ];
 
     for (const artifact of this.collector.list()) {
       if (artifact.metadata?.kind === "search" || artifact.description?.includes("search")) {
@@ -500,7 +567,7 @@ export class EvidencePackBuilder {
       ];
       for (const text of blobs) {
         const matches = text.match(
-          /([A-Za-z0-9_./-]+\.(?:html|css|js|ts|tsx|jsx|json|md|py|go|rs|java))/g,
+          /([A-Za-z0-9_./-]+\.(?:html|css|js|ts|tsx|jsx|json|md|py|go|rs|java|dart))/g,
         );
         for (const m of matches ?? []) {
           candidates.add(m.replace(/^\.\//, ""));
@@ -515,8 +582,26 @@ export class EvidencePackBuilder {
       "src/index.ts",
       "src/main.ts",
       "src/app.ts",
+      ...ARCHITECTURE_DOC_CANDIDATES,
     ]) {
       candidates.add(name);
+    }
+
+    if (
+      isArchitectureHeavyTask(
+        [
+          contract?.goal ?? "",
+          ...(contract?.requirements ?? []),
+          ...(contract?.acceptanceCriteria ?? []),
+        ].join("\n"),
+      )
+    ) {
+      for (const doc of ARCHITECTURE_DOC_CANDIDATES) {
+        candidates.add(doc);
+      }
+      for (const related of expandRelatedModuleFiles(changed)) {
+        candidates.add(related);
+      }
     }
 
     // Import heuristic from changed files
@@ -549,9 +634,12 @@ export class EvidencePackBuilder {
       ...[...candidates].filter((file) => !changedSet.has(file)).sort(),
     ];
 
+    const maxFiles =
+      this.options.depth === "DEEP" ? MAX_FILES_DEEP : MAX_FILES;
+
     for (const relative of orderedCandidates) {
       if (isNoisePath(relative)) continue;
-      if (changedRefs.length + unchangedRefs.length >= MAX_FILES) break;
+      if (changedRefs.length + unchangedRefs.length >= maxFiles) break;
       const ref = await this.readFileRef(
         relative,
         changedSet.has(relative) ? "changed" : "unchanged_important",
@@ -591,23 +679,16 @@ export class EvidencePackBuilder {
     if (isImagePath(relative)) {
       return null;
     }
-    const absolute = path.join(this.projectPath, relative);
-    try {
-      const stat = await fs.stat(absolute);
-      if (!stat.isFile() || stat.size > 200_000) return null;
-      const raw = await fs.readFile(absolute, "utf8");
-      const redacted = redactSecrets(raw);
-      const truncated = redacted.text.length > MAX_FILE_BYTES;
-      return {
-        path: relative,
-        role,
-        description: `${role}: ${relative}`,
-        content: redacted.text.slice(0, MAX_FILE_BYTES),
-        truncated,
-      };
-    } catch {
-      return null;
-    }
+    const text = (await readGuardedProjectText(this.projectPath, relative))?.text;
+    if (text === undefined) return null;
+    const truncated = text.length > MAX_FILE_BYTES;
+    return {
+      path: relative,
+      role,
+      description: `${role}: ${relative}`,
+      content: text.slice(0, MAX_FILE_BYTES),
+      truncated,
+    };
   }
 
   private async collectScreenshotArtifacts(): Promise<void> {
@@ -722,6 +803,7 @@ const HANDOFF_KEYS = [
   "limitations",
   "architectureSummary",
   "architecture_summary",
+  "architecture",
 ] as const;
 
 /**
@@ -789,9 +871,99 @@ export function parseArchitectureSummary(text: string): string | undefined {
   if (!trimmed) {
     return undefined;
   }
+  // The executor's JSON handoff first (fenced block preferred, see findExecutorHandoff).
   const parsed = findExecutorHandoff(trimmed);
-  const summary = parsed?.architectureSummary ?? parsed?.architecture_summary;
-  return typeof summary === "string" && summary.trim() ? summary.trim() : undefined;
+  const summary =
+    parsed?.architectureSummary ?? parsed?.architecture_summary ?? parsed?.architecture;
+  if (typeof summary === "string" && summary.trim()) {
+    return summary.trim();
+  }
+
+  const sectionC = trimmed.match(
+    /(?:^|\n)#+\s*Section C[^\n]*\n([\s\S]*?)(?=\n#+\s*Section [D-Z]|\n---\s*\n(?:####|###|##)|\n#### \d+\.|$)/i,
+  );
+  if (sectionC?.[1]?.trim()) {
+    return sectionC[1].trim().slice(0, 12_000);
+  }
+
+  const archHeader = trimmed.match(
+    /(?:^|\n)#+\s*Architecture[^\n]*\n([\s\S]*?)(?=\n#+\s+(?:Section [D-Z]|Inlined|Command Output)|\n---\s*\n(?:####|###)|$)/i,
+  );
+  const archBody = archHeader?.[1]?.trim();
+  if (archBody && archBody.length > 80) {
+    return archBody.slice(0, 12_000);
+  }
+
+  if (
+    /clean architecture|presentation layer|domain layer|data layer|module layering|layer dependency/i.test(
+      trimmed,
+    )
+  ) {
+    const idx = trimmed.search(
+      /clean architecture|presentation layer|module layering|layer dependency/i,
+    );
+    if (idx >= 0) {
+      return trimmed.slice(idx, idx + 12_000).trim();
+    }
+  }
+
+  return undefined;
+}
+
+const ARCHITECTURE_DOC_CANDIDATES = [
+  "docs/architecture.md",
+  "ARCHITECTURE.md",
+  "architecture.md",
+  "docs/ARCHITECTURE.md",
+] as const;
+
+/** Load committed architecture documentation when executor output lacks Section C. */
+export async function loadProjectArchitectureDoc(
+  projectPath: string,
+): Promise<string | undefined> {
+  for (const relative of ARCHITECTURE_DOC_CANDIDATES) {
+    const trimmed = (await readGuardedProjectText(projectPath, relative))?.text.trim();
+    if (trimmed && trimmed.length > 80) {
+      return trimmed.slice(0, 12_000);
+    }
+  }
+  return undefined;
+}
+
+export function isArchitectureHeavyTask(text: string): boolean {
+  return /architecture|clean arch|layering|module bound|refactor|repository|providers?\.dart|hexagonal/i.test(
+    text,
+  );
+}
+
+/** Expand git-changed paths to related domain/data/presentation files in the same feature module. */
+export function expandRelatedModuleFiles(changed: string[]): string[] {
+  const expanded = new Set<string>();
+  const moduleRe =
+    /^(?:apps\/[^/]+\/)?(?:lib\/)?features\/([^/]+)\/(presentation|domain|data)\//;
+
+  for (const file of changed) {
+    const match = file.match(moduleRe);
+    if (!match) {
+      continue;
+    }
+    const [, module, layer] = match;
+    const prefix = file.slice(0, file.indexOf(`/features/${module}/`) + `/features/${module}/`.length);
+
+    if (layer === "presentation") {
+      expanded.add(`${prefix}presentation/providers/${module}_providers.dart`);
+      expanded.add(`${prefix}presentation/providers/${module}s_providers.dart`);
+    }
+    expanded.add(`${prefix}domain/repositories/${module}_repository.dart`);
+    expanded.add(`${prefix}domain/repositories/${module}s_repository.dart`);
+    expanded.add(`${prefix}data/repositories/${module}_repository_impl.dart`);
+    expanded.add(`${prefix}data/repositories/${module}s_repository_impl.dart`);
+  }
+
+  for (const file of changed) {
+    expanded.delete(file);
+  }
+  return [...expanded];
 }
 
 export function parseExecutorExplanation(

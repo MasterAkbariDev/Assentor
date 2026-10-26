@@ -962,6 +962,8 @@ export async function resumeAssentorTask(input: {
   projectPath: string;
   taskId?: string;
   verbose?: boolean;
+  executor?: string;
+  reviewer?: string;
   maxRounds?: number;
   maxMessages?: number;
   /** Executor model; overrides `config.executor.model`. */
@@ -971,11 +973,12 @@ export async function resumeAssentorTask(input: {
   /** Config `teams` entry to review with; see `RunAssentorInput.team`. */
   team?: string;
 }) {
+  assertReviewerOrTeam(input);
   const projectPath = path.resolve(input.projectPath);
   const reporter = new RunReporter({
     verbose: input.verbose,
-    executorName: "executor",
-    reviewerName: "reviewer",
+    executorName: input.executor ?? "executor",
+    reviewerName: input.reviewer ?? "reviewer",
   });
   reporter.preparing("loading task to continue…");
 
@@ -995,7 +998,12 @@ export async function resumeAssentorTask(input: {
   try {
     // Config first: a bad --team fails here, before the task is even looked up.
     reporter.updatePreparing("loading config…");
-    const loaded = await loadAssentorConfig(projectPath);
+    const loaded = await loadAssentorConfig(projectPath, {
+      executor: input.executor,
+      reviewer: input.reviewer,
+      maxRounds: input.maxRounds,
+      maxMessages: input.maxMessages,
+    });
     const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
 
     const resume = input.taskId
@@ -1043,6 +1051,14 @@ export async function resumeAssentorTask(input: {
     }
     const executorProvider = config.executor.provider;
     const backends = selectReviewerBackends(config);
+
+    reporter.updateAgentLabels({
+      executorName: formatExecutorProvider(executorProvider),
+      reviewerName: formatReviewerRunLabel(
+        backends[0]?.provider ?? input.reviewer ?? "reviewer",
+        backends[0],
+      ),
+    });
 
     reporter.updatePreparing("checking environment…");
     const preflight = await runPreflight({
