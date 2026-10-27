@@ -145,6 +145,8 @@ Strategy tasks (T02-04…08) implement against the **strategy contract** deliver
 ### T02-09 · Stage-graph runner (plan → execute → review, tiebreak)
 **Tier:** 🔴 O · **Review:** O2 + human · **Size:** L · **Depends:** T02-03, T01-03
 
+**Planner note (from the T01-03 review):** a reviewer negotiation used as the panel tiebreak (`onDisagreement`) replaces the vote, so the security veto and failed-member guard still apply but a negotiated PASS could clear a member's BLOCKED or evidenced non-security blocker. When implementing the tiebreak here, keep those: a negotiated result may not be PASS while any member returned BLOCKED or an evidenced blocker.
+
 **Goal** — Sessions run as a graph of stages: `negotiate` output can feed `execute`; `review` NEEDS_WORK loops back; review disagreement can trigger a reviewer negotiation (`tiebreak: negotiate`).
 
 **Deliverables**

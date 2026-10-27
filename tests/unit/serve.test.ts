@@ -133,13 +133,17 @@ describe("assentor serve: HTTP", () => {
     await fs.writeFile(path.join(uiDir, ".env"), "SECRET=1", "utf8");
     const outside = await tempDir("serve-outside-");
     await fs.writeFile(path.join(outside, "secret.txt"), "nope", "utf8");
-    await fs.symlink(path.join(outside, "secret.txt"), path.join(uiDir, "link.txt"));
+    // Creating symlinks needs elevated rights on Windows runners; the rest of the test still runs there.
+    const canSymlink = process.platform !== "win32";
+    if (canSymlink) {
+      await fs.symlink(path.join(outside, "secret.txt"), path.join(uiDir, "link.txt"));
+    }
     const { handle, host } = await serve({ uiDir });
 
     const get = (p: string) => request(handle.port, { path: p, headers: { host } });
     expect((await get("/")).body).toBe("<p>app</p>");
     expect((await get("/assets/app.js")).headers["content-type"]).toContain("text/javascript");
-    for (const p of ["/../package.json", "/%2e%2e/package.json", "/assets/..%2f..%2fpackage.json", "/.env", "/link.txt", "/nope.js"]) {
+    for (const p of ["/../package.json", "/%2e%2e/package.json", "/assets/..%2f..%2fpackage.json", "/.env", ...(canSymlink ? ["/link.txt"] : []), "/nope.js"]) {
       expect((await get(p)).status, p).toBe(404);
     }
     expect((await request(handle.port, { method: "POST", headers: { host } })).status).toBe(405);

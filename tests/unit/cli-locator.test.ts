@@ -110,6 +110,6 @@ describe("CLI locator", () => {
       homedir: "/home/sam",
       env: { HOME: "/home/sam" },
     });
-    expect(paths.some((p) => p.endsWith("/.local/bin/agy"))).toBe(true);
+    expect(paths.some((p) => p.replace(/\\/g, "/").endsWith("/.local/bin/agy"))).toBe(true);
   });
 });

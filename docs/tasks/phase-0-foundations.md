@@ -328,6 +328,8 @@ Phase exit criteria:
 ### T00-08 · CI matrix: macOS + Windows + Linux
 **Tier:** 🟡 S · **Review:** O · **Size:** S–M · **Depends:** —
 
+**Status: ✅ done, not yet run on GitHub** (`2e8f870`, Sonnet; planner review PASS). `.github/workflows/ci.yml`: matrix ubuntu/macos/windows, `fail-fast: false`, git configured before checkout (`autocrlf false`, `eol lf`, CI identity), same gate on Node 24. Test-only Windows fixes: cli-locator path normalisation; chmod and symlink tests `skipIf(win32)` with reasons; serve traversal test keeps its non-symlink checks on Windows. Unverified until the first CI run: process-group kill tests (event-log-lock, process-tracker, cursor-spawn). Any product fix a Windows run reveals is a separate Danger-list card.
+
 **Goal** — "Works on all OS" is enforced by CI.
 
 **Context to read** — `.github/workflows/ci.yml`, `vitest.config.ts`, tests touching paths/processes (`cli-locator`, `process-tracker`, `cursor-spawn`, `persistence`, `git-artifacts`, `e2e-average`).
