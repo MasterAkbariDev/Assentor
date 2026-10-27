@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Command } from "commander";
+import { Command, InvalidArgumentError } from "commander";
 import path from "node:path";
 import {
   doctorAssentor,
@@ -29,6 +29,15 @@ import {
 
 const program = new Command();
 const version = getLocalVersionSync();
+
+/** Commander turns a thrown InvalidArgumentError into a one-line message and exit code 1. */
+function parsePort(value: string): number {
+  const port = Number(value);
+  if (!/^\d+$/.test(value) || port > 65_535) {
+    throw new InvalidArgumentError("Port must be an integer from 0 to 65535.");
+  }
+  return port;
+}
 
 program
   .name("assentor")
@@ -100,7 +109,7 @@ program
   .command("app")
   .description("Serve the web UI on a free local port and open it in your browser")
   .option("-p, --project <path>", "Project directory", ".")
-  .option("--port <n>", "Port (0 picks a free one)", (v: string) => Number(v), 0)
+  .option("--port <n>", "Port (0 picks a free one)", parsePort, 0)
   .option("--no-open", "Print the URL without opening a browser")
   .action(async (options: { project: string; port: number; open: boolean }) => {
     const { runApp } = await import("./app.js");

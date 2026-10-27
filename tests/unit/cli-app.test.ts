@@ -4,7 +4,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
-import { browserOpenCommand, launchApp, openBrowser, type SpawnFn } from "../../src/cli/app.js";
+import { browserOpenCommand, launchApp, openBrowser, runApp, type SpawnFn } from "../../src/cli/app.js";
 import type { ServeHandle } from "../../src/serve/index.js";
 
 const dirs: string[] = [];
@@ -143,5 +143,35 @@ describe("launchApp", () => {
 
     expect(handle.url).toContain("#token=");
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("runApp", () => {
+  it("stops the server on SIGTERM and removes its signal listeners afterwards", async () => {
+    let resolveClosed!: () => void;
+    const closed = new Promise<void>((resolve) => (resolveClosed = resolve));
+    const close = vi.fn(async () => resolveClosed());
+    const stub: ServeHandle = {
+      url: URL_WITH_TOKEN,
+      port: 4319,
+      host: "127.0.0.1",
+      closed,
+      close,
+    };
+    const sigintBefore = process.listenerCount("SIGINT");
+    const sigtermBefore = process.listenerCount("SIGTERM");
+
+    const running = runApp(
+      { projectPath: await tempProject(), open: false },
+      { startServe: async () => stub, log: () => {} },
+    );
+    await vi.waitFor(() => expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore + 1));
+
+    process.emit("SIGTERM");
+    await running;
+
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(process.listenerCount("SIGINT")).toBe(sigintBefore);
+    expect(process.listenerCount("SIGTERM")).toBe(sigtermBefore);
   });
 });

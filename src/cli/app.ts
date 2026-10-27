@@ -86,8 +86,15 @@ export async function launchApp(options: AppOptions, deps: AppDeps = {}): Promis
 /** `assentor app`: runs until Ctrl+C or SIGTERM, then stops the server gracefully. */
 export async function runApp(options: AppOptions, deps: AppDeps = {}): Promise<void> {
   const handle = await launchApp(options, deps);
-  const stop = () => void handle.close();
+  const stop = () => {
+    handle.close().catch(() => undefined);
+  };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
-  await handle.closed;
+  try {
+    await handle.closed;
+  } finally {
+    process.off("SIGINT", stop);
+    process.off("SIGTERM", stop);
+  }
 }
