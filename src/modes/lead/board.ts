@@ -2,6 +2,7 @@ import { BoardOpSchema, type BoardOp, type LeadTask, type LeadTaskPlan, type Lea
 
 /**
  * Lead task board (task T02B-05). Pure: `applyBoardOp` never mutates its input.
+ * Assumes the input board is valid; validate boards loaded from disk before use.
  * Every operation returns a new board, or the original board object with an
  * `error` when the operation is refused.
  *
@@ -137,7 +138,13 @@ function runOp(board: TaskBoard, op: BoardOp): TaskBoard {
       if (task.status !== "backlog" && task.status !== "rejected") {
         throw transitionError(task, "assigned");
       }
-      return replaceAt(board, index, { ...task, status: "assigned", assignee: op.seatId });
+      // Assigning a rejected task is a reassignment, so it counts against the per-task cap.
+      return replaceAt(board, index, {
+        ...withoutRejection(task),
+        status: "assigned",
+        assignee: op.seatId,
+        reassignCount: task.reassignCount + (task.status === "rejected" ? 1 : 0),
+      });
     }
 
     case "status": {
@@ -178,7 +185,7 @@ function runOp(board: TaskBoard, op: BoardOp): TaskBoard {
         throw transitionError(task, "assigned");
       }
       return replaceAt(board, index, {
-        ...task,
+        ...withoutRejection(task),
         status: "assigned",
         assignee: op.seatId,
         reassignCount: task.reassignCount + 1,
@@ -227,6 +234,10 @@ function splitTask(board: TaskBoard, taskId: string, children: LeadTaskPlan[]): 
 
   const childIds = new Set<string>();
   for (const child of children) {
+    if (child.dependsOn.some((dep) => key(dep) === key(parent.id))) {
+      // The parent becomes `split` and never `accepted`, so the child could never be ready.
+      throw new BoardError(`child ${child.id} cannot depend on its parent ${parent.id}`);
+    }
     const id = key(child.id);
     if (childIds.has(id) || findTask(board, child.id) !== undefined) {
       throw new BoardError(`task id ${child.id} is already used`);
@@ -415,6 +426,12 @@ function requireTask(board: TaskBoard, id: string): { index: number; task: LeadT
 
 function replaceAt(board: TaskBoard, index: number, task: LeadTask): TaskBoard {
   return { tasks: board.tasks.map((current, position) => (position === index ? task : current)) };
+}
+
+/** The task without its rejection reason, for a rejected task that goes back to `assigned`. */
+function withoutRejection(task: LeadTask): LeadTask {
+  const { rejectionReason: _reason, ...rest } = task;
+  return rest;
 }
 
 function transitionError(task: LeadTask, target: string): BoardError {

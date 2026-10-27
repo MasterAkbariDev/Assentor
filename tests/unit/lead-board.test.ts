@@ -124,6 +124,28 @@ describe("applyBoardOp: assign and reassign", () => {
     expect(taskOf(board, "T1")).toMatchObject({ status: "assigned", assignee: "seat-a" });
   });
 
+  it("assign from rejected counts a reassignment and clears the rejection reason", () => {
+    const rejected = run(inProgressBoard(), { op: "reject", taskId: "T1", reason: "nope" });
+    const board = run(rejected, { op: "assign", taskId: "T1", seatId: "seat-b" });
+
+    expect(taskOf(board, "T1")).toMatchObject({ status: "assigned", assignee: "seat-b", reassignCount: 1 });
+    expect(taskOf(board, "T1").rejectionReason).toBeUndefined();
+  });
+
+  it("assign from backlog does not count a reassignment", () => {
+    const board = run(emptyTaskBoard(), planOp(planned("T1")), { op: "assign", taskId: "T1", seatId: "a" });
+
+    expect(taskOf(board, "T1").reassignCount).toBe(0);
+  });
+
+  it("reassign clears the rejection reason", () => {
+    const rejected = run(inProgressBoard(), { op: "reject", taskId: "T1", reason: "nope" });
+    const board = run(rejected, { op: "reassign", taskId: "T1", seatId: "b" });
+
+    expect(taskOf(board, "T1")).toMatchObject({ status: "assigned", reassignCount: 1 });
+    expect(taskOf(board, "T1").rejectionReason).toBeUndefined();
+  });
+
   it("assign also works from rejected", () => {
     const rejected = run(inProgressBoard(), { op: "reject", taskId: "T1", reason: "nope" });
     const board = run(rejected, { op: "assign", taskId: "T1", seatId: "seat-b" });
@@ -234,6 +256,16 @@ describe("applyBoardOp: split", () => {
     const board = run(base, { op: "split", taskId: "T1", tasks: [planned("T1a"), planned("T1b")] });
 
     expect(taskOf(board, "T2").dependsOn).toEqual(["T1a", "T1b"]);
+  });
+
+  it("refuses a child that depends on its own parent, ignoring case", () => {
+    const base = run(emptyTaskBoard(), planOp(planned("T1")));
+
+    const direct = applyBoardOp(base, { op: "split", taskId: "T1", tasks: [planned("T1.1", { dependsOn: ["T1"] }), planned("T1.2")] });
+    expect(direct.error).toBe("child T1.1 cannot depend on its parent T1");
+
+    const lowered = applyBoardOp(base, { op: "split", taskId: "T1", tasks: [planned("T1.1"), planned("T1.2", { dependsOn: ["t1"] })] });
+    expect(lowered.error).toBe("child T1.2 cannot depend on its parent T1");
   });
 
   it("refuses a closed task (accepted, rejected or split)", () => {
