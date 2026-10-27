@@ -91,12 +91,14 @@ describe("architecture doc fallback", () => {
     return dir;
   }
 
-  it("ignores an architecture doc symlinked from outside the project", async () => {
+  // Creating symlinks needs elevated rights on Windows runners.
+  it.skipIf(process.platform === "win32")("ignores an architecture doc symlinked from outside the project", async () => {
     const dir = await projectWithOutsideSymlink();
     expect(await loadProjectArchitectureDoc(dir)).toBeUndefined();
   });
 
-  it("does not fulfill architecture or file requests through an outside symlink", async () => {
+  // Creating symlinks needs elevated rights on Windows runners.
+  it.skipIf(process.platform === "win32")("does not fulfill architecture or file requests through an outside symlink", async () => {
     const dir = await projectWithOutsideSymlink();
     const collector = new ArtifactCollector();
     const fulfillment = await fulfillEvidenceRequests(

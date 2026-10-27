@@ -14,10 +14,25 @@ permissions:
 
 jobs:
   check:
-    name: Typecheck, test, build
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    name: Typecheck, test, build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      # Let every OS report its own failures instead of cancelling the rest.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
+      # Before checkout so Windows does not rewrite line endings in fixtures.
+      # The identity is for tests that run `git commit`.
+      - name: Configure git
+        shell: bash
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+          git config --global user.name "Assentor CI"
+          git config --global user.email "ci@assentor.invalid"
+
       - name: Checkout
         uses: actions/checkout@v5
 

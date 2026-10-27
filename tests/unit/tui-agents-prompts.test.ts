@@ -437,7 +437,8 @@ describe("tui agents prompts", () => {
       await waitFor(() => app.text().includes("1 prompt file(s) failed to load"), "the validate result");
     });
 
-    it("a fork the filesystem refuses shows the error, the run continues, and nothing rejects", async () => {
+    // POSIX permission bits: a read-only directory is not enforced by chmod on Windows.
+    it.skipIf(process.platform === "win32")("a fork the filesystem refuses shows the error, the run continues, and nothing rejects", async () => {
       const rejections: unknown[] = [];
       const onRejection = (reason: unknown) => {
         rejections.push(reason);
