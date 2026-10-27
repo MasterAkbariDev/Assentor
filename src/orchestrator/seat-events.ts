@@ -1,4 +1,9 @@
-import type { SeatPermissions, SeatStatus, SeatTransport } from "../core/seats.js";
+import {
+  isTerminalSeatStatus,
+  type SeatPermissions,
+  type SeatStatus,
+  type SeatTransport,
+} from "../core/seats.js";
 import { createDeltaCoalescer, type DeltaCoalescer } from "../events/coalescer.js";
 import type { EventLog } from "../events/log.js";
 import {
@@ -61,6 +66,13 @@ export interface SeatInfo {
   permissions: SeatPermissions;
 }
 
+/** Legacy terminal events and how they close turns still open at that point. */
+const SESSION_END: Partial<Record<SupervisorEvent["type"], { ok: boolean; label: string }>> = {
+  "task.completed": { ok: true, label: "completed" },
+  "task.blocked": { ok: false, label: "blocked" },
+  "task.failed": { ok: false, label: "failed" },
+};
+
 /**
  * Map executor activity strings (cursor stream-json, print-CLI parsers) to a
  * seat status. Unknown activities return `undefined`.
@@ -107,6 +119,8 @@ export class SeatEventSink {
   private readonly redact: boolean;
   /** Last `seat.status` per seat, as `status + NUL + detail`. */
   private readonly lastStatus = new Map<string, string>();
+  /** Seats whose current turn has started but not reported done or error. */
+  private readonly openTurns = new Set<string>();
 
   constructor(options: SeatEventSinkOptions) {
     this.sessionId = options.sessionId;
@@ -254,7 +268,18 @@ export class SeatEventSink {
         const { rawOutput, ...rest } = data;
         draft.data = { ...rest, rawOutputChars: rawOutput.length } as typeof draft.data;
       }
+      const ending = SESSION_END[event.type];
+      if (ending) {
+        // A session end closes every turn still open, so no seat is left "running".
+        this.closeOpenTurns(ending);
+      }
       this.emit(draft);
+      // The panel seat gets `starting` from review.started but its verdict is a
+      // review.verdict, not a seat event: end the reviewer-scoped turn here.
+      if (event.type === "review.completed" && draft.seatId && this.openTurns.has(draft.seatId)) {
+        const verdict = (draft.data as { status?: unknown }).status;
+        this.done(draft.seatId, true, `verdict: ${String(verdict ?? "UNKNOWN")}`);
+      }
     } catch (error) {
       this.report(error, "supervisor event mapping");
     }
@@ -285,6 +310,12 @@ export class SeatEventSink {
     await this.chain;
   }
 
+  private closeOpenTurns(ending: { ok: boolean; label: string }): void {
+    for (const seatId of [...this.openTurns]) {
+      this.done(seatId, ending.ok, `session ${ending.label} before this seat reported`);
+    }
+  }
+
   /** False when this is a repeated `seat.status`. Other lifecycle events reset the seat's last status. */
   private trackStatus(draft: EngineEventDraft): boolean {
     const seatId = draft.seatId!;
@@ -296,11 +327,19 @@ export class SeatEventSink {
           return false;
         }
         this.lastStatus.set(seatId, key);
+        if (isTerminalSeatStatus(data.status as SeatStatus)) {
+          this.openTurns.delete(seatId);
+        } else if (data.status !== "queued") {
+          this.openTurns.add(seatId);
+        }
         return true;
       }
       case "seat.spawned":
       case "seat.done":
       case "seat.error":
+        this.lastStatus.delete(seatId);
+        this.openTurns.delete(seatId);
+        return true;
       case "seat.retry":
         this.lastStatus.delete(seatId);
         return true;

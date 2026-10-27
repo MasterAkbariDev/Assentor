@@ -21,6 +21,7 @@ import {
   type ReviewerTurnResult,
   type SupervisorEvent,
 } from "../../src/index.js";
+import { reduceSeatEvents } from "../../src/ui-shared/status.js";
 
 const tempDirs: string[] = [];
 
@@ -78,6 +79,8 @@ async function runWithSeats(options: {
   log?: EventLog;
   withSink?: boolean;
   onError?: (error: unknown, context: string) => void;
+  /** Reviewer members; default two passing reviewers. */
+  reviewers?: Reviewer[];
 }): Promise<{ legacy: SupervisorEvent[]; engine: EngineEvent[]; status: TaskState }> {
   const legacy: SupervisorEvent[] = [];
   const engine: EngineEvent[] = [];
@@ -90,20 +93,22 @@ async function runWithSeats(options: {
           onEvent: (event) => engine.push(event),
           ...(options.onError ? { onError: options.onError } : {}),
         });
-  const members = ["Claude", "Gemini"].map((name, index) =>
-    trackReviewerSeat(passingReviewer(name), `reviewer-${index + 1}`, () => sink),
+  const members = (options.reviewers ?? ["Claude", "Gemini"].map(passingReviewer)).map(
+    (member, index) => trackReviewerSeat(member, `reviewer-${index + 1}`, () => sink),
   );
+  const single = members.length === 1;
   const supervisor = new Supervisor({
     projectPath: options.projectPath,
     contract: createEmptyContract("Implement average()"),
     executor: passingExecutor(),
-    reviewer: new PanelReviewer({ name: "panel", reviewers: members }),
+    reviewer: single ? members[0]! : new PanelReviewer({ name: "panel", reviewers: members }),
     budgets: createBudgets({ maxRounds: 3, maxMessages: 20 }),
     taskId: options.sessionId,
     skipGates: true,
     onEvent: (event) => legacy.push(event),
     seatEvents: sink,
-    seatScope: { executorSeatId: "executor", reviewerSeatId: "panel" },
+    seatScope: { executorSeatId: "executor", reviewerSeatId: single ? "reviewer-1" : "panel" },
+    maxFailureRetries: 0,
   });
   const result = await supervisor.run();
   await sink?.close();
@@ -415,5 +420,68 @@ describe("Supervisor with seat events", () => {
 
     const all = await readSessionEvents(projectPath, sessionId);
     expect(all).toHaveLength(first.engine.length + second.engine.length);
+  });
+});
+
+describe("seat turns always end", () => {
+  function finalSeats(engine: EngineEvent[]) {
+    return engine.reduce(reduceSeatEvents, {} as ReturnType<typeof reduceSeatEvents>);
+  }
+
+  it("ends the review panel seat after its verdict", async () => {
+    const projectPath = await tempProject();
+    const { engine, status } = await runWithSeats({ projectPath, sessionId: createId() });
+
+    expect(status).toBe(TaskState.Done);
+    const panel = engine.filter((e) => e.seatId === "panel");
+    const verdictAt = panel.findIndex((e) => e.type === "review.verdict");
+    expect(verdictAt).toBeGreaterThanOrEqual(0);
+    expect(panel[verdictAt + 1]).toMatchObject({
+      type: "seat.done",
+      data: { ok: true, summary: "verdict: PASS" },
+    });
+    for (const seat of Object.values(finalSeats(engine))) {
+      expect(["done", "failed"]).toContain(seat.status);
+    }
+  });
+
+  it("does not end a single reviewer twice", async () => {
+    const projectPath = await tempProject();
+    const { engine } = await runWithSeats({
+      projectPath,
+      sessionId: createId(),
+      reviewers: [passingReviewer("Claude")],
+    });
+
+    const done = engine.filter((e) => e.seatId === "reviewer-1" && e.type === "seat.done");
+    expect(done).toHaveLength(1);
+  });
+
+  it("closes every open turn when the session fails", async () => {
+    const projectPath = await tempProject();
+    const broken: Reviewer = {
+      name: "Broken",
+      review: async () => {
+        throw new Error("reviewer crashed");
+      },
+      continue: async () => {
+        throw new Error("reviewer crashed");
+      },
+    };
+    const { engine, status } = await runWithSeats({
+      projectPath,
+      sessionId: createId(),
+      reviewers: [broken, broken],
+    });
+
+    expect(status).not.toBe(TaskState.Done);
+    for (const [seatId, seat] of Object.entries(finalSeats(engine))) {
+      expect({ seatId, ended: ["done", "failed"].includes(seat.status) }).toEqual({
+        seatId,
+        ended: true,
+      });
+    }
+    const panelEnd = engine.find((e) => e.seatId === "panel" && e.type === "seat.done");
+    expect(panelEnd?.data).toMatchObject({ ok: false });
   });
 });
