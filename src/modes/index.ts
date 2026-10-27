@@ -45,3 +45,10 @@ export {
   type ControllerActionResult,
   type ControllerContext,
 } from "./controller.js";
+export {
+  applyBoardOp,
+  boardColumns,
+  readyTasks,
+  type ApplyBoardOpResult,
+  type BoardColumns,
+} from "./lead/board.js";
