@@ -9,7 +9,7 @@ import {
   normalizeExecutorProvider,
 } from "../executors/providers.js";
 import { NegotiateModeSchema, ReviewModeSchema } from "./teams.js";
-import { TeamSchema } from "../core/seats.js";
+import { SEAT_PROVIDERS, TeamSchema } from "../core/seats.js";
 
 const ExecutorProviderSchema = z.preprocess(
   (value) =>
@@ -118,6 +118,18 @@ export const AssentorConfigSchema = z.object({
       maxMessages: z.number().int().positive().default(50),
       maxRuntimeMinutes: z.number().int().positive().default(120),
       maxToolCalls: z.number().int().positive().default(200),
+      /** Seat scheduler (T02-02): parallel jobs per provider; unset = CLI 2, API 4. */
+      concurrency: z.record(z.enum(SEAT_PROVIDERS), z.number().int().min(1).max(16)).default({}),
+      /** Seat scheduler: parallel jobs across all providers. */
+      globalConcurrency: z.number().int().min(1).max(32).default(6),
+      /** Seat scheduler: whole-session budget across all seats (unset = no limit). */
+      session: z
+        .object({
+          maxTokens: z.number().int().positive().optional(),
+          maxCostUsd: z.number().positive().optional(),
+          maxRuntimeMinutes: z.number().int().positive().optional(),
+        })
+        .default({}),
     })
     .default({}),
   binaries: z

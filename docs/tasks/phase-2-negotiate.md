@@ -32,6 +32,8 @@ Strategy tasks (T02-04…08) implement against the **strategy contract** deliver
 ### T02-02 · Seat scheduler: concurrency, rate limits, budgets
 **Tier:** 🔴 O · **Review:** O2 · **Size:** L · **Depends:** T00-07
 
+**Status: ✅ done** (planner; O2 NEEDS_WORK → fixed → PASS). `src/seats/scheduler.ts`: `SeatScheduler.run(seat, job, { signal, timeoutMs, classify, maxAttempts })` → `JobOutcome` (never throws; reasons `cancelled|budget|timeout|rate_limited|error`, scope `seat|session`). Global FIFO admission with per-provider caps from the seat's transport (CLI 2, API 4), a global cap (6) and provider cooldowns; budgets re-checked at admission. Rate limits back off exponentially with jitter, release the slot, honour `retryAfterMs` up to `backoffMaxMs` (longer fails). Budgets per seat and session (tokens/cost/runtime): 80% `budget.warning`, 100% stop; runtime enforced mid-run by a timer; a seat breach stops the seat's jobs, a session breach stops all. Per-attempt `timeoutMs`; a job that ignores its abort settles after `abortGraceMs` (slot held until it really ends). `cancelSeat`/`cancelAll`. Config `limits.concurrency`, `limits.globalConcurrency`, `limits.session`; `createSeatScheduler(limits, …)`. Known limit (documented): parallel jobs can overshoot a runtime budget by their overlap. T02-03 maps `scope: "session"` → `NegotiationCancelledError(reason)` and everything else → `ok: false`, and must call `cancelAll` when a session ends.
+
 **Goal** — Run many seats safely: per-provider concurrency caps, queue with `queued` status, rate-limit backoff with countdown events, per-seat and per-session budgets, cancellation.
 
 **Context to read** — `src/core/budgets.ts`, `src/core/retry.ts`, `src/orchestrator/supervisor.ts` (retry logic), `src/process/tracker.ts`.

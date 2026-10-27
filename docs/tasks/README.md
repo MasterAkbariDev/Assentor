@@ -116,7 +116,7 @@ Legend: 🟢 H · 🟡 S · 🔴 O · Size S/M/L (≈ <150 / 150–500 / >500 ch
 | ID | Title | Tier | Review | Size | Depends |
 |---|---|---|---|---|---|
 | T02-01 | Worktree manager | 🔴 O | O2 + human | L | T00-01 |
-| T02-02 | Seat scheduler: concurrency, rate limits, budgets | 🔴 O | O2 | L | T00-07 |
+| T02-02 | Seat scheduler: concurrency, rate limits, budgets ✅ | 🔴 O | O2 | L | T00-07 |
 | T02-03 | Negotiation engine core + strategy contract | 🔴 O | O2 + human | L | T02-02 |
 | T02-04 | Strategy: Vote (ranked / Borda) | 🟢 H | S | S | T02-03 |
 | T02-05 | Strategy: Debate | 🟡 S | O | M | T02-03 |
