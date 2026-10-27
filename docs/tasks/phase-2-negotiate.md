@@ -97,6 +97,8 @@ Strategy tasks (T02-04…08) implement against the **strategy contract** deliver
 ### T02-05 · Strategy: Debate
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** T02-03
 
+**Status: implemented, awaiting Opus review.** Rules are documented at the top of `src/negotiation/strategies/debate.ts`. Decisions: options `maxRounds`/`consensus`/`moderator`/`devilsAdvocate` (seat ids); the moderator only rules after the last round (judge on the first seat if none); a seat whose round-1 proposal fails is out; critics are never shown their own proposal and self/unknown-target critiques are dropped with dissent; critique weight (cited 1, uncited 0.5) lowers the leader's agreement score: `score = base × (1 − 0.5·W/(W+V))`; if the moderator/judge reply is unusable the last check's leader (else the first proposal) stands and `consensus.reached` is false; dissent covers failures, dropped critiques and every final-round voter that did not back the decision.
+
 **Goal** — Propose → anonymized critique (evidence-required) → revise → consensus check, up to `maxRounds`; moderator/judge decides if no consensus; dissent recorded.
 
 **Deliverables** — strategy implementation, devil's-advocate seat support (role `devils-advocate` never counts toward consensus), critique quality rule (critiques without file/line or reasoning citations get weight 0.5), tests with scripted seats covering convergence in round 1, round 3, and no convergence → judge.
