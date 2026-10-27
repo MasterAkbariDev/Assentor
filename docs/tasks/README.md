@@ -177,7 +177,7 @@ Design: [modes.md](../plans/modes.md)
 | T04-12 | Prompts / Teams / Playbooks editors | 🟢 H | S | M | T04-06 |
 | T04-13 | Settings, Doctor, Onboarding | 🟢 H | S | M | T04-06 |
 | T04-14 | Command palette + keyboard map | 🟢 H | S | S | T04-06 |
-| T04-15 | `assentor app` launcher | 🟢 H | S | S | T04-03 |
+| T04-15 | `assentor app` launcher ✅ | 🟢 H | S | S | T04-03 |
 | T04-16 | Mode picker (new session) | 🟢 H | S | S | T04-06, T02B-01, T02B-08 |
 | T04-17 | Lead team board view | 🟢 H | S | M | T04-06, T02B-18 |
 
