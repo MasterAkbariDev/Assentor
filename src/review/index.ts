@@ -63,6 +63,7 @@ export {
   ReviewCoordinator,
   PanelReviewer,
   correlateFindings,
+  rankCorrelatedFindings,
   securityVeto,
   type CorrelatedFinding,
   type MemberOutcome,
