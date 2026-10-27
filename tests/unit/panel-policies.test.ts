@@ -11,12 +11,14 @@ import {
 import { ReviewCoordinator, type ReviewPolicy } from "../../src/review/coordinator.js";
 import { IssueCategory } from "../../src/protocol/review-result.js";
 import { createEmptyContract } from "../../src/index.js";
+import { MessageType } from "../../src/protocol/messages.js";
+import { createProtocolMessage } from "../../src/protocol/parse.js";
 import type { ReviewerFinding } from "../../src/agents/routed-reviewer.js";
 import type { LogicalAgentProfile } from "../../src/agents/index.js";
 import type { RoutingEngine } from "../../src/routing/engine.js";
 
 type Issue = NonNullable<ReviewResult["issues"]>[number];
-type Verdict = "PASS" | "NEEDS_WORK" | "BLOCKED" | "FAIL";
+type Verdict = "PASS" | "NEEDS_WORK" | "BLOCKED" | "FAIL" | "ASK";
 
 const POLICIES: ReviewPolicy[] = ["security-veto", "unanimous", "majority", "weighted", "adjudicator"];
 
@@ -41,11 +43,22 @@ function result(status: ReviewResult["status"], issues: Issue[] = []): ReviewRes
   });
 }
 
+const askForDiff = createProtocolMessage({
+  conversationId: "c",
+  round: 1,
+  from: "reviewer",
+  to: "executor",
+  type: MessageType.EvidenceRequest,
+  content: { requests: [{ kind: "git_diff" }], reason: "need the diff" },
+});
+
 function member(name: string, verdict: Verdict, issues: Issue[] = []): Reviewer {
   const turn = (): ReviewerTurnResult =>
     verdict === "FAIL"
       ? { error: "claude CLI timed out" }
-      : { result: result(verdict as ReviewResult["status"], issues) };
+      : verdict === "ASK"
+        ? { messages: [askForDiff] }
+        : { result: result(verdict as ReviewResult["status"], issues) };
   return { name, review: async () => turn(), continue: async () => turn() };
 }
 
@@ -84,6 +97,23 @@ const P: [Verdict] = ["PASS"];
 const N: [Verdict] = ["NEEDS_WORK"];
 const B: [Verdict] = ["BLOCKED"];
 const F: [Verdict] = ["FAIL"];
+const ASK: [Verdict] = ["ASK"];
+const blockerEvidenced: Issue = {
+  id: "BLK-1",
+  severity: Severity.Blocker,
+  category: IssueCategory.Correctness,
+  description: "Migration drops the users table",
+  evidence: ["db/001.sql:3 DROP TABLE users"],
+  affectedFiles: ["db/001.sql"],
+};
+const minorObjection: Issue = {
+  id: "MIN-1",
+  severity: Severity.Minor,
+  category: IssueCategory.Maintainability,
+  description: "Rename helper for clarity",
+  evidence: [],
+  affectedFiles: [],
+};
 
 describe("panel decision policies", () => {
   // expected status per policy, in POLICIES order
@@ -113,9 +143,9 @@ describe("panel decision policies", () => {
       expected: { "security-veto": "NEEDS_WORK", unanimous: "NEEDS_WORK", majority: "NEEDS_WORK", weighted: "NEEDS_WORK", adjudicator: "NEEDS_WORK" },
     },
     {
-      name: "one blocked, two pass",
+      name: "one blocked, two pass (a vote never clears BLOCKED)",
       seats: [P, B, P],
-      expected: { "security-veto": "BLOCKED", unanimous: "BLOCKED", majority: "PASS", weighted: "PASS", adjudicator: "BLOCKED" },
+      expected: { "security-veto": "BLOCKED", unanimous: "BLOCKED", majority: "BLOCKED", weighted: "BLOCKED", adjudicator: "BLOCKED" },
     },
     {
       name: "two blocked, one pass",
@@ -125,7 +155,7 @@ describe("panel decision policies", () => {
     {
       name: "three-way split",
       seats: [P, N, B],
-      expected: { "security-veto": "BLOCKED", unanimous: "BLOCKED", majority: "NEEDS_WORK", weighted: "NEEDS_WORK", adjudicator: "BLOCKED" },
+      expected: { "security-veto": "BLOCKED", unanimous: "BLOCKED", majority: "BLOCKED", weighted: "BLOCKED", adjudicator: "BLOCKED" },
     },
     {
       name: "single seat passes",
@@ -149,6 +179,26 @@ describe("panel decision policies", () => {
       },
     },
     {
+      name: "evidenced blocker (not security) from a dissenter beside a PASS majority",
+      seats: [P, ["NEEDS_WORK", [blockerEvidenced]], P],
+      expected: { "security-veto": "NEEDS_WORK", unanimous: "NEEDS_WORK", majority: "NEEDS_WORK", weighted: "NEEDS_WORK", adjudicator: "NEEDS_WORK" },
+    },
+    {
+      name: "pass, needs work and a failed member: the vote is undecided, so inconclusive for votes",
+      seats: [P, N, F],
+      expected: { "security-veto": "NEEDS_WORK", unanimous: "NEEDS_WORK", majority: "INCONCLUSIVE", weighted: "INCONCLUSIVE", adjudicator: "NEEDS_WORK" },
+    },
+    {
+      name: "pass, needs work and a member still asking: the vote is undecided",
+      seats: [P, N, ASK],
+      expected: { "security-veto": "NEEDS_WORK", unanimous: "NEEDS_WORK", majority: "INCONCLUSIVE", weighted: "INCONCLUSIVE", adjudicator: "NEEDS_WORK" },
+    },
+    {
+      name: "missing member cannot change the vote (two needs work, one failed)",
+      seats: [N, N, F],
+      expected: { "security-veto": "NEEDS_WORK", unanimous: "NEEDS_WORK", majority: "NEEDS_WORK", weighted: "NEEDS_WORK", adjudicator: "NEEDS_WORK" },
+    },
+    {
       name: "member failure never rescues a majority of passes",
       seats: [P, F, F],
       expected: {
@@ -158,11 +208,6 @@ describe("panel decision policies", () => {
         weighted: "INCONCLUSIVE",
         adjudicator: "INCONCLUSIVE",
       },
-    },
-    {
-      name: "member failure beside real findings keeps the findings",
-      seats: [N, N, F],
-      expected: { "security-veto": "NEEDS_WORK", unanimous: "NEEDS_WORK", majority: "NEEDS_WORK", weighted: "NEEDS_WORK", adjudicator: "NEEDS_WORK" },
     },
   ];
 
@@ -201,6 +246,25 @@ describe("panel decision policies", () => {
     expect(
       await outcome("weighted", [N, P, P], { roles, roleWeights: { "security-reviewer": 1 } }),
     ).toBe("PASS");
+  });
+
+  it("a PASS majority drops a dissenter's minor objection but keeps an evidenced blocker", async () => {
+    const minor = await build("majority", [P, P, ["NEEDS_WORK", [minorObjection]]]).review(panelInput());
+    expect(minor.result!.status).toBe(ReviewStatus.Pass);
+    expect(minor.result!.issues).toEqual([]);
+
+    const blocker = await build("majority", [P, P, ["NEEDS_WORK", [blockerEvidenced]]]).review(panelInput());
+    expect(blocker.result!.status).toBe(ReviewStatus.NeedsWork);
+    expect(blocker.result!.issues!.map((i) => i.id)).toContain("BLK-1");
+    expect(blocker.result!.requiredChanges!.length).toBeGreaterThan(0);
+  });
+
+  it("weighted: a missing heavy seat keeps the vote undecided; a missing light one does not", async () => {
+    // security seat (2) failed: P(1) vs N(1) with 2 missing could be decided either way
+    const heavyMissing = ["security-reviewer", "code-reviewer", "code-reviewer"];
+    expect(await outcome("weighted", [F, P, N], { roles: heavyMissing })).toBe("INCONCLUSIVE");
+    // light seat failed: N(3 of 4) already wins whatever the missing seat says
+    expect(await outcome("weighted", [N, N, F], { roles: heavyMissing })).toBe("NEEDS_WORK");
   });
 
   it("weighted: rejects non-positive weights", () => {
@@ -269,8 +333,8 @@ describe("adjudicator", () => {
 describe("onDisagreement (negotiate tiebreak)", () => {
   const negotiatedPass = result(ReviewStatus.Pass);
 
-  it("is consulted on a split when tiebreak is negotiate, for every policy", async () => {
-    for (const policy of POLICIES) {
+  it("is consulted on a split when tiebreak is negotiate, for every policy but unanimous", async () => {
+    for (const policy of POLICIES.filter((p) => p !== "unanimous")) {
       const onDisagreement = vi.fn(async (_findings: ReviewerFinding[]) => negotiatedPass);
       const status = await outcome(policy, [P, N], { tiebreak: "negotiate", onDisagreement });
       expect(status, policy).toBe("PASS");
@@ -305,5 +369,48 @@ describe("onDisagreement (negotiate tiebreak)", () => {
     const hook = { tiebreak: "negotiate" as const, onDisagreement: async () => negotiatedPass };
     expect(await outcome("majority", [P, ["NEEDS_WORK", [securityMajor]]], hook)).toBe("NEEDS_WORK");
     expect(await outcome("majority", [P, N, F], hook)).toBe("INCONCLUSIVE");
+  });
+});
+
+describe("onDisagreement and security claims", () => {
+  const unevidencedClaim: Issue = { ...securityMajor, id: "SEC-U", evidence: [], affectedFiles: ["src/db.ts"] };
+  const hook = {
+    tiebreak: "negotiate" as const,
+    onDisagreement: async () => result(ReviewStatus.Pass),
+  };
+
+  it("a negotiated PASS over an unevidenced security claim asks for the diff once, then blocks", async () => {
+    for (const policy of ["majority", "weighted", "adjudicator"] as const) {
+      const panel = build(policy, [P, ["NEEDS_WORK", [unevidencedClaim]]], hook);
+      const first = await panel.review(panelInput());
+      expect(first.result!.status, policy).toBe(ReviewStatus.NeedsWork);
+      expect(first.result!.evidenceRequests!.length, policy).toBeGreaterThan(0);
+      expect(first.result!.summary).toContain("Unverified security claim");
+
+      const second = await panel.review(panelInput());
+      expect(second.result!.status, policy).toBe(ReviewStatus.Blocked);
+      expect(second.result!.summary).toContain("a human must decide");
+    }
+  });
+
+  it("unanimous never consults the hook", async () => {
+    const onDisagreement = vi.fn(async (_f: ReviewerFinding[]) => result(ReviewStatus.Pass));
+    expect(await outcome("unanimous", [P, N], { tiebreak: "negotiate", onDisagreement })).toBe("NEEDS_WORK");
+    expect(onDisagreement).not.toHaveBeenCalled();
+  });
+
+  it("a FAILED hook result is ignored", async () => {
+    const failed = makeReviewResult({
+      status: ReviewStatus.Failed,
+      confidence: 1,
+      summary: "negotiation could not run",
+      issues: [],
+      requiredChanges: [],
+      optionalChanges: [],
+      evidenceRequests: [],
+    });
+    expect(
+      await outcome("majority", [P, N], { tiebreak: "negotiate", onDisagreement: async () => failed }),
+    ).toBe("NEEDS_WORK");
   });
 });

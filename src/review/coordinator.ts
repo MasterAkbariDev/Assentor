@@ -85,6 +85,16 @@ export function defaultRoleWeight(role: string): number {
   return /security/i.test(role) ? 2 : 1;
 }
 
+export interface DecideOptions {
+  totalReviewers?: number;
+  /**
+   * Keys of unevidenced security claims already sent for verification.
+   * The same claim coming back unsupported blocks for a human instead of
+   * asking again. Updated in place.
+   */
+  verificationRequested?: Set<string>;
+}
+
 export interface ReviewCoordinatorOptions {
   reviewers: Reviewer[];
   /** Optional LLM adjudicator; when omitted, uses deterministic weighted merge. */
@@ -235,37 +245,71 @@ export class ReviewCoordinator {
    */
   async decide(
     findings: ReviewerFinding[],
-    options: {
-      totalReviewers?: number;
-      /**
-       * Keys of unevidenced security claims already sent for verification.
-       * The same claim coming back unsupported blocks for a human instead of
-       * asking again. Updated in place.
-       */
-      verificationRequested?: Set<string>;
-    } = {},
+    options: DecideOptions = {},
   ): Promise<ReviewResult> {
-    if (findings.length === 0) {
-      return makeReviewResult({
+    const outcome = await this.decideOutcome(findings, options);
+    return (
+      outcome.result ??
+      makeReviewResult({
         status: ReviewStatus.Failed,
         confidence: 1,
-        summary: "No reviewer returned a structured result",
+        summary: outcome.inconclusive ?? "Panel inconclusive",
         issues: [],
         requiredChanges: [],
         optionalChanges: [],
         evidenceRequests: [],
-      });
+      })
+    );
+  }
+
+  /**
+   * Like `decide`, but a vote that members who did not answer (failed or
+   * pending) could still change comes back as `inconclusive` instead of a
+   * result, so the caller can retry rather than send a guess to the executor.
+   */
+  async decideOutcome(
+    findings: ReviewerFinding[],
+    options: DecideOptions = {},
+  ): Promise<{ result?: ReviewResult; inconclusive?: string }> {
+    if (findings.length === 0) {
+      return {
+        result: makeReviewResult({
+          status: ReviewStatus.Failed,
+          confidence: 1,
+          summary: "No reviewer returned a structured result",
+          issues: [],
+          requiredChanges: [],
+          optionalChanges: [],
+          evidenceRequests: [],
+        }),
+      };
     }
     const total = options.totalReviewers ?? (this.reviewers.length || undefined);
     const base = await this.mergeFindings(findings, total);
+    if ("inconclusive" in base) {
+      return base;
+    }
     const result = enforceSecurityAuthority(base, findings, options.verificationRequested);
-    return this.policy === "security-veto" ? result : labelVerdicts(this.policy, findings, result);
+    return {
+      result:
+        this.policy === "security-veto" ? result : labelVerdicts(this.policy, findings, result),
+    };
+  }
+
+  /** Weight of configured members that have no finding (failed, pending or absent). */
+  private missingWeight(findings: ReviewerFinding[]): number {
+    const answered = new Set(findings.map((f) => f.agentId));
+    let missing = 0;
+    for (const [id, weight] of this.memberWeights) {
+      if (!answered.has(id)) missing += weight;
+    }
+    return missing;
   }
 
   private async mergeFindings(
     findings: ReviewerFinding[],
     total: number | undefined,
-  ): Promise<ReviewResult> {
+  ): Promise<ReviewResult | { inconclusive: string }> {
     if (findings.length === 1) {
       return normalizeResult(findings[0]!.result);
     }
@@ -274,10 +318,12 @@ export class ReviewCoordinator {
       return mergeAgreeing(findings, total);
     }
 
-    if (this.tiebreak === "negotiate" && this.onDisagreement) {
+    // `unanimous` never lets anyone but the members decide.
+    if (this.tiebreak === "negotiate" && this.onDisagreement && this.policy !== "unanimous") {
       try {
         const negotiated = await this.onDisagreement(findings);
-        if (negotiated) {
+        // A FAILED negotiation is an operational failure, not a ruling.
+        if (negotiated && negotiated.status !== ReviewStatus.Failed) {
           return normalizeResult(negotiated);
         }
       } catch {
@@ -289,9 +335,14 @@ export class ReviewCoordinator {
       case "unanimous":
         return weightedMerge(findings, total);
       case "majority":
-        return voteMerge(findings, total, () => 1);
+        return voteMerge(findings, total, () => 1, this.missingWeight(findings));
       case "weighted":
-        return voteMerge(findings, total, (id) => this.memberWeights.get(id) ?? 1);
+        return voteMerge(
+          findings,
+          total,
+          (id) => this.memberWeights.get(id) ?? 1,
+          this.missingWeight(findings),
+        );
       case "adjudicator":
       case "security-veto":
         break;
@@ -431,10 +482,23 @@ export class PanelReviewer implements Reviewer {
       };
     }
 
-    const result = await this.coordinator.decide(findings, {
+    const decided = await this.coordinator.decideOutcome(findings, {
       totalReviewers: outcomes.length,
       verificationRequested: this.verificationRequested,
     });
+    // A vote that failed or pending members could still change is not a
+    // verdict: same path as a PASS with failed members.
+    if (decided.inconclusive !== undefined || !decided.result) {
+      if (failed.length === 0) {
+        return { messages: communication };
+      }
+      return {
+        error: inconclusiveSummary(outcomes),
+        retryable: failed.every((f) => f.retryable),
+        rawOutput: rawOutput(this.coordinator.correlate(findings)),
+      };
+    }
+    const result = decided.result;
 
     // PASS needs every configured member. Members still asking get their
     // evidence first; failed members make the turn inconclusive. That is an
@@ -724,40 +788,64 @@ function weightedMerge(findings: ReviewerFinding[], total?: number): ReviewResul
 }
 
 /**
- * Status with more than half of the total weight wins; anything else (ties,
- * three-way splits) is NEEDS_WORK. A FAILED verdict still wins outright, as in
- * `weightedMerge`.
+ * Vote for `majority` and `weighted`. The threshold is half of the configured
+ * panel's weight: `missing` is the weight of members with no finding.
+ *
+ * - Any BLOCKED verdict keeps the result BLOCKED; a vote never clears it.
+ * - A FAILED verdict wins outright, as in `weightedMerge`.
+ * - A side with more than half the weight wins; anything else is NEEDS_WORK,
+ *   unless the missing members could still decide it, which is inconclusive.
+ * - A PASS majority drops dissenters' major/minor/info objections, but not an
+ *   evidenced blocker (any category): that makes the result NEEDS_WORK.
  */
 function voteMerge(
   findings: ReviewerFinding[],
   total: number | undefined,
   weightOf: (agentId: string) => number,
-): ReviewResult {
-  if (findings.some((f) => f.result.status === ReviewStatus.Failed)) {
+  missing: number,
+): ReviewResult | { inconclusive: string } {
+  if (
+    findings.some(
+      (f) => f.result.status === ReviewStatus.Failed || f.result.status === ReviewStatus.Blocked,
+    )
+  ) {
     return weightedMerge(findings, total);
   }
   const tally = new Map<ReviewResult["status"], number>();
-  let sum = 0;
+  let answered = 0;
   for (const f of findings) {
     const weight = weightOf(f.agentId);
     tally.set(f.result.status, (tally.get(f.result.status) ?? 0) + weight);
-    sum += weight;
+    answered += weight;
   }
-  const winner = [...tally.entries()].find(([, weight]) => weight * 2 > sum)?.[0];
+  const panel = answered + missing;
+  const winner = [...tally.entries()].find(([, weight]) => weight * 2 > panel)?.[0];
+
+  if (winner === undefined) {
+    const couldDecide = [ReviewStatus.Pass, ReviewStatus.NeedsWork, ReviewStatus.Blocked].some(
+      (status) => ((tally.get(status) ?? 0) + missing) * 2 > panel,
+    );
+    if (missing > 0 && couldDecide) {
+      return {
+        inconclusive: "Panel vote is undecided and members that did not answer could still decide it",
+      };
+    }
+    return mergeStatus(ReviewStatus.NeedsWork, findings, "Panel: no majority; changes required", total);
+  }
   if (winner === ReviewStatus.Pass) {
-    return mergeStatus(ReviewStatus.Pass, findings, "Panel: majority passed", total);
+    const blockers = findings.some((f) =>
+      (f.result.issues ?? []).some((i) => i.severity === Severity.Blocker && isEvidenced(i)),
+    );
+    return blockers
+      ? mergeStatus(
+          ReviewStatus.NeedsWork,
+          findings,
+          "Panel: evidenced blocker issue overrides the PASS majority",
+          total,
+        )
+      : mergeStatus(ReviewStatus.Pass, findings, "Panel: majority passed", total);
   }
-  if (winner === ReviewStatus.Blocked) {
-    return mergeStatus(ReviewStatus.Blocked, findings, "Panel: majority blocked", total);
-  }
-  return mergeStatus(
-    ReviewStatus.NeedsWork,
-    findings,
-    winner === undefined
-      ? "Panel: no majority; changes required"
-      : "Panel: majority requires changes",
-    total,
-  );
+  return mergeStatus(ReviewStatus.NeedsWork, findings, "Panel: majority requires changes", total);
 }
 
 /** Prefix the summary with each member's verdict, e.g. `Panel [majority] A PASS, B NEEDS_WORK`. */
