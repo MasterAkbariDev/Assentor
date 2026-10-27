@@ -105,8 +105,41 @@ describe("parseAgentReport: failures", () => {
     expect(parseAgentReport("", "T1")).toMatchObject({ ok: false, needsRepair: true });
   });
 
+  it("names the parse error when JSON-looking text cannot be parsed", () => {
+    const result = parseAgentReport('My report: {"taskId": "T1", "status": }', "T1");
+
+    expect(result).toMatchObject({ ok: false, needsRepair: true });
+    expect((result as { error: string }).error).toMatch(/^JSON found but it could not be parsed: ./);
+    expect((result as { error: string }).error).not.toContain("no JSON report found");
+  });
+
+  it("says a brace is unmatched when there is no closing brace", () => {
+    expect(parseAgentReport("I wrote {not finished", "T1")).toEqual({
+      ok: false,
+      error: "JSON found but it could not be parsed: no matching closing brace",
+      needsRepair: true,
+    });
+  });
+
+  it("keeps 'no JSON report found' for text with no brace at all", () => {
+    expect(parseAgentReport("Done, no report here.", "T1")).toEqual({
+      ok: false,
+      error: "no JSON report found",
+      needsRepair: true,
+    });
+  });
+
   it("a JSON array is not a report", () => {
     expect(parseAgentReport(fenced([1, 2]), "T1")).toMatchObject({ ok: false, needsRepair: true });
+  });
+
+  it("a cut inside an earlier code block does not turn its closing fence into an opener", () => {
+    // ~40k lines of ts: the 64 KB tail begins inside this block, so its closing fence is the first fence seen.
+    const tsBlock = ["```ts", ...Array.from({ length: 40_000 }, (_, i) => `const value${i} = ${i};`), "```"].join("\n");
+    const text = `${tsBlock}\nThe report follows.\n${fenced(REPORT)}`;
+
+    expect(Buffer.byteLength(text, "utf8")).toBeGreaterThan(MAX_REPORT_SCAN_BYTES);
+    expect(parseAgentReport(text, "T1")).toMatchObject({ ok: true, report: { taskId: "T1", status: "done" } });
   });
 
   it("ignores everything before the last 64 KB", () => {
@@ -217,6 +250,17 @@ describe("verifyReportClaims", () => {
       "diff_file_not_reported",
     ]);
     expect(verifyReportClaims(report, evidence, { ignoreCase: true })).toEqual([]);
+  });
+
+  it("normalises '/./' segments and a trailing slash, and counts a repeated file once", () => {
+    const checks = verifyReportClaims(reportOf({ filesChanged: ["src/./a.ts", "./src/a.ts", "src/a.ts/"] }), {
+      diffFiles: ["src/a.ts"],
+    });
+
+    expect(checks).toEqual([]);
+
+    const repeated = verifyReportClaims(reportOf({ filesChanged: ["src/x.ts", "./src/x.ts"] }), { diffFiles: [] });
+    expect(repeated).toEqual([{ kind: "file_not_in_diff", detail: "reported file src/x.ts is not in the diff" }]);
   });
 
   it("no false positives when the same file appears in several spellings of the diff list", () => {

@@ -34,7 +34,8 @@ export type ParseAgentReportResult =
  * - A schema failure, or no JSON at all, asks for a repair.
  */
 export function parseAgentReport(text: string, taskId: string): ParseAgentReportResult {
-  const found = findReportJson(tailBytes(text, MAX_REPORT_SCAN_BYTES));
+  const tail = tailBytes(text, MAX_REPORT_SCAN_BYTES);
+  const found = findReportJson(tail.text, tail.truncated);
   if (!found.ok) {
     return { ok: false, error: found.error, needsRepair: true };
   }
@@ -131,12 +132,12 @@ export function verifyReportClaims(
   const reported = new Set(report.filesChanged.map((file) => fold(normalizePath(file))));
   const checks: ClaimCheck[] = [];
 
-  for (const file of report.filesChanged) {
+  for (const file of uniqueBy(report.filesChanged, (file) => fold(normalizePath(file)))) {
     if (!diff.has(fold(normalizePath(file)))) {
       checks.push({ kind: "file_not_in_diff", detail: `reported file ${file} is not in the diff` });
     }
   }
-  for (const file of evidence.diffFiles) {
+  for (const file of uniqueBy(evidence.diffFiles, (file) => fold(normalizePath(file)))) {
     if (!reported.has(fold(normalizePath(file)))) {
       checks.push({
         kind: "diff_file_not_reported",
@@ -181,14 +182,37 @@ function normalizePath(path: string): string {
   return path
     .trim()
     .replace(/\\/g, "/")
+    .replace(/\/{2,}/g, "/")
     .replace(/^(\.\/)+/, "")
-    .replace(/\/{2,}/g, "/");
+    .replace(/(\/\.)+\//g, "/")
+    .replace(/(.)\/$/, "$1");
 }
 
-/** The last `max` UTF-8 bytes of `text`. */
-function tailBytes(text: string, max: number): string {
+/** Items in first-seen order, one per key. */
+function uniqueBy(items: string[], key: (item: string) => string): string[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const k = key(item);
+    if (seen.has(k)) {
+      return false;
+    }
+    seen.add(k);
+    return true;
+  });
+}
+
+/**
+ * The last `max` UTF-8 bytes of `text`. When the text was cut, its first line
+ * is cut mid-line too, so it is dropped.
+ */
+function tailBytes(text: string, max: number): { text: string; truncated: boolean } {
   const bytes = Buffer.from(text, "utf8");
-  return bytes.length <= max ? text : bytes.subarray(bytes.length - max).toString("utf8");
+  if (bytes.length <= max) {
+    return { text, truncated: false };
+  }
+  const tail = bytes.subarray(bytes.length - max).toString("utf8");
+  const newline = tail.indexOf("\n");
+  return { text: newline < 0 ? "" : tail.slice(newline + 1), truncated: true };
 }
 
 type FoundJson = { ok: true; data: unknown } | { ok: false; error: string };
@@ -198,8 +222,8 @@ type FoundJson = { ok: true; data: unknown } | { ok: false; error: string };
  * parse (an earlier valid block must not stand in for a broken final one).
  * Without a fenced block, bare JSON is read with `extractJsonCandidate`.
  */
-function findReportJson(text: string): FoundJson {
-  const jsonBlocks = fencedBlocks(text).filter(
+function findReportJson(text: string, truncated: boolean): FoundJson {
+  const jsonBlocks = fencedBlocks(text, truncated).filter(
     (block) => block.info === "" || block.info === "json" || block.info === "jsonc",
   );
   const last = jsonBlocks.at(-1);
@@ -215,7 +239,31 @@ function findReportJson(text: string): FoundJson {
   }
 
   const bare = extractJsonCandidate(text);
-  return bare.ok ? { ok: true, data: bare.data } : { ok: false, error: "no JSON report found" };
+  if (bare.ok) {
+    return { ok: true, data: bare.data };
+  }
+  if (text.includes("{")) {
+    return {
+      ok: false,
+      error: `JSON found but it could not be parsed: ${bareParseError(text) ?? bare.error}`,
+    };
+  }
+  return { ok: false, error: "no JSON report found" };
+}
+
+/** The JSON.parse message for the span from the first `{` to the last `}`, when there is one. */
+function bareParseError(text: string): string | undefined {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end < start) {
+    return "no matching closing brace";
+  }
+  try {
+    JSON.parse(text.slice(start, end + 1));
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 /**
@@ -224,16 +272,24 @@ function findReportJson(text: string): FoundJson {
  * opens a block, the first word of its info string is the language, and a
  * closing line is backticks at least as long as the opener. An unclosed block
  * is dropped.
+ *
+ * When the text was cut (`cut`), a bare fence on the first fence line is the
+ * closer of a block whose opener was cut off, so it is not an opener.
  */
-function fencedBlocks(text: string): Array<{ info: string; body: string }> {
+function fencedBlocks(text: string, cut: boolean): Array<{ info: string; body: string }> {
   const blocks: Array<{ info: string; body: string }> = [];
   let open: { ticks: number; info: string; lines: string[] } | undefined;
+  let firstFence = true;
   for (const line of text.split(/\r?\n/)) {
     if (!open) {
       const opener = /^\s*(`{3,})([^`]*)$/.exec(line);
       if (opener) {
         const info = (opener[2] ?? "").trim().split(/\s+/)[0]?.toLowerCase() ?? "";
-        open = { ticks: opener[1]!.length, info, lines: [] };
+        const orphanCloser = cut && firstFence && info === "";
+        firstFence = false;
+        if (!orphanCloser) {
+          open = { ticks: opener[1]!.length, info, lines: [] };
+        }
       }
       continue;
     }
