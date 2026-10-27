@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EngineEvent } from "@engine/protocol/events.js";
 import { burstFixture, sessionFixture } from "../test/fixtures.js";
-import { createEngineStore, createFrameBatcher } from "./engineStore.js";
+import { ACTIVITY_EVENT_TYPES, createEngineStore, createFrameBatcher } from "./engineStore.js";
 
 describe("engine store", () => {
   it("reconstructs identical state when a stream is replayed after a mid-stream reload", () => {
@@ -75,12 +75,31 @@ describe("engine store", () => {
     store.getState().applyEvents(id, events);
 
     const seatEvents = store.getState().session!.seatEvents;
-    // 301 non-delta events for "a" (spawn + 300 statuses); the last 200 are kept.
+    // 300 status events for "a" (spawn is not an activity type); the last 200 are kept: seq 102..301.
     expect(seatEvents.a).toHaveLength(200);
     expect(seatEvents.a![0]!.seq).toBe(102);
     expect(seatEvents.a!.at(-1)!.seq).toBe(301);
-    expect(seatEvents.a!.every((e) => e.type !== "seat.output.delta")).toBe(true);
+    expect(seatEvents.a!.every((e) => ACTIVITY_EVENT_TYPES.has(e.type))).toBe(true);
     expect(seatEvents.b!.map((e) => e.seq)).toEqual([342]);
+  });
+
+  it("high-volume types the drawer does not show never evict its activity rows", () => {
+    const id = "noise-run";
+    const at = new Date(Date.UTC(2026, 9, 25, 10, 0, 0)).toISOString();
+    const ev = (seq: number, type: string, data: object) => ({ seq, sessionId: id, seatId: "a", at, type, data }) as EngineEvent;
+    const events: EngineEvent[] = [
+      ev(1, "seat.status", { status: "starting" }),
+      ev(2, "seat.status", { status: "thinking" }),
+      ...Array.from({ length: 300 }, (_, i) => ev(3 + i, "seat.tokens", { tokensIn: 1, tokensOut: 1 })),
+      ...Array.from({ length: 300 }, (_, i) => ev(303 + i, "seat.thinking", { text: `t${i}` })),
+    ];
+    const store = createEngineStore();
+    store.getState().select(id);
+    store.getState().applyEvents(id, events);
+
+    const seatEvents = store.getState().session!.seatEvents;
+    expect(seatEvents.a!.map((e) => e.seq)).toEqual([1, 2]);
+    expect(store.getState().session!.lastSeq).toBe(602);
   });
 
   it("a mid-stream reload rebuilds identical seat info and capped seat events", () => {

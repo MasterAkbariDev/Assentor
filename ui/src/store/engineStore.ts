@@ -1,5 +1,5 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
-import type { EngineEvent } from "@engine/protocol/events.js";
+import type { EngineEvent, EngineEventType } from "@engine/protocol/events.js";
 import type { SessionSummary } from "@engine/protocol/rpc.js";
 import { reduceSeatEvents, type SeatState } from "@engine/ui-shared/status.js";
 
@@ -18,7 +18,22 @@ export interface SeatInfo {
   permissions: "read-only" | "edit";
 }
 
-/** Most events kept per seat for the drawer's Activity tab. Output deltas are never kept here. */
+/**
+ * The event types the seat drawer's Activity tab shows. Only these are kept per
+ * seat, so high-volume types (tokens, thinking, output) can't push out the rows
+ * that matter. `activity.ts` renders exactly these.
+ */
+export const ACTIVITY_EVENT_TYPES: ReadonlySet<EngineEventType> = new Set<EngineEventType>([
+  "seat.status",
+  "seat.tool_call",
+  "seat.done",
+  "seat.error",
+  "seat.retry",
+  "seat.model.changed",
+  "review.verdict",
+]);
+
+/** Most activity events kept per seat (see `ACTIVITY_EVENT_TYPES`). */
 export const SEAT_EVENT_CAP = 200;
 
 export interface SessionView {
@@ -26,7 +41,7 @@ export interface SessionView {
   seats: Record<string, SeatState>;
   /** From `seat.spawned`, keyed by seat id. */
   seatInfo: Record<string, SeatInfo>;
-  /** The last `SEAT_EVENT_CAP` non-`seat.output.delta` events of each seat, oldest first. */
+  /** The last `SEAT_EVENT_CAP` events of each seat whose type is in `ACTIVITY_EVENT_TYPES`, oldest first. */
   seatEvents: Record<string, EngineEvent[]>;
   /** Last applied `seq`; resubscribe from here. */
   lastSeq: number;
@@ -90,7 +105,7 @@ export function createEngineStore(): EngineStore {
             const { provider, transport, permissions } = event.data;
             seatInfo = { ...seatInfo, [event.seatId]: { provider, transport, permissions } };
           }
-          if (event.seatId && event.type !== "seat.output.delta") {
+          if (event.seatId && ACTIVITY_EVENT_TYPES.has(event.type)) {
             seatEvents = { ...seatEvents, [event.seatId]: [...(seatEvents[event.seatId] ?? []), event].slice(-SEAT_EVENT_CAP) };
           }
           lastSeq = event.seq;

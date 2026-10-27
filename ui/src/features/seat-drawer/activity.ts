@@ -1,5 +1,6 @@
 import { STATUS_META } from "@engine/ui-shared/status.js";
 import type { EngineEvent } from "@engine/protocol/events.js";
+import { ACTIVITY_EVENT_TYPES } from "../../store/engineStore.js";
 
 /**
  * Activity rows for the seat drawer. Only the events that say something about
@@ -21,6 +22,9 @@ export interface ActivityRow {
 export function activityRows(events: readonly EngineEvent[]): ActivityRow[] {
   const rows: ActivityRow[] = [];
   for (const event of events) {
+    if (!ACTIVITY_EVENT_TYPES.has(event.type)) {
+      continue;
+    }
     const text = activityText(event);
     if (text !== undefined) {
       rows.push({ key: event.seq, at: event.at, time: formatClock(event.at), text });

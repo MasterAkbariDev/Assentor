@@ -91,7 +91,7 @@ function SeatDrawerPanel({ seat }: { seat: SeatState }) {
   const tabId = (id: TabId) => `${titleId}-tab-${id}`;
 
   return (
-    <div className="seat-drawer" role="dialog" aria-labelledby={titleId}>
+    <div className="seat-drawer" role="dialog" aria-modal="false" aria-labelledby={titleId}>
       <div className="seat-drawer-head">
         <h2 id={titleId} className="seat-drawer-title">
           {seat.displayName}
