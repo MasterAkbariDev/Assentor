@@ -89,6 +89,14 @@ Phase exit criteria:
 ### T01-03 · Panel decision policies
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** T01-02
 
+**Status: implemented, awaiting review.** Decisions (on top of G-1; see STATUS §5):
+- `security-veto` (default) is unchanged, including summaries. Other policies prefix the summary with `Panel [policy] M1 PASS, M2 NEEDS_WORK.`
+- `majority`/`weighted` vote over the *answering* members (a PASS still needs every member via `PanelReviewer`'s G-1 guard, and the evidenced security veto runs after every policy). A split with no >50% winner is NEEDS_WORK; a PASS majority drops a dissenter's non-security objections.
+- `weighted`: weight by seat role (`security*` = 2, else 1; `roleWeights` overrides), keyed per member id incl. `#2` duplicates. `roles` is passed from the seat roles by the CLI.
+- `unanimous` never adjudicates (any BLOCKED → BLOCKED, else NEEDS_WORK). `adjudicator` rules on any split; with none configured (the CLI never configures one) it falls back to most-severe-wins and says so.
+- `onDisagreement` runs on a split only when `tiebreak: "negotiate"`; `undefined`/throw falls back to the policy; its result still goes through the security veto and the failed-member guard.
+- `src/review/index.ts` also exports `REVIEW_POLICIES`, `ReviewPolicy`, `defaultRoleWeight`.
+
 **Goal** — `ReviewCoordinator.decide` supports `majority | unanimous | weighted | security-veto | adjudicator` from `modes.review.policy`; default `security-veto` keeps today's behavior exactly.
 
 **Context to read** — `src/review/coordinator.ts` (whole), `src/agents/routed-reviewer.ts` (`reviewersDisagree`, `adjudicate`), `src/protocol/review-result.ts`, `tests/unit/multi-agent.test.ts`, `tests/integration/hardening-pack-panel.test.ts`.

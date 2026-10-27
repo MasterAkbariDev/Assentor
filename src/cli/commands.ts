@@ -52,6 +52,7 @@ import {
   specialtyAddendum,
   selectReviewerBackends,
   formatReviewerRunLabel,
+  type ReviewCoordinatorOptions,
   type ReviewerBackend,
 } from "../review/index.js";
 import { loadAssentorConfig, type AssentorConfig } from "../config/load.js";
@@ -495,6 +496,18 @@ function reviewerSeatInfo(
   };
 }
 
+/** Decision policy and seat roles for a `PanelReviewer`, from `modes.review`. */
+function panelPolicyOptions(
+  config: AssentorConfig,
+  backends: ReviewerMemberSource[],
+): Pick<ReviewCoordinatorOptions, "policy" | "tiebreak" | "roles"> {
+  const mode = config.modes.review;
+  return {
+    ...(mode ? { policy: mode.policy, tiebreak: mode.tiebreak } : {}),
+    roles: backends.map((backend) => backend.role ?? "general"),
+  };
+}
+
 async function createMembersFromBackends(input: {
   config: AssentorConfig;
   projectPath: string;
@@ -858,6 +871,7 @@ async function runAssentorTaskBody(
           reviewers: memberReviewers,
           goal: input.prompt,
           acceptanceCriteria: input.acceptanceCriteria ?? [],
+          ...panelPolicyOptions(config, memberBackends),
         });
 
   reporter.note(
@@ -1115,6 +1129,7 @@ export async function resumeAssentorTask(input: {
             name: teamMode ? "panel:team" : `panel:${reviewStrategy.toLowerCase()}`,
             reviewers: memberReviewers,
             goal: resume.snapshot.contract.goal,
+            ...panelPolicyOptions(config, memberBackends),
             acceptanceCriteria:
               resume.snapshot.contract.acceptanceCriteria ?? [],
           });
