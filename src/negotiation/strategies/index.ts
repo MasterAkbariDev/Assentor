@@ -1,4 +1,5 @@
 import type { NegotiationStrategy } from "../strategy.js";
+import { voteStrategy } from "./vote.js";
 
 /**
  * Strategy registry (T02-03a). Each strategy card adds its strategy here
@@ -20,4 +21,15 @@ export function getStrategy(id: string): NegotiationStrategy | undefined {
 
 export function listStrategies(): string[] {
   return [...strategies.keys()].sort();
+}
+
+/**
+ * Register the built-in strategies that exist so far. Call it explicitly (the
+ * engine does at startup); nothing registers at import time, so tests stay
+ * isolated. Safe to call twice.
+ */
+export function registerBuiltinStrategies(): void {
+  if (!strategies.has(voteStrategy.id)) {
+    registerStrategy(voteStrategy);
+  }
 }

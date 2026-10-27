@@ -74,6 +74,8 @@ Strategy tasks (T02-04…08) implement against the **strategy contract** deliver
 ### T02-04 · Strategy: Vote (ranked / Borda)
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T02-03
 
+**Status: ✅ done** (`c81286d` + `d56d5b8`, Haiku #3; Sonnet NEEDS_WORK → fixed). `src/negotiation/strategies/vote.ts` + `registerBuiltinStrategies()` (explicit, idempotent). Ballots matched with `matchLabel`; invalid ballots and failed replies → dissent; self-vote demotion via `seatByLabel`; Borda; ties → earliest label in proposal order (not text sort: B beats AA); score = winner / (valid ballots × (n−1)), reached > 0.5. Fewer than two proposals: one consensus event at round 1 (one proposal = deliberate vacuous consensus, score 1). Only labels+text in vars.
+
 **Goal** — Each seat proposes; each seat ranks all proposals; Borda count picks the winner.
 
 **Context to read** — `src/negotiation/README.md`, `src/negotiation/strategy.ts` (contract from T02-03a: `askSeat`, `anonymizeProposals`, `matchLabel`, `RankReplySchema`, `NegotiationResultSchema`), `src/negotiation/testing/mock-context.ts` (`createMockNegotiationContext`), `tests/unit/negotiation-contract.test.ts` (README example strategy test).
