@@ -15,6 +15,8 @@ Order: **T02B-01 → (T02B-03, 04, 05, 08, 12, 17 in parallel for Haiku) → T02
 ### T02B-01 · Mode registry, controller contract, autonomy axis
 **Tier:** 🔴 O · **Review:** O2 + human · **Size:** L · **Depends:** T02-09, T00-09
 
+**Status: 🔶 type half done as T02B-01a** (planner; O2 NEEDS_WORK → fixed). `src/modes/lead/types.ts` (`TaskIdSchema` git-ref-safe, `OwnedPathSchema` repo-relative, `LeadTaskPlanSchema`/`LeadTaskSchema`, `TaskBoardSchema` (case-insensitive unique ids), `BoardOpSchema`, `AgentReportSchema`, `emptyTaskBoard`), `src/modes/roster.ts` (`CapabilityProfileSchema`, `ProviderAvailability`, `RosterStats`, `RosterScoreboard`, `RosterPolicySchema`, `RosterEntry`, `COST_TIERS`, `costRank`), `src/modes/controller.ts` (`ControllerActionSchema` — 14 actions, `SeatChoiceSchema` with `SeatRoleSchema` + `ModelIdSchema`, `ControllerTurnSchema` ≤ 20 actions, `ControllerContext`). Still to do: deliverables 1, 5, 6, 7 (mode registry, autonomy axis, `modes.<id>` config, new event types) after T02-09. Unblocks T02B-03, T02B-04, T02B-05, T02B-08.
+
 **Goal** — The contract every mode builds on, plus the `mode` / `autonomy` split, without breaking existing flags or configs.
 
 **Deliverables**

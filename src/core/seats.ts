@@ -154,6 +154,17 @@ export const SeatRoleSchema = z
   .regex(SEAT_ROLE_PATTERN, "role must be a kebab-case id (e.g. security-reviewer)");
 
 /**
+ * A model id that is safe to pass to a CLI as an argument value: `AUTO`, or a
+ * plain id like `opus`, `gpt-5`, `anthropic/claude-sonnet`, `gemini-2.5-flash`.
+ * Never starts with `-` (it could be read as a flag). Use it wherever a model
+ * choice comes from a model (e.g. the Lead controller), not only from config.
+ */
+export const MODEL_ID_PATTERN = /^(AUTO|[A-Za-z0-9][A-Za-z0-9._:/-]{0,127})$/;
+export const ModelIdSchema = z
+  .string()
+  .regex(MODEL_ID_PATTERN, "model must be AUTO or an id of letters, digits and . _ : / - (not starting with -)");
+
+/**
  * `read-only` seats never receive bypass/unattended flags and never get a
  * writable worktree. `edit` seats work inside their own worktree.
  */

@@ -50,6 +50,8 @@ Strategy tasks (T02-04…08) implement against the **strategy contract** deliver
 ### T02-03 · Negotiation engine core + strategy contract
 **Tier:** 🔴 O · **Review:** O2 + human · **Size:** L · **Depends:** T02-02
 
+**Status: 🔶 contract half done as T02-03a** (planner; O2 NEEDS_WORK → fixed). `src/negotiation/strategy.ts`: `NegotiationStrategy`, `NegotiationContext` (`askSeat(seatId, step, vars, { readOnly, worktreePath? })` → `ok`/`!ok`, rejects only with `NegotiationCancelledError{reason}` or for an unknown seat), steps `negotiate-propose|critique|revise|rank|agree|synthesize`, `judge`, `moderator` with reply schemas, `anonymizeProposals`, `matchLabel`, `agreementScore`, `NegotiationResultSchema` (+ `transcriptRef`); registry in `strategies/index.ts`; `testing/mock-context.ts`. Still to do (the engine half): `engine.ts` on top of the seat scheduler (T02-02), persistence of `negotiation.json`, events through the sink. Implementation steps for best-of-n/divide are added by T02-06/T02-08 under Opus review. Items 2–5 below are covered by the contract; `ctx.anonymize`/`judge(...)`/`log`/`budget` are replaced by `anonymizeProposals` and engine-side handling.
+
 **Goal** — The framework all strategies plug into: rounds, anonymization, convergence, persistence, events.
 
 **Deliverables**
@@ -61,7 +63,7 @@ Strategy tasks (T02-04…08) implement against the **strategy contract** deliver
 4. Consensus helper: `agreementScore(responses)` — structured: each seat answers `{ agree: boolean, preferred: label, confidence }`; score = weighted share for the top label.
 5. A `MockSeat` harness for strategy tests (deterministic scripted responses).
 6. Prompt refs for proposal/critique/revise/vote/judge (placeholders until T03-02/03 ship real prompts).
-7. File layout later cards rely on: `src/negotiation/strategy.ts` (contract), `src/negotiation/engine.ts`, `src/negotiation/strategies/index.ts` (registry), `src/negotiation/testing/mock-seat.ts`, plus a `src/negotiation/README.md` with one worked example strategy.
+7. File layout later cards rely on: `src/negotiation/strategy.ts` (contract), `src/negotiation/engine.ts`, `src/negotiation/strategies/index.ts` (registry), `src/negotiation/testing/mock-context.ts`, plus a `src/negotiation/README.md` with one worked example strategy.
 
 **Acceptance** — engine tests with a trivial strategy; anonymization never leaks seat names into prompts; cancellation mid-round; persistence round-trip.
 
@@ -72,13 +74,13 @@ Strategy tasks (T02-04…08) implement against the **strategy contract** deliver
 
 **Goal** — Each seat proposes; each seat ranks all proposals; Borda count picks the winner.
 
-**Context to read** — `src/negotiation/strategy.ts` (contract from T02-03), `src/negotiation/testing/mock-seat.ts`, one existing strategy test if present.
+**Context to read** — `src/negotiation/README.md`, `src/negotiation/strategy.ts` (contract from T02-03a: `askSeat`, `anonymizeProposals`, `matchLabel`, `RankReplySchema`, `NegotiationResultSchema`), `src/negotiation/testing/mock-context.ts` (`createMockNegotiationContext`), `tests/unit/negotiation-contract.test.ts` (README example strategy test).
 
 **Allowed files** — create: `src/negotiation/strategies/vote.ts`, `tests/unit/strategy-vote.test.ts`; modify: `src/negotiation/strategies/index.ts` (register).
 
 **Spec**
-1. Round 1: `askSeat(seat, "negotiate.propose", { goal })` for every seat in parallel → proposals; anonymize.
-2. Round 2: `askSeat(seat, "negotiate.rank", { goal, proposals })` → expects `{ ranking: string[] }` (labels, best first). Invalid/missing labels → ignore that seat's ballot and record in `dissent` with reason `"invalid ballot"`.
+1. Round 1: `ctx.askSeat(seat.id, "negotiate-propose", { goal: ctx.goal }, { readOnly: true })` for every seat in parallel → proposals from `ok` replies (failed replies → `dissent`); label them with `anonymizeProposals`.
+2. Round 2: `ctx.askSeat(seat.id, "negotiate-rank", { goal: ctx.goal, proposals: anonymized }, { readOnly: true })` → `{ ranking: string[] }` (labels, best first). Map every label with `matchLabel`; a ballot with an unknown or duplicate label, or that doesn't rank every proposal, is ignored and recorded in `dissent` with reason `"invalid ballot"`. Only `anonymized` (labels + text) goes into `vars` — never seat ids.
 3. Borda: with `n` proposals, position `i` (0-based) scores `n - 1 - i`. A seat may not rank its own proposal first — if it does, move it to last place before scoring (document this rule in code).
 4. Ties → lowest label alphabetically wins, and `rationale` says it was a tie-break.
 5. `NegotiationResult.votes` = per-seat ranking + per-label total.
@@ -118,7 +120,7 @@ Strategy tasks (T02-04…08) implement against the **strategy contract** deliver
 **Spec**
 1. Options: `aggregator: seatId` (required; must be in team → else `validate` returns error `"synthesize requires an aggregator seat in the team"`).
 2. Round 1: all non-aggregator seats propose in parallel (anonymized).
-3. Round 2: `askSeat(aggregator, "negotiate.synthesize", { goal, proposals })` → expects `{ answer: string, sources: Array<{ label: string; used: string }> }`.
+3. Round 2: `ctx.askSeat(aggregator, "negotiate-synthesize", { goal: ctx.goal, proposals: anonymized }, { readOnly: true })` → `{ answer, sources: Array<{ label, used }> }` (`SynthesizeReplySchema`); match source labels with `matchLabel`.
 4. Validate every `sources[].label` exists; unknown labels → add a `dissent` entry `"aggregator cited unknown proposal <label>"` (don't fail).
 5. Proposals never cited → listed in `rationale` as "not used".
 6. `decision = answer`; `consensus` event score = cited proposals / total proposals.

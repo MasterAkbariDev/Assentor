@@ -70,6 +70,8 @@ export {
   BUILTIN_REVIEW_ROLES,
   BUILTIN_SEAT_ROLES,
   SeatRoleSchema,
+  ModelIdSchema,
+  MODEL_ID_PATTERN,
   SeatBudgetSchema,
   SeatSpecSchema,
   SeatStatusSchema,

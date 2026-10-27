@@ -142,6 +142,9 @@ Web preview fast path: done enough to pause. T04-02p, T04-03p, T04-06p, T04-07p 
 - Haiku #2 ("Haiku implementer 2: Assentor task cards", worktree `haiku-two-cards-fd2328`) — FU-05 merged (T00-03 continue()/cursor model-flag tests; export strips zero-width chars before redaction; `rankCorrelatedFindings` re-exported — `severityRank` stays private). Waiting for the next core card.
 - Haiku #3 ("Haiku implementer 3: Assentor UI cards", worktree `youthful-galileo-a41523`) — FU-04 done; waiting for the next core card.
 
+**Contracts landed (user signed off 2026-10-27):** T02-03a negotiation strategy contract (`src/negotiation/`) and T02B-01a Lead/modes types (`src/modes/`), O2 NEEDS_WORK → fixed → PASS. They unblock Haiku cards T02-04 vote, T02-07 synthesize, T02B-03 report parser, T02B-04 roster, T02B-05 task board, T02B-08 auto router. Assignments: Haiku #2 → T02B-05 then T02B-03; Haiku #3 → T02-04 then T02-07; T02B-04/T02B-08 next.
+- Sonnet session "Sonnet implementer: Assentor core cards" (started 2026-10-27) — 🟡 T01-03 panel policies, then T00-08 CI matrix.
+
 **Core order (critical path):**
 1. 🟡 T01-03 panel decision policies and 🟡 T00-08 CI matrix: Sonnet-tier, can run in a separate Sonnet session in parallel.
 2. 🔴 T02-02 seat scheduler → 🔴 T02-03 negotiation engine + strategy contract (opens Haiku cards T02-04 vote, T02-07 synthesize; Sonnet T02-05/06/08).
@@ -152,6 +155,8 @@ Web preview fast path: done enough to pause. T04-02p, T04-03p, T04-06p, T04-07p 
 **Gate under load:** FU-04 (`ad4fe08`, Haiku #3) fixed the two load-sensitive tests (rpc-core catch-up writes its 2,000-line log in one write; the supervisor test that spawns a real `npm test` has a 20 s timeout). The full gate passes with default workers again; if a different test times out under heavy load, rerun with `--maxWorkers=3` and record the test name here.
 
 ## 9. Known follow-ups (not scheduled)
+
+- rpc-core "catches up quickly" asserts delivery within 1 s; it missed once at load average ~139 (2 s) and passes alone. Loosen to a few seconds or measure relative to a baseline.
 
 - From the `main` merge review: `resume --executor <other provider>` reuses the snapshot's executor session id (main's behaviour, unguarded); the new `mergeEvidenceIntoPack` call on the needs-work path has no try/catch (a pack bootstrap error fails the task); the shared reviewer prompt's evidence example lists only `file`/`search`/`command`.
 
