@@ -139,7 +139,7 @@ Web preview fast path: done enough to pause. T04-02p, T04-03p, T04-06p, T04-07p 
 
 **Sessions**
 - Haiku #1 ("Haiku implementer: Assentor task cards") — retired by the user (other account). Do not assign work to it.
-- Haiku #2 ("Haiku implementer 2: Assentor task cards", worktree `haiku-two-cards-fd2328`) — T04-04p merged (`ebf4f1a`); now FU-05 (T00-03 model-flag test gaps, zero-width chars stripped before redaction in exports, re-export review ranking helpers).
+- Haiku #2 ("Haiku implementer 2: Assentor task cards", worktree `haiku-two-cards-fd2328`) — FU-05 merged (T00-03 continue()/cursor model-flag tests; export strips zero-width chars before redaction; `rankCorrelatedFindings` re-exported — `severityRank` stays private). Waiting for the next core card.
 - Haiku #3 ("Haiku implementer 3: Assentor UI cards", worktree `youthful-galileo-a41523`) — FU-04 done; waiting for the next core card.
 
 **Core order (critical path):**

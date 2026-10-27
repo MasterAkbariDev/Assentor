@@ -38,9 +38,15 @@ const CONTROL_OR_INVISIBLE =
 /** Longest event-derived value shown; longer values are cut and end with "…". */
 const MAX_CODE_CHARS = 500;
 
+/**
+ * Zero-width and format characters are deleted before redaction, so a secret
+ * split by one (`sk-ab\u200Bcd…`) still matches the secret patterns.
+ */
+const ZERO_WIDTH = /[\u200B-\u200F\u2060-\u2064\uFEFF]/g;
+
 /** Renders event-derived text as a safe inline code span. */
 function code(value: string | undefined): string {
-  const cleaned = redactSecrets(value ?? "")
+  const cleaned = redactSecrets((value ?? "").replace(ZERO_WIDTH, ""))
     .text.replace(CONTROL_OR_INVISIBLE, " ")
     .replace(/\t/g, " ")
     .replace(/\r\n|\r|\n/g, " ")

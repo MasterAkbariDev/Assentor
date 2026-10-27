@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as engine from "../../src/index.js";
 import {
   IssueCategory,
   ReviewStatus,
@@ -129,5 +130,11 @@ describe("finding agreement counts", () => {
 
     expect(rankCorrelatedFindings(empty)).toEqual([]);
     expect(correlateFindings([])).toEqual([]);
+  });
+});
+
+describe("package exports", () => {
+  it("exposes rankCorrelatedFindings from src/index.js as the same function", () => {
+    expect(engine.rankCorrelatedFindings).toBe(rankCorrelatedFindings);
   });
 });
