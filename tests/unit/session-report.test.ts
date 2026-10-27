@@ -276,6 +276,21 @@ describe("terminal and spoofing safety", () => {
     expect(report).toContain("[REDACTED]");
   });
 
+  it("redacts a secret that has a zero-width space inside it", () => {
+    seq = 0;
+    const events: EngineEvent[] = [
+      ev(0, "session.created", { title: "Use sk-ab\u200Bcdefghijklmnopqrstuvwxyz0123 now" }),
+      ev(1, "seat.error", { message: "bad key sk-x\u2060y\uFEFFzabcdefghijklmnopqrstuv" }, { seatId: "s1" }),
+      ev(2, "session.completed", {}),
+    ];
+    const report = renderSessionReport(events);
+
+    expect(report).toContain("# `Use [REDACTED] now`");
+    expect(report).not.toContain("cdefghijklmnop");
+    expect(report).not.toContain("zabcdefghijklmnop");
+    expect(report).toContain("[REDACTED]");
+  });
+
   it("cuts a long value to 500 characters plus an ellipsis", () => {
     seq = 0;
     const message = "a".repeat(2000);
