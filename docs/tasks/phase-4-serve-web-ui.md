@@ -227,7 +227,7 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-15 · `assentor app` launcher
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T04-03
 
-**Status: ✅ done** (`3b6b113`, Haiku #2; Sonnet review PASS). Files are `src/cli/app.ts` + `tests/unit/cli-app.test.ts` (not `packages/cli`). `assentor app [-p] [--port] [--no-open]` starts `startServe` on port 0 (loopback only), prints the same lines as `serve`, and opens the browser with a pure `browserOpenCommand(platform, url)` (darwin `open`, win32 `cmd /c start ""`, else `xdg-open`), spawned without a shell, detached and unref'd; URLs not matching `^http://127\.0\.0\.1:\d+/(#token=[0-9a-f]+)?$` are refused. Follow-ups: remove the signal listeners after close, `.catch` on `handle.close()`, validate `--port` (0–65535) with a clear message, a `runApp` signal-path test.
+**Status: ✅ done** (`3b6b113`, Haiku #2; Sonnet review PASS). Files are `src/cli/app.ts` + `tests/unit/cli-app.test.ts` (not `packages/cli`). `assentor app [-p] [--port] [--no-open]` starts `startServe` on port 0 (loopback only), prints the same lines as `serve`, and opens the browser with a pure `browserOpenCommand(platform, url)` (darwin `open`, win32 `cmd /c start ""`, else `xdg-open`), spawned without a shell, detached and unref'd; URLs not matching `^http://127\.0\.0\.1:\d+/(#token=[0-9a-f]+)?$` are refused. Follow-ups done in `f319195` (signal listeners removed after close, `.catch` on `handle.close()`, `--port` validated 0–65535, `runApp` SIGTERM test).
 
 **Allowed files** — `packages/cli/src/commands/app.ts`, register in CLI index, tests.
 
