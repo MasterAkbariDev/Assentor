@@ -133,15 +133,23 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 
 ## 8. In flight right now
 
-Resumed 2026-10-27 by "Multi-model CLI app architecture".
+**Direction (user, 2026-10-27): core engine first.** After the Haiku agents finish their current cards, UI and app work (rest of Phase 4, Phase 5) pauses. Finish the core (Phases 0–3, 2b) first, then build the UI and apps on top of it.
 
-- ✅ T04-06p Opus review done; fixes committed.
-- ✅ **Review-panel seat fix** (`afb6269`): decided in the engine, not the UI. `SeatEventSink` tracks open turns; `review.completed` ends the reviewer-scoped seat ("verdict: PASS"), and a session end closes any open turn (ok only when completed).
-- 🔶 **T04-07p → Haiku #1** — read-only session board (`ui/src/features/session-board/`), brief sent with the review's additions.
-- 🔶 **T04-15 → Haiku #2** — `assentor app` launcher (`src/cli/app.ts`). Next for #2: T06-02 session export.
-- Then the preview milestone is done: `assentor app` (or `serve`) + a browser shows live runs with a real session board.
+Web preview fast path: done enough to pause. T04-02p, T04-03p, T04-06p, T04-07p (board), T04-08p (seat drawer, `5eae232`), T04-15 (`assentor app`) are merged; T04-04p (read-only prompt/team/model RPCs) is in its last fix round with Haiku #2.
 
-**Try the preview:** `pnpm build`, run something with `assentor run "…"`, then `bin/assentor serve -p <project>` and open the printed link. Gate needs Node ≥ 22.13: `export PATH="$HOME/.nvm/versions/node/v24.11.1/bin:$PATH"`.
+**Sessions**
+- Haiku #1 ("Haiku implementer: Assentor task cards") — retired by the user (other account). Do not assign work to it.
+- Haiku #2 ("Haiku implementer 2: Assentor task cards", worktree `haiku-two-cards-fd2328`) — finishing T04-04p (read-only `CliModelCatalog` so `models.catalog` never writes). Then core cards.
+- Haiku #3 ("Haiku implementer 3: Assentor UI cards", worktree `youthful-galileo-a41523`) — FU-04: make the two load-sensitive tests (rpc-core "catches up quickly", supervisor "fulfills reviewer command evidence") reliable. Then core cards.
+
+**Core order (critical path):**
+1. 🟡 T01-03 panel decision policies and 🟡 T00-08 CI matrix: Sonnet-tier, can run in a separate Sonnet session in parallel.
+2. 🔴 T02-02 seat scheduler → 🔴 T02-03 negotiation engine + strategy contract (opens Haiku cards T02-04 vote, T02-07 synthesize; Sonnet T02-05/06/08).
+3. 🔴 T02-01 worktree manager (needed by best-of-N, divide, Lead integrate).
+4. 🔴 T02-09 stage-graph runner (needs T02-03 + T01-03) → 🔴 T02B-01 mode registry/controller contract (opens Haiku cards T02B-03/04/05/08/17) → 🔴 T02B-07 danger classifier → 🔴 T02B-02 Lead controller.
+5. 🔴 T01-05 model switch; Phase 3 rest (T03-03 meta prompts after T02-03, T03-04 playbooks after T02-09).
+
+**Gate under load:** other sessions run gates concurrently (load average 150+); two timing tests can time out with default workers. Until FU-04 lands, a rerun with `pnpm test --maxWorkers=3` is acceptable if the failures are only those two tests.
 
 ## 9. Known follow-ups (not scheduled)
 
