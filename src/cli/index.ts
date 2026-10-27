@@ -97,6 +97,21 @@ program
   );
 
 program
+  .command("app")
+  .description("Serve the web UI on a free local port and open it in your browser")
+  .option("-p, --project <path>", "Project directory", ".")
+  .option("--port <n>", "Port (0 picks a free one)", (v: string) => Number(v), 0)
+  .option("--no-open", "Print the URL without opening a browser")
+  .action(async (options: { project: string; port: number; open: boolean }) => {
+    const { runApp } = await import("./app.js");
+    await runApp({
+      projectPath: path.resolve(options.project),
+      port: options.port,
+      open: options.open,
+    });
+  });
+
+program
   .command("init")
   .description(
     "Create an optional project .assentor/config.yaml override (global defaults live in ~/.assentor)",
