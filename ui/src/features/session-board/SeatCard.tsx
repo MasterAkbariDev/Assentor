@@ -1,16 +1,40 @@
+import type { KeyboardEvent } from "react";
 import { seatLineModel, STATUS_META, type SeatState } from "@engine/ui-shared/status.js";
 
 /**
- * One seat on the board. Read-only: no handler and no button. The status icon
- * is decorative; its label sits next to it, so the status is always in text.
- * `now` comes from the board's single ticker.
+ * One seat on the board. A click, Enter or Space opens the seat drawer for it.
+ * The card is the only control on the board. The status icon is decorative;
+ * its label sits next to it, so the status is always in text. `now` comes from
+ * the board's single ticker.
  */
-export function SeatCard({ seat, now }: { seat: SeatState; now: number }) {
+export function SeatCard({
+  seat,
+  now,
+  onOpen,
+}: {
+  seat: SeatState;
+  now: number;
+  onOpen: (seatId: string) => void;
+}) {
   const line = seatLineModel(seat, now);
   const thinking = seat.status === "thinking";
   const hasTokens = seat.tokensIn > 0 || seat.tokensOut > 0;
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onOpen(seat.seatId);
+    }
+  };
   return (
-    <article className={`seat-card tone-${STATUS_META[seat.status].tone}`} data-seat-id={seat.seatId}>
+    <article
+      className={`seat-card tone-${STATUS_META[seat.status].tone}`}
+      data-seat-id={seat.seatId}
+      role="button"
+      tabIndex={0}
+      aria-haspopup="dialog"
+      onClick={() => onOpen(seat.seatId)}
+      onKeyDown={onKeyDown}
+    >
       <div className="seat-card-head">
         <span className="seat-card-status">
           <span className={thinking ? "seat-card-icon is-thinking" : "seat-card-icon"} aria-hidden="true">
