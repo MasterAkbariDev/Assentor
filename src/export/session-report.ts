@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import path from "node:path";
 import type { EngineEvent } from "../protocol/events.js";
 import { redactSecrets } from "../security/redact.js";
 import { reduceSeatEvents, type SeatState } from "../ui-shared/status.js";
@@ -25,13 +26,30 @@ export interface SessionReportOptions {
 
 const DEFAULT_MAX_TIMELINE_LINES = 200;
 
+/**
+ * Control characters (except tab, CR and LF, which are handled below) and
+ * invisible or bidi formatting characters. Terminal escapes such as ESC[2J or
+ * OSC 52 would otherwise reach the user's terminal from stdout, and bidi
+ * overrides could make a file read differently from its text.
+ */
+const CONTROL_OR_INVISIBLE =
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2069\uFEFF]/g;
+
+/** Longest event-derived value shown; longer values are cut and end with "…". */
+const MAX_CODE_CHARS = 500;
+
 /** Renders event-derived text as a safe inline code span. */
 function code(value: string | undefined): string {
-  const safe = redactSecrets(value ?? "")
-    .text.replace(/`/g, "ʼ")
+  const cleaned = redactSecrets(value ?? "")
+    .text.replace(CONTROL_OR_INVISIBLE, " ")
+    .replace(/\t/g, " ")
     .replace(/\r\n|\r|\n/g, " ")
+    .replace(/`/g, "ʼ")
     .trim();
-  return safe.length > 0 ? `\`${safe}\`` : "-";
+  const chars = [...cleaned];
+  const shown =
+    chars.length > MAX_CODE_CHARS ? `${chars.slice(0, MAX_CODE_CHARS).join("")}…` : cleaned;
+  return shown.length > 0 ? `\`${shown}\`` : "-";
 }
 
 /** A table cell: a code span with `|` escaped so it cannot split the row. */
@@ -348,8 +366,13 @@ export async function saveSessionReport(
       flag: options.force ? "w" : "wx",
     });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+    const errno = (error as NodeJS.ErrnoException).code;
+    if (errno === "EEXIST") {
       throw new ReportExistsError(file);
+    }
+    if (errno === "ENOENT") {
+      const dir = path.dirname(file);
+      throw new Error(`Directory does not exist: ${dir}`);
     }
     throw error;
   }

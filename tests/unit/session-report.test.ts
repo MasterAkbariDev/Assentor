@@ -234,3 +234,72 @@ describe("saveSessionReport", () => {
     expect(await fs.readFile(file, "utf8")).toBe("second");
   });
 });
+
+/** Codepoints a terminal or a bidi-aware viewer would act on, as in the code() filter. */
+const UNSAFE_CODEPOINT =
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2069\uFEFF]/;
+
+describe("terminal and spoofing safety", () => {
+  it("drops escape sequences, bidi overrides and NUL from every event-derived field", () => {
+    seq = 0;
+    const events: EngineEvent[] = [
+      ev(0, "session.created", { title: "Build\x1b[31m ‮ evil \u0000 end" }),
+      ev(1, "seat.error", { message: "boom\x1b[2J\x1b]52;c;ZGF0YQ==\x07 ‮reversed" }, { seatId: "s1" }),
+      ev(2, "session.warning", { kind: "clip\x1b[31m", message: "‮ \u0000 hidden" }),
+      ev(3, "session.completed", {}),
+    ];
+    const report = renderSessionReport(events);
+
+    const unsafe = [...report].filter((ch) => UNSAFE_CODEPOINT.test(ch));
+    expect(unsafe).toEqual([]);
+    expect(report).not.toContain("\x1b");
+    expect(report).not.toContain("‮");
+    expect(report).not.toContain("\u0000");
+    // The text around the removed characters is kept.
+    expect(report).toContain("# `Build [31m   evil   end`");
+    expect(report).toContain("- `clip [31m:");
+    expect(report).toContain("hidden`");
+  });
+
+  it("redacts bare sk- tokens and Bearer tokens in the title and seat errors", () => {
+    seq = 0;
+    const events: EngineEvent[] = [
+      ev(0, "session.created", { title: "Use sk-abcdefghijklmnopqrstuvwxyz012345 now" }),
+      ev(1, "seat.error", { message: "auth failed with Bearer abc.def-ghi_123/jkl==" }, { seatId: "s1" }),
+      ev(2, "session.completed", {}),
+    ];
+    const report = renderSessionReport(events);
+
+    expect(report).not.toContain("sk-abcdefghijklmnopqrstuvwxyz012345");
+    expect(report).not.toContain("abc.def-ghi_123");
+    expect(report).toContain("# `Use [REDACTED] now`");
+    expect(report).toContain("[REDACTED]");
+  });
+
+  it("cuts a long value to 500 characters plus an ellipsis", () => {
+    seq = 0;
+    const message = "a".repeat(2000);
+    const events: EngineEvent[] = [
+      ev(0, "session.created", { title: "Long" }),
+      ev(1, "session.warning", { kind: "warn", message }),
+      ev(2, "session.completed", {}),
+    ];
+    const report = renderSessionReport(events);
+
+    const value = `warn: ${message}`;
+    expect(report).toContain(`- \`${value.slice(0, 500)}…\``);
+    expect(report).not.toContain("a".repeat(495));
+  });
+});
+
+describe("saveSessionReport missing directory", () => {
+  it("names the missing directory instead of a bare ENOENT", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "session-report-missing-"));
+    dirs.push(dir);
+    const missing = path.join(dir, "no-such-dir");
+
+    await expect(saveSessionReport(path.join(missing, "r.md"), "x")).rejects.toThrow(
+      `Directory does not exist: ${missing}`,
+    );
+  });
+});
