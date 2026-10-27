@@ -441,3 +441,97 @@ describe("executor model through createExecutor", () => {
     expect(resolveExecutorModel(undefined, undefined)).toBeUndefined();
   });
 });
+
+describe("model flag placement with resume and continue flags", () => {
+  it("claude-code continue() with a session id: --resume, -p, output format, --model, then the prompt", async () => {
+    let captured: string[] = [];
+    const executor = new PrintCliExecutor({
+      recipe: PRINT_CLI_RECIPES["claude-code"]!,
+      binary: "/tmp/claude",
+      model: "opus",
+      spawnFn: async (request) => {
+        captured = request.args;
+        return { code: 0, stdout: "done", stderr: "" };
+      },
+    });
+    await executor.continue({
+      taskId: "t1",
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("goal"),
+      sessionId: "abc",
+      mode: "supervised",
+      messages: [],
+    });
+    expect(captured.slice(0, -1)).toEqual([
+      "--dangerously-skip-permissions",
+      "--resume",
+      "abc",
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--model",
+      "opus",
+    ]);
+    expect(captured.at(-1)).not.toMatch(/^--/);
+  });
+
+  it("antigravity continue() without a session id: --continue, then --model, then the attached prompt", async () => {
+    let captured: string[] = [];
+    const executor = new PrintCliExecutor({
+      recipe: PRINT_CLI_RECIPES.antigravity!,
+      binary: "/tmp/agy",
+      model: "opus",
+      spawnFn: async (request) => {
+        captured = request.args;
+        return { code: 0, stdout: "done", stderr: "" };
+      },
+    });
+    await executor.continue({
+      taskId: "t1",
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("goal"),
+      mode: "supervised",
+      messages: [],
+    });
+    expect(captured.slice(0, -1)).toEqual([
+      "--dangerously-skip-permissions",
+      "--continue",
+      "--output-format",
+      "stream-json",
+      "--model",
+      "opus",
+    ]);
+    expect(captured.at(-1)?.startsWith("-p=")).toBe(true);
+  });
+
+  it("antigravity continue() with a session id uses --conversation and still puts the model before the prompt", async () => {
+    let captured: string[] = [];
+    const executor = new PrintCliExecutor({
+      recipe: PRINT_CLI_RECIPES.antigravity!,
+      binary: "/tmp/agy",
+      model: "opus",
+      spawnFn: async (request) => {
+        captured = request.args;
+        return { code: 0, stdout: "done", stderr: "" };
+      },
+    });
+    await executor.continue({
+      taskId: "t1",
+      projectPath: "/tmp/project",
+      contract: createEmptyContract("goal"),
+      sessionId: "conv-9",
+      mode: "supervised",
+      messages: [],
+    });
+    expect(captured.slice(0, -1)).toEqual([
+      "--dangerously-skip-permissions",
+      "--conversation",
+      "conv-9",
+      "--output-format",
+      "stream-json",
+      "--model",
+      "opus",
+    ]);
+    expect(captured).not.toContain("--continue");
+  });
+});

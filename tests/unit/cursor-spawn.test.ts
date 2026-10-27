@@ -1,9 +1,43 @@
-import { describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createEmptyContract } from "../../src/index.js";
+import { createExecutor } from "../../src/cli/commands.js";
 import {
   CursorExecutor,
   defaultSpawn,
 } from "../../src/providers/executors/cursor/index.js";
+
+// While `capture.calls` is set, cursor launches are recorded and never started.
+// Otherwise the real spawn runs, so defaultSpawn's real-process tests still work.
+const capture = vi.hoisted(() => ({ calls: undefined as undefined | Array<{ command: string; args: string[] }> }));
+
+vi.mock("../../src/executors/cli-locator.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/executors/cli-locator.js")>();
+  return {
+    ...actual,
+    spawnCliProcess: (
+      command: string,
+      args: string[],
+      options: Parameters<typeof actual.spawnCliProcess>[2],
+    ) => {
+      if (!capture.calls) {
+        return actual.spawnCliProcess(command, args, options);
+      }
+      capture.calls.push({ command, args });
+      const child = new EventEmitter() as unknown as EventEmitter & {
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+      };
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      setImmediate(() => child.emit("close", 0, null));
+      return child as unknown as ReturnType<typeof actual.spawnCliProcess>;
+    },
+  };
+});
 
 async function cursorArgs(options: { model?: string; extraArgs?: string[] }): Promise<string[]> {
   let args: string[] = [];
@@ -98,4 +132,31 @@ describe("defaultSpawn", () => {
     expect(Date.now() - started).toBeLessThan(2_000);
     expect(result.timedOut).not.toBe(true);
   }, 8_000);
+});
+
+describe("cursor model flag through createExecutor", () => {
+  let projectDir: string;
+
+  beforeEach(async () => {
+    projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-model-"));
+    capture.calls = [];
+  });
+
+  afterEach(async () => {
+    capture.calls = undefined;
+    await fs.rm(projectDir, { recursive: true, force: true });
+  });
+
+  it("createExecutor('cursor', …, { model }) puts --model <m> right before the prompt", async () => {
+    const executor = await createExecutor("cursor", projectDir, { model: "gpt-5" });
+    await executor.run({
+      taskId: "t1",
+      projectPath: projectDir,
+      contract: createEmptyContract("goal"),
+      prompt: "goal",
+    });
+
+    const args = capture.calls!.at(-1)!.args;
+    expect(args.slice(-3)).toEqual(["--model", "gpt-5", "goal"]);
+  });
 });
