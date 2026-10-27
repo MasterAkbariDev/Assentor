@@ -515,7 +515,8 @@ describe("supervisor", () => {
     // The requested command output itself reaches the reviewer.
     expect(responseOnSecondCall).toContain("npm test");
     expect(responseOnSecondCall).toContain("delivered=1/1");
-  });
+    // A real `npm test` child: its startup alone can pass 5 s on a busy machine.
+  }, 20_000);
 
   it("maps executor cancel (Ctrl+C) to FAILED so the task can be resumed", async () => {
     const executor = mockExecutor(async () => ({

@@ -139,8 +139,8 @@ Web preview fast path: done enough to pause. T04-02p, T04-03p, T04-06p, T04-07p 
 
 **Sessions**
 - Haiku #1 ("Haiku implementer: Assentor task cards") — retired by the user (other account). Do not assign work to it.
-- Haiku #2 ("Haiku implementer 2: Assentor task cards", worktree `haiku-two-cards-fd2328`) — finishing T04-04p (read-only `CliModelCatalog` so `models.catalog` never writes). Then core cards.
-- Haiku #3 ("Haiku implementer 3: Assentor UI cards", worktree `youthful-galileo-a41523`) — FU-04: make the two load-sensitive tests (rpc-core "catches up quickly", supervisor "fulfills reviewer command evidence") reliable. Then core cards.
+- Haiku #2 ("Haiku implementer 2: Assentor task cards", worktree `haiku-two-cards-fd2328`) — T04-04p merged (`ebf4f1a`); now FU-05 (T00-03 model-flag test gaps, zero-width chars stripped before redaction in exports, re-export review ranking helpers).
+- Haiku #3 ("Haiku implementer 3: Assentor UI cards", worktree `youthful-galileo-a41523`) — FU-04 done; waiting for the next core card.
 
 **Core order (critical path):**
 1. 🟡 T01-03 panel decision policies and 🟡 T00-08 CI matrix: Sonnet-tier, can run in a separate Sonnet session in parallel.
@@ -149,7 +149,7 @@ Web preview fast path: done enough to pause. T04-02p, T04-03p, T04-06p, T04-07p 
 4. 🔴 T02-09 stage-graph runner (needs T02-03 + T01-03) → 🔴 T02B-01 mode registry/controller contract (opens Haiku cards T02B-03/04/05/08/17) → 🔴 T02B-07 danger classifier → 🔴 T02B-02 Lead controller.
 5. 🔴 T01-05 model switch; Phase 3 rest (T03-03 meta prompts after T02-03, T03-04 playbooks after T02-09).
 
-**Gate under load:** other sessions run gates concurrently (load average 150+); two timing tests can time out with default workers. Until FU-04 lands, a rerun with `pnpm test --maxWorkers=3` is acceptable if the failures are only those two tests.
+**Gate under load:** FU-04 (`ad4fe08`, Haiku #3) fixed the two load-sensitive tests (rpc-core catch-up writes its 2,000-line log in one write; the supervisor test that spawns a real `npm test` has a 20 s timeout). The full gate passes with default workers again; if a different test times out under heavy load, rerun with `--maxWorkers=3` and record the test name here.
 
 ## 9. Known follow-ups (not scheduled)
 
