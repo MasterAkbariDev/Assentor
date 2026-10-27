@@ -99,6 +99,8 @@ Order: **T02B-01 → (T02B-03, 04, 05, 08, 12, 17 in parallel for Haiku) → T02
 ### T02B-05 · Task board model
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T02B-01
 
+**Status: ✅ done** (`e89f32d` + `29cb341`, Haiku #2; Sonnet NEEDS_WORK → fixed). `src/modes/lead/board.ts`: pure `applyBoardOp` (validates the op, returns the original board on any refusal), case-insensitive ids, the transition matrix, `readyTasks`, `boardColumns` (incl. `split`). Decisions: `plan` keeps unmatched backlog tasks; dependents of a split parent depend on all its children; a child may not depend on its own parent; `assign` from `rejected` counts as a reassignment and clears `rejectionReason`; `assign` doesn't check `dependsOn` — the controller (T02B-02) must gate on `readyTasks`. Assumes a valid input board (validate boards loaded from disk).
+
 **Goal** — Pure data structure for the Lead's task board.
 
 **Context to read** — `src/modes/lead/types.ts` (`LeadTask`, `TaskBoard`), modes.md §4.2, §4.7.
