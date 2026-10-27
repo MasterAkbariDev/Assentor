@@ -372,9 +372,12 @@ describe("events.subscribe", () => {
     const sessionId = createId();
     const log = await EventLog.open(projectPath, sessionId);
     cleanups.push(() => log.close());
-    for (let i = 0; i < 2000; i += 1) {
-      await log.append(draft(sessionId, "y".repeat(500)));
-    }
+    // Write the 2,000 lines in one go: awaiting 2,000 appends is what made this test slow under load.
+    const at = new Date(0).toISOString();
+    const lines = Array.from({ length: 2000 }, (_, i) =>
+      JSON.stringify({ seq: i + 1, sessionId, at, type: "session.created", data: { title: "y".repeat(500) } }),
+    );
+    await fs.writeFile(sessionPaths(projectPath, sessionId).events, `${lines.join("\n")}\n`, "utf8");
     const server = createEngineRpcServer({
       projectPath,
       engineVersion: "x",
