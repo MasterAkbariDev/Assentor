@@ -6,7 +6,7 @@
   --border: rgba(0, 0, 0, 0.1);
   --accent: #2a78d6;
   --ok: #0c8a0c;
-  --warn: #b77b00;
+  --warn: #8f5f00; /* 4.5:1+ on white for status text */
   --error: #c83232;
   --active: #6250d6;
   color-scheme: light dark;
@@ -128,4 +128,64 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 @media (max-width: 640px) {
   .shell { grid-template-columns: 1fr; grid-template-areas: "header" "sidebar" "main"; }
   .sidebar { border-right: none; border-bottom: 1px solid var(--border); max-height: 40vh; }
+}
+
+/* Session board (T04-07p): read-only seat cards, one ticker, responsive grid. */
+.seat-board { display: grid; gap: 18px; }
+.seat-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.seat-group-count { font-variant-numeric: tabular-nums; }
+.seat-grid { display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1024px) {
+  .seat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .seat-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.seat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.seat-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.seat-card-status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.seat-card-icon { display: inline-block; width: 1.2em; text-align: center; }
+.seat-card-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seat-card-meta { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seat-card-line {
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.seat-card-elapsed { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.seat-card-tokens { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tone-ok .seat-card-status { color: var(--ok); }
+.tone-error .seat-card-status { color: var(--error); }
+.tone-warn .seat-card-status { color: var(--warn); }
+.tone-active .seat-card-status, .tone-info .seat-card-status { color: var(--active); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .seat-card-icon.is-thinking { animation: seat-card-think 1.4s ease-in-out infinite; }
+  @keyframes seat-card-think {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
 }

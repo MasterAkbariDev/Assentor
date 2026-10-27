@@ -30,7 +30,7 @@ describe("App shell", () => {
     });
     expect(getByText("Opus#2")).toBeTruthy();
     expect(getByText("failed")).toBeTruthy();
-    expect(getByRole("heading").textContent).toContain("REVIEWING");
+    expect(getByRole("heading", { level: 1 }).textContent).toContain("REVIEWING");
   });
 
   it("explains a missing token and an old run without a live log", () => {

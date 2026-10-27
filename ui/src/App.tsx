@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { STATUS_META, seatLineModel } from "@engine/ui-shared/status.js";
+import { SessionBoard } from "./features/session-board/SessionBoard.js";
 import { useEngine } from "./store/context.js";
 import type { ConnectionStatus } from "./store/engineStore.js";
 
@@ -108,15 +108,10 @@ export function SessionList() {
   );
 }
 
-/** Placeholder seat view; the session board (T04-07p) replaces it. */
+/** The selected run: heading, error notice, empty states, and the session board. */
 export function SessionPanel() {
   const session = useEngine((s) => s.session);
   const summary = useEngine((s) => s.sessions.find((x) => x.id === s.selectedId));
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   if (!session) {
     return <p className="empty">Select a run to watch it live.</p>;
@@ -124,7 +119,7 @@ export function SessionPanel() {
   if (summary && !summary.hasLiveLog) {
     return <p className="empty">This run was made before live logs existed; there is nothing to stream.</p>;
   }
-  const seats = Object.values(session.seats);
+  const seatCount = Object.keys(session.seats).length;
   return (
     <section aria-label="Seats">
       <h1 className="session-heading">
@@ -132,28 +127,7 @@ export function SessionPanel() {
         {session.state ? <span className="session-state"> · {session.state}</span> : null}
       </h1>
       {session.error ? <p className="notice error">{session.error}</p> : null}
-      {seats.length === 0 ? (
-        <p className="empty">Waiting for events…</p>
-      ) : (
-        <ul className="seat-list">
-          {seats.map((seat) => {
-            const line = seatLineModel(seat, now);
-            return (
-              <li key={seat.seatId} className={`seat tone-${STATUS_META[seat.status].tone}`}>
-                <span className="seat-status">
-                  <span aria-hidden="true">{line.icon}</span> {line.label}
-                </span>
-                <span className="seat-name">{line.name}</span>
-                <span className="seat-meta">
-                  {line.model} · {line.role}
-                </span>
-                <span className="seat-detail">{line.detail}</span>
-                <span className="seat-elapsed">{line.elapsed}</span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      {seatCount === 0 ? <p className="empty">Waiting for events…</p> : <SessionBoard />}
     </section>
   );
 }

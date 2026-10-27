@@ -108,6 +108,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-07 · Session board + SeatCard
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T04-06
 
+**Status: ✅ preview cut T04-07p done** (`0e4ffe8`, Haiku #1's last card; Sonnet review PASS; planner added in the merge: group titles are `<h2>` and light-mode `--warn` is darkened to #8f5f00 for contrast). `ui/src/features/session-board/` (`SessionBoard`, `SeatCard`, `useNow`) + `ui/src/store/selectors.ts`; groups executor / reviewers (`reviewer-*`, `panel`) / others; one 1 s ticker per board that stops when no seat is live; only `thinking` animates, under reduced-motion. Read-only: no model picker, pause/cancel, budget bar or drawer; no stage rail (stages aren't modelled). Follow-ups: CSS-path test via `import.meta.url`, `React.memo` on `SeatCard`, tests for ticker restart and the "other" group.
+
 **Context to read** — `packages/ui/README.md`, store selectors `selectSession`, `selectSeats`, `selectStages`, `@assentor/ui-shared/status`, fixture `session-negotiate-review.ndjson`, plan §4.6 "Session board".
 
 **Allowed files** — create under `packages/ui/src/features/session-board/`: `SessionBoard.tsx`, `SeatCard.tsx`, `StageRail.tsx`, `ModelPicker.tsx`, tests; modify: route file for `/sessions/$id` only.
