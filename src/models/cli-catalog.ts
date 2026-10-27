@@ -202,6 +202,11 @@ export interface CliModelCatalogOptions {
   run?: RunCli;
   /** Injectable binary locator; defaults to `locateBinary`. */
   locate?: (tool: BinaryTool) => string | undefined;
+  /**
+   * Never writes: a corrupt cache is read as empty and left alone (no backup),
+   * and every write method, including `discover`, throws "read-only catalog".
+   */
+  readOnly?: boolean;
 }
 
 type ModelRecord = Partial<Record<SeatProvider, DiscoveredModel[]>>;
@@ -227,6 +232,7 @@ export class CliModelCatalog {
   private state: CatalogCache;
   /** False when a corrupt cache could not be backed up, so it must not be overwritten. */
   private readonly writable: boolean;
+  private readonly readOnly: boolean;
   private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(options: CliModelCatalogOptions = {}) {
@@ -234,7 +240,8 @@ export class CliModelCatalog {
       options.cachePath ?? path.join(userAssentorDir(), "models-cache.json");
     this.run = options.run ?? defaultRunCli;
     this.locate = options.locate ?? ((tool) => locateBinary(tool));
-    const loaded = loadCache(this.cachePath);
+    this.readOnly = options.readOnly ?? false;
+    const loaded = loadCache(this.cachePath, this.readOnly);
     this.state = loaded.state;
     this.writable = loaded.writable;
   }
@@ -264,6 +271,9 @@ export class CliModelCatalog {
   async discover(
     provider: SeatProvider,
   ): Promise<{ entries: CatalogEntry[]; error?: string }> {
+    if (this.readOnly) {
+      throw readOnlyError();
+    }
     const tool = DISCOVERY_TOOL[provider];
     if (!tool) {
       return { entries: [], error: `${provider} has no model discovery command` };
@@ -343,6 +353,9 @@ export class CliModelCatalog {
 
   /** Apply a change and save it. If the save fails, the in-memory state is restored and the error rethrown. */
   private mutate(change: (state: CatalogCache) => CatalogCache): Promise<void> {
+    if (this.readOnly) {
+      return Promise.reject(readOnlyError());
+    }
     return this.enqueue(async () => {
       const previous = this.state;
       this.state = change(previous);
@@ -367,6 +380,9 @@ export class CliModelCatalog {
 
   /** Save the current state. Refuses when a corrupt cache could not be backed up. */
   private writeNow(): Promise<void> {
+    if (this.readOnly) {
+      return Promise.reject(readOnlyError());
+    }
     if (!this.writable) {
       return Promise.reject(
         new Error(
@@ -399,6 +415,10 @@ function assertUserModelId(id: string): void {
   }
 }
 
+function readOnlyError(): Error {
+  return new Error("read-only catalog");
+}
+
 function emptyCache(): CatalogCache {
   return { discovered: {}, user: {} };
 }
@@ -408,7 +428,10 @@ function emptyCache(): CatalogCache {
  * or whose top-level shape is wrong, is backed up (best effort) and treated as
  * empty. Individual invalid entries are dropped.
  */
-function loadCache(cachePath: string): { state: CatalogCache; writable: boolean } {
+function loadCache(
+  cachePath: string,
+  readOnly: boolean,
+): { state: CatalogCache; writable: boolean } {
   let raw: string;
   try {
     raw = readFileSync(cachePath, "utf8");
@@ -416,23 +439,23 @@ function loadCache(cachePath: string): { state: CatalogCache; writable: boolean 
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return { state: emptyCache(), writable: true };
     }
-    return backupCorrupt(cachePath);
+    return backupCorrupt(cachePath, readOnly);
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return backupCorrupt(cachePath);
+    return backupCorrupt(cachePath, readOnly);
   }
   if (!isPlainObject(parsed)) {
-    return backupCorrupt(cachePath);
+    return backupCorrupt(cachePath, readOnly);
   }
   if (
     (parsed.discovered !== undefined && !isPlainObject(parsed.discovered)) ||
     (parsed.user !== undefined && !isPlainObject(parsed.user))
   ) {
-    return backupCorrupt(cachePath);
+    return backupCorrupt(cachePath, readOnly);
   }
   return {
     state: {
@@ -443,7 +466,14 @@ function loadCache(cachePath: string): { state: CatalogCache; writable: boolean 
   };
 }
 
-function backupCorrupt(cachePath: string): { state: CatalogCache; writable: boolean } {
+function backupCorrupt(
+  cachePath: string,
+  readOnly: boolean,
+): { state: CatalogCache; writable: boolean } {
+  if (readOnly) {
+    // A read-only catalog never creates files, so the corrupt cache is only ignored.
+    return { state: emptyCache(), writable: false };
+  }
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   try {
     copyFileSync(cachePath, `${cachePath}.corrupt-${stamp}`);

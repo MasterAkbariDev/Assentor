@@ -1,6 +1,7 @@
 import path from "node:path";
 import { RPC_PROTOCOL_VERSION, type SessionSummary } from "../protocol/rpc.js";
 import { getLocalVersionSync } from "../self/version.js";
+import { registerLibraryMethods } from "./library.js";
 import { RpcServer } from "./server.js";
 import {
   listSessions,
@@ -22,7 +23,8 @@ export interface EngineRpcOptions {
 
 /**
  * The engine's RPC server with every read-only method registered: the
- * handshake, `sessions.list` and `events.subscribe` / `events.unsubscribe`.
+ * handshake, `sessions.list`, `events.subscribe` / `events.unsubscribe`, and
+ * the prompt, team and model-catalog reads from `library.ts`.
  */
 export function createEngineRpcServer(options: EngineRpcOptions): RpcServer {
   const projectPath = path.resolve(options.projectPath);
@@ -66,5 +68,6 @@ export function createEngineRpcServer(options: EngineRpcOptions): RpcServer {
       ok: unsubscribeFromSession(connection, subscriptionId),
     }));
 
+  registerLibraryMethods(server, { projectPath });
   return server;
 }

@@ -128,7 +128,16 @@ describe("JSON-RPC conformance", () => {
     expect(await client.call("engine.hello", { client: "test" })).toEqual({
       engineVersion: "9.9.9-test",
       protocolVersion: 1,
-      capabilities: ["engine.hello", "events.subscribe", "events.unsubscribe", "sessions.list"],
+      capabilities: [
+        "engine.hello",
+        "events.subscribe",
+        "events.unsubscribe",
+        "models.catalog",
+        "prompt.get",
+        "prompt.list",
+        "sessions.list",
+        "team.list",
+      ],
     });
     await expect(client.call("events.subscribe", { sessionId: "bad" })).rejects.toBeInstanceOf(RpcRemoteError);
   });

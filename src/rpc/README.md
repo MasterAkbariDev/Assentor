@@ -7,6 +7,7 @@ JSON-RPC 2.0 between the engine and its clients (CLI/TUI in process, the Tauri s
 | `../protocol/rpc.ts` | The contract: method params/result zod schemas, error codes, notification shapes. Browser-safe. |
 | `server.ts` | `RpcServer` (method registry) and `RpcConnection` (one per client: validation, error mapping, serialized writer). |
 | `engine.ts` | `createEngineRpcServer({ projectPath })` — registers every engine method. |
+| `library.ts` | `registerLibraryMethods` — read-only `prompt.list`, `prompt.get`, `team.list`, `models.catalog`. |
 | `sessions.ts` | `sessions.list`, `events.subscribe` / `events.unsubscribe` (read-only; never locks or repairs the log). |
 | `transports.ts` | `createInProcessTransport(server)`, `serveStdio(server, { input, output })` (NDJSON). |
 | `client.ts` | `RpcClient` — typed `call`, notifications, `subscribeEvents`, `onClose`. Browser-safe. |
@@ -25,6 +26,17 @@ JSON-RPC 2.0 between the engine and its clients (CLI/TUI in process, the Tauri s
 3. Throw `new RpcError(RpcErrorCode.InvalidParams, "…")` for a client mistake; any other throw becomes `-32603 Internal error` (message only, no stack).
 4. For streams, send `connection.notify(method, params)` and `await` it (that is the backpressure), and stop work in `connection.onClose(...)`.
 5. Test it through `createInProcessTransport` + `RpcClient` (see `tests/unit/rpc-core.test.ts`).
+
+## Read-only library methods (`library.ts`)
+
+| Method | Params | Result |
+|---|---|---|
+| `prompt.list` | none | `prompts` (id, title, role, description?, source `builtin`/`user`/`project`, `overridden`) and `errors` (file relative to its layer directory, message) |
+| `prompt.get` | `{ id }` | id, title, role, source, `frontMatter`, `body`. Unknown id: `InvalidParams` |
+| `team.list` | none | `teams` (config teams expanded to seats, plus `legacy-review` when `modes.review` is unset) and `modes` (team names) |
+| `models.catalog` | `{ provider }` | `entries` (id, label, source) from the model cache only; never runs discovery |
+
+Results never contain absolute paths, key ids or vault data.
 
 ## Rules
 

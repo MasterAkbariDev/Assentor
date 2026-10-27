@@ -60,6 +60,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-04 · RPC handlers: prompts / teams / playbooks / settings
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T04-02
 
+**Status: ✅ preview cut T04-04p done** (`e6107b4` + `793aaf4`, Haiku #2; Sonnet NEEDS_WORK → fixed). Read-only methods in `src/rpc/library.ts`: `prompt.list`, `prompt.get`, `team.list` (config teams expanded to seats, plus the legacy review team when `modes.review` is unset; config errors → `InvalidRequest "Config problem: …"`, paths scrubbed; never `keyId`), `models.catalog` (a `readOnly` `CliModelCatalog`: reads the cache only, never backs up, discovers or writes). Not in this cut: `prompt.save/fork/preview/validate`, `team.save/delete/validate`, playbooks, `settings.*`, `env.*` (writes or process spawns).
+
 **Goal** — Expose existing library/config functions over RPC.
 
 **Context to read** — `packages/engine/rpc/README.md` + example handler (T04-02), `PromptLibrary` (T03-01), `src/config/load.ts` (`loadAssentorConfig`, `saveAssentorConfig`), `src/config/teams.ts`, playbook loader (T03-04), `src/services/app.ts` (`runFullDiagnostics`, `detectExecutors`).

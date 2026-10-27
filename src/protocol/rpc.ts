@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SEAT_PROVIDERS } from "../core/seats.js";
 import type { EngineEvent } from "./events.js";
 
 /**
@@ -79,6 +80,35 @@ export const SessionSummarySchema = z.object({
 });
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 
+/** Mirrors `PROMPT_ROLES` in src/prompts/format.ts (kept literal so this file stays browser-safe). */
+const PromptRoleSchema = z.enum(["builder", "reviewer", "meta"]);
+
+const PromptSummarySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  role: PromptRoleSchema,
+  description: z.string().optional(),
+  source: z.enum(["builtin", "user", "project"]),
+  /** True when this prompt replaces one with the same id from a lower layer. */
+  overridden: z.boolean(),
+});
+
+const PromptLoadErrorSchema = z.object({
+  /** Relative to the layer's prompt directory, with `/` separators. */
+  file: z.string(),
+  message: z.string(),
+});
+
+const TeamSeatSchema = z.object({
+  id: z.string(),
+  displayName: z.string(),
+  provider: z.enum(SEAT_PROVIDERS),
+  transport: z.enum(["cli", "api"]),
+  model: z.string(),
+  role: z.string(),
+  permissions: z.enum(["read-only", "edit"]),
+});
+
 export const RpcMethods = {
   "engine.hello": {
     params: z.object({ client: z.string().max(100).optional() }).strict().optional(),
@@ -105,6 +135,52 @@ export const RpcMethods = {
   "events.unsubscribe": {
     params: z.object({ subscriptionId: z.string().min(1) }).strict(),
     result: z.object({ ok: z.boolean() }),
+  },
+  // Read-only library methods (src/rpc/library.ts). None of them writes or starts anything.
+  "prompt.list": {
+    params: z.object({}).strict().optional(),
+    result: z.object({
+      prompts: z.array(PromptSummarySchema),
+      errors: z.array(PromptLoadErrorSchema),
+    }),
+  },
+  "prompt.get": {
+    params: z.object({ id: z.string().min(1).max(100) }).strict(),
+    result: z.object({
+      id: z.string(),
+      title: z.string(),
+      role: PromptRoleSchema,
+      source: z.enum(["builtin", "user", "project"]),
+      frontMatter: z.record(z.unknown()),
+      body: z.string(),
+    }),
+  },
+  "team.list": {
+    params: z.object({}).strict().optional(),
+    result: z.object({
+      teams: z.array(
+        z.object({
+          name: z.string(),
+          description: z.string().optional(),
+          source: z.enum(["config", "legacy-review"]),
+          seats: z.array(TeamSeatSchema),
+        }),
+      ),
+      /** Team names set in `modes.review` and `modes.negotiate`. */
+      modes: z.object({ review: z.string().optional(), negotiate: z.string().optional() }).strict(),
+    }),
+  },
+  "models.catalog": {
+    params: z.object({ provider: z.enum(SEAT_PROVIDERS) }).strict(),
+    result: z.object({
+      entries: z.array(
+        z.object({
+          id: z.string(),
+          label: z.string(),
+          source: z.enum(["seed", "discovered", "user"]),
+        }),
+      ),
+    }),
   },
 } as const;
 
