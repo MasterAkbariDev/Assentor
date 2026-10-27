@@ -112,6 +112,36 @@ program
   });
 
 program
+  .command("export")
+  .description("Write a Markdown report of a session from its event log")
+  .argument("<sessionId>", "Session id")
+  .option("-p, --project <path>", "Project directory", ".")
+  .option("-o, --out <file>", "Write the report to this file instead of stdout")
+  .option("--force", "Replace the --out file if it already exists", false)
+  .action(async (sessionId: string, options: { project: string; out?: string; force: boolean }) => {
+    const { readSessionEvents } = await import("../events/index.js");
+    const { renderSessionReport, saveSessionReport } = await import("../export/index.js");
+    try {
+      const projectPath = path.resolve(options.project);
+      const events = await readSessionEvents(projectPath, sessionId);
+      if (events.length === 0) {
+        throw new Error(`No events found for session ${sessionId} in ${projectPath}`);
+      }
+      const report = renderSessionReport(events);
+      if (options.out) {
+        const file = path.resolve(options.out);
+        await saveSessionReport(file, report, { force: options.force });
+        console.log(`Wrote ${file}`);
+      } else {
+        process.stdout.write(report);
+      }
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
+  });
+
+program
   .command("init")
   .description(
     "Create an optional project .assentor/config.yaml override (global defaults live in ~/.assentor)",
