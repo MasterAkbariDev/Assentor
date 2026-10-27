@@ -80,24 +80,46 @@ export function createEngineStore(): EngineStore {
   }));
 }
 
+/** Pending events past this are applied at once, so a hidden tab can't build an unbounded backlog. */
+export const MAX_PENDING_EVENTS = 1_000;
+
+function defaultSchedule(flush: () => void): void {
+  // Hidden tabs pause animation frames; fall back to a timer so the backlog keeps draining.
+  const hidden = typeof document !== "undefined" && document.hidden;
+  if (!hidden && typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(flush);
+  } else {
+    setTimeout(flush, hidden ? 250 : 16);
+  }
+}
+
 /**
  * Collect events and apply them once per animation frame, so a burst of
- * output deltas costs one render, not hundreds.
+ * output deltas costs one render, not hundreds. More than
+ * `MAX_PENDING_EVENTS` waiting are applied immediately.
  */
 export function createFrameBatcher(
   store: EngineStore,
-  schedule: (flush: () => void) => void = (flush) =>
-    typeof requestAnimationFrame === "function" ? requestAnimationFrame(flush) : setTimeout(flush, 16),
+  schedule: (flush: () => void) => void = defaultSchedule,
+  maxPending: number = MAX_PENDING_EVENTS,
 ): { push(sessionId: string, event: EngineEvent): void; flush(): void } {
   let pending: Array<{ sessionId: string; event: EngineEvent }> = [];
   let scheduled = false;
   const flush = () => {
     scheduled = false;
+    if (pending.length === 0) {
+      return;
+    }
     const batch = pending;
     pending = [];
     const bySession = new Map<string, EngineEvent[]>();
     for (const { sessionId, event } of batch) {
-      bySession.set(sessionId, [...(bySession.get(sessionId) ?? []), event]);
+      const list = bySession.get(sessionId);
+      if (list) {
+        list.push(event);
+      } else {
+        bySession.set(sessionId, [event]);
+      }
     }
     for (const [sessionId, events] of bySession) {
       store.getState().applyEvents(sessionId, events);
@@ -106,6 +128,10 @@ export function createFrameBatcher(
   return {
     push(sessionId, event) {
       pending.push({ sessionId, event });
+      if (pending.length >= maxPending) {
+        flush();
+        return;
+      }
       if (!scheduled) {
         scheduled = true;
         schedule(flush);

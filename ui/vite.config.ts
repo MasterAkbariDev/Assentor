@@ -17,7 +17,7 @@ export default defineConfig({
   build: {
     outDir: path.resolve(here, "dist"),
     emptyOutDir: true,
-    sourcemap: true,
+    sourcemap: false,
     // serve's CSP allows no inline script; keep the module preload polyfill out of the HTML.
     modulePreload: { polyfill: false },
   },

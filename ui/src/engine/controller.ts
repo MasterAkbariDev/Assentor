@@ -24,6 +24,9 @@ export class EngineController {
   private unsubscribe?: () => Promise<void>;
   private listTimer?: ReturnType<typeof setInterval>;
   private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private resyncTimer?: ReturnType<typeof setTimeout>;
+  /** Resubscribes run one at a time, so overlapping selects can't leak a subscription. */
+  private subscribeChain: Promise<void> = Promise.resolve();
   private attempt = 0;
   private stopped = false;
   private readonly batcher;
@@ -49,6 +52,7 @@ export class EngineController {
     this.offSelect();
     clearInterval(this.listTimer);
     clearTimeout(this.reconnectTimer);
+    clearTimeout(this.resyncTimer);
     this.client?.close();
   }
 
@@ -76,6 +80,7 @@ export class EngineController {
         this.client = undefined;
         this.unsubscribe = undefined;
         clearInterval(this.listTimer);
+        clearTimeout(this.resyncTimer);
         this.scheduleReconnect();
       }
     });
@@ -84,6 +89,10 @@ export class EngineController {
       this.attempt = 0;
       store.getState().setConnection("connected", hello.engineVersion);
       await this.refreshSessions();
+      if (this.client !== client || client.isClosed) {
+        return; // dropped during the first refresh; onClose already scheduled a reconnect
+      }
+      clearInterval(this.listTimer);
       this.listTimer = setInterval(() => void this.refreshSessions(), this.options.listIntervalMs ?? 3000);
       await this.resubscribe();
     } catch {
@@ -111,8 +120,17 @@ export class EngineController {
     }
   }
 
-  /** (Re)subscribe the selected session from its last applied seq. */
-  private async resubscribe(): Promise<void> {
+  /** (Re)subscribe the selected session from its last applied seq. Calls are serialized. */
+  private resubscribe(): Promise<void> {
+    const next = this.subscribeChain.then(() => this.resubscribeNow());
+    this.subscribeChain = next.catch(() => undefined);
+    return next;
+  }
+
+  private async resubscribeNow(): Promise<void> {
+    if (this.stopped) {
+      return;
+    }
     const client = this.client;
     const previous = this.unsubscribe;
     this.unsubscribe = undefined;
@@ -135,11 +153,12 @@ export class EngineController {
             return;
           }
           const delay = params.reason === "io_error" ? 1000 : 0;
-          setTimeout(() => void this.resubscribe(), delay);
+          clearTimeout(this.resyncTimer);
+          this.resyncTimer = setTimeout(() => void this.resubscribe(), delay);
         },
       });
-      if (store.getState().session?.id !== sessionId) {
-        await sub.unsubscribe(); // selection changed while subscribing
+      if (store.getState().session?.id !== sessionId || this.client !== client || this.stopped) {
+        await sub.unsubscribe().catch(() => undefined); // selection or connection changed while subscribing
         return;
       }
       this.unsubscribe = sub.unsubscribe;

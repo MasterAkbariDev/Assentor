@@ -56,4 +56,20 @@ describe("engine store", () => {
     expect(session.lastSeq).toBe(events.at(-1)!.seq);
     expect(session.seats["seat-3"]!.lastLine).toBe("line 49");
   });
+
+  it("stays bounded when frames never run (hidden tab)", () => {
+    const { id, events } = burstFixture(5, 500);
+    const store = createEngineStore();
+    store.getState().select(id);
+    const batcher = createFrameBatcher(store, () => undefined, 1000);
+
+    for (const event of events) {
+      batcher.push(id, event);
+    }
+
+    // 2,500 events with a cap of 1,000: two forced applies, 500 still waiting.
+    expect(store.getState().session!.eventCount).toBe(2000);
+    batcher.flush();
+    expect(store.getState().session!.eventCount).toBe(events.length);
+  });
 });

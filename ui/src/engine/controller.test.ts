@@ -106,4 +106,51 @@ describe("EngineController", () => {
     expect(store.getState().connection).toBe("unauthorized");
     expect(attempts).toBe(1);
   });
+
+  it("keeps exactly one live subscription when the selection flips quickly", async () => {
+    const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "ui-controller-"));
+    dirs.push(projectPath);
+    const server = createEngineRpcServer({ projectPath, engineVersion: "1.0.0-test", subscriptions: { pollMs: 5 } });
+    const calls = { subscribe: 0, unsubscribe: 0 };
+    const store = createEngineStore();
+    const controller = new EngineController({
+      store,
+      connect: async () => {
+        const { client } = createInProcessTransport(server);
+        // Count subscribe/unsubscribe requests on the wire.
+        return {
+          send(frame: string) {
+            const method = (JSON.parse(frame) as { method?: string }).method;
+            if (method === "events.subscribe") calls.subscribe += 1;
+            if (method === "events.unsubscribe") calls.unsubscribe += 1;
+            client.send(frame);
+          },
+          onMessage: (listener) => client.onMessage(listener),
+          onClose: (listener) => client.onClose(listener),
+          close: () => client.close(),
+        };
+      },
+      listIntervalMs: 1000,
+      backoffMs: [10],
+      schedule: (flush) => setTimeout(flush, 0),
+    });
+    stops.push(() => controller.stop());
+
+    const a = createId();
+    const b = createId();
+    for (const id of [a, b]) {
+      const log = await EventLog.open(projectPath, id);
+      stops.push(() => void log.close());
+      await log.append({ type: "session.created", sessionId: id, data: { title: id } });
+    }
+    await controller.start();
+
+    store.getState().select(a);
+    store.getState().select(b);
+    store.getState().select(a);
+    await until(() => store.getState().session?.id === a && store.getState().session!.lastSeq === 1);
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(calls.subscribe - calls.unsubscribe).toBe(1);
+  });
 });

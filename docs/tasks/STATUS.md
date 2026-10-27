@@ -2,7 +2,7 @@
 
 **Read this first if you are an AI (or a person) picking up this work.** It is the one authoritative record of where the Assentor multi-model / app build stands, how it is run, and what to do next. Where it disagrees with [../plans/](../plans/) or older notes, this file wins.
 
-_Last updated: 2026-10-25 by the planner session "Repository status review" (Opus)._
+_Last updated: 2026-10-27 by the planner session "Multi-model CLI app architecture" (Opus)._
 
 ---
 
@@ -27,7 +27,8 @@ Nothing has been pushed. No PR exists. Merge-base of integration and `main` is `
 
 **Sessions (Claude Desktop) that have worked on this:**
 - "Repository status review" — current planner (Opus). Took over from "Multi-model CLI app architecture" (first planner, idle).
-- "Haiku implementer: Assentor task cards" — the Haiku implementer (replaced "Templates and phase 0 foundations"). Works only in the Haiku worktree; reports back by cross-session message and waits.
+- "Haiku implementer: Assentor task cards" — Haiku implementer #1 (replaced "Templates and phase 0 foundations"). Works only in the Haiku worktree; reports back by cross-session message and waits. Owns `ui/` cards.
+- "Haiku implementer 2: Assentor task cards" (`haiku-two`) — Haiku implementer #2, started 2026-10-27 to speed things up. Own worktree/branch cut from the integration branch; never touches `ui/`. Merge its branch the same way as #1's.
 - "Review reliability concerns" (Opus) — works on `main`; wrote gate §5.0 and delivered gate items 2–3.
 
 If a session no longer exists, start a new one with the same role and point it at this file.
@@ -115,7 +116,7 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 2. ✅ **Merge `main`** (gate items 2–3) into integration.
 3. ✅ **T04-02p** (🔴 M, O2) — done, see commit log and the T04-02 card note. `src/rpc/`: typed method registry, in-process + stdio transports, `engine.hello`, read-only `sessions.list` and `events.subscribe(sessionId, fromSeq)` (`readSessionEvents` + live tail, bounded per-subscriber queue → `events.resync_required`). No write methods.
 4. ✅ **T04-03p** (🔴 M, O2 + user sign-off) — done, see the T04-03 card note. — `assentor serve`: 127.0.0.1 only, 256-bit token via URL fragment, Origin + Host (DNS-rebinding) checks, CSP, auth-failure rate limit, serves the built UI; watch-only.
-5. 🔶 **T04-06p** (🟡 M) — built and committed; **Opus review still to do** (see §8 and the T04-06 card note). — `ui/` scaffold (Vite + React + TS), `Transport` + `WebSocketTransport`, event store reusing `reduceSeatEvents` (`src/ui-shared/status.ts`), reconnect + resync, app shell (Sessions only), fixture stream.
+5. ✅ **T04-06p** (🟡 M) — `837c386` + review fixes (Opus NEEDS_WORK → fixed → PASS; see the T04-06 card note). — `ui/` scaffold (Vite + React + TS), `Transport` + `WebSocketTransport`, event store reusing `reduceSeatEvents` (`src/ui-shared/status.ts`), reconnect + resync, app shell (Sessions only), fixture stream.
 6. **T04-07p** *(after the T04-06p review)* (🟢 M, Haiku) — read-only session board: seat cards (status icon + label, model, role, last line, elapsed, tokens). No model picker, pause or cancel yet.
 
 **Approved dependencies (lean set):** runtime `ws`; UI dev/build `vite`, `@vitejs/plugin-react`, `react`, `react-dom`, `zustand`, `tailwindcss`, `jsdom`, `@testing-library/react`. TanStack Router/Query/Virtual and Radix come later with the full UI. Nothing else without asking.
@@ -132,13 +133,15 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 
 ## 8. In flight right now
 
-**Paused by the user (2026-10-26) after T04-06p was committed.** Nothing uncommitted. When resuming, in order:
+Resumed 2026-10-27 by "Multi-model CLI app architecture".
 
-1. **Opus review of T04-06p** (`ui/`, the `build`/`typecheck`/vitest wiring, the dependency set). Fix findings, then mark T04-06p ✅.
-2. **T04-07p to Haiku** — read-only session board replacing `SessionPanel`'s seat list (`ui/src/features/session-board/`). Include in the brief: the **"Review panel" seat stays at `starting` with a growing timer** (seen in the live preview): the panel seat gets `seat.status starting` from the mirrored `review.started` but no `seat.done`, because `review.completed` maps to `review.verdict`. Fix in the engine (`src/orchestrator/engine-events.ts` / `seat-events.ts`: end the reviewer-scoped seat on `review.completed`) or treat `review.verdict` as the panel's end in `reduceSeatEvents` — a planner decision before the card goes out.
-3. Then the preview milestone is done: `assentor serve` + a browser shows live runs.
+- ✅ T04-06p Opus review done; fixes committed.
+- ✅ **Review-panel seat fix** (`afb6269`): decided in the engine, not the UI. `SeatEventSink` tracks open turns; `review.completed` ends the reviewer-scoped seat ("verdict: PASS"), and a session end closes any open turn (ok only when completed).
+- 🔶 **T04-07p → Haiku #1** — read-only session board (`ui/src/features/session-board/`), brief sent with the review's additions.
+- 🔶 **T04-15 → Haiku #2** — `assentor app` launcher (`src/cli/app.ts`). Next for #2: T06-02 session export.
+- Then the preview milestone is done: `assentor app` (or `serve`) + a browser shows live runs with a real session board.
 
-**Try the preview:** `pnpm build`, run something with `assentor run "…"`, then `bin/assentor serve -p <project>` and open the printed link.
+**Try the preview:** `pnpm build`, run something with `assentor run "…"`, then `bin/assentor serve -p <project>` and open the printed link. Gate needs Node ≥ 22.13: `export PATH="$HOME/.nvm/versions/node/v24.11.1/bin:$PATH"`.
 
 ## 9. Known follow-ups (not scheduled)
 
