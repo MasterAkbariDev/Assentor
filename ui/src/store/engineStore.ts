@@ -1,5 +1,5 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
-import type { EngineEvent } from "@engine/protocol/events.js";
+import type { EngineEvent, EngineEventType } from "@engine/protocol/events.js";
 import type { SessionSummary } from "@engine/protocol/rpc.js";
 import { reduceSeatEvents, type SeatState } from "@engine/ui-shared/status.js";
 
@@ -11,9 +11,38 @@ import { reduceSeatEvents, type SeatState } from "@engine/ui-shared/status.js";
 
 export type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "unauthorized" | "no_token";
 
+/** What `seat.spawned` says about a seat beyond `SeatState` (the seat drawer's Info tab). */
+export interface SeatInfo {
+  provider: string;
+  transport: "cli" | "api";
+  permissions: "read-only" | "edit";
+}
+
+/**
+ * The event types the seat drawer's Activity tab shows. Only these are kept per
+ * seat, so high-volume types (tokens, thinking, output) can't push out the rows
+ * that matter. `activity.ts` renders exactly these.
+ */
+export const ACTIVITY_EVENT_TYPES: ReadonlySet<EngineEventType> = new Set<EngineEventType>([
+  "seat.status",
+  "seat.tool_call",
+  "seat.done",
+  "seat.error",
+  "seat.retry",
+  "seat.model.changed",
+  "review.verdict",
+]);
+
+/** Most activity events kept per seat (see `ACTIVITY_EVENT_TYPES`). */
+export const SEAT_EVENT_CAP = 200;
+
 export interface SessionView {
   id: string;
   seats: Record<string, SeatState>;
+  /** From `seat.spawned`, keyed by seat id. */
+  seatInfo: Record<string, SeatInfo>;
+  /** The last `SEAT_EVENT_CAP` events of each seat whose type is in `ACTIVITY_EVENT_TYPES`, oldest first. */
+  seatEvents: Record<string, EngineEvent[]>;
   /** Last applied `seq`; resubscribe from here. */
   lastSeq: number;
   eventCount: number;
@@ -29,15 +58,22 @@ export interface EngineState {
   sessions: SessionSummary[];
   selectedId?: string;
   session?: SessionView;
+  /** The seat whose drawer is open. Cleared when the selected run changes. */
+  openSeatId?: string;
   setConnection(status: ConnectionStatus, engineVersion?: string): void;
   setSessions(sessions: SessionSummary[]): void;
   select(id: string | undefined): void;
+  openSeat(seatId: string | undefined): void;
   /** Apply events in order; events at or below `lastSeq`, or for another session, are ignored. */
   applyEvents(sessionId: string, events: EngineEvent[]): void;
   failSession(sessionId: string, message: string): void;
 }
 
 export type EngineStore = StoreApi<EngineState>;
+
+function emptySession(id: string): SessionView {
+  return { id, seats: {}, seatInfo: {}, seatEvents: {}, lastSeq: 0, eventCount: 0 };
+}
 
 export function createEngineStore(): EngineStore {
   return createStore<EngineState>()((set) => ({
@@ -50,20 +86,28 @@ export function createEngineStore(): EngineStore {
       set((s) =>
         id === s.selectedId
           ? s
-          : { selectedId: id, session: id ? { id, seats: {}, lastSeq: 0, eventCount: 0 } : undefined },
+          : { selectedId: id, openSeatId: undefined, session: id ? emptySession(id) : undefined },
       ),
+    openSeat: (seatId) => set({ openSeatId: seatId }),
     applyEvents: (sessionId, events) =>
       set((s) => {
         const current = s.session;
         if (!current || current.id !== sessionId || events.length === 0) {
           return s;
         }
-        let { seats, lastSeq, eventCount, state } = current;
+        let { seats, seatInfo, seatEvents, lastSeq, eventCount, state } = current;
         for (const event of events) {
           if (event.sessionId !== sessionId || event.seq <= lastSeq) {
             continue;
           }
           seats = reduceSeatEvents(seats, event);
+          if (event.seatId && event.type === "seat.spawned") {
+            const { provider, transport, permissions } = event.data;
+            seatInfo = { ...seatInfo, [event.seatId]: { provider, transport, permissions } };
+          }
+          if (event.seatId && ACTIVITY_EVENT_TYPES.has(event.type)) {
+            seatEvents = { ...seatEvents, [event.seatId]: [...(seatEvents[event.seatId] ?? []), event].slice(-SEAT_EVENT_CAP) };
+          }
           lastSeq = event.seq;
           eventCount += 1;
           if (event.type === "session.state") {
@@ -73,7 +117,7 @@ export function createEngineStore(): EngineStore {
         if (lastSeq === current.lastSeq) {
           return s;
         }
-        return { session: { ...current, seats, lastSeq, eventCount, ...(state ? { state } : {}) } };
+        return { session: { ...current, seats, seatInfo, seatEvents, lastSeq, eventCount, ...(state ? { state } : {}) } };
       }),
     failSession: (sessionId, message) =>
       set((s) => (s.session?.id === sessionId ? { session: { ...s.session, error: message } } : s)),

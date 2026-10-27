@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import type { EngineEvent } from "@engine/protocol/events.js";
 import { burstFixture, sessionFixture } from "../test/fixtures.js";
-import { createEngineStore, createFrameBatcher } from "./engineStore.js";
+import { ACTIVITY_EVENT_TYPES, createEngineStore, createFrameBatcher } from "./engineStore.js";
 
 describe("engine store", () => {
   it("reconstructs identical state when a stream is replayed after a mid-stream reload", () => {
@@ -33,7 +34,94 @@ describe("engine store", () => {
     expect(store.getState().session!.eventCount).toBe(0);
     store.getState().applyEvents(sessionFixture.id, sessionFixture.events);
     store.getState().select("another-id");
-    expect(store.getState().session).toEqual({ id: "another-id", seats: {}, lastSeq: 0, eventCount: 0 });
+    expect(store.getState().session).toEqual({
+      id: "another-id",
+      seats: {},
+      seatInfo: {},
+      seatEvents: {},
+      lastSeq: 0,
+      eventCount: 0,
+    });
+  });
+
+  it("keeps each seat's spawn info and closes the drawer when the run changes", () => {
+    const { id, events } = sessionFixture;
+    const store = createEngineStore();
+    store.getState().select(id);
+    store.getState().applyEvents(id, events);
+    expect(store.getState().session!.seatInfo.executor).toEqual({ provider: "mock", transport: "api", permissions: "edit" });
+    expect(store.getState().session!.seatInfo["reviewer-1"]!.permissions).toBe("read-only");
+
+    store.getState().openSeat("executor");
+    store.getState().select(id); // same run: the drawer stays open
+    expect(store.getState().openSeatId).toBe("executor");
+    store.getState().select("another-id");
+    expect(store.getState().openSeatId).toBeUndefined();
+  });
+
+  it("keeps the last 200 non-delta events per seat, in order, and only that seat's", () => {
+    const id = "cap-run";
+    let seq = 0;
+    const at = new Date(Date.UTC(2026, 9, 25, 10, 0, 0)).toISOString();
+    const ev = (seatId: string, type: string, data: object) => ({ seq: ++seq, sessionId: id, seatId, at, type, data }) as EngineEvent;
+    const events: EngineEvent[] = [
+      ev("a", "seat.spawned", { displayName: "A", provider: "mock", transport: "api", model: "AUTO", role: "r", permissions: "edit" }),
+      ...Array.from({ length: 300 }, (_, i) => ev("a", "seat.status", { status: i % 2 ? "writing" : "thinking" })),
+      ...Array.from({ length: 40 }, () => ev("a", "seat.output.delta", { text: "x" })),
+      ev("b", "seat.status", { status: "writing" }),
+    ];
+    const store = createEngineStore();
+    store.getState().select(id);
+    store.getState().applyEvents(id, events);
+
+    const seatEvents = store.getState().session!.seatEvents;
+    // 300 status events for "a" (spawn is not an activity type); the last 200 are kept: seq 102..301.
+    expect(seatEvents.a).toHaveLength(200);
+    expect(seatEvents.a![0]!.seq).toBe(102);
+    expect(seatEvents.a!.at(-1)!.seq).toBe(301);
+    expect(seatEvents.a!.every((e) => ACTIVITY_EVENT_TYPES.has(e.type))).toBe(true);
+    expect(seatEvents.b!.map((e) => e.seq)).toEqual([342]);
+  });
+
+  it("high-volume types the drawer does not show never evict its activity rows", () => {
+    const id = "noise-run";
+    const at = new Date(Date.UTC(2026, 9, 25, 10, 0, 0)).toISOString();
+    const ev = (seq: number, type: string, data: object) => ({ seq, sessionId: id, seatId: "a", at, type, data }) as EngineEvent;
+    const events: EngineEvent[] = [
+      ev(1, "seat.status", { status: "starting" }),
+      ev(2, "seat.status", { status: "thinking" }),
+      ...Array.from({ length: 300 }, (_, i) => ev(3 + i, "seat.tokens", { tokensIn: 1, tokensOut: 1 })),
+      ...Array.from({ length: 300 }, (_, i) => ev(303 + i, "seat.thinking", { text: `t${i}` })),
+    ];
+    const store = createEngineStore();
+    store.getState().select(id);
+    store.getState().applyEvents(id, events);
+
+    const seatEvents = store.getState().session!.seatEvents;
+    expect(seatEvents.a!.map((e) => e.seq)).toEqual([1, 2]);
+    expect(store.getState().session!.lastSeq).toBe(602);
+  });
+
+  it("a mid-stream reload rebuilds identical seat info and capped seat events", () => {
+    const id = "cap-replay";
+    const at = new Date(Date.UTC(2026, 9, 25, 10, 0, 0)).toISOString();
+    const events = [
+      { seq: 1, sessionId: id, seatId: "a", at, type: "seat.spawned", data: { displayName: "A", provider: "mock", transport: "cli", model: "AUTO", role: "r", permissions: "read-only" } },
+      ...Array.from({ length: 260 }, (_, i) => ({ seq: i + 2, sessionId: id, seatId: "a", at, type: "seat.status", data: { status: i % 2 ? "writing" : "thinking" } })),
+    ] as EngineEvent[];
+    const whole = createEngineStore();
+    whole.getState().select(id);
+    whole.getState().applyEvents(id, events);
+
+    const reloaded = createEngineStore();
+    reloaded.getState().select(id);
+    reloaded.getState().applyEvents(id, events.slice(0, 100));
+    const fromSeq = reloaded.getState().session!.lastSeq;
+    reloaded.getState().applyEvents(id, events.filter((e) => e.seq > fromSeq - 2));
+
+    expect(reloaded.getState().session).toEqual(whole.getState().session);
+    expect(reloaded.getState().session!.seatInfo.a).toEqual({ provider: "mock", transport: "cli", permissions: "read-only" });
+    expect(reloaded.getState().session!.seatEvents.a).toHaveLength(200);
   });
 
   it("applies a 6-seat × 50-event burst per frame without dropping events", () => {

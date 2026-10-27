@@ -8,12 +8,13 @@ import { useNow } from "./useNow.js";
 const TICK_MS = 1000;
 
 /**
- * Read-only board of the selected run's seats: grouped (executor, reviewers,
- * other), one card per seat, a responsive grid. Owns the only elapsed-time
- * ticker, and it runs only while at least one seat is still live.
+ * Board of the selected run's seats: grouped (executor, reviewers, other), one
+ * card per seat, a responsive grid. Each card opens the seat drawer. Owns the
+ * only elapsed-time ticker, and it runs only while at least one seat is still live.
  */
 export function SessionBoard() {
   const seats = useEngine(selectSeats);
+  const openSeat = useEngine((s) => s.openSeat);
   const groups = useMemo(() => groupSeats(seats ?? {}), [seats]);
   const live = Object.values(seats ?? {}).some(isLiveSeat);
   const now = useNow(TICK_MS, live);
@@ -28,7 +29,7 @@ export function SessionBoard() {
           </h2>
           <div className="seat-grid">
             {group.seats.map((seat) => (
-              <SeatCard key={seat.seatId} seat={seat} now={now} />
+              <SeatCard key={seat.seatId} seat={seat} now={now} onOpen={openSeat} />
             ))}
           </div>
         </section>

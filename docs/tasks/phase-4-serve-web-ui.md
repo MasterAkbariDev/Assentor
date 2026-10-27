@@ -127,6 +127,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-08 · Seat drawer
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T04-06 · **New deps:** `@xterm/xterm`
 
+**Status: ✅ preview cut T04-08p done** (`15ae1c1` + `3e901df`, Haiku #3; Sonnet NEEDS_WORK → fixed). Read-only drawer in `ui/src/features/seat-drawer/`: a seat card (role=button, Enter/Space) opens a non-modal `role=dialog` with tabs Activity (seat's status/tool/done/error/retry/model/verdict events), Output (`outputTail` as text, follows the tail, "Jump to latest") and Info (provider/transport/permissions from `seat.spawned`, times, tokens, ids). Store gains `seatInfo` and `seatEvents` (only `ACTIVITY_EVENT_TYPES`, last 200 per seat). Escape/close restore focus. Not in this cut: pause/stop/restart/inject, Files tab, xterm.
+
 **Allowed files** — `packages/ui/src/features/seat-drawer/*`, its tests.
 
 **Spec**

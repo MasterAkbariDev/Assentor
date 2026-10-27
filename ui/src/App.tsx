@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { SeatDrawer } from "./features/seat-drawer/SeatDrawer.js";
 import { SessionBoard } from "./features/session-board/SessionBoard.js";
 import { useEngine } from "./store/context.js";
 import type { ConnectionStatus } from "./store/engineStore.js";
@@ -127,7 +128,14 @@ export function SessionPanel() {
         {session.state ? <span className="session-state"> · {session.state}</span> : null}
       </h1>
       {session.error ? <p className="notice error">{session.error}</p> : null}
-      {seatCount === 0 ? <p className="empty">Waiting for events…</p> : <SessionBoard />}
+      {seatCount === 0 ? (
+        <p className="empty">Waiting for events…</p>
+      ) : (
+        <>
+          <SessionBoard />
+          <SeatDrawer />
+        </>
+      )}
     </section>
   );
 }
