@@ -211,10 +211,21 @@ describe("team.list", () => {
     expect((error as RpcRemoteError).message).not.toContain(projectPath);
   });
 
-  it("never includes a keyId", async () => {
-    const result = await engineClient().call("team.list");
+  it("never includes a keyId, even from an API reviewer that has one", async () => {
+    await writeProjectFile(
+      "config.yaml",
+      ["reviewers:", "  - provider: gemini", "    transport: api", "    keyId: vault-key-secret-42", ""].join("\n"),
+    );
 
-    expect(JSON.stringify(result)).not.toContain("keyId");
+    const result = await engineClient().call("team.list");
+    const json = JSON.stringify(result);
+
+    expect(result.teams.find((team) => team.source === "legacy-review")?.seats[0]).toMatchObject({
+      provider: "gemini",
+      transport: "api",
+    });
+    expect(json).not.toContain("keyId");
+    expect(json).not.toContain("vault-key-secret-42");
   });
 });
 
@@ -236,6 +247,20 @@ describe("models.catalog", () => {
     expect(result.entries[0]).toEqual({ id: "AUTO", label: expect.any(String), source: "seed" });
     expect(result.entries.every((entry) => entry.id.length > 0)).toBe(true);
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("never writes the cache: a corrupt or wrong-shape file is left alone and seeds still come back", async () => {
+    const cache = path.join(userDir, "models-cache.json");
+    for (const corrupt of ["{ not json", "[1, 2, 3]"]) {
+      await fs.writeFile(cache, corrupt, "utf8");
+
+      const result = await engineClient().call("models.catalog", { provider: "claude-code" });
+
+      expect(result.entries[0]).toMatchObject({ id: "AUTO", source: "seed" });
+      expect(result.entries.length).toBeGreaterThan(1);
+      expect((await fs.readdir(userDir)).filter((name) => name.includes(".corrupt-"))).toEqual([]);
+      expect(await fs.readFile(cache, "utf8")).toBe(corrupt);
+    }
   });
 
   it("returns InvalidParams for an unknown provider", async () => {
@@ -278,5 +303,24 @@ describe("builtin prompt library", () => {
     expect(result.prompts.filter((prompt) => prompt.source === "builtin").map((p) => p.id)).toEqual(
       builtinIds,
     );
+  });
+});
+
+describe("read-only catalog", () => {
+  it("refuses every write and never spawns, and creates no file", async () => {
+    const cachePath = path.join(userDir, "models-cache.json");
+    const run = vi.fn();
+    const catalog = new CliModelCatalog({
+      cachePath,
+      run,
+      locate: () => "/usr/bin/fake",
+      readOnly: true,
+    });
+
+    await expect(catalog.addUserModel("claude-code", "my-model")).rejects.toThrow("read-only catalog");
+    await expect(catalog.removeUserModel("claude-code", "my-model")).rejects.toThrow("read-only catalog");
+    await expect(catalog.discover("claude-code")).rejects.toThrow("read-only catalog");
+    expect(run).not.toHaveBeenCalled();
+    await expect(fs.access(cachePath)).rejects.toThrow();
   });
 });

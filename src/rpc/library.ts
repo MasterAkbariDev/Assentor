@@ -17,14 +17,15 @@ import { RpcError, type RpcServer } from "./server.js";
 export interface LibraryMethodsOptions {
   /** Project whose `.assentor/` the methods read. */
   projectPath: string;
-  /** Overrides the catalog (tests). Default: `new CliModelCatalog()`, read per call. */
+  /** Overrides the catalog (tests). Default: a read-only `CliModelCatalog`, built per call. */
   createCatalog?: () => CliModelCatalog;
 }
 
 /** Registers `prompt.list`, `prompt.get`, `team.list` and `models.catalog`. */
 export function registerLibraryMethods(server: RpcServer, options: LibraryMethodsOptions): RpcServer {
   const projectPath = path.resolve(options.projectPath);
-  const createCatalog = options.createCatalog ?? (() => new CliModelCatalog());
+  // Read-only: a browser request must never create or repair the cache file.
+  const createCatalog = options.createCatalog ?? (() => new CliModelCatalog({ readOnly: true }));
 
   server
     .register("prompt.list", async () => {
@@ -158,7 +159,8 @@ function scrubMessage(message: string, roots: Array<[string, string]>): string {
   for (const [root, label] of roots) {
     out = out.split(root).join(label);
   }
+  // A path may hold spaces, so a path runs to the next quote, bracket or line end.
   return out
-    .replace(/(?:[A-Za-z]:\\|\\\\)[^\s'"]+/g, "<path>")
-    .replace(/(^|[\s'"(])\/[^\s'")]+/g, "$1<path>");
+    .replace(/(?:[A-Za-z]:\\|\\\\)[^'"()\n]+/g, "<path>")
+    .replace(/(^|[\s'"(])\/[^'"()\n]+/g, "$1<path>");
 }
