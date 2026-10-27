@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { expandSeatSpecs, NegotiationCancelledError, NegotiationResultSchema } from "../../src/index.js";
+import {
+  expandSeatSpecs,
+  NegotiationCancelledError,
+  NegotiationResultSchema,
+  proposalLabel,
+} from "../../src/index.js";
 import { getStrategy, listStrategies, registerBuiltinStrategies } from "../../src/negotiation/strategies/index.js";
 import { voteStrategy } from "../../src/negotiation/strategies/vote.js";
 import { createMockNegotiationContext, type MockAsk } from "../../src/negotiation/testing/mock-context.js";
@@ -89,9 +94,48 @@ describe("vote strategy: results", () => {
 
     expect(result.decision).toBe("use a queue");
     expect(result.tallies).toEqual({ [A]: 1, [B]: 1 });
-    expect(result.rationale).toContain("tie-break: Proposal A sorts first");
+    expect(result.rationale).toContain("tie-break: Proposal A is the earliest");
     // 1 of 2 possible points is 0.5, which is not above the threshold.
     expect(result.consensus).toEqual({ score: 0.5, reached: false });
+  });
+
+  it("breaks a tie between B and AA toward B (earliest in proposal order), not by sort order", async () => {
+    // 27 proposals: index 26 is "Proposal AA". Sorted as text, "Proposal AA" would come before "Proposal B".
+    // A spec holds at most 8 seats, so 27 seats take four specs.
+    const big = expandSeatSpecs([
+      { provider: "claude-code", model: "opus", count: 8 },
+      { provider: "claude-code", model: "sonnet", count: 8 },
+      { provider: "claude-code", model: "haiku", count: 8 },
+      { provider: "codex", model: "sol", count: 3 },
+    ]);
+    expect(big).toHaveLength(27);
+    const ids = big.map((seat) => seat.id);
+    const labels = big.map((_, i) => proposalLabel(i));
+    expect(labels[1]).toBe(B);
+    expect(labels[26]).toBe("Proposal AA");
+    const rest = labels.filter((label) => label !== B && label !== "Proposal AA");
+    const bFirst = [B, "Proposal AA", ...rest];
+    const aaFirst = ["Proposal AA", B, ...rest];
+    // 0-based seats 0 and 2..13 rank B first; seat 1 and seats 14..25 rank AA first (each seat's
+    // own proposal is never first, so no self-vote move); seat 26 submits an invalid ballot.
+    // 26 ballots count and B and AA each get 663 points.
+    const ballots: Record<string, string[]> = {};
+    ids.forEach((id, i) => {
+      ballots[id] = i === 26 ? ["Proposal Z"] : i === 1 || (i >= 14 && i <= 25) ? aaFirst : bFirst;
+    });
+    const { ctx } = createMockNegotiationContext({
+      seats: big,
+      script: (ask) => {
+        if (ask.step === "negotiate-propose") return { proposal: `idea ${ids.indexOf(ask.seatId)}` };
+        return { ranking: ballots[ask.seatId] };
+      },
+    });
+    const result = await voteStrategy.run(ctx);
+
+    expect(result.tallies![B]).toBe(result.tallies!["Proposal AA"]);
+    expect(result.tallies![B]).toBeGreaterThan(result.tallies![A]!);
+    expect(result.decision).toBe("idea 1");
+    expect(result.rationale).toContain("tie-break: Proposal B is the earliest");
   });
 
   it("a seat that ranks its own proposal first has it moved to last, and says so", async () => {
@@ -178,7 +222,7 @@ describe("vote strategy: proposals and failures", () => {
   });
 
   it("one proposal wins without a vote round", async () => {
-    const { ctx, asks } = createMockNegotiationContext({
+    const { ctx, asks, events } = createMockNegotiationContext({
       seats,
       script: script({}, ["opus-2", "sol-1"]),
     });
@@ -189,10 +233,14 @@ describe("vote strategy: proposals and failures", () => {
     expect(result.rounds).toBe(1);
     expect(result.consensus).toEqual({ score: 1, reached: true });
     expect(asks.filter((a) => a.step === "negotiate-rank")).toHaveLength(0);
+    expect(events.at(-1)).toEqual({
+      type: "negotiation.consensus",
+      data: { round: 1, score: 1, reached: true, preferred: A },
+    });
   });
 
   it("no proposal means no decision", async () => {
-    const { ctx } = createMockNegotiationContext({
+    const { ctx, events } = createMockNegotiationContext({
       seats,
       script: script({}, ["opus-1", "opus-2", "sol-1"]),
     });
@@ -202,6 +250,7 @@ describe("vote strategy: proposals and failures", () => {
     expect(result.rationale).toBe("no proposals");
     expect(result.consensus).toEqual({ score: 0, reached: false });
     expect(result.dissent).toHaveLength(3);
+    expect(events).toEqual([{ type: "negotiation.consensus", data: { round: 1, score: 0, reached: false } }]);
   });
 });
 

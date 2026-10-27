@@ -18,9 +18,11 @@ import {
  *   ballot does, that proposal moves to last before scoring. `votes` and
  *   `tallies` show the moved ranking.
  * - Borda: with n proposals, the position at index i (0-based) scores n - 1 - i.
- * - Ties go to the label that sorts first, and the rationale says it was a tie-break.
+ * - Ties go to the earliest label in proposal order, and the rationale says it was a tie-break.
  * - consensus.score = winner points / (valid ballots × (n - 1)); reached when score > 0.5.
- * - Fewer than two proposals: no vote round. One proposal wins; none means no decision.
+ * - Fewer than two proposals: no vote round. One proposal wins with a deliberate
+ *   vacuous consensus (score 1); none means no decision (score 0). Each emits
+ *   one consensus event at round 1.
  */
 export const voteStrategy: NegotiationStrategy = {
   id: "vote",
@@ -45,6 +47,12 @@ export const voteStrategy: NegotiationStrategy = {
     const n = anonymized.length;
     if (n < 2) {
       const only = anonymized[0];
+      // One proposal is a deliberate vacuous consensus: there is nothing to vote on.
+      const consensus = { score: only ? 1 : 0, reached: Boolean(only) };
+      ctx.emit({
+        type: "negotiation.consensus",
+        data: { round: 1, ...consensus, ...(only ? { preferred: only.label } : {}) },
+      });
       return {
         strategy: "vote",
         decision: only?.text ?? "",
@@ -52,7 +60,7 @@ export const voteStrategy: NegotiationStrategy = {
         proposals: listed,
         dissent,
         rounds: 1,
-        consensus: { score: only ? 1 : 0, reached: Boolean(only) },
+        consensus,
       };
     }
 
@@ -103,17 +111,16 @@ export const voteStrategy: NegotiationStrategy = {
       };
     }
 
-    // Ties go to the label that sorts first.
-    const sorted = [...labels].sort();
+    // Ties go to the earliest label in proposal order (`labels` is already in that order).
     const top = Math.max(...labels.map((label) => points.get(label) ?? 0));
-    const topLabels = sorted.filter((label) => points.get(label) === top);
+    const topLabels = labels.filter((label) => points.get(label) === top);
     const winner = topLabels[0]!;
     const score = top / maxPossible;
     const reached = score > 0.5;
     const winnerText = listed.find((p) => p.label === winner)?.text ?? "";
     const rationale =
       `${winner} won with ${top} of ${maxPossible} points from ${votes.length} valid ballot(s)` +
-      (topLabels.length > 1 ? `; tie-break: ${winner} sorts first among the top labels` : "") +
+      (topLabels.length > 1 ? `; tie-break: ${winner} is the earliest of the top labels` : "") +
       (reached ? "" : "; below the 0.5 consensus threshold");
     ctx.emit({ type: "negotiation.consensus", data: { round: 2, score, reached, preferred: winner } });
     return {
