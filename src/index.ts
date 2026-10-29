@@ -166,6 +166,16 @@ export {
   type NegotiationRunInput,
   type NegotiationRunOutput,
 } from "./negotiation/engine.js";
+export {
+  createBestOfNExecutor,
+  parseBestOfNOptions,
+  discardBestOfNLosers,
+  shuffleWithSeed,
+  BEST_OF_N_STRATEGY_ID,
+  type BestOfNCandidate,
+  type BestOfNDeps,
+  type BestOfNOptions,
+} from "./negotiation/strategies/best-of-n.js";
 export * from "./worktrees/index.js";
 export {
   createStageRunners,

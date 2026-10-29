@@ -120,7 +120,7 @@ Legend: 🟢 H · 🟡 S · 🔴 O · Size S/M/L (≈ <150 / 150–500 / >500 ch
 | T02-03 | Negotiation engine core + strategy contract ✅ | 🔴 O | O2 + human | L | T02-02 |
 | T02-04 | Strategy: Vote (ranked / Borda) ✅ | 🟢 H | S | S | T02-03 |
 | T02-05 | Strategy: Debate ✅ | 🟡 S | O | M | T02-03 |
-| T02-06 | Strategy: Best-of-N | 🟡 S | O | M | T02-01, T02-03 |
+| T02-06 | Strategy: Best-of-N ✅ | 🟡 S | O | M | T02-01, T02-03 |
 | T02-07 | Strategy: Synthesize ✅ | 🟢 H | S | S | T02-03 |
 | T02-08 | Strategy: Divide & conquer | 🟡 S | O | L | T02-01, T02-03 |
 | T02-09 | Stage-graph runner (plan → execute → review, tiebreak) ✅ | 🔴 O | O2 + human | L | T02-03, T01-03 |
