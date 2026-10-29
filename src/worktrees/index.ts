@@ -1,0 +1,18 @@
+export {
+  WorktreeManager,
+  WorktreeError,
+  assertSeatKey,
+  shortSeatName,
+  worktreeBranch,
+  worktreeRelativePath,
+  type WorktreeManagerOptions,
+  type SeatKey,
+  type WorktreeState,
+  type WorktreeOutcome,
+  type WorktreeInfo,
+  type WorktreeDiff,
+  type ApplyStrategy,
+  type ApplyResult,
+  type CleanupReport,
+  type ReconcileReport,
+} from "./manager.js";
