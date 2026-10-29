@@ -165,3 +165,10 @@ export {
   type NegotiationRunInput,
   type NegotiationRunOutput,
 } from "./negotiation/engine.js";
+export {
+  createStageRunners,
+  createDebateTiebreak,
+  type StageRunnerDeps,
+  type PanelTiebreakOptions,
+  type DebateTiebreakInput,
+} from "./orchestrator/session-stages.js";

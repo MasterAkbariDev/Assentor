@@ -114,7 +114,8 @@ export interface ReviewCoordinatorOptions {
    * Called on a split panel when `tiebreak` is `negotiate` (implemented by the
    * negotiate mode, T02-09). A returned result replaces the policy's merge but
    * still goes through the security veto. `undefined` (or a throw) falls back
-   * to the policy.
+   * to the policy, and so does a PASS while any member returned BLOCKED or an
+   * evidenced blocker issue.
    */
   onDisagreement?: (findings: ReviewerFinding[]) => Promise<ReviewResult | undefined>;
 }
@@ -322,8 +323,18 @@ export class ReviewCoordinator {
     if (this.tiebreak === "negotiate" && this.onDisagreement && this.policy !== "unanimous") {
       try {
         const negotiated = await this.onDisagreement(findings);
-        // A FAILED negotiation is an operational failure, not a ruling.
-        if (negotiated && negotiated.status !== ReviewStatus.Failed) {
+        // A FAILED negotiation is an operational failure, not a ruling, and a
+        // negotiated PASS may not clear a member's BLOCKED or evidenced blocker.
+        const memberBlocks = findings.some(
+          (f) =>
+            f.result.status === ReviewStatus.Blocked ||
+            (f.result.issues ?? []).some((i) => i.severity === Severity.Blocker && isEvidenced(i)),
+        );
+        if (
+          negotiated &&
+          negotiated.status !== ReviewStatus.Failed &&
+          !(negotiated.status === ReviewStatus.Pass && memberBlocks)
+        ) {
           return normalizeResult(negotiated);
         }
       } catch {

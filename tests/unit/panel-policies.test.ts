@@ -414,3 +414,32 @@ describe("onDisagreement and security claims", () => {
     ).toBe("NEEDS_WORK");
   });
 });
+
+describe("onDisagreement may not clear a member's BLOCKED or evidenced blocker (T02-09)", () => {
+  const hook = { tiebreak: "negotiate" as const, onDisagreement: async () => result(ReviewStatus.Pass) };
+  const evidencedBlocker: Issue = {
+    id: "COR-1",
+    severity: Severity.Blocker,
+    category: IssueCategory.Correctness,
+    description: "Deletes user data on retry",
+    evidence: ["src/sync.ts:42 rm(dir)"],
+    affectedFiles: ["src/sync.ts"],
+  };
+
+  it("a negotiated PASS over a BLOCKED member falls back to the policy", async () => {
+    for (const policy of ["majority", "weighted", "adjudicator", "security-veto"] as const) {
+      expect(await outcome(policy, [P, ["BLOCKED"]], hook), policy).toBe("BLOCKED");
+    }
+  });
+
+  it("a negotiated PASS over an evidenced non-security blocker falls back to the policy", async () => {
+    for (const policy of ["majority", "weighted"] as const) {
+      expect(await outcome(policy, [P, ["NEEDS_WORK", [evidencedBlocker]]], hook), policy).toBe("NEEDS_WORK");
+    }
+  });
+
+  it("a negotiated non-PASS over a BLOCKED member still stands", async () => {
+    const needsWork = { tiebreak: "negotiate" as const, onDisagreement: async () => result(ReviewStatus.NeedsWork) };
+    expect(await outcome("majority", [P, ["BLOCKED"]], needsWork)).toBe("NEEDS_WORK");
+  });
+});
