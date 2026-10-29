@@ -157,4 +157,12 @@ export { AuditLog, type AuditEvent } from "./services/audit.js";
 export * from "./export/index.js";
 export * from "./negotiation/index.js";
 export * from "./modes/index.js";
+export {
+  runNegotiation,
+  createNegotiationContext,
+  type SeatStepRunner,
+  type TranscriptEntry,
+  type NegotiationRunInput,
+  type NegotiationRunOutput,
+} from "./negotiation/engine.js";
 export * from "./worktrees/index.js";

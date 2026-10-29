@@ -52,3 +52,13 @@ export {
   type ApplyBoardOpResult,
   type BoardColumns,
 } from "./lead/board.js";
+export {
+  parseAgentReport,
+  repairPrompt,
+  verifyReportClaims,
+  MAX_REPORT_SCAN_BYTES,
+  type ParseAgentReportResult,
+  type ClaimCheck,
+  type ClaimEvidence,
+  type VerifyClaimsOptions,
+} from "./lead/report.js";

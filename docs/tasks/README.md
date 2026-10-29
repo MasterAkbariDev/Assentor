@@ -117,11 +117,11 @@ Legend: 🟢 H · 🟡 S · 🔴 O · Size S/M/L (≈ <150 / 150–500 / >500 ch
 |---|---|---|---|---|---|
 | T02-01 | Worktree manager | 🔴 O | O2 + human | L | T00-01 |
 | T02-02 | Seat scheduler: concurrency, rate limits, budgets ✅ | 🔴 O | O2 | L | T00-07 |
-| T02-03 | Negotiation engine core + strategy contract | 🔴 O | O2 + human | L | T02-02 |
+| T02-03 | Negotiation engine core + strategy contract ✅ | 🔴 O | O2 + human | L | T02-02 |
 | T02-04 | Strategy: Vote (ranked / Borda) ✅ | 🟢 H | S | S | T02-03 |
-| T02-05 | Strategy: Debate | 🟡 S | O | M | T02-03 |
+| T02-05 | Strategy: Debate ✅ | 🟡 S | O | M | T02-03 |
 | T02-06 | Strategy: Best-of-N | 🟡 S | O | M | T02-01, T02-03 |
-| T02-07 | Strategy: Synthesize | 🟢 H | S | S | T02-03 |
+| T02-07 | Strategy: Synthesize ✅ | 🟢 H | S | S | T02-03 |
 | T02-08 | Strategy: Divide & conquer | 🟡 S | O | L | T02-01, T02-03 |
 | T02-09 | Stage-graph runner (plan → execute → review, tiebreak) | 🔴 O | O2 + human | L | T02-03, T01-03 |
 | T02-10 | Pre-run cost estimator ✅ | 🟢 H | S | S | T00-02 |
@@ -132,12 +132,12 @@ Design: [modes.md](../plans/modes.md)
 |---|---|---|---|---|---|
 | T02B-01 | Mode registry, controller contract, autonomy axis | 🔴 O | O2 + human | L | T02-09, T00-09 |
 | T02B-02 | Lead controller (the Supervisor) | 🔴 O | O2 + human | L | T02B-01, 03, 04, 05, T02-01, T02-02 |
-| T02B-03 | Agent report parser + claim verification | 🟢 H | S | M | T02B-01 |
-| T02B-04 | Roster builder | 🟢 H | S | M | T02B-01, T01-01 |
+| T02B-03 | Agent report parser + claim verification ✅ | 🟢 H | S | M | T02B-01 |
+| T02B-04 | Roster builder ✅ | 🟢 H | S | M | T02B-01, T01-01 |
 | T02B-05 | Task board model ✅ | 🟢 H | S | M | T02B-01 |
 | T02B-06 | Cascade mode | 🟡 S | O | M | T02B-01, T02B-07, T01-03 |
 | T02B-07 | Danger-area classifier | 🔴 O | O2 | S | T02B-01 |
-| T02B-08 | Auto mode router | 🟢 H | S | S | T02B-01 |
+| T02B-08 | Auto mode router ✅ | 🟢 H | S | S | T02B-01 |
 | T02B-09 | Playbooks: Pipeline, Explore, Plan | 🟢 H | S | S | T02B-01, T03-01, T03-04 |
 | T02B-10 | Mode prompts (lead, navigator, attacker, …) | 🟢 H | O (quality) | M | T03-01, T02B-01 |
 | T02B-11 | TDD mode | 🟡 S | O | M | T02B-01, T02B-12, T02-01 |
