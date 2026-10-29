@@ -44,6 +44,7 @@ export {
   type ControllerTurn,
   type ControllerActionResult,
   type ControllerContext,
+  type ControllerTurnResult,
 } from "./controller.js";
 export {
   applyBoardOp,
@@ -58,8 +59,14 @@ export {
   ModeIdSchema,
   listModes,
   getMode,
+  EXISTING_WORK_STRATEGY,
   type ModeId,
   type ModeDefinition,
+  type ModeBuildInput,
+  type ModeController,
+  type ModeControllerInput,
+  type ModeControllerResult,
+  type SessionSpecInput,
 } from "./registry.js";
 export {
   parseAgentReport,

@@ -75,6 +75,12 @@ export interface ControllerActionResult {
   reason?: string;
 }
 
+/** One executed turn: the actions asked for and the engine's verdict on each, in order. Shown to the controller next turn. */
+export interface ControllerTurnResult {
+  turn: ControllerTurn;
+  results: ControllerActionResult[];
+}
+
 /**
  * What the controller sees and can do each turn (implemented by T02B-02).
  * Limits, policy and budget live on the engine side behind `execute`; T02B-02

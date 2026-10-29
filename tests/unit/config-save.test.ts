@@ -82,6 +82,12 @@ const FULL_CONFIG = {
   modes: {
     review: { team: "review-panel", policy: "majority", tiebreak: "negotiate" },
     negotiate: { team: "review-panel", strategy: "vote", maxRounds: 2, consensus: 0.6 },
+    // Not typed yet (T02B-02): kept as written and round-tripped.
+    lead: {
+      lead: { provider: "claude-code", model: "opus" },
+      limits: { maxSeats: 6, maxTasks: 20 },
+      policy: { integrate: "approve", reviewBeforeAccept: true },
+    },
   },
   routing: { strategy: "BEST", reviewStrategy: "PANEL" },
   models: { default: "AUTO", gemini: "gemini-2.5-flash", openai: "gpt-4o-mini" },
@@ -106,6 +112,21 @@ describe("saveAssentorConfig", () => {
     const loaded = await loadAssentorConfig(dir);
 
     expect(loaded).toEqual({ ...config, project: { path: path.resolve(dir) } });
+  });
+
+  it("keeps a modes.<id> section it does not type yet, and rejects unknown mode ids", async () => {
+    const dir = await projectDir();
+    const file = await saveAssentorConfig(dir, parseAssentorConfig(FULL_CONFIG), { scope: "project" });
+
+    expect((await readYaml(file)).modes).toMatchObject({ lead: FULL_CONFIG.modes.lead });
+    expect((await loadAssentorConfig(dir)).modes.lead).toEqual(FULL_CONFIG.modes.lead);
+    expect(() => parseAssentorConfig({ modes: { reveiw: { team: "x" } } })).toThrow(/unknown mode .{0,2}"reveiw/);
+    expect(() => parseAssentorConfig({ modes: { lead: "opus" } })).toThrow();
+    expect(() => parseAssentorConfig({ modes: { supervisor: {} } })).toThrow(/did you mean modes\.lead/);
+    // Inherited Object keys are not aliases.
+    expect(() => parseAssentorConfig({ modes: { constructor: {} } })).toThrow(/unknown mode \\?"constructor/);
+    expect(() => parseAssentorConfig({ modes: { constructor: {} } })).not.toThrow(/did you mean/);
+    expect(() => parseAssentorConfig({ modes: { review: { policy: "majority" } } })).toThrow(); // typed: team required
   });
 
   it("keeps run.autonomy and writes run.mode to match it for older readers", async () => {

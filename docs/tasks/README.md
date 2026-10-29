@@ -130,7 +130,7 @@ Legend: 🟢 H · 🟡 S · 🔴 O · Size S/M/L (≈ <150 / 150–500 / >500 ch
 Design: [modes.md](../plans/modes.md)
 | ID | Title | Tier | Review | Size | Depends |
 |---|---|---|---|---|---|
-| T02B-01 | Mode registry, controller contract, autonomy axis | 🔴 O | O2 + human | L | T02-09, T00-09 |
+| T02B-01 | Mode registry, controller contract, autonomy axis ✅ | 🔴 O | O2 + human | L | T02-09, T00-09 |
 | T02B-02 | Lead controller (the Supervisor) | 🔴 O | O2 + human | L | T02B-01, 03, 04, 05, T02-01, T02-02 |
 | T02B-03 | Agent report parser + claim verification ✅ | 🟢 H | S | M | T02B-01 |
 | T02B-04 | Roster builder ✅ | 🟢 H | S | M | T02B-01, T01-01 |

@@ -15,6 +15,7 @@ import {
 } from "../executors/providers.js";
 import { NegotiateModeSchema, ReviewModeSchema } from "./teams.js";
 import { SEAT_PROVIDERS, TeamSchema } from "../core/seats.js";
+import { MODE_ALIASES, MODE_IDS } from "../modes/registry.js";
 
 const ExecutorProviderSchema = z.preprocess(
   (value) =>
@@ -102,10 +103,30 @@ export const AssentorConfigSchema = z.object({
     )
     .default([{ provider: "mock", role: "general", transport: "api" }]),
   teams: z.record(z.string().min(1), TeamSchema).default({}),
+  /**
+   * `modes.<modeId>`: per-mode settings. `negotiate` and `review` (T00-02) are typed
+   * here; any other mode's section is kept as written and checked by that mode's
+   * `validate` before it runs. Unknown mode ids are rejected.
+   */
   modes: z
     .object({
       negotiate: NegotiateModeSchema.optional(),
       review: ReviewModeSchema.optional(),
+    })
+    // `.optional()` so `config.modes.lead.x` needs a guard in TypeScript; YAML null is still refused.
+    .catchall(z.record(z.unknown()).optional())
+    .superRefine((modes, ctx) => {
+      for (const key of Object.keys(modes)) {
+        if (!(MODE_IDS as readonly string[]).includes(key)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: Object.hasOwn(MODE_ALIASES, key)
+              ? `unknown mode "${key}"; did you mean modes.${MODE_ALIASES[key]}?`
+              : `unknown mode "${key}" (modes: ${MODE_IDS.join(", ")})`,
+          });
+        }
+      }
     })
     .default({}),
   routing: z
