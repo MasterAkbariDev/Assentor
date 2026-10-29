@@ -135,6 +135,15 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 
 **Planner handover (user, 2026-10-29):** session "Repository status review" (Opus) is the planner again; "Multi-model CLI app architecture" stays idle. The user asked for parallel subagents to finish faster. Found on takeover: merged since the last STATUS edit — T02-02 seat scheduler (`a7c8732`), T02-04 vote (`e516ff4`), T02B-05 Lead board (`f875a48`), T01-03 panel policies + T00-08 CI matrix (`2292270`). Uncommitted in this worktree: the previous planner's **T02-03 negotiation engine** (`src/negotiation/engine.ts`, test, export) — gate green, under O2 review now. Unmerged on side branches: T02B-03 report parser (`claude/haiku-two-cards-fd2328`, `bd5fdf9`, review fixes in), T02-05 debate (`claude/priceless-kirch-952d9c`, `9483d1f`), T02-07 synthesize (`claude/youthful-galileo-a41523`, `2ec5361`) — all under review now. New implementer subagents (own worktrees `card-*` off integration): T02B-04, T02B-08, T02B-17 (Haiku), T02-01 worktree manager (Opus, 🔴, O2 + sign-off). Gate on takeover: 1,277 tests green.
 
+**Parallel wave (2026-10-29, live — each card on its own branch/worktree `claude/card-*`, merged by the planner after review):**
+- ✅ T02-07 synthesize merged (`2dae7c0`).
+- T02-03 negotiation engine: moved off the integration worktree to `claude/card-t02-03`; O2 NEEDS_WORK (abort-listener leak, late session-id check, no final seat event on cancel, missing acceptance tests) → Opus fixing; then **user sign-off**.
+- T02-05 debate: Opus NEEDS_WORK (seat roles ignored, judge fallback, critique stacking, registry conflict) → Sonnet fixing on `claude/card-t02-05` (from `9483d1f`).
+- T02B-03 report parser: Sonnet NEEDS_WORK (quadratic scan on brace-only input) → Haiku fixing on `claude/card-t02b-03` (from `bd5fdf9`).
+- T02B-04 roster (`67a685d`) and T02B-08 auto router (`1a4ec9d`): done by Haiku, Sonnet reviews running.
+- T02B-17 modes CLI: escalated — needs the mode registry + autonomy axis. Split **T02B-01b** (registry metadata + autonomy, 🔴 O2 + sign-off) → Opus implementing; T02B-17 waits for it.
+- T02-01 worktree manager (🔴 O2 + sign-off): Opus implementing.
+
 **Direction (user, 2026-10-27): core engine first.** After the Haiku agents finish their current cards, UI and app work (rest of Phase 4, Phase 5) pauses. Finish the core (Phases 0–3, 2b) first, then build the UI and apps on top of it.
 
 Web preview fast path: done enough to pause. T04-02p, T04-03p, T04-06p, T04-07p (board), T04-08p (seat drawer, `5eae232`), T04-15 (`assentor app`) are merged; T04-04p (read-only prompt/team/model RPCs) is in its last fix round with Haiku #2.
