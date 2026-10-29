@@ -54,7 +54,7 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**35 of 80 cards done** (2026-10-29; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 22/41 · 🟡 Sonnet-tier 5/17 · 🔴 Opus-tier 8/22. Tests: 1648 passing. Core (Phases 0–3 + 2b) left: 17 cards.
+**36 of 80 cards done** (2026-10-29; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 23/41 · 🟡 Sonnet-tier 5/17 · 🔴 Opus-tier 8/22. Tests: 1656 passing. Core (Phases 0–3 + 2b) left: 16 cards.
 
 | Phase | Done | Open |
 |---|---|---|
@@ -139,6 +139,7 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 - ✅ T01-05 model switch merged (`031b9bc`): O2 PASS after 3 rounds; user signed off on 2026-10-29, including the shared kill-tree change.
 - Follow-ups to file: FU-07 kill-tree SIGSTOP the root before the `ps` snapshot plus an async `ps` fallback; `setModel` rejecting invalid ids itself (defence in depth); manifest lock for the worktree manager before two Assentor processes share a repo; per-session lock + grace timeout in the session host; `saveConfig` atomic write.
 - Next wave (started 2026-10-29): T02-06 best-of-N and T02-08 divide (Sonnet), T02B-17 modes CLI and T03-04 playbooks (Haiku), T02B-01 controller contract and T02B-07 danger classifier (Opus).
+- ✅ T02B-17 `assentor modes` merged (`a96ab80`, Sonnet PASS). Open: spec 5 `--mode auto` waits for a runnable non-solo mode (T02B-01).
 
 **Direction (user, 2026-10-27): core engine first.** After the Haiku agents finish their current cards, UI and app work (rest of Phase 4, Phase 5) pauses. Finish the core (Phases 0–3, 2b) first, then build the UI and apps on top of it.
 
@@ -159,7 +160,7 @@ Web preview fast path: done enough to pause. T04-02p, T04-03p, T04-06p, T04-07p 
 4. 🔴 T02-09 stage-graph runner (needs T02-03 + T01-03) → 🔴 T02B-01 mode registry/controller contract (opens Haiku cards T02B-03/04/05/08/17) → 🔴 T02B-07 danger classifier → 🔴 T02B-02 Lead controller.
 5. 🔴 T01-05 model switch; Phase 3 rest (T03-03 meta prompts after T02-03, T03-04 playbooks after T02-09).
 
-**Gate under load:** FU-04 (`ad4fe08`, Haiku #3) fixed the two load-sensitive tests (rpc-core catch-up writes its 2,000-line log in one write; the supervisor test that spawns a real `npm test` has a 20 s timeout). The full gate passes with default workers again; if a different test times out under heavy load, rerun with `--maxWorkers=3` and record the test name here.
+**Gate under load:** FU-04 (`ad4fe08`, Haiku #3) fixed the two load-sensitive tests (rpc-core catch-up writes its 2,000-line log in one write; the supervisor test that spawns a real `npm test` has a 20 s timeout). The full gate passes with default workers again; if a different test times out under heavy load, rerun with `--maxWorkers=3` and record the test name here. 2026-10-29 at load ~150 (six agents gating at once): `modes-registry` "autonomy precedence…" runs and `evidence-pack` "includes committed files since git baseline" timed out; a timed-out run leaked its `MockExecutor` spy into the next test. Fixed in `a96ab80` with 30 s / 20 s timeouts.
 
 ## 9. Known follow-ups (not scheduled)
 
