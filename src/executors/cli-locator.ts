@@ -5,6 +5,7 @@ import {
   existsSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -373,11 +374,13 @@ export function rememberBinary(tool: BinaryTool, filePath: string): void {
     ...((current.binaries as Record<string, unknown> | undefined) ?? {}),
     [tool]: filePath,
   };
-  const tmp = `${cachePath}.${process.pid}.${Date.now()}.tmp`;
+  // Write through a symlinked config (dotfile managers) instead of replacing the link.
+  const target = existsSync(cachePath) ? realpathSync(cachePath) : cachePath;
+  const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
   try {
-    mkdirSync(path.dirname(cachePath), { recursive: true });
+    mkdirSync(path.dirname(target), { recursive: true });
     writeFileSync(tmp, stringifyYaml(current, { lineWidth: 100 }), "utf8");
-    renameSync(tmp, cachePath);
+    renameSync(tmp, target);
   } catch {
     // Best-effort cache: do not fail when user config dir is read-only or restricted
     try {

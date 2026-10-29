@@ -143,6 +143,19 @@ describe("CLI locator", () => {
         binaries: { codex: "/bin/codex", claude: "/bin/claude" },
       });
     });
+
+    it.skipIf(process.platform === "win32")("writes through a symlinked config and keeps the link", async () => {
+      const cache = await cachePath();
+      const real = path.join(await tempDir(), "dotfiles-config.yaml");
+      await fs.writeFile(real, "run:\n  mode: supervised\n");
+      await fs.symlink(real, cache);
+      rememberBinary("claude", "/bin/claude");
+      expect((await fs.lstat(cache)).isSymbolicLink()).toBe(true);
+      expect(parseYaml(await fs.readFile(real, "utf8"))).toEqual({
+        run: { mode: "supervised" },
+        binaries: { claude: "/bin/claude" },
+      });
+    });
   });
 
   it("treats cursor.cmd as the Cursor.app-style binary", () => {
