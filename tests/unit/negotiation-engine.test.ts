@@ -279,6 +279,97 @@ describe("askSeat semantics", () => {
     expect(events[0]!.data).toMatchObject({ status: "editing" });
   });
 
+  it("closes queued seats too when cancelled: one seat.done per ask, none left queued", async () => {
+    const team = expandSeatSpecs([{ provider: "claude-code", model: "opus", count: 3 }]); // CLI cap 2: the third queues
+    const events: EngineEventDraft[] = [];
+    const caller = new AbortController();
+    const sched = new SeatScheduler({ sessionId: "s", backoffBaseMs: 1, emit: (e) => events.push(e) });
+    const ctx = createNegotiationContext({
+      sessionId: "s",
+      goal: "g",
+      seats: team,
+      scheduler: sched,
+      signal: caller.signal,
+      emit: (e) => events.push(e),
+      runStep: ({ signal }) => new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("x")))),
+    }).ctx;
+    const asks = team.map((s) => ctx.askSeat(s.id, "negotiate-propose", {}, { readOnly: true }).catch((e: unknown) => e));
+    await new Promise((r) => setTimeout(r, 5));
+    expect(events.some((e) => e.seatId === "opus-3" && e.type === "seat.status" && e.data.status === "queued")).toBe(true);
+    caller.abort();
+    for (const error of await Promise.all(asks)) expect(error).toBeInstanceOf(NegotiationCancelledError);
+    for (const seat of team) {
+      const mine = events.filter((e) => e.seatId === seat.id);
+      expect(mine.at(-1)).toMatchObject({ type: "seat.done", data: { ok: false, summary: "cancelled" } });
+      expect(mine.filter((e) => e.type === "seat.done")).toHaveLength(1);
+    }
+  });
+
+  it("dispose() stops asks still in flight without stopping the scheduler", async () => {
+    const sched = scheduler();
+    let sawAbort = false;
+    const { ctx, dispose, events } = context(
+      ({ signal }) =>
+        new Promise((_, reject) =>
+          signal.addEventListener("abort", () => {
+            sawAbort = true;
+            reject(new Error("x"));
+          }),
+        ),
+      { scheduler: sched },
+    );
+    // A strategy whose Promise.all rejects at once leaves opus-1 running.
+    const strategyRun = Promise.all([
+      ctx.askSeat("opus-1", "negotiate-propose", {}, { readOnly: true }),
+      ctx.askSeat("nobody", "negotiate-propose", {}, { readOnly: true }),
+    ]);
+    const inFlight = ctx.askSeat("opus-2", "negotiate-propose", {}, { readOnly: true });
+    await expect(strategyRun).rejects.toThrow("unknown seat");
+    await new Promise((r) => setTimeout(r, 5));
+    dispose();
+    await expect(inFlight).rejects.toBeInstanceOf(NegotiationCancelledError);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(sawAbort).toBe(true);
+    expect(sched.runningCount).toBe(0);
+    expect(events.filter((e) => e.type === "seat.done").map((e) => e.data)).toEqual([
+      { ok: false, summary: "cancelled" },
+      { ok: false, summary: "cancelled" },
+    ]);
+    // The scheduler was not cancelled: it still runs new work.
+    const after = await sched.run(seats[0]!, async () => "ok");
+    expect(after.ok).toBe(true);
+  });
+
+  it("runNegotiation stops in-flight asks when the strategy throws", async () => {
+    let signalOfOrphan: AbortSignal | undefined;
+    await expect(
+      runNegotiation({
+        sessionId: "s",
+        runId: "orphan",
+        goal: "g",
+        seats,
+        scheduler: scheduler(),
+        strategy: {
+          id: "leaky",
+          validate: () => undefined,
+          run: (ctx) =>
+            Promise.all([
+              ctx.askSeat("opus-1", "negotiate-propose", {}, { readOnly: true }),
+              ctx.askSeat("nobody", "negotiate-propose", {}, { readOnly: true }),
+            ]).then(() => {
+              throw new Error("unreachable");
+            }),
+        },
+        runStep: ({ signal }) => {
+          signalOfOrphan = signal;
+          return new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("x"))));
+        },
+      }),
+    ).rejects.toThrow("unknown seat");
+    await new Promise((r) => setTimeout(r, 5));
+    expect(signalOfOrphan?.aborted).toBe(true);
+  });
+
   it("throws for a seat that isn't in the team", async () => {
     const { ctx } = context(votingRunner);
     await expect(ctx.askSeat("nobody", "negotiate-propose", {}, { readOnly: true })).rejects.toThrow("unknown seat");

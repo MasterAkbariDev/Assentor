@@ -132,7 +132,13 @@ export function createNegotiationContext(
   } else {
     input.signal?.addEventListener("abort", onCallerAbort, { once: true });
   }
-  const dispose = () => input.signal?.removeEventListener("abort", onCallerAbort);
+  // Ending the run stops asks still in flight (seat-scope: no cancelAll, the scheduler lives on).
+  const dispose = () => {
+    input.signal?.removeEventListener("abort", onCallerAbort);
+    if (!controller.signal.aborted) {
+      controller.abort(new NegotiationCancelledError("cancelled"));
+    }
+  };
 
   const emit = (draft: EngineEventDraft) => {
     try {
@@ -164,23 +170,18 @@ export function createNegotiationContext(
         throw new NegotiationCancelledError(stopReason);
       }
       const index = nextIndex++;
-      let started = false;
-      /** Close the seat's `thinking`/`editing` status when the run stops under it. */
-      const stopped = (reason: "cancelled" | "budget") => {
-        if (started) {
-          emit({
-            type: "seat.done",
-            sessionId: input.sessionId,
-            seatId,
-            data: { ok: false, summary: reason === "budget" ? "budget exceeded" : "cancelled" },
-          });
-        }
-      };
+      /** Close the seat's `queued`/`thinking`/`editing` status when the run stops under it (one `seat.done` per ask). */
+      const stopped = (reason: "cancelled" | "budget") =>
+        emit({
+          type: "seat.done",
+          sessionId: input.sessionId,
+          seatId,
+          data: { ok: false, summary: reason === "budget" ? "budget exceeded" : "cancelled" },
+        });
 
       const outcome: JobOutcome<unknown> = await input.scheduler.run(
         seat,
         async (job) => {
-          started = true;
           emit({
             type: "seat.status",
             sessionId: input.sessionId,
@@ -296,8 +297,18 @@ export async function runNegotiation(input: NegotiationRunInput): Promise<Negoti
 
   if (file) {
     await fs.mkdir(path.dirname(file), { recursive: true });
-    // shortcut: "wx" is exclusive but not atomic (a crash mid-write leaves a partial file that blocks a rerun); use tmp + link if that bites.
-    await fs.writeFile(file, `${JSON.stringify({ result, transcript }, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+    // Exclusive: EEXIST (a concurrent run with this id) rejects here, before we own the file.
+    const handle = await fs.open(file, "wx");
+    try {
+      await handle.writeFile(`${JSON.stringify({ result, transcript }, null, 2)}\n`, "utf8");
+      await handle.close();
+    } catch (error) {
+      // A failed write must not leave a partial file that blocks a rerun of this runId.
+      await handle.close().catch(() => undefined);
+      await fs.unlink(file).catch(() => undefined);
+      throw error;
+    }
+    // shortcut: not crash-safe (a process crash mid-write still leaves a partial file); use tmp + link if that bites.
   }
   return { result, transcript };
 }
