@@ -79,6 +79,7 @@ export {
   MAX_RISK_DIFF_CHARS,
   MAX_RISK_PATHS,
   MAX_RISK_PATH_CHARS,
+  MAX_RISK_PATH_SEGMENTS,
   MAX_RISK_REASONS,
   DangerAreaRuleSchema,
   type DangerCategory,

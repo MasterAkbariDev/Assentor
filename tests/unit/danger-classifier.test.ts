@@ -168,8 +168,15 @@ describe("classifyRisk: every category, positive and negative", () => {
     expect(classifyRisk({ taskText: "", paths: [], diff: "" }).level).toBe("normal");
   });
 
-  it("context lines are not scanned", () => {
+  it("context lines of a changed hunk are scanned and cited", () => {
     const diff = [`--- a/${NORMAL_FILE}`, `+++ b/${NORMAL_FILE}`, "@@ -1,2 +1,2 @@", " spawn(cmd);", "-a", "+b"].join("\n");
+    const result = classifyRisk({ diff });
+    expect(result.categories).toContain("process");
+    expect(result.reasons.join("\n")).toContain(`${NORMAL_FILE}:1 (context)`);
+  });
+
+  it("context of a hunk without a change is not scanned", () => {
+    const diff = [`--- a/${NORMAL_FILE}`, `+++ b/${NORMAL_FILE}`, "@@ -1,2 +1,2 @@", " spawn(cmd);", " x"].join("\n");
     expect(classifyRisk({ diff }).level).toBe("normal");
   });
 
@@ -299,8 +306,8 @@ describe("classifyRisk: path normalisation cannot dodge a rule", () => {
     expect(classifyRisk({ paths: ["src/app.ts::$DATA"] }).reasons.join("\n")).toContain("alternate data stream");
   });
 
-  it("a drive letter alone is not a stream", () => {
-    expect(classifyRisk({ paths: ["C:\\repo\\src\\ui\\board-view.ts"] }).level).toBe("normal");
+  it("a drive-letter path inside projectRoot is classified relative to it", () => {
+    expect(classifyRisk({ paths: ["C:\\repo\\src\\ui\\board-view.ts"] }, { projectRoot: "c:/REPO" }).level).toBe("normal");
   });
 
   it("`..` that stays inside the project is not an escape", () => {
@@ -388,8 +395,8 @@ describe("classifyRisk: diff shapes", () => {
     expect(result.reasons[0]).toContain("diff line 1");
   });
 
-  it("checks combined (merge) diffs", () => {
-    expect(cats({ diff: "diff --cc src/git/local.ts\nindex 1,2..3\n@@@ -1,1 -1,1 +1,1 @@@" })).toContain("git");
+  it("checks the path of a combined (merge) diff and marks it unscanned", () => {
+    expect(cats({ diff: "diff --cc src/git/local.ts\nindex 1,2..3\n@@@ -1,1 -1,1 +1,1 @@@" })).toEqual(["git", RISK_UNSCANNED]);
   });
 });
 
@@ -429,6 +436,11 @@ describe("classifyRisk: huge input is never safe", () => {
     }
     classifyRisk({ diff: `diff --git a/${" b/".repeat(5_000)}\n` });
     classifyRisk({ paths: [`${"*a".repeat(1_000)}/${"a".repeat(2_000)}`] }, { extraRules: [{ name: "x", paths: ["*a*a*a*a*a*b"] }] });
+    const hostile = Array.from({ length: 50 }, (_, i) => ({ name: `r${i}`, paths: Array.from({ length: 50 }, () => `${"*a".repeat(60)}*b`) }));
+    expect(cats({ paths: Array.from({ length: 5_000 }, (_, i) => `${"a".repeat(MAX_RISK_PATH_CHARS)}${i}`) })).toEqual([RISK_UNSCANNED]);
+    // Ordinary large changes stay within the matching budget.
+    expect(cats({ paths: Array.from({ length: 5_000 }, (_, i) => `packages/app/src/features/area${i % 50}/components/widgets/view${i}/index.tsx`) })).toEqual([]);
+    expect(classifyRisk({ paths: Array.from({ length: 200 }, (_, i) => `${"a".repeat(900)}/x${i}`) }, { extraRules: hostile }).categories).toEqual([RISK_UNSCANNED]);
     // Generous bound for a loaded machine; a ReDoS would take minutes.
     expect(performance.now() - started).toBeLessThan(30_000);
   }, 120_000);
@@ -508,5 +520,226 @@ describe("classifyRisk: user danger areas (modes.cascade.dangerAreas)", () => {
     const rules = config.modes.cascade?.dangerAreas ?? [];
     expect(classifyRisk({ paths: ["src/billing/x.ts"] }, { extraRules: rules }).categories).toEqual(["payments"]);
     expect(AssentorConfigSchema.parse({}).modes.cascade).toBeUndefined();
+  });
+});
+
+describe("classifyRisk: O2 review evasions", () => {
+  const hdr = (f: string) => `diff --git a/${f} b/${f}\nindex 1111111..2222222 100644\n--- a/${f}\n+++ b/${f}\n`;
+
+  describe("absolute paths and projectRoot", () => {
+    for (const p of ["/etc/passwd", "C:/Windows/System32/drivers/etc/hosts", "\\\\host\\share\\x.ts", "/Users/me/.zshrc", "c:relative\\x.ts"]) {
+      it(`${JSON.stringify(p)} is a paths danger without a root`, () => {
+        const result = classifyRisk({ paths: [p] });
+        expect(result.categories).toContain("paths");
+        expect(result.reasons.join("\n")).toContain("absolute");
+      });
+    }
+
+    it("`+++ /abs` in a diff is a paths danger", () => {
+      const diff = "diff --git a/etc/cron.d/x b/etc/cron.d/x\n--- /etc/cron.d/x\n+++ /etc/cron.d/x\n@@ -0,0 +1 @@\n+* * * * * root echo";
+      expect(cats({ diff })).toContain("paths");
+    });
+
+    it("an absolute path inside projectRoot is classified relative to it", () => {
+      expect(classifyRisk({ paths: ["/work/repo/src/ui/a.ts"] }, { projectRoot: "/work/repo" })).toEqual({ level: "normal", categories: [], reasons: [] });
+      expect(classifyRisk({ paths: ["/work/repo/src/process/x.ts"] }, { projectRoot: "/work/repo/" }).categories).toEqual(["process"]);
+      expect(classifyRisk({ paths: ["/WORK/Repo/./src/../src/ui/a.ts"] }, { projectRoot: "/work/repo" }).level).toBe("normal");
+    });
+
+    it("an absolute path outside projectRoot is a paths danger", () => {
+      for (const p of ["/work/repo2/src/ui/a.ts", "/work/repo/../other/a.ts", "/etc/passwd", "d:/repo/src/ui/a.ts"]) {
+        const result = classifyRisk({ paths: [p] }, { projectRoot: "/work/repo" });
+        expect(result.categories, p).toContain("paths");
+        expect(result.reasons.join("\n"), p).toContain("outside the project root");
+      }
+    });
+  });
+
+  describe("git modes", () => {
+    it("a symlink is a paths danger and its target is checked", () => {
+      const out = "diff --git a/src/data b/src/data\nnew file mode 120000\nindex 0000000..1111111\n--- /dev/null\n+++ b/src/data\n@@ -0,0 +1 @@\n+../../../../etc\n\\ No newline at end of file";
+      const result = classifyRisk({ diff: out });
+      expect(result.categories).toEqual(["paths"]);
+      expect(result.reasons.join("\n")).toContain("is a symlink");
+      expect(result.reasons.join("\n")).toContain("escapes the project root");
+      const abs = "diff --git a/docs/notes b/docs/notes\nnew file mode 120000\nindex 0000000..1111111\n--- /dev/null\n+++ b/docs/notes\n@@ -0,0 +1 @@\n+/Users/me/Library";
+      expect(classifyRisk({ diff: abs }).reasons.join("\n")).toContain("absolute");
+      const inside = "diff --git a/docs/link b/docs/link\nnew file mode 120000\nindex 0000000..1111111\n--- /dev/null\n+++ b/docs/link\n@@ -0,0 +1 @@\n+../src/keys/vault.ts";
+      expect(cats({ diff: inside })).toEqual(["secrets", "paths"]);
+    });
+
+    it("an existing symlink (index mode 120000) is a paths danger", () => {
+      expect(cats({ diff: "diff --git a/l b/l\nindex 1111111..2222222 120000\n--- a/l\n+++ b/l\n@@ -1 +1 @@\n-a\n+b" })).toContain("paths");
+    });
+
+    it("a submodule (gitlink) is git and release", () => {
+      const bump = "diff --git a/vendor/lib b/vendor/lib\nindex abc..def 160000\n--- a/vendor/lib\n+++ b/vendor/lib\n@@ -1 +1 @@\n-Subproject commit 1111111111111111111111111111111111111111\n+Subproject commit 2222222222222222222222222222222222222222";
+      expect(cats({ diff: bump })).toEqual(["git", "release"]);
+      const added = "diff --git a/vendor/lib b/vendor/lib\nnew file mode 160000\nindex 0000000..def\n--- /dev/null\n+++ b/vendor/lib\n@@ -0,0 +1 @@\n+Subproject commit 2222222222222222222222222222222222222222";
+      expect(cats({ diff: added })).toEqual(["git", "release"]);
+      expect(cats({ diff: `${hdr("vendor/x")}@@ -1 +1 @@\n-a\n+Subproject commit 2222222222222222222222222222222222222222` })).toEqual(["git", "release"]);
+    });
+
+    it("a new 100755 mode is shell, including mode-only changes and extensionless scripts", () => {
+      expect(cats({ diff: "diff --git a/tools/run b/tools/run\nold mode 100644\nnew mode 100755" })).toEqual(["shell"]);
+      const script = "diff --git a/tools/run b/tools/run\nnew file mode 100755\nindex 0000000..1111111\n--- /dev/null\n+++ b/tools/run\n@@ -0,0 +1,2 @@\n+#!/bin/sh\n+node ./dist/x.js";
+      expect(cats({ diff: script })).toEqual(["shell"]);
+      expect(classifyRisk({ diff: "diff --git a/tools/run b/tools/run\nold mode 100755\nnew mode 100644" }).level).toBe("normal");
+    });
+  });
+
+  describe("binary content", () => {
+    const bin = (file: string, mode = "100644") =>
+      `diff --git a/${file} b/${file}\nnew file mode ${mode}\nindex 0000000..d00491f\nGIT binary patch\nliteral 12\nzcmZ?wbhEHbWMp7uXkcIfg8\n\nliteral 0\nHcmV?d00001\n`;
+
+    it("is unscanned unless it is non-executable media", () => {
+      expect(cats({ diff: bin("assets/x.bin") })).toEqual([RISK_UNSCANNED]);
+      expect(cats({ diff: bin("tools/helper") })).toEqual([RISK_UNSCANNED]);
+      for (const ext of ["png", "JPG", "jpeg", "gif", "webp", "ico", "pdf", "woff", "woff2", "ttf"]) {
+        expect(classifyRisk({ diff: bin(`assets/a.${ext}`) }).level, ext).toBe("normal");
+      }
+      expect(cats({ diff: bin("assets/logo.png", "100755") })).toEqual(["shell", RISK_UNSCANNED]);
+    });
+
+    it("applies to `Binary files … differ` too", () => {
+      const noext = "diff --git a/tools/helper b/tools/helper\nnew file mode 100755\nindex 0000000..abc\nBinary files /dev/null and b/tools/helper differ";
+      expect(cats({ diff: noext })).toEqual(["shell", RISK_UNSCANNED]);
+      expect(cats({ diff: "Binary files a/docs/a.svg and b/docs/a.svg differ" })).toEqual([RISK_UNSCANNED]);
+      expect(classifyRisk({ diff: "Binary files a/docs/a.png and b/docs/a.png differ" }).level).toBe("normal");
+    });
+  });
+
+  describe("context lines", () => {
+    it("catches `shell: false` turned on next to a spawn in the context", () => {
+      const diff = `${hdr("src/util/run.ts")}@@ -10,4 +10,4 @@ export function runAgent(bin: string) {\n   const child = spawn(bin, args, {\n-    shell: false,\n+    shell: process.platform === "win32",\n     stdio: "pipe",`;
+      expect(cats({ diff })).toEqual(expect.arrayContaining(["process", "shell"]));
+    });
+
+    it("catches an execFileSync argument swap where only the arguments change", () => {
+      const diff = `${hdr("src/util/run.ts")}@@ -10,4 +10,4 @@\n   execFileSync(bin, [\n-    "--safe",\n+    userArg,\n   ]);`;
+      expect(cats({ diff })).toContain("process");
+    });
+
+    it("scans the function context after `@@ … @@`", () => {
+      const diff = `${hdr("src/util/run.ts")}@@ -10,2 +10,2 @@ function spawnAgent() { return spawn(bin, [\n-  "a",\n+  "b",`;
+      const result = classifyRisk({ diff });
+      expect(result.categories).toContain("process");
+      expect(result.reasons.join("\n")).toContain("hunk header");
+    });
+  });
+
+  describe("keywords", () => {
+    const changed = (line: string) => cats({ diff: `${hdr(NORMAL_FILE)}@@ -1,1 +1,1 @@\n-x\n+${line}` });
+
+    it("read-only flags in any spelling, but not the TypeScript `readonly` keyword", () => {
+      for (const line of ["this.readOnly = false;", "if (seat.isReadOnly) return;", "mode: READ_ONLY", "a read-only seat", "READONLY"]) {
+        expect(changed(line), line).toContain("permissions");
+      }
+      expect(changed("readonly sessionId: string;")).toEqual([]);
+    });
+
+    it("permissions:, approvals, autopilot and autonomy", () => {
+      for (const line of ['permissions: "edit",', "await requestApproval(stage);", 'return "autopilot";', 'autonomy: "full"']) {
+        expect(changed(line), line).toContain("permissions");
+      }
+    });
+
+    it("`shell:` with any value", () => {
+      for (const line of ["{ shell: useShell }", "{ shell: isWin }", 'shell: "/bin/zsh"']) {
+        expect(changed(line), line).toContain("shell");
+      }
+    });
+
+    it("dynamic loading", () => {
+      expect(changed("const mod = await import(pathToFileURL(userPath).href);")).toContain("shell");
+      expect(changed("const r = require(name);")).toContain("shell");
+      expect(changed("const r = require('node:child_' + 'process');")).toContain("shell");
+      expect(changed("const req = createRequire(import.meta.url);")).toContain("shell");
+      expect(changed("vm.createContext(sandbox);")).toContain("shell");
+      expect(changed("new Worker(file, { eval: false });")).toContain("process");
+      expect(changed("process.dlopen(module, file);")).toContain("process");
+      expect(changed("process['\\x6bill'](pid);")).toContain("process");
+      expect(changed('const x = await import("./x.js");')).toEqual([]);
+      expect(changed('const y = require("./y.js");')).toEqual([]);
+    });
+
+    it("host binds, guarded readers and timing-safe compares", () => {
+      expect(changed('host: "::",')).toContain("network");
+      expect(changed('host: "0.0.0.0",')).toContain("network");
+      expect(changed("const t = await readGuardedProjectText(root, rel);")).toContain("paths");
+      expect(changed("if (!timingSafeEqual(a, b)) return false;")).toContain("secrets");
+    });
+  });
+
+  describe("bare names match with an extension", () => {
+    const cases: Array<[string, string]> = [
+      ["src/keys.ts", "secrets"],
+      ["src/tui/screens/keys.tsx", "secrets"],
+      ["config.json", "config"],
+      ["src/config.ts", "config"],
+      ["src/utils/process.ts", "process"],
+      ["src/git.ts", "git"],
+      ["lib/serve.ts", "network"],
+    ];
+    for (const [p, category] of cases) {
+      it(`${p} → ${category}`, () => expect(cats({ paths: [p] })).toContain(category));
+    }
+  });
+
+  describe("unicode", () => {
+    for (const p of ["src/proce\u017F\u017F/kill-tree.ts", "src/pro\u200Ccess/kill-tree.ts", "src/pro\u200Bcess/kill-tree.ts", "src/process\u00AD/x.ts", "src/process\u2060/x.ts", "src/\u212Aeys/vault.ts", "src/proc\uFF45ss/x.ts", "\uFEFFsrc/git/a.ts"]) {
+      it(`path ${JSON.stringify(p)} is still matched`, () => expect(classifyRisk({ paths: [p] }).level).toBe("danger"));
+    }
+
+    it("task text and diff content are normalised too", () => {
+      expect(cats({ taskText: "spa\u200Bwn the child pro\u200Bcess" })).toContain("process");
+      expect(cats({ diff: `${hdr(NORMAL_FILE)}@@ -1 +1 @@\n-x\n+const c = spa\u200Dwn(cmd);` })).toContain("process");
+      expect(cats({ diff: `${hdr(NORMAL_FILE)}@@ -1 +1 @@\n-x\n+--dangerously\u00AD-skip-permissions` })).toContain("permissions");
+    });
+
+    it("strips bidi and invisible marks from reasons", () => {
+      const result = classifyRisk({ taskText: "kill the process \u200E\u200F\u061C\u202E" , paths: ["src/process/a\u200E.ts"] });
+      expect(result.reasons.join("\n")).not.toMatch(/[\u200E\u200F\u061C\u202E]/);
+    });
+  });
+
+  describe("caps and unreadable diffs", () => {
+    it("a path over 64 segments or 1024 chars is unscanned", () => {
+      expect(cats({ paths: ["a/".repeat(64) + "b"] })).toEqual([RISK_UNSCANNED]);
+      expect(classifyRisk({ paths: ["a/".repeat(63) + "b"] }).level).toBe("normal");
+      expect(cats({ paths: ["a".repeat(MAX_RISK_PATH_CHARS + 1)] })).toEqual([RISK_UNSCANNED]);
+    });
+
+    it("a context diff (`diff -c`) is unscanned", () => {
+      const diff = "*** src/util/a.ts\n--- src/util/a.ts\n***************\n*** 1 ****\n! x\n--- 1 ----\n! execSync(userCmd)";
+      expect(cats({ diff })).toContain(RISK_UNSCANNED);
+    });
+
+    it("a combined diff hunk is unscanned", () => {
+      const diff = "diff --cc src/util/a.ts\nindex 1,2..3\n--- a/src/util/a.ts\n+++ b/src/util/a.ts\n@@@ -1,1 -1,1 +1,2 @@@\n  x\n +spawn(cmd, { shell: true })";
+      expect(cats({ diff })).toContain(RISK_UNSCANNED);
+    });
+
+    it("recognised headers without hunks stay readable (pure rename, mode, similarity)", () => {
+      const rename = "diff --git a/src/util/a.ts b/src/util/b.ts\nsimilarity index 100%\nrename from src/util/a.ts\nrename to src/util/b.ts";
+      expect(classifyRisk({ diff: rename }).level).toBe("normal");
+      expect(classifyRisk({ diff: "diff --git a/a.ts b/a.ts\ndeleted file mode 100644\nindex 1111111..0000000" }).level).toBe("normal");
+    });
+  });
+
+  describe("extra build and tooling files", () => {
+    const cases: Array<[string, string]> = [
+      [".pnpmfile.cjs", "release"],
+      ["setup.py", "release"],
+      ["build.rs", "release"],
+      ["vite.config.ts", "release"],
+      [".vscode/tasks.json", "shell"],
+      [".devcontainer/devcontainer.json", "shell"],
+      ["tools/deploy", "release"],
+      ["src/modes/danger.ts", "permissions"],
+    ];
+    for (const [p, category] of cases) {
+      it(`${p} → ${category}`, () => expect(cats({ paths: [p] })).toContain(category));
+    }
   });
 });

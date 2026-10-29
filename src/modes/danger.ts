@@ -9,20 +9,34 @@ import { isSecretPath, redactSecrets } from "../security/redact.js";
  *
  * Biased toward false positives: a missed danger area is the costly mistake.
  *
- * - Paths are repo-relative. They are normalised before matching: `\` becomes
- *   `/`, case is folded, `.`/`..` segments are resolved, and Windows trailing
- *   dots/spaces are trimmed, so `SRC\Process.\x.ts` and `docs/../src/process/x.ts`
- *   both hit `src/process`. A path that climbs above the root, starts at `~`, or
- *   uses a Windows short name or `:` stream is itself a `paths` danger.
+ * - Paths: NFKC-normalised, invisible (default-ignorable) characters removed,
+ *   case-folded, `\` read as `/`, `.`/`..` resolved and Windows trailing
+ *   dots/spaces trimmed, so `SRC\Process.\x.ts`, `src/proceſſ/x.ts` and
+ *   `docs/../src/process/x.ts` all hit `src/process`. An absolute path (POSIX,
+ *   drive letter or UNC) is a `paths` danger unless it lies inside `projectRoot`,
+ *   in which case it is classified relative to the root. Paths that climb above
+ *   the root, start at `~`, or use a Windows short name or `:` stream are
+ *   `paths` dangers too.
  * - A rule glob matches at any depth and also matches everything under it:
- *   `git` matches `src/git/local.ts`. Globs support `*`, `?` and `**` and are
- *   matched without regular expressions, so a crafted path cannot cause ReDoS.
+ *   `git` matches `src/git/local.ts`. A bare name also matches a file of that
+ *   name with an extension (`keys` matches `keys.tsx`). Globs support `*`, `?`
+ *   and `**` and are matched without regular expressions under a work budget.
  * - Diffs: every path in `diff --git`, `---`/`+++`, `rename`/`copy` and
- *   `Binary files` lines is checked (both sides of a rename); added and removed
- *   lines are scanned with keyword patterns. Context lines and binary payloads
- *   are not scanned.
+ *   `Binary files` lines is checked (both sides of a rename). Added and removed
+ *   lines, the context lines of hunks with a change, and the function context
+ *   after `@@ … @@` are scanned with keyword patterns. Modes count: a symlink
+ *   (120000) is a `paths` danger and its target is checked as a path, a gitlink
+ *   (160000) is `git` + `release`, a new 100755 mode is `shell`. Binary content
+ *   is `unscanned` unless the file is plain media (png, jpg, … ttf) and not
+ *   executable. Combined (`diff --cc`) and context (`diff -c`) diffs, and any
+ *   line the parser does not recognise, are `unscanned`.
  * - Input over a size limit is scanned up to the limit and reported as the
  *   `unscanned` category, which makes the level `danger`, never `normal`.
+ * - Limits of keyword matching: it reads text, not semantics. Obfuscation such
+ *   as `process['\x6bill']`, string-built module names or homoglyphs from other
+ *   scripts (Cyrillic `е`) can defeat a pattern. A few obvious forms are caught
+ *   (`process[`, non-literal `import(`/`require(`), but this is a triage signal,
+ *   not a security boundary; reviewers still read the diff.
  */
 
 /** Built-in danger categories, in the order of the Danger list. */
@@ -48,13 +62,14 @@ export type RiskLevel = "normal" | "danger";
 export const MAX_RISK_TASK_CHARS = 100_000;
 export const MAX_RISK_DIFF_CHARS = 2_000_000;
 export const MAX_RISK_PATHS = 5_000;
-export const MAX_RISK_PATH_CHARS = 4_096;
+export const MAX_RISK_PATH_CHARS = 1_024;
+export const MAX_RISK_PATH_SEGMENTS = 64;
 /** Reasons kept in the result; further matches are counted in a final line. */
 export const MAX_RISK_REASONS = 50;
 
 export interface RiskInput {
   taskText?: string;
-  /** Repo-relative paths the task touches or the change modified. */
+  /** Paths the task touches or the change modified; repo-relative, or absolute with `projectRoot`. */
   paths?: readonly string[];
   /** Unified diff (git or plain). */
   diff?: string;
@@ -74,6 +89,12 @@ export interface DangerAreaRule {
 
 export interface RiskOptions {
   extraRules?: readonly DangerAreaRule[];
+  /**
+   * Absolute project root. An absolute path inside it is classified relative to
+   * it; any other absolute path (or any absolute path when this is unset) is a
+   * `paths` danger.
+   */
+  projectRoot?: string;
 }
 
 export interface RiskAssessment {
@@ -91,8 +112,8 @@ export const DangerAreaRuleSchema = z
       .trim()
       .toLowerCase()
       .regex(/^[a-z0-9][a-z0-9._-]{0,63}$/, "use letters, digits, '.', '_' or '-' (max 64)"),
-    paths: z.array(z.string().trim().min(1).max(256)).max(100).default([]),
-    keywords: z.array(z.string().trim().min(2).max(100)).max(100).default([]),
+    paths: z.array(z.string().trim().min(1).max(128)).max(50).default([]),
+    keywords: z.array(z.string().trim().min(2).max(100)).max(50).default([]),
   })
   .refine((rule) => rule.paths.length + rule.keywords.length > 0, {
     message: "a danger area needs at least one path or keyword",
@@ -125,6 +146,9 @@ const BUILTIN_RULES: BuiltinRule[] = [
       /\bSIG(?:KILL|TERM|INT|HUP)\b/,
       /\bdetached\s*:\s*true\b/i,
       /\bjob\s*objects?\b/i,
+      /\bprocess\s*\[/,
+      /\bnew\s+Worker\s*\(/,
+      /\bprocess\.dlopen\b/,
       /\bprocess\s+(?:trees?|groups?|lifecycle)\b/i,
     ],
     task: [
@@ -142,6 +166,7 @@ const BUILTIN_RULES: BuiltinRule[] = [
       /--force(?:-with-lease)?\b|--hard\b|--no-verify\b/i,
       /\b(?:simple-git|isomorphic-git|nodegit|libgit2)\b/i,
       /\bworktrees?\b/i,
+      /\bSubproject commit [0-9a-f]/,
     ],
     task: [
       /\bgit\b/i,
@@ -150,7 +175,7 @@ const BUILTIN_RULES: BuiltinRule[] = [
   },
   {
     category: "permissions",
-    paths: ["*permission*", "*sandbox*", "*approval*", "*security*", "seats", "seats.ts", ".claude/settings*", ".claude/hooks", ".codex/config*", ".gemini/settings*", ".cursor/cli*", ".mcp.json"],
+    paths: ["*permission*", "*sandbox*", "*approval*", "*security*", "*danger*", "seats", ".claude/settings*", ".claude/hooks", ".codex/config*", ".gemini/settings*", ".cursor/cli*", ".mcp.json"],
     text: [
       /--dangerously[-\w]*/i,
       /\byolo\b/i,
@@ -158,10 +183,14 @@ const BUILTIN_RULES: BuiltinRule[] = [
       /\bskip[-_\s]?permissions?\b/i,
       /--full-auto\b|\bdanger-full-access\b|--sandbox\b|--approval-mode\b|--allow-all-tools\b|--trust\b/i,
       /\b(?:permission|approval)[-_]?(?:mode|policy|prompt)s?\b/i,
-      /\bread[-_\s]only\b/i,
+      // `readOnly`, `isReadOnly`, `read-only`, `READ_ONLY`; not the TypeScript `readonly` keyword.
+      /read[-_\s]only/i,
+      /[rR]eadOnly|READONLY/,
+      /\bpermissions?\s*:/i,
+      /approv|autopilot|autonomy/i,
       /\b(?:allowed|disallowed)Tools\b/i,
     ],
-    task: [/\bpermissions?\b/i, /\bbypass\w*/i, /\bsandbox\w*/i, /\bapprovals?\b/i, /\bedit\s+seats?\b/i],
+    task: [/\bpermissions?\b/i, /\bbypass\w*/i, /\bsandbox\w*/i, /\bapprovals?\b/i, /\bedit\s+seats?\b/i, /\bread[-\s]?only\b/i, /\bdanger\w*/i],
   },
   {
     category: "secrets",
@@ -180,6 +209,7 @@ const BUILTIN_RULES: BuiltinRule[] = [
       /\bredact/i,
       /\b(?:en|de)crypt/i,
       /process\.env\.[A-Z0-9_]*(?:KEY|TOKEN)\b/i,
+      /\btimingSafeEqual\b/,
     ],
     secretValues: [
       /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
@@ -203,7 +233,7 @@ const BUILTIN_RULES: BuiltinRule[] = [
       /\bcors\b/i,
       /\b(?:allowedOrigins?|checkOrigin|verifyClient|originAllowed)\b/i,
       /\bheaders?\s*(?:\.|\[\s*["'])origin\b/i,
-      /\b0\.0\.0\.0\b/,
+      /\b0\.0\.0\.0\b|["'](?:::|\[::\])["']/,
       /\bcontent-security-policy\b|\bcsp\b/i,
       /\bwss?:\/\//i,
       /\bauthorization\b/i,
@@ -222,15 +252,19 @@ const BUILTIN_RULES: BuiltinRule[] = [
   },
   {
     category: "shell",
-    paths: ["*shell*", "*recipe*", "*locator*", "*.sh", "*.bash", "*.zsh", "*.fish", "*.ps1", "*.psm1", "*.bat", "*.cmd", "*.exe", "*.dll", "*.so", "*.dylib", "*.node", "*.jar", "*.wasm", "makefile", "*.mk", "justfile"],
+    paths: ["*shell*", "*recipe*", "*locator*", ".vscode", ".devcontainer", "*.sh", "*.bash", "*.zsh", "*.fish", "*.ps1", "*.psm1", "*.bat", "*.cmd", "*.exe", "*.dll", "*.so", "*.dylib", "*.node", "*.jar", "*.wasm", "makefile", "*.mk", "justfile"],
     text: [
-      /\bshell\s*:\s*(?:true|["'])/i,
+      /\bshell\s*:/i,
       /\b(?:bash|zsh|sh|fish|cmd|powershell|pwsh)(?:\.exe)?\s+(?:-l?c|-l|-i|\/[cdsk]|-command|-encodedcommand|-noprofile)\b/i,
       /["'](?:-lc|-c|\/c|\/d|-command)["']/i,
       /\$SHELL\b|\bprocess\.env\.SHELL\b|\bComSpec\b/i,
       /\blogin[-_\s]?shell\b/i,
       /\bprocess\.env\.PATH\b|\$PATH\b|%PATH%|\bPATHEXT\b/,
-      /\beval\s*\(|\bnew\s+Function\s*\(|\bvm\.run\w*/i,
+      /\beval\s*\(|\bnew\s+Function\s*\(|\bvm\./i,
+      // Dynamic loading: a non-literal or concatenated specifier, or createRequire.
+      /\b(?:import|require)\s*\(\s*[^'"`\s)]/,
+      /\b(?:import|require)\s*\(\s*['"`][^'"`\n]*['"`]\s*\+/,
+      /\bcreateRequire\b/,
       /\b(?:curl|wget|Invoke-WebRequest|Invoke-Expression|iex)\b/i,
       /\bchmod\s+(?:\+x|[0-7]{3,4})\b/i,
     ],
@@ -239,7 +273,8 @@ const BUILTIN_RULES: BuiltinRule[] = [
       /\bPATH\b/,
       /\brecipes?\b/i,
       /\buser[-\s]defined\s+(?:clis?|commands?)\b/i,
-      /\b(?:arbitrary|user)\s+commands?\b/i,
+      /\b(?:arbitrary|user(?:'s)?)\s+(?:\w+\s+)?commands?\b/i,
+      /\bplugins?\b/i,
       /\bexecut(?:e|es|ing|ion)\s+(?:of\s+)?(?:commands?|scripts?|binar(?:y|ies))\b/i,
     ],
   },
@@ -257,6 +292,7 @@ const BUILTIN_RULES: BuiltinRule[] = [
       /\b(?:realpath|symlink|readlink)\w*/i,
       /(?:safe|contained)(?:project)?path/i,
       /\bpath[-_\s]?traversal\b/i,
+      /guarded/i,
     ],
     task: [
       /\b(?:delete|deletes|deleting|remove|removes|removing|clean(?:\s|-)?up|cleaning\s+up|purge|wipe|prune|erase)\s+(?:\w+\s+){0,2}?(?:files?|dirs?|director(?:y|ies)|folders?|worktrees?|sessions?|data|caches?|logs?|branch(?:es)?|artifacts?|everything)\b/i,
@@ -268,7 +304,7 @@ const BUILTIN_RULES: BuiltinRule[] = [
   },
   {
     category: "release",
-    paths: [".github", ".gitlab-ci*", ".circleci", "azure-pipelines*", "jenkinsfile", ".buildkite", ".travis*", "scripts/install*", "scripts/uninstall*", "scripts/update*", "scripts/release*", "scripts/publish*", "install.sh", "install.ps1", "*release*", "*publish*", "*signing*", "*codesign*", "*notar*", "*.entitlements", "*updater*", "*update-manifest*", "*self-update*", "self", "bin", "package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "yarn.lock", ".yarnrc*", "bun.lockb", "dockerfile*", "*.dockerfile", "docker-compose*", ".goreleaser*", "cargo.toml", "cargo.lock", "pyproject.toml", "requirements*.txt", "go.mod", "go.sum", "src-tauri/tauri.conf*"],
+    paths: [".github", ".gitlab-ci*", ".circleci", "azure-pipelines*", "jenkinsfile", ".buildkite", ".travis*", "scripts/install*", "scripts/uninstall*", "scripts/update*", "scripts/release*", "scripts/publish*", "install.sh", "install.ps1", "*release*", "*publish*", "*signing*", "*codesign*", "*notar*", "*.entitlements", "*deploy*", "*updater*", "*update-manifest*", "*self-update*", "self", "bin", "package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "yarn.lock", ".yarnrc*", "bun.lockb", "dockerfile*", "*.dockerfile", "docker-compose*", ".goreleaser*", "cargo.toml", "cargo.lock", "pyproject.toml", "requirements*.txt", "go.mod", "go.sum", "setup.py", "build.rs", ".pnpmfile.cjs", "*.config.js", "*.config.cjs", "*.config.mjs", "*.config.ts", "*.config.mts", "src-tauri/tauri.conf*"],
     text: [
       /\b(?:codesign|signtool|notarytool|notarize|notarization|stapler|cosign|minisign|gpg)\b/i,
       /\b(?:npm|pnpm|yarn|cargo)\s+publish\b|\btwine\s+upload\b/i,
@@ -279,6 +315,7 @@ const BUILTIN_RULES: BuiltinRule[] = [
       /\bpull_request_target\b|\bwrite-all\b/i,
       /\b(?:auto|self)[-_\s]?updat\w*/i,
       /\bupdate[-_\s]?manifest\b/i,
+      /\bSubproject commit [0-9a-f]/,
     ],
     task: [
       /\breleas(?:e|es|ing)\b/i,
@@ -323,28 +360,86 @@ const BUILTIN_RULES: BuiltinRule[] = [
   },
 ];
 
+type SegmentTest = (segment: string, budget: Budget) => boolean;
+
 interface CompiledGlob {
   glob: string;
   segments: string[];
+  /** One test per entry of `segments` ("**" entries are handled by the matcher). */
+  tests: SegmentTest[];
+  /** Wildcard-free segments; a path lacking any of them cannot match (cheap prefilter). */
+  literals: string[];
 }
 
 interface CompiledRule {
   category: string;
   globs: CompiledGlob[];
+  /** Built-ins only: the rule's one-segment globs as a fast per-segment test. */
+  segmentTest?: (name: string) => boolean;
   text: RegExp[];
   task: RegExp[];
   secretValues: RegExp[];
 }
 
+/** Default-ignorable code points (ZWSP, ZWJ, ZWNJ, soft hyphen, BOM, bidi marks, …). */
+const IGNORABLE = /\p{Default_Ignorable_Code_Point}/gu;
+
+/** NFKC and default-ignorables stripped, so `proceſſ` and `pro​cess` read as `process`. Case is kept. */
+function normalizeText(text: string): string {
+  return text.normalize("NFKC").replace(IGNORABLE, "");
+}
+
+/** Text normalisation plus full case folding, for paths and globs. */
+function foldPath(text: string): string {
+  return normalizeText(text).toUpperCase().toLowerCase().replace(/\\/g, "/");
+}
+
 /** `glob` matches at any depth and covers everything below it: `**​/glob/**`. */
 function compileGlob(glob: string): CompiledGlob {
-  const inner = glob.replace(/\\/g, "/").toLowerCase().split("/").filter((s) => s.length > 0 && s !== ".");
-  return { glob, segments: ["**", ...inner, "**"] };
+  const inner = foldPath(glob).split("/").filter((s) => s.length > 0 && s !== ".");
+  const segments = ["**", ...inner, "**"];
+  return { glob, segments, tests: segments.map(segmentTest), literals: inner.filter((x) => !/[*?]/.test(x)) };
+}
+
+/**
+ * Fast path for a built-in rule's one-segment globs. Each is a literal, `x*`,
+ * `*x`, `*x*` or `x*y`; they become a set lookup plus literal alternations
+ * (no quantifiers, so linear).
+ */
+function segmentFastTest(globs: readonly CompiledGlob[]): ((name: string) => boolean) | undefined {
+  const literals = new Set<string>();
+  const prefixes: string[] = [];
+  const suffixes: string[] = [];
+  const infixes: string[] = [];
+  const pairs: Array<[string, string]> = [];
+  for (const g of globs) {
+    if (g.segments.length !== 3) continue;
+    const parts = g.segments[1]!.split("*");
+    if (g.segments[1]!.includes("?") || parts.length > 3) throw new Error(`built-in glob too complex for the fast path: ${g.glob}`);
+    if (parts.length === 1) literals.add(parts[0]!);
+    else if (parts.length === 3 && parts[0] === "" && parts[2] === "") infixes.push(parts[1]!);
+    else if (parts.length === 2 && parts[0] === "") suffixes.push(parts[1]!);
+    else if (parts.length === 2 && parts[1] === "") prefixes.push(parts[0]!);
+    else if (parts.length === 2) pairs.push([parts[0]!, parts[1]!]);
+    else throw new Error(`built-in glob shape not supported by the fast path: ${g.glob}`);
+  }
+  const alt = (list: string[]) => list.map(escapeRegExp).join("|");
+  const infix = infixes.length > 0 ? new RegExp(alt(infixes)) : undefined;
+  const prefix = prefixes.length > 0 ? new RegExp(`^(?:${alt(prefixes)})`) : undefined;
+  const suffix = suffixes.length > 0 ? new RegExp(`(?:${alt(suffixes)})$`) : undefined;
+  if (literals.size + infixes.length + prefixes.length + suffixes.length + pairs.length === 0) return undefined;
+  return (name) =>
+    literals.has(name) ||
+    (infix?.test(name) ?? false) ||
+    (prefix?.test(name) ?? false) ||
+    (suffix?.test(name) ?? false) ||
+    pairs.some(([head, tail]) => name.length >= head.length + tail.length && name.startsWith(head) && name.endsWith(tail));
 }
 
 const COMPILED_BUILTINS: CompiledRule[] = BUILTIN_RULES.map((rule) => ({
   category: rule.category,
   globs: rule.paths.map(compileGlob),
+  segmentTest: segmentFastTest(rule.paths.map(compileGlob)),
   text: rule.text,
   task: rule.task ?? [],
   secretValues: rule.secretValues ?? [],
@@ -354,11 +449,17 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function keywordRegExp(keyword: string): RegExp {
-  const k = keyword.trim();
-  const start = /^\w/.test(k) ? "(?<![A-Za-z0-9_])" : "";
-  const end = /\w$/.test(k) ? "(?![A-Za-z0-9_])" : "";
-  return new RegExp(`${start}${escapeRegExp(k)}${end}`, "i");
+/** All of a rule's keywords as one literal, whole-word, case-insensitive alternation. */
+function keywordsRegExp(keywords: readonly string[]): RegExp[] {
+  const parts = keywords
+    .map((keyword) => normalizeText(keyword).trim())
+    .filter((k) => k.length > 0)
+    .map((k) => {
+      const start = /^\w/.test(k) ? "(?<![A-Za-z0-9_])" : "";
+      const end = /\w$/.test(k) ? "(?![A-Za-z0-9_])" : "";
+      return `${start}${escapeRegExp(k)}${end}`;
+    });
+  return parts.length > 0 ? [new RegExp(parts.join("|"), "i")] : [];
 }
 
 function compileExtraRules(rules: readonly DangerAreaRule[]): CompiledRule[] {
@@ -366,19 +467,62 @@ function compileExtraRules(rules: readonly DangerAreaRule[]): CompiledRule[] {
     category: rule.name.trim().toLowerCase(),
     // A glob with no segments (".", "/") would match every path; skip it.
     globs: (rule.paths ?? []).map(compileGlob).filter((g) => g.segments.length > 2),
-    text: (rule.keywords ?? []).filter((k) => k.trim().length > 0).map(keywordRegExp),
+    text: keywordsRegExp(rule.keywords ?? []),
     task: [],
     secretValues: [],
   }));
 }
 
-/** `*` and `?` within one segment. Two-pointer match, O(len(p) * len(s)) worst case. */
-function matchSegment(p: string, s: string): boolean {
+/** Distinct path-like words in task text that are checked against path rules. */
+const MAX_TASK_PATH_TOKENS = 200;
+
+/** Glob-matching work allowed per call; past it the remaining paths are `unscanned`. */
+const GLOB_STEP_BUDGET = 8_000_000;
+
+interface Budget {
+  left: number;
+}
+
+/**
+ * Literal and one-`*` segments (`git`, `*.sh`, `kill-*`, `*spawn*`) use native
+ * string tests, charged by length; anything else uses the step-charged matcher.
+ */
+function segmentTest(p: string): SegmentTest {
+  const cost = (s: string) => 1 + (s.length >> 3);
+  if (!/[*?]/.test(p)) {
+    return (s, b) => {
+      b.left -= cost(s);
+      return s === p;
+    };
+  }
+  if (!p.includes("?")) {
+    const parts = p.split("*");
+    if (parts.length === 2) {
+      const [head, tail] = parts as [string, string];
+      return (s, b) => {
+        b.left -= cost(s);
+        return s.length >= head.length + tail.length && s.startsWith(head) && s.endsWith(tail);
+      };
+    }
+    if (parts.length === 3 && parts[0] === "" && parts[2] === "") {
+      const middle = parts[1]!;
+      return (s, b) => {
+        b.left -= cost(s);
+        return s.includes(middle);
+      };
+    }
+  }
+  return (s, b) => matchSegment(p, s, b);
+}
+
+/** `*` and `?` within one segment. Two-pointer match; every step is charged to `budget`. */
+function matchSegment(p: string, s: string, budget: Budget): boolean {
   let pi = 0;
   let si = 0;
   let star = -1;
   let mark = 0;
   while (si < s.length) {
+    if (--budget.left < 0) return false;
     if (pi < p.length && (p[pi] === "?" || p[pi] === s[si])) {
       pi += 1;
       si += 1;
@@ -398,28 +542,32 @@ function matchSegment(p: string, s: string): boolean {
   return pi === p.length;
 }
 
-function globMatchesPath(glob: CompiledGlob, segments: readonly string[]): boolean {
-  // Fast path for the common one-segment rule (`**/x/**`): any segment matches x.
-  if (glob.segments.length === 3) {
-    const only = glob.segments[1]!;
-    return only === "**" || segments.some((s) => matchSegment(only, s));
-  }
-  return matchGlob(glob.segments, segments);
+/** A segment matches by its full name or by its name without the last extension (`keys` ~ `keys.tsx`). */
+function matchName(test: SegmentTest, segment: string, stem: string, budget: Budget): boolean {
+  return test(segment, budget) || (stem !== segment && test(stem, budget));
 }
 
-/** Segment-level glob match; `**` spans zero or more segments. O(P * S) segment matches. */
-function matchGlob(pattern: readonly string[], segments: readonly string[]): boolean {
+function globMatchesPath(glob: CompiledGlob, path: NormalizedPath, budget: Budget): boolean {
+  const { segments, stems } = path;
+  // Fast path for the common one-segment rule (`**/x/**`): any segment matches x.
+  if (glob.segments.length === 3) {
+    const test = glob.tests[1]!;
+    return glob.segments[1] === "**" || path.unique.some((i) => matchName(test, segments[i]!, stems[i]!, budget));
+  }
+  if (glob.literals.some((l) => !path.names.has(l))) return false;
+  const pattern = glob.segments;
   const n = segments.length;
   let next: boolean[] = new Array<boolean>(n + 1).fill(false);
   next[n] = true;
   for (let i = pattern.length - 1; i >= 0; i -= 1) {
     const p = pattern[i]!;
+    const test = glob.tests[i]!;
     const cur: boolean[] = new Array<boolean>(n + 1).fill(false);
     for (let j = n; j >= 0; j -= 1) {
       cur[j] =
         p === "**"
           ? next[j]! || (j < n && cur[j + 1]!)
-          : j < n && next[j + 1]! && matchSegment(p, segments[j]!);
+          : j < n && next[j + 1]! && matchName(test, segments[j]!, stems[j]!, budget);
     }
     next = cur;
   }
@@ -433,28 +581,63 @@ function trimTrailing(segment: string, chars: string): string {
 }
 
 interface NormalizedPath {
+  /** Folded, `/`-joined segments (without the root). */
   path: string;
   segments: string[];
+  /** Each segment without its last extension. */
+  stems: string[];
+  /** Index of the first occurrence of each distinct segment (repeats need no second test). */
+  unique: number[];
+  /** Every segment and stem, for the literal prefilter. */
+  names: Set<string>;
+  /** "" for a relative path, "/" for POSIX or UNC, or a drive such as "c:". */
+  root: string;
 }
 
 /**
- * Lower-cased, `/`-separated, `.`/`..` resolved (leading `..` kept), Windows
+ * Unicode-normalised and case-folded, `/`-separated, `.`/`..` resolved, Windows
  * trailing dots/spaces trimmed (Windows ignores them, so `process.` is `process`).
+ * A relative path keeps leading `..`; an absolute one cannot climb above its root.
  */
 function normalizeRiskPath(raw: string): NormalizedPath {
+  let text = foldPath(raw);
+  let root = "";
+  const drive = /^[a-z]:/.exec(text);
+  if (drive) {
+    root = drive[0];
+    text = text.slice(2);
+  } else if (text.startsWith("/")) {
+    root = "/";
+  }
   const out: string[] = [];
-  for (const part of raw.replace(/\\/g, "/").toLowerCase().split("/")) {
+  for (const part of text.split("/")) {
     const spaced = trimTrailing(part, " ");
     if (spaced === "" || spaced === ".") continue;
     if (spaced === "..") {
       if (out.length > 0 && out[out.length - 1] !== "..") out.pop();
-      else out.push("..");
+      else if (root === "") out.push("..");
       continue;
     }
     const trimmed = trimTrailing(spaced, ". ");
     if (trimmed !== "") out.push(trimmed);
   }
-  return { path: out.join("/"), segments: out };
+  return withStems(out, root);
+}
+
+function withStems(segments: string[], root: string): NormalizedPath {
+  const stems = segments.map((s) => {
+    const dot = s.lastIndexOf(".");
+    return dot > 0 ? s.slice(0, dot) : s;
+  });
+  const seen = new Set<string>();
+  const unique: number[] = [];
+  segments.forEach((s, i) => {
+    if (!seen.has(s)) {
+      seen.add(s);
+      unique.push(i);
+    }
+  });
+  return { path: segments.join("/"), segments, stems, unique, names: new Set([...segments, ...stems]), root };
 }
 
 /** Collects reasons, one per (category, key), in scan order. */
@@ -469,8 +652,8 @@ class Findings {
     if (this.seen.has(id)) return;
     this.seen.add(id);
     this.categories.add(category);
-    // Reasons quote agent-written text; drop control and bidi characters (terminal escapes).
-    const safe = `${category}: ${reason}`.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, "?");
+    // Reasons quote agent-written text: drop controls, bidi and other invisible characters.
+    const safe = `${category}: ${reason}`.replace(/[\p{Cc}\p{Default_Ignorable_Code_Point}]/gu, "?");
     if (this.reasons.length < MAX_RISK_REASONS) this.reasons.push(safe);
     else this.dropped += 1;
   }
@@ -499,54 +682,116 @@ function quote(text: string): string {
   return JSON.stringify(text);
 }
 
+/** Binary files whose content may go unscanned: plain media and fonts, never executable. */
+const MEDIA_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "ico", "pdf", "woff", "woff2", "ttf"]);
+
+/** What the extended git headers of one `diff --git` section said. */
+interface Section {
+  file: string;
+  executable: boolean;
+  symlink: boolean;
+}
+
 class Classifier {
   private readonly checkedPaths = new Set<string>();
+  private readonly budget: Budget = { left: GLOB_STEP_BUDGET };
+  private readonly root: NormalizedPath | undefined;
 
   constructor(
     private readonly rules: readonly CompiledRule[],
     private readonly findings: Findings,
-  ) {}
+    projectRoot: string | undefined,
+  ) {
+    this.root = projectRoot ? normalizeRiskPath(projectRoot) : undefined;
+  }
 
-  /** Check one changed path: structure (escape, short names, streams) and every glob rule. */
+  private unscanned(key: string, reason: string): void {
+    this.findings.add(RISK_UNSCANNED, key, reason);
+  }
+
+  /** Check one changed path: structure (absolute, escape, short names, streams) and every glob rule. */
   checkPath(raw: string, where: string): void {
+    // Out of matching budget: the result is already `unscanned`; stop spending time.
+    if (this.budget.left < 0) return;
     if (raw.length > MAX_RISK_PATH_CHARS) {
-      this.findings.add(RISK_UNSCANNED, `path:${raw.slice(0, 200)}`, `${where} has a path of ${raw.length} chars, over the ${MAX_RISK_PATH_CHARS} limit; not checked`);
+      this.unscanned(`path:${raw.slice(0, 200)}`, `${where} has a path of ${raw.length} chars, over the ${MAX_RISK_PATH_CHARS} limit; not checked`);
       return;
     }
-    const norm = normalizeRiskPath(raw);
-    if (norm.path === "" || this.checkedPaths.has(norm.path)) return;
-    this.checkedPaths.add(norm.path);
-    const cite = `${where} ${quote(norm.path)}`;
+    let norm = normalizeRiskPath(raw);
+    if (norm.segments.length > MAX_RISK_PATH_SEGMENTS) {
+      this.unscanned(`path:${norm.path.slice(0, 200)}`, `${where} has ${norm.segments.length} segments, over the ${MAX_RISK_PATH_SEGMENTS} limit; not checked`);
+      return;
+    }
+    const id = norm.root === "" ? norm.path : norm.root === "/" ? `/${norm.path}` : `${norm.root}/${norm.path}`;
+    if (id === "" || this.checkedPaths.has(id)) return;
+    this.checkedPaths.add(id);
+    const cite = `${where} ${quote(id)}`;
 
+    if (norm.root !== "") {
+      const inside = this.relativeToRoot(norm);
+      if (inside) {
+        norm = inside;
+      } else {
+        this.findings.add(
+          "paths",
+          `abs:${id}`,
+          this.root ? `${cite} is outside the project root` : `${cite} is absolute (no project root given to resolve it)`,
+        );
+      }
+    }
     if (norm.segments[0] === "..") {
-      this.findings.add("paths", `path:${norm.path}`, `${cite} escapes the project root`);
+      this.findings.add("paths", `path:${id}`, `${cite} escapes the project root`);
     } else if (norm.segments[0] === "~") {
-      this.findings.add("paths", `path:${norm.path}`, `${cite} points into the home directory`);
+      this.findings.add("paths", `path:${id}`, `${cite} points into the home directory`);
     }
     if (norm.segments.some((s) => /~\d/.test(s))) {
-      this.findings.add("paths", `short:${norm.path}`, `${cite} looks like a Windows short (8.3) name, which can alias another path`);
+      this.findings.add("paths", `short:${id}`, `${cite} looks like a Windows short (8.3) name, which can alias another path`);
     }
-    if (norm.segments.some((s) => s.includes(":") && !/^[a-z]:$/.test(s))) {
-      this.findings.add("paths", `stream:${norm.path}`, `${cite} contains ':' (alternate data stream or drive-relative path)`);
+    if (norm.segments.some((s) => s.includes(":"))) {
+      this.findings.add("paths", `stream:${id}`, `${cite} contains ':' (alternate data stream or drive-relative path)`);
     }
     if (isSecretPath(norm.path)) {
-      this.findings.add("secrets", `path:${norm.path}`, `${cite} is a secrets file`);
+      this.findings.add("secrets", `path:${id}`, `${cite} is a secrets file`);
     }
-    this.matchGlobs(norm, cite);
+    this.matchGlobs(norm, cite, id);
+  }
+
+  /** The path relative to `projectRoot` when it lies inside it, else undefined. */
+  private relativeToRoot(norm: NormalizedPath): NormalizedPath | undefined {
+    const root = this.root;
+    if (!root || root.root !== norm.root || norm.segments.length < root.segments.length) return undefined;
+    if (!root.segments.every((s, i) => norm.segments[i] === s)) return undefined;
+    return withStems(norm.segments.slice(root.segments.length), "");
   }
 
   /** Glob rules only; for path-like words in task text, where structure checks would misfire on URLs. */
-  matchGlobs(norm: NormalizedPath, cite: string): void {
+  matchGlobs(norm: NormalizedPath, cite: string, id = norm.path): void {
     for (const rule of this.rules) {
-      const hit = rule.globs.find((g) => globMatchesPath(g, norm.segments));
-      if (hit) this.findings.add(rule.category, `path:${norm.path}`, `${cite} matches ${quote(hit.glob)}`);
+      if (this.budget.left < 0) break;
+      let globs = rule.globs;
+      if (rule.segmentTest) {
+        const test = rule.segmentTest;
+        const fast = norm.unique.some((i) => {
+          const segment = norm.segments[i]!;
+          const stem = norm.stems[i]!;
+          this.budget.left -= 3 + (segment.length >> 3);
+          return test(segment) || (stem !== segment && test(stem));
+        });
+        // On a fast-path miss only the multi-segment globs are left to try.
+        if (!fast) globs = globs.filter((g) => g.segments.length !== 3);
+      }
+      const hit = globs.find((g) => globMatchesPath(g, norm, this.budget));
+      if (hit) this.findings.add(rule.category, `path:${id}`, `${cite} matches ${quote(hit.glob)}`);
+    }
+    if (this.budget.left < 0) {
+      this.unscanned("budget", `path matching ran out of its work budget at ${cite}; later paths were not fully checked`);
     }
   }
 
   /**
-   * Scan one file's changed lines. Each pattern runs once over the joined lines
-   * (fast on big diffs); a hit is mapped back to its line for the citation. A
-   * match may span a line break, which can only add danger.
+   * Scan one file's changed lines and the context of changed hunks. Each pattern
+   * runs once over the joined lines; a hit is mapped back to its line for the
+   * citation. A match may span a line break, which can only add danger.
    */
   checkChunk(chunk: Chunk): void {
     if (chunk.lines.length === 0) return;
@@ -595,11 +840,18 @@ class Classifier {
       }
     }
     // Paths named in the task, e.g. "fix src/process/kill-tree.ts".
+    const tokens = new Set<string>();
     for (const token of text.split(/[\s`'"()[\]{},;<>]+/)) {
       if (token.length < 2 || token.length > MAX_RISK_PATH_CHARS) continue;
       if (!/[/\\]/.test(token) && !/\.[A-Za-z0-9]{1,10}$/.test(token)) continue;
+      if (tokens.has(token)) continue;
+      if (tokens.size >= MAX_TASK_PATH_TOKENS) {
+        this.unscanned("task paths", `task text names more than ${MAX_TASK_PATH_TOKENS} distinct paths; the rest were not checked`);
+        break;
+      }
+      tokens.add(token);
       const norm = normalizeRiskPath(trimTrailing(token, ".:!?"));
-      if (norm.path === "") continue;
+      if (norm.path === "" || norm.segments.length > MAX_RISK_PATH_SEGMENTS) continue;
       if (isSecretPath(norm.path)) {
         this.findings.add("secrets", `path:${norm.path}`, `task text names ${quote(norm.path)}, a secrets file`);
       }
@@ -614,19 +866,60 @@ class Classifier {
       this.checkChunk(chunk);
       chunk = newChunk(next);
     };
+    let section: Section = { file: "(diff)", executable: false, symlink: false };
     let oldLine: number | undefined;
     let newLine: number | undefined;
+    /** Open hunk: context waits in `pending` until the hunk shows a change. */
+    let hunk: { changed: boolean; pending: Array<{ line: string; ref: LineRef }> } | undefined;
+    let inBinaryPatch = false;
+
+    const push = (line: string, ref: LineRef) => {
+      chunk.lines.push(line);
+      chunk.refs.push(ref);
+    };
+    const binary = (fallback: string) => {
+      const file = section.file !== "(diff)" ? section.file : fallback;
+      const name = normalizeRiskPath(file).segments.at(-1) ?? "";
+      const dot = name.lastIndexOf(".");
+      const media = dot > 0 && MEDIA_EXTENSIONS.has(name.slice(dot + 1));
+      if (!media || section.executable) {
+        const why = media ? "an executable binary" : "binary";
+        this.unscanned(`binary:${file}`, `${quote(file)} is ${why}; its content was not scanned`);
+      }
+    };
+    const fileMode = (mode: string, isNew: boolean, where: string) => {
+      const cite = `${quote(section.file)} (${where})`;
+      if (mode === "120000") {
+        section.symlink = true;
+        this.findings.add("paths", `symlink:${section.file}`, `${cite} is a symlink`);
+      } else if (mode === "160000") {
+        this.findings.add("git", `gitlink:${section.file}`, `${cite} is a submodule (gitlink)`);
+        this.findings.add("release", `gitlink:${section.file}`, `${cite} is a submodule (gitlink)`);
+      } else if (mode === "100755") {
+        section.executable = true;
+        if (isNew) this.findings.add("shell", `exec:${section.file}`, `${cite} is made executable`);
+      }
+    };
+
     const lines = diff.split("\n");
     for (let i = 0; i < lines.length; i += 1) {
       let line = lines[i]!;
       if (line.endsWith("\r")) line = line.slice(0, -1);
+      if (inBinaryPatch && !line.startsWith("diff --git ")) continue;
       const first = line[0];
 
-      if (first === " ") {
+      if (first === " " || (line === "" && hunk)) {
+        if (hunk) {
+          const ref: LineRef = { fileLine: newLine, diffLine: i + 1, sign: " " };
+          if (hunk.changed) push(line.slice(1), ref);
+          else hunk.pending.push({ line: line.slice(1), ref });
+        }
         if (oldLine !== undefined) oldLine += 1;
         if (newLine !== undefined) newLine += 1;
         continue;
       }
+      if (line === "" || first === "\\") continue;
+
       // `---`/`+++` are file headers outside a hunk, but inside one they are content
       // lines. Treat them as both: checking an extra path only adds danger.
       if (line.startsWith("--- ") || line.startsWith("+++ ")) {
@@ -638,45 +931,85 @@ class Classifier {
         }
       }
       if (first === "+" || first === "-") {
-        const fileLine = first === "+" ? newLine : oldLine;
-        chunk.lines.push(line.slice(1));
-        chunk.refs.push({ fileLine, diffLine: i + 1, sign: first });
+        if (hunk && !hunk.changed) {
+          hunk.changed = true;
+          for (const pending of hunk.pending) push(pending.line, pending.ref);
+          hunk.pending = [];
+        }
+        const content = line.slice(1);
+        push(content, { fileLine: first === "+" ? newLine : oldLine, diffLine: i + 1, sign: first });
+        if (first === "+" && section.symlink && !line.startsWith("+++ ")) {
+          this.checkPath(linkTarget(section.file, content), `symlink ${quote(section.file)} points to`);
+        }
         if (first === "+" && newLine !== undefined) newLine += 1;
         if (first === "-" && oldLine !== undefined) oldLine += 1;
         continue;
       }
 
+      // Any other line is a header and closes the hunk.
+      hunk = undefined;
+      let m: RegExpExecArray | null;
       if (line.startsWith("diff --git ")) {
+        inBinaryPatch = false;
         const candidates = gitHeaderPaths(line.slice("diff --git ".length));
         for (const p of candidates) this.checkPath(p, "diff header path");
-        setFile(candidates[candidates.length - 1] ?? chunk.file);
+        const file = candidates[candidates.length - 1] ?? chunk.file;
+        section = { file, executable: false, symlink: false };
+        setFile(file);
         oldLine = newLine = undefined;
       } else if (line.startsWith("diff --cc ") || line.startsWith("diff --combined ")) {
-        setFile(unquotePath(line.slice(line.indexOf(" ", 5) + 1)));
-        this.checkPath(chunk.file, "diff header path");
-        oldLine = newLine = undefined;
-      } else if (line.startsWith("rename ") || line.startsWith("copy ")) {
-        const renamed = /^(?:rename|copy) (?:from|to) /.exec(line);
-        if (renamed) this.checkPath(unquotePath(line.slice(renamed[0].length)), `diff ${renamed[0].trim()}`);
+        const file = unquotePath(line.slice(line.indexOf(" ", 5) + 1));
+        section = { file, executable: false, symlink: false };
+        setFile(file);
+        this.checkPath(file, "diff header path");
+        this.unscanned(`combined:${file}`, `${quote(file)} is a combined (merge) diff, which is not scanned`);
+      } else if (line.startsWith("@@@")) {
+        this.unscanned(`combined:${chunk.file}`, `${quote(chunk.file)} is a combined (merge) diff, which is not scanned`);
+      } else if ((m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line))) {
+        oldLine = Number(m[1]);
+        newLine = Number(m[2]);
+        hunk = { changed: false, pending: [] };
+        // Function context after the second `@@`, e.g. `@@ -1,4 +1,4 @@ spawn(bin, args, {`.
+        const context = line.slice(m[0].length).trim();
+        if (context) hunk.pending.push({ line: context, ref: { fileLine: undefined, diffLine: i + 1, sign: "@@" } });
+      } else if ((m = /^(new file mode|new mode|old mode|deleted file mode) ([0-7]{6})$/.exec(line))) {
+        fileMode(m[2]!, m[1] === "new file mode" || m[1] === "new mode", m[1]!);
+      } else if ((m = /^index [0-9a-f]+(?:,[0-9a-f]+)*\.\.[0-9a-f]+(?: ([0-7]{6}))?$/.exec(line))) {
+        if (m[1]) fileMode(m[1], false, "index");
+      } else if ((m = /^(?:rename|copy) (?:from|to) /.exec(line))) {
+        this.checkPath(unquotePath(line.slice(m[0].length)), `diff ${m[0].trim()}`);
       } else if (line.startsWith("Binary files ") && line.endsWith(" differ")) {
         const body = line.slice("Binary files ".length, -" differ".length);
-        for (const p of splitCandidates(body, " and ")) this.checkPath(stripPrefix(unquotePath(p)), "binary diff path");
-      } else if (line.startsWith("@@")) {
-        const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
-        oldLine = m ? Number(m[1]) : undefined;
-        newLine = m ? Number(m[2]) : undefined;
+        const candidates = splitCandidates(body, " and ")
+          .map((p) => stripPrefix(unquotePath(p)))
+          .filter((p) => !p.startsWith("/dev/null"));
+        for (const p of candidates) this.checkPath(p, "binary diff path");
+        binary(candidates[candidates.length - 1] ?? body);
+      } else if (line === "GIT binary patch") {
+        inBinaryPatch = true;
+        binary(section.file);
+      } else if (!/^(?:similarity index|dissimilarity index) \d+%$/.test(line)) {
+        // Context diffs (`diff -c`), mail headers and anything else we cannot parse.
+        this.unscanned(`unparsed:${chunk.file}`, `diff line ${i + 1} is not in a format the classifier reads (${quote(line.slice(0, 60))}); the change was not fully scanned`);
       }
     }
     this.checkChunk(chunk);
   }
 }
 
+interface LineRef {
+  fileLine: number | undefined;
+  diffLine: number;
+  /** "+", "-", " " (context) or "@@" (hunk-header function context). */
+  sign: string;
+}
+
 interface Chunk {
   file: string;
-  /** Added and removed lines, without the +/- marker. */
+  /** Scanned lines: changes, and context of changed hunks, without the marker. */
   lines: string[];
   /** Where each entry of `lines` came from; turned into a citation only on a hit. */
-  refs: Array<{ fileLine: number | undefined; diffLine: number; sign: string }>;
+  refs: LineRef[];
 }
 
 function newChunk(file: string): Chunk {
@@ -685,7 +1018,17 @@ function newChunk(file: string): Chunk {
 
 function citeLine(chunk: Chunk, k: number): string {
   const ref = chunk.refs[k]!;
-  return `${chunk.file}:${ref.fileLine ?? `diff line ${ref.diffLine}`} (${ref.sign})`;
+  if (ref.sign === "@@") return `${chunk.file} hunk header (diff line ${ref.diffLine})`;
+  const where = ref.fileLine ?? `diff line ${ref.diffLine}`;
+  return `${chunk.file}:${where} (${ref.sign === " " ? "context" : ref.sign})`;
+}
+
+/** A symlink's target, resolved against the link's directory unless it is absolute. */
+function linkTarget(linkFile: string, target: string): string {
+  const t = target.trim();
+  if (/^(?:[A-Za-z]:)?[/\\]/.test(t) || t.startsWith("~")) return t;
+  const slash = linkFile.lastIndexOf("/");
+  return slash >= 0 ? `${linkFile.slice(0, slash)}/${t}` : t;
 }
 
 /** First pattern (in rule order) that matches anywhere in `text`. */
@@ -757,29 +1100,30 @@ function readQuoted(text: string): { value: string; end: number } | undefined {
   return undefined;
 }
 
+/** Cut normalised text back to `max` chars, reporting `unscanned` when it had to. */
+function capText(text: string, max: number, what: string, findings: Findings): string {
+  if (text.length <= max) return text;
+  findings.add(RISK_UNSCANNED, what, `${what} is ${text.length} chars, over the ${max} limit; only the first ${max} were scanned`);
+  return text.slice(0, max);
+}
+
 /**
  * Classify a task and/or change. `level` is `danger` when any category matched,
- * including `unscanned` (input over a size limit). Same input, same output.
+ * including `unscanned` (input over a size limit or in a format it cannot read).
+ * Same input, same output.
  */
 export function classifyRisk(input: RiskInput, options: RiskOptions = {}): RiskAssessment {
   const findings = new Findings();
   const rules = [...COMPILED_BUILTINS, ...compileExtraRules(options.extraRules ?? [])];
-  const classifier = new Classifier(rules, findings);
+  const classifier = new Classifier(rules, findings, options.projectRoot);
 
   const paths = input.paths ?? [];
   if (paths.length > MAX_RISK_PATHS) {
     findings.add(RISK_UNSCANNED, "paths", `${paths.length} paths given, over the ${MAX_RISK_PATHS} limit; only the first ${MAX_RISK_PATHS} were checked`);
   }
-  let diff = input.diff ?? "";
-  if (diff.length > MAX_RISK_DIFF_CHARS) {
-    findings.add(RISK_UNSCANNED, "diff", `diff is ${diff.length} chars, over the ${MAX_RISK_DIFF_CHARS} limit; only the first ${MAX_RISK_DIFF_CHARS} were scanned`);
-    diff = diff.slice(0, MAX_RISK_DIFF_CHARS);
-  }
-  let task = input.taskText ?? "";
-  if (task.length > MAX_RISK_TASK_CHARS) {
-    findings.add(RISK_UNSCANNED, "task", `task text is ${task.length} chars, over the ${MAX_RISK_TASK_CHARS} limit; only the first ${MAX_RISK_TASK_CHARS} were scanned`);
-    task = task.slice(0, MAX_RISK_TASK_CHARS);
-  }
+  // Cap before and after normalising: NFKC can lengthen text.
+  const diff = capText(normalizeText(capText(input.diff ?? "", MAX_RISK_DIFF_CHARS, "diff", findings)), MAX_RISK_DIFF_CHARS, "diff", findings);
+  const task = capText(normalizeText(capText(input.taskText ?? "", MAX_RISK_TASK_CHARS, "task text", findings)), MAX_RISK_TASK_CHARS, "task text", findings);
 
   for (const p of paths.slice(0, MAX_RISK_PATHS)) classifier.checkPath(String(p), "path");
   if (diff) classifier.checkDiff(diff);
