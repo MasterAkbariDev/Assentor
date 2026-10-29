@@ -59,6 +59,8 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 ### T02B-03 · Agent report parser + claim verification
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T02B-01
 
+**Status: ✅ done.** Shipped in `4e475e7`, review fixes `bd5fdf9` and `1535152` (Haiku subagent). Sonnet review: fence parity after the 64 KB cut, named bare-JSON parse errors, brace-only input bounded (<200 ms on 64 KB), wrong task id truncated to 100 chars. `src/modes/lead/report.ts`: `parseAgentReport`, repair prompt, claim checks; exported from `src/modes/index.ts`.
+
 **Goal** — Turn an agent's final text into a validated `AgentReport`, and check its claims against reality.
 
 **Context to read** — `src/modes/lead/types.ts` (`AgentReportSchema`), `src/protocol/parse.ts` (`extractJsonCandidate` — reuse it), `src/review/verification-gates.ts` (gate result shapes), modes.md §4.3.
@@ -82,6 +84,8 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 
 ### T02B-04 · Roster builder
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T02B-01, T01-01
+
+**Status: ✅ done.** Shipped in `67a685d` (Haiku subagent). Sonnet review PASS. Decisions: `src/modes/capabilities.ts` seeds (8 keys, "seed — user-editable"), `src/modes/roster-build.ts` (`buildRoster`, `formatRosterForPrompt`, `rosterKey`); locale-independent sort; duplicate catalog rows collapse to the first; `rateLimitedUntil` attached but not excluded and not shown in the prompt table (T02B-02 must check it); the catalog's `AUTO` row is an ordinary model when availability lists it (policy for T02B-02). Not exported from `src/modes/index.ts` (import by path). Follow-ups: `maxRows` NaN/fraction handling; tests for `maxRows: 0`, AUTO, neutral-profile `maxCost`, `allowedProviders: []`.
 
 **Goal** — Produce the list of hireable agents the Lead sees each turn.
 
@@ -141,6 +145,8 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 
 ### T02B-08 · Auto mode router
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T02B-01
+
+**Status: ✅ done.** Shipped in `1a4ec9d` (Haiku subagent). Sonnet review PASS. `src/modes/auto.ts`: pure, deterministic keyword router (review, explore, plan, swarm, debug, tdd, cascade on high/critical risk, lead, solo); literal mode ids until T02B-01b. Review follow-ups done in `5cafc30` (Haiku): distinct fallback reason when matched modes are unavailable, sentence split ignores dotted filenames, `\s+` in phrases, missing tests added.
 
 **Context to read** — `src/review/complexity.ts` (`TaskComplexityAnalyzer`, `ComplexityAnalysis`), `src/review/plan-explain.ts` (how reasons are phrased), modes.md §6 "Auto".
 

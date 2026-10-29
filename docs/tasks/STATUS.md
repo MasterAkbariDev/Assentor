@@ -54,16 +54,16 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**19 of 80 cards done** (plus T03-03 half done, 3 follow-up cards FU-01…03, and gate fix G-1). By tier: 🟢 Haiku 14/41 · 🟡 Sonnet-tier 2/17 · 🔴 Opus-tier 3/22. Tests: 1004 passing.
+**30 of 80 cards done** (2026-10-29; plus T03-03 half done, follow-ups FU-01…05, gate fixes G-1, G-5). By tier: 🟢 Haiku 21/41 · 🟡 Sonnet-tier 5/17 · 🔴 Opus-tier 4/22. Tests: 1369 passing.
 
 | Phase | Done | Open |
 |---|---|---|
-| 0 Foundations | 8/9 | T00-08 CI matrix (🟡, unassigned) |
-| 1 Review & models | 5/7 | T01-03 panel policies (🟡), T01-05 model switch (🔴) |
-| 2 Negotiate | 1/10 | gated (§5) |
-| 2b Lead & modes | 1/19 | gated (§5) |
-| 3 Prompt library | 4/6 | T03-03 rest (moderator/judge/negotiate-*: gated), T03-04 playbooks (needs T02-09: gated) |
-| 4 Engine & web UI | 0/17 | fast path in progress (§6) |
+| 0 Foundations | 9/9 | — |
+| 1 Review & models | 6/7 | T01-05 model switch (🔴, Opus implementing) |
+| 2 Negotiate | 5/10 | T02-01 worktrees + T02-03 engine (in review), T02-06/08 (need T02-01), T02-09 stage graph |
+| 2b Lead & modes | 5/19 | T02B-01b registry (in review), then T02B-17, T02B-07, T02B-02 |
+| 3 Prompt library | 4/6 | T03-03 rest (after T02-03 merges), T03-04 playbooks (needs T02-09) |
+| 4 Engine & web UI | 1/17 | web preview fast path merged (§6); rest paused (core first) |
 | 5 Desktop | 0/12 | — |
 
 | Card | Status | Commit |
@@ -134,6 +134,14 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 ## 8. In flight right now
 
 **Planner handover (user, 2026-10-29):** session "Repository status review" (Opus) is the planner again; "Multi-model CLI app architecture" stays idle. The user asked for parallel subagents to finish faster. Found on takeover: merged since the last STATUS edit — T02-02 seat scheduler (`a7c8732`), T02-04 vote (`e516ff4`), T02B-05 Lead board (`f875a48`), T01-03 panel policies + T00-08 CI matrix (`2292270`). Uncommitted in this worktree: the previous planner's **T02-03 negotiation engine** (`src/negotiation/engine.ts`, test, export) — gate green, under O2 review now. Unmerged on side branches: T02B-03 report parser (`claude/haiku-two-cards-fd2328`, `bd5fdf9`, review fixes in), T02-05 debate (`claude/priceless-kirch-952d9c`, `9483d1f`), T02-07 synthesize (`claude/youthful-galileo-a41523`, `2ec5361`) — all under review now. New implementer subagents (own worktrees `card-*` off integration): T02B-04, T02B-08, T02B-17 (Haiku), T02-01 worktree manager (Opus, 🔴, O2 + sign-off). Gate on takeover: 1,277 tests green.
+
+**Parallel wave (2026-10-29, live — each card on its own branch/worktree `claude/card-*`, merged by the planner after review):**
+- ✅ Merged: T02-07 synthesize (`2dae7c0`), T02B-04 roster (`eb64ae5`), T02B-03 report parser (`95113db`), T02B-08 auto router (`f1ca175`), T02-05 debate (`f72f60f`, with an Opus no-voter guard `8245d53`). Optional follow-ups are on each card.
+- T02-03 negotiation engine (`claude/card-t02-03`, `c24d11d`): O2 re-review CHANGES REQUIRED — a queued seat gets no terminal event on cancel; `dispose()` must abort in-flight asks when `strategy.run` exits early. Opus fixing; then O2 check and **user sign-off** (open questions: one file per run `negotiations/<runId>.json`; save nothing on cancel; refuse to overwrite a reused runId).
+- T02-01 worktree manager (`claude/card-t02-01`, `77cc522`): implemented; O2 review running; then **user sign-off** (open questions: manifest file lock; `--no-verify` snapshot commits; seat = `{sessionId, seatId}`; auto-add `.assentor/` to `.gitignore`).
+- T02B-01b registry + autonomy (`claude/card-t02b-01b`, `cd1d9e6`): implemented; O2 review running; then **user sign-off** (open questions: unknown `--mode` now errors; `review` mode unavailable; TUI start passes the old run mode). T02B-17 modes CLI waits for it.
+- T01-05 model switch (`claude/card-t01-05`): Opus implementing.
+- Next once these land: T02-06 best-of-N and T02-08 divide (Sonnet, need T02-01), T03-03 meta prompts (Haiku, after T02-03), T02B-17 (Haiku), T02B-07 danger classifier, T02-09 stage graph.
 
 **Direction (user, 2026-10-27): core engine first.** After the Haiku agents finish their current cards, UI and app work (rest of Phase 4, Phase 5) pauses. Finish the core (Phases 0–3, 2b) first, then build the UI and apps on top of it.
 

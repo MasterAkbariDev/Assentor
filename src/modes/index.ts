@@ -61,3 +61,13 @@ export {
   type ModeId,
   type ModeDefinition,
 } from "./registry.js";
+export {
+  parseAgentReport,
+  repairPrompt,
+  verifyReportClaims,
+  MAX_REPORT_SCAN_BYTES,
+  type ParseAgentReportResult,
+  type ClaimCheck,
+  type ClaimEvidence,
+  type VerifyClaimsOptions,
+} from "./lead/report.js";
