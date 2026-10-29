@@ -10,7 +10,10 @@ export interface ModeSuggestionInput {
   complexity: ComplexityAnalysis;
   /** Accepted for future repo-size rules; the T02B-08 rules do not read it. */
   repoFileCount?: number;
-  /** Mode ids the caller can run right now. The router never suggests anything else. */
+  /**
+   * Mode ids the caller can run right now. The router only suggests these, except
+   * `solo`, the final fallback, which it returns even when it is not listed.
+   */
   availableModes: string[];
 }
 
@@ -40,36 +43,43 @@ const KEYWORD_RULES: Array<{
   noBuildVerb?: boolean;
   why: string;
 }> = [
-  { mode: "review", re: /\b(?:review|audit|check my|look over)\b/i, why: "asks for a review or audit" },
+  { mode: "review", re: /\b(?:review|audit|check\s+my|look\s+over)\b/i, why: "asks for a review or audit" },
   {
     mode: "explore",
-    re: /\b(?:why|how does|explain|where is|what does)\b/i,
+    re: /\b(?:why|how\s+does|explain|where\s+is|what\s+does)\b/i,
     noBuildVerb: true,
     why: "asks how something works or where it lives",
   },
   {
     mode: "plan",
-    re: /\b(?:plan|design|spec|roadmap|break down)\b/i,
+    re: /\b(?:plan|design|spec|roadmap|break\s+down)\b/i,
     noBuildVerb: true,
     why: "asks for a plan or design before code",
   },
   {
     mode: "swarm",
-    re: /\b(?:rename|migrate|replace all|bump|across (?:the )?(?:repo|codebase)|every file)\b/i,
+    re: /\b(?:rename|migrate|replace\s+all|bump|across\s+(?:the\s+)?(?:repo|codebase)|every\s+file)\b/i,
     why: "is a mechanical change spread across many files",
   },
   {
     mode: "debug",
-    re: /\b(?:flaky|intermittent|crash|regression|stack trace|incident)\b/i,
+    re: /\b(?:flaky|intermittent|crash|regression|stack\s+trace|incident)\b/i,
     why: "describes a bug to track down",
   },
-  { mode: "tdd", re: /\b(?:test first|tdd)\b/i, why: "asks for test-first work" },
+  { mode: "tdd", re: /\b(?:test\s+first|tdd)\b/i, why: "asks for test-first work" },
 ];
 
 const FALLBACK: Candidate = {
   mode: "solo",
   confidence: 0.4,
   reason: "No specific pattern matched, so one executor with review is the simplest fit.",
+};
+
+/** Used when rules matched but every matched mode is unavailable. */
+const UNAVAILABLE_FALLBACK: Candidate = {
+  mode: "solo",
+  confidence: 0.4,
+  reason: "No available mode matched, so one executor with review is the simplest fit.",
 };
 
 /** Every rule that matches, in precedence order. `solo` is not a candidate here. */
@@ -101,7 +111,10 @@ function candidates(input: ModeSuggestionInput): Candidate[] {
   const listedItems = task
     .split(/\r?\n/)
     .filter((line) => /^\s*(?:[-*•]|\d+[.)])\s+\S/.test(line)).length;
-  const buildSentences = task.split(/[.!?\n]+/).filter((part) => BUILD_VERB.test(part)).length;
+  // A dot only ends a sentence before whitespace, so `a.ts` stays one word.
+  const buildSentences = task
+    .split(/[.!?]+(?=\s|$)|\r?\n/)
+    .filter((part) => BUILD_VERB.test(part)).length;
   if (listedItems >= 3) {
     out.push({
       mode: "lead",
@@ -128,7 +141,7 @@ export function suggestMode(input: ModeSuggestionInput): ModeSuggestion {
   const matched = candidates(input);
 
   const skippedNotes: string[] = [];
-  let chosen: Candidate = FALLBACK;
+  let chosen: Candidate = matched.length > 0 ? UNAVAILABLE_FALLBACK : FALLBACK;
   for (const candidate of matched) {
     if (available.has(candidate.mode)) {
       chosen = candidate;

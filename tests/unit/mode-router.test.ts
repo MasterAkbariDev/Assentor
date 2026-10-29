@@ -56,6 +56,33 @@ describe("auto mode router: keyword rules", () => {
   it("routes test-first requests to tdd", () => {
     expect(route("Write the parser test first, then the parser").mode).toBe("tdd");
   });
+
+  it("routes the tdd keyword itself to tdd", () => {
+    const suggestion = route("Use TDD for the parser");
+    expect(suggestion.mode).toBe("tdd");
+    expect(suggestion.reasons[0]).toContain('"TDD"');
+  });
+
+  it("routes check my, look over and replace all triggers", () => {
+    expect(route("Check my diff before merge").mode).toBe("review");
+    expect(route("Look over the auth module").mode).toBe("review");
+    expect(route("Replace all the old helpers").mode).toBe("swarm");
+  });
+
+  it("matches multi-word phrases across any whitespace", () => {
+    expect(route("Check  my branch").mode).toBe("review");
+    expect(route("How\ndoes the cache evict?").mode).toBe("explore");
+    expect(route("Sync the names across\nthe  repo").mode).toBe("swarm");
+  });
+
+  it("does not match review inside longer words", () => {
+    expect(route("Fix the reviewer assignment").mode).toBe("solo");
+    expect(route("Previewing the page layout").mode).toBe("solo");
+  });
+
+  it("lets a build verb suppress plan", () => {
+    expect(route("Build the caching design for sessions").mode).toBe("solo");
+  });
 });
 
 describe("auto mode router: risk and multi-part rules", () => {
@@ -80,6 +107,22 @@ describe("auto mode router: risk and multi-part rules", () => {
     const suggestion = route("Add a cache. Build a size limit. Update the docs.");
     expect(suggestion.mode).toBe("lead");
     expect(suggestion.reasons[0]).toContain("3 separate sentences");
+  });
+
+  it("does not count dotted filenames as separate sentences", () => {
+    const suggestion = route("Update a.ts and fix b.ts and write c.ts");
+    expect(suggestion.mode).toBe("solo");
+    expect(suggestion.reasons[0]).not.toContain("separate sentences");
+  });
+
+  it("counts numbered items written as 1. and as 1)", () => {
+    const dotted = route("Ship the feature:\n1. login form\n2. session store\n3. tests");
+    expect(dotted.mode).toBe("lead");
+    expect(dotted.reasons[0]).toContain("3 separate items");
+
+    const parenthesized = route("Ship the feature:\n1) login form\n2) session store\n3) tests");
+    expect(parenthesized.mode).toBe("lead");
+    expect(parenthesized.reasons[0]).toContain("3 separate items");
   });
 });
 
@@ -108,6 +151,8 @@ describe("auto mode router: fallback, availability and alternatives", () => {
   it("returns solo when no matching mode is available", () => {
     const suggestion = route("Intermittent crash in the worker", { available: ["solo"] });
     expect(suggestion.mode).toBe("solo");
+    expect(suggestion.reasons[0]).toContain("No available mode matched");
+    expect(suggestion.reasons[0]).not.toContain("No specific pattern matched");
     expect(suggestion.reasons).toContain(
       "debug also fits, but it is not available here, so it was skipped.",
     );
