@@ -54,12 +54,12 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**34 of 80 cards done** (2026-10-29; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 22/41 · 🟡 Sonnet-tier 5/17 · 🔴 Opus-tier 7/22. Tests: 1609 passing. Core (Phases 0–3 + 2b) left: 18 cards.
+**35 of 80 cards done** (2026-10-29; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 22/41 · 🟡 Sonnet-tier 5/17 · 🔴 Opus-tier 8/22. Tests: 1648 passing. Core (Phases 0–3 + 2b) left: 17 cards.
 
 | Phase | Done | Open |
 |---|---|---|
 | 0 Foundations | 9/9 | — |
-| 1 Review & models | 6/7 | T01-05 model switch (O2 PASS after 3 rounds; waiting for user sign-off) |
+| 1 Review & models | 7/7 | — |
 | 2 Negotiate | 8/10 | T02-06 best-of-N, T02-08 divide (Sonnet) |
 | 2b Lead & modes | 5/19 (+01b) | T02B-01 controller contract, T02B-07 classifier, T02B-17 CLI, then T02B-02 Lead and the modes |
 | 3 Prompt library | 5/6 | T03-04 playbooks |
@@ -136,7 +136,7 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 **Planner handover (user, 2026-10-29):** session "Repository status review" (Opus) is the planner again; "Multi-model CLI app architecture" stays idle. The user asked for parallel subagents to finish faster. Found on takeover: merged since the last STATUS edit — T02-02 seat scheduler (`a7c8732`), T02-04 vote (`e516ff4`), T02B-05 Lead board (`f875a48`), T01-03 panel policies + T00-08 CI matrix (`2292270`). Uncommitted in this worktree: the previous planner's **T02-03 negotiation engine** (`src/negotiation/engine.ts`, test, export) — gate green, under O2 review now. Unmerged on side branches: T02B-03 report parser (`claude/haiku-two-cards-fd2328`, `bd5fdf9`, review fixes in), T02-05 debate (`claude/priceless-kirch-952d9c`, `9483d1f`), T02-07 synthesize (`claude/youthful-galileo-a41523`, `2ec5361`) — all under review now. New implementer subagents (own worktrees `card-*` off integration): T02B-04, T02B-08, T02B-17 (Haiku), T02-01 worktree manager (Opus, 🔴, O2 + sign-off). Gate on takeover: 1,277 tests green.
 
 **Parallel wave (2026-10-29) — merged so far:** T02-07 synthesize (`2dae7c0`), T02B-04 roster (`eb64ae5`), T02B-03 report parser (`95113db`), T02B-08 auto router (`f1ca175`, follow-ups `4884c13`), T02-05 debate (`f72f60f`), T02-03 negotiation engine (`db3a8a4`), T03-03b negotiation prompts (`7b3a0cd`), FU-06 config safety (`885b5cd`), **T02-01 worktree manager (`3f17a20`), T02-09 stage-graph runner (`07392f5`), T02B-01b mode registry + autonomy (`2c28797`)** — the last three O2 PASS and signed off by the user on 2026-10-29. Card notes record each sign-off and known limit.
-- T01-05 model switch (`claude/card-t01-05`, `6cb9933`): **O2 PASS after 3 rounds**; waiting for **user sign-off** (shared kill-tree change: one `ps` snapshot per kill burst, 500 ms cap, falls back to today's behaviour under heavy load; TUI `m` → T01-06; `run`/`modelChoices` wiring → engine API; panel/reviewer switching refused; brief red `seat.done` on an interrupt-restart).
+- ✅ T01-05 model switch merged (`031b9bc`): O2 PASS after 3 rounds; user signed off on 2026-10-29, including the shared kill-tree change.
 - Follow-ups to file: FU-07 kill-tree SIGSTOP the root before the `ps` snapshot plus an async `ps` fallback; `setModel` rejecting invalid ids itself (defence in depth); manifest lock for the worktree manager before two Assentor processes share a repo; per-session lock + grace timeout in the session host; `saveConfig` atomic write.
 - Next wave (started 2026-10-29): T02-06 best-of-N and T02-08 divide (Sonnet), T02B-17 modes CLI and T03-04 playbooks (Haiku), T02B-01 controller contract and T02B-07 danger classifier (Opus).
 
