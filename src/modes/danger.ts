@@ -30,6 +30,9 @@ import { isSecretPath, redactSecrets } from "../security/redact.js";
  *   is `unscanned` unless the file is plain media (png, jpg, … ttf) and not
  *   executable. Combined (`diff --cc`) and context (`diff -c`) diffs, and any
  *   line the parser does not recognise, are `unscanned`.
+ * - Pass plain `git diff` output (no colour, no `--stat`). ANSI colour,
+ *   `git show` commit headers and format-patch mail headers are lines the parser
+ *   does not recognise, so they make the result `unscanned`.
  * - Input over a size limit is scanned up to the limit and reported as the
  *   `unscanned` category, which makes the level `danger`, never `normal`.
  * - Limits of keyword matching: it reads text, not semantics. Obfuscation such
@@ -139,6 +142,8 @@ const BUILTIN_RULES: BuiltinRule[] = [
     text: [
       /\bchild_process\b/i,
       /\b(?:spawn|spawnSync|execFile|execFileSync|execSync|fork)\s*\(/i,
+      // Aliased or promisified: `nodeSpawn(`, `execFileAsync(`. Bounded `\w` keeps it linear.
+      /(?:spawn|execfile|execsync)\w{0,40}\s*\(/i,
       /\bexeca\b/i,
       /\bprocess\.kill\b|\.kill\s*\(/i,
       /\b(?:taskkill|pkill|killall)\b/i,
@@ -183,9 +188,11 @@ const BUILTIN_RULES: BuiltinRule[] = [
       /\bskip[-_\s]?permissions?\b/i,
       /--full-auto\b|\bdanger-full-access\b|--sandbox\b|--approval-mode\b|--allow-all-tools\b|--trust\b/i,
       /\b(?:permission|approval)[-_]?(?:mode|policy|prompt)s?\b/i,
-      // `readOnly`, `isReadOnly`, `read-only`, `READ_ONLY`; not the TypeScript `readonly` keyword.
+      // `readOnly`, `isReadOnly`, `read-only`, `READ_ONLY`, `isReadonly`, `{ readonly: true }`,
+      // `opts.readonly`, `{ readonly }`, "readonly"; not the TypeScript `readonly` keyword or `Readonly<T>`.
       /read[-_\s]only/i,
       /[rR]eadOnly|READONLY/,
+      /[A-Za-z_]Readonly\b|\breadonly[\s?]*[:=,}]|\.readonly\b|["'`]readonly["'`]/,
       /\bpermissions?\s*:/i,
       /approv|autopilot|autonomy/i,
       /\b(?:allowed|disallowed)Tools\b/i,
@@ -258,6 +265,7 @@ const BUILTIN_RULES: BuiltinRule[] = [
       /\b(?:bash|zsh|sh|fish|cmd|powershell|pwsh)(?:\.exe)?\s+(?:-l?c|-l|-i|\/[cdsk]|-command|-encodedcommand|-noprofile)\b/i,
       /["'](?:-lc|-c|\/c|\/d|-command)["']/i,
       /\$SHELL\b|\bprocess\.env\.SHELL\b|\bComSpec\b/i,
+      /\bprocess\.env\.(?:EDITOR|VISUAL)\b|\$EDITOR\b/,
       /\blogin[-_\s]?shell\b/i,
       /\bprocess\.env\.PATH\b|\$PATH\b|%PATH%|\bPATHEXT\b/,
       /\beval\s*\(|\bnew\s+Function\s*\(|\bvm\./i,
@@ -396,7 +404,11 @@ function foldPath(text: string): string {
 
 /** `glob` matches at any depth and covers everything below it: `**​/glob/**`. */
 function compileGlob(glob: string): CompiledGlob {
-  const inner = foldPath(glob).split("/").filter((s) => s.length > 0 && s !== ".");
+  // Trimmed like path segments (Windows ignores trailing dots/spaces), so `keys.` means `keys`.
+  const inner = foldPath(glob)
+    .split("/")
+    .map((s) => (s === ".." ? s : trimTrailing(s, ". ")))
+    .filter((s) => s.length > 0 && s !== ".");
   const segments = ["**", ...inner, "**"];
   return { glob, segments, tests: segments.map(segmentTest), literals: inner.filter((x) => !/[*?]/.test(x)) };
 }
@@ -756,7 +768,10 @@ class Classifier {
     this.matchGlobs(norm, cite, id);
   }
 
-  /** The path relative to `projectRoot` when it lies inside it, else undefined. */
+  /**
+   * The path relative to `projectRoot` when it lies inside it, else undefined.
+   * Case-insensitive (paths are folded), so on a case-sensitive disk it errs toward "inside".
+   */
   private relativeToRoot(norm: NormalizedPath): NormalizedPath | undefined {
     const root = this.root;
     if (!root || root.root !== norm.root || norm.segments.length < root.segments.length) return undefined;
@@ -905,7 +920,14 @@ class Classifier {
     for (let i = 0; i < lines.length; i += 1) {
       let line = lines[i]!;
       if (line.endsWith("\r")) line = line.slice(0, -1);
-      if (inBinaryPatch && !line.startsWith("diff --git ")) continue;
+      if (inBinaryPatch && !line.startsWith("diff --git ")) {
+        // Only `literal`/`delta` headers, base85 data and blank lines belong here; anything
+        // else (e.g. text headers hidden after a media file's patch) is unscanned.
+        if (line !== "" && !/^(?:literal|delta) \d+$/.test(line) && !/^[A-Za-z][0-9A-Za-z!#$%&()*+\-;<=>?@^_`{|}~]*$/.test(line)) {
+          this.unscanned(`binary-region:${section.file}`, `diff line ${i + 1} sits inside the binary patch of ${quote(section.file)} but is not binary data; not scanned`);
+        }
+        continue;
+      }
       const first = line[0];
 
       if (first === " " || (line === "" && hunk)) {

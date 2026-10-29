@@ -362,7 +362,8 @@ describe("classifyRisk: diff shapes", () => {
         "HcmV?d00001",
       ].join("\n");
     expect(cats({ diff: binary("src/keys/vault.bin") })).toContain("secrets");
-    expect(classifyRisk({ diff: binary("assets/logo.png") }).level).toBe("normal");
+    // The payload is never keyword-scanned; this one is not valid base85, so it is unscanned.
+    expect(cats({ diff: binary("assets/logo.png") })).toEqual([RISK_UNSCANNED]);
   });
 
   it("checks `Binary files … differ` lines", () => {
@@ -742,4 +743,68 @@ describe("classifyRisk: O2 review evasions", () => {
       it(`${p} → ${category}`, () => expect(cats({ paths: [p] })).toContain(category));
     }
   });
+});
+
+describe("classifyRisk: O2 review round 2", () => {
+  const hdr = (f: string) => `diff --git a/${f} b/${f}\nindex 1111111..2222222 100644\n--- a/${f}\n+++ b/${f}\n@@ -1,3 +1,3 @@\n`;
+  const changed = (body: string, file = "src/orchestrator/x.ts") => cats({ diff: hdr(file) + body });
+
+  it("readonly flags in property, member, shorthand and string form", () => {
+    for (const body of [
+      "-  const db = open(file, { readonly: true });\n+  const db = open(file, { readonly: false });",
+      "-  if (seat.isReadonly) throw new Error('no');\n+  if (false) throw new Error('no');",
+      "+  readonly?: boolean;",
+      "+  readonly = true;",
+      "-  run({ readonly });\n+  run({});",
+      "-  run({ readonly, x });\n+  run({ x });",
+      "-  if (opts.readonly) return;\n+  // removed",
+      '+  const mode = "readonly";',
+    ]) {
+      expect(changed(body), body).toContain("permissions");
+    }
+  });
+
+  it("the TypeScript readonly keyword and Readonly<T> stay normal", () => {
+    for (const body of ["+  readonly name: string;", "+  readonly items: readonly string[];", "+  private readonly x = 1;", "+  const x: Readonly<Foo> = y;", "+  readonly [key: string]: number;"]) {
+      expect(changed(body), body).toEqual([]);
+    }
+  });
+
+  it("aliased and promisified spawn/exec are process", () => {
+    expect(changed('-  const child = nodeSpawn(bin, ["--version"]);\n+  const child = nodeSpawn(cmd, userArgs);', "src/cli/app.ts")).toContain("process");
+    expect(changed("-  const r = await execFileAsync(\"git\", args, {\n+  const r = await execFileAsync(userCmd, args, {", "src/artifacts/evidence.ts")).toContain("process");
+    expect(changed("+  execSyncSafe (cmd);")).toContain("process");
+  });
+
+  it("$EDITOR / $VISUAL are shell", () => {
+    expect(changed("+  const editor = parseEditor(process.env.EDITOR);", "src/cli/prompts.ts")).toContain("shell");
+    expect(changed("+  const v = process.env.VISUAL ?? 'vi';")).toContain("shell");
+    expect(changed('+  run("$EDITOR file");')).toContain("shell");
+  });
+
+  it("non-base85 lines inside a media file's binary patch are unscanned", () => {
+    const hidden = "diff --git a/img.png b/img.png\nindex 1..2 100644\nGIT binary patch\nliteral 3\nabc\n\n--- a/src/util/x.ts\n+++ b/src/util/x.ts\n@@ -1 +1 @@\n+execSync(userCmd)\n";
+    expect(cats({ diff: hidden })).toEqual([RISK_UNSCANNED]);
+    const clean = "diff --git a/img.png b/img.png\nindex 1..2 100644\nGIT binary patch\nliteral 12\nzcmZ?wbhEHbWMp7uXkcIfg8\n\ndelta 3\nHcmV?d00001\n";
+    expect(classifyRisk({ diff: clean }).level).toBe("normal");
+  });
+
+  it("ANSI colour and git show headers are unscanned", () => {
+    expect(cats({ diff: "\u001b[1mdiff --git a/src/util/x.ts b/src/util/x.ts\u001b[m\n" })).toContain(RISK_UNSCANNED);
+    expect(cats({ diff: `commit 1234567890abcdef\nAuthor: A <a@b>\n\n    msg\n\n${hdr("src/util/x.ts")}-a\n+b` })).toContain(RISK_UNSCANNED);
+  });
+
+  it("user globs are trimmed like paths", () => {
+    expect(classifyRisk({ paths: ["src/billing/x.ts"] }, { extraRules: [{ name: "payments", paths: ["src/billing. /"] }] }).categories).toEqual(["payments"]);
+    expect(classifyRisk({ paths: ["src/billing/x.ts"] }, { extraRules: [{ name: "payments", paths: ["billing.."] }] }).categories).toEqual(["payments"]);
+  });
+
+  it("the new patterns stay linear on adversarial runs", () => {
+    const started = performance.now();
+    classifyRisk({ diff: `+${"spawn".repeat(40_000)}` });
+    classifyRisk({ diff: `+readonly${" ".repeat(200_000)}x` });
+    classifyRisk({ diff: `+readonly${" ?".repeat(100_000)}x` });
+    classifyRisk({ diff: `+execfile${"a".repeat(200_000)}` });
+    expect(performance.now() - started).toBeLessThan(20_000);
+  }, 60_000);
 });
