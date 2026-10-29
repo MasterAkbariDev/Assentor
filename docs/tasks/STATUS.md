@@ -54,14 +54,14 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**38 of 80 cards done** (2026-10-29; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 24/41 · 🟡 Sonnet-tier 6/17 · 🔴 Opus-tier 8/22. Tests: 1688 passing. Core (Phases 0–3 + 2b) left: 14 cards.
+**39 of 80 cards done** (2026-10-29; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 24/41 · 🟡 Sonnet-tier 6/17 · 🔴 Opus-tier 9/22. Tests: 1713 passing. Core (Phases 0–3 + 2b) left: 13 cards.
 
 | Phase | Done | Open |
 |---|---|---|
 | 0 Foundations | 9/9 | — |
 | 1 Review & models | 7/7 | — |
 | 2 Negotiate | 9/10 | T02-08 divide (rework after Opus review) |
-| 2b Lead & modes | 5/19 (+01b) | T02B-01 controller contract, T02B-07 classifier, T02B-17 CLI, then T02B-02 Lead and the modes |
+| 2b Lead & modes | 7/19 (+01b) | T02B-07 classifier (O2 round 3); T02B-02 Lead, 09, 10, 11, 14 in progress; then 06, 13, 15, 16, 18, 19 |
 | 3 Prompt library | 6/6 | — |
 | 4 Engine & web UI | 1/17 | web preview fast path merged (§6); rest paused (core first) |
 | 5 Desktop | 0/12 | — |
@@ -138,14 +138,16 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 **Parallel wave (2026-10-29) — merged so far:** T02-07 synthesize (`2dae7c0`), T02B-04 roster (`eb64ae5`), T02B-03 report parser (`95113db`), T02B-08 auto router (`f1ca175`, follow-ups `4884c13`), T02-05 debate (`f72f60f`), T02-03 negotiation engine (`db3a8a4`), T03-03b negotiation prompts (`7b3a0cd`), FU-06 config safety (`885b5cd`), **T02-01 worktree manager (`3f17a20`), T02-09 stage-graph runner (`07392f5`), T02B-01b mode registry + autonomy (`2c28797`)** — the last three O2 PASS and signed off by the user on 2026-10-29. Card notes record each sign-off and known limit.
 - ✅ T01-05 model switch merged (`031b9bc`): O2 PASS after 3 rounds; user signed off on 2026-10-29, including the shared kill-tree change.
 - Follow-ups to file: FU-07 kill-tree SIGSTOP the root before the `ps` snapshot plus an async `ps` fallback; `setModel` rejecting invalid ids itself (defence in depth); manifest lock for the worktree manager before two Assentor processes share a repo; per-session lock + grace timeout in the session host; `saveConfig` atomic write.
-- Next wave (started 2026-10-29): T02-06 best-of-N and T02-08 divide (Sonnet), T02B-17 modes CLI and T03-04 playbooks (Haiku), T02B-01 controller contract and T02B-07 danger classifier (Opus).
+- Wave 3 (started 2026-10-29): T02B-02 Lead (Opus), T02B-10 mode prompts and T02B-09 Pipeline/Explore/Plan playbooks (Haiku), T02B-11 TDD and T02B-14 red-team (Sonnet). Held for the next wave: T02B-13 pair, T02B-16 debug, and routing `assentor run` through `prepareModeSession` (Danger follow-up card).
 - ✅ T02B-17 `assentor modes` merged (`a96ab80`, Sonnet PASS). Open: spec 5 `--mode auto` waits for a runnable non-solo mode (T02B-01).
 - ✅ T03-04 built-in playbooks merged (`05eaffb`, Sonnet PASS); Phase 3 complete. Running playbooks waits for a real `SeatStepRunner` and team binding.
 - In fix rounds after review:
   - ✅ T02-06 best-of-N merged (`6d4648d`): Opus PASS after 2 rounds; user signed off (deletion paths + read-only `WorktreeManager.topLevel()`).
   - T02-08 divide (Opus NEEDS_WORK: rework as an Executor like best-of-N, run parts through the scheduler, no stuck `waiting` seat, rename and late-write ownership bypasses. The R1/R2 fixes change the T02-01 worktree manager, so they need O2 plus **user sign-off**).
-  - T02B-01 controller contract: O2 round-1 fixes in at `ab42957`; O2 re-check running; then **user sign-off**.
-- T02B-07 danger classifier: O2 CHANGES REQUIRED (eight proven false negatives: absolute paths, git modes, binaries, context lines, keyword gaps, dynamic loading, bare names with extensions, Unicode folding). Opus fixing; then O2 and **user sign-off**. Follow-up after it lands: commit a project `.assentor/config.yaml` listing this repo's danger files that generic rules miss.
+  - ✅ T02B-01 controller contract merged (`f1a5a3d`): O2 PASS after 2 rounds; user signed off. Must-do for T02B-02: approval/answer channel for dynamic controllers, `stages` gated under `manual`, resume re-applies the autonomy floor.
+  - ✅ Worktree manager follow-up merged (`2dde8f9`, cherry-picked from `6966bd6` without the superseded divide commit): renames at both ends, `applyTo` `allowedPaths`. O2 PASS; user signed off.
+  - T02-08 divide: round-2 fixes at `9787195` (seat cancel no longer merges half work, conflicts return failed, late symlinks blocked); Opus round-3 re-check running; then user sign-off.
+- T02B-07 danger classifier: O2 round 2 found two regex gaps (`readonly` object keys, aliased `spawn`/`execFileAsync`); Opus fixing; then O2 and **user sign-off**. Follow-up after it lands: a project `.assentor/config.yaml` with this repo's danger files (13 listed in the reviews).
 
 **Direction (user, 2026-10-27): core engine first.** After the Haiku agents finish their current cards, UI and app work (rest of Phase 4, Phase 5) pauses. Finish the core (Phases 0–3, 2b) first, then build the UI and apps on top of it.
 
