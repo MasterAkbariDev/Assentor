@@ -78,3 +78,21 @@ export {
   type ClaimEvidence,
   type VerifyClaimsOptions,
 } from "./lead/report.js";
+export {
+  classifyRisk,
+  DANGER_CATEGORIES,
+  RISK_UNSCANNED,
+  MAX_RISK_TASK_CHARS,
+  MAX_RISK_DIFF_CHARS,
+  MAX_RISK_PATHS,
+  MAX_RISK_PATH_CHARS,
+  MAX_RISK_PATH_SEGMENTS,
+  MAX_RISK_REASONS,
+  DangerAreaRuleSchema,
+  type DangerCategory,
+  type DangerAreaRule,
+  type RiskLevel,
+  type RiskInput,
+  type RiskOptions,
+  type RiskAssessment,
+} from "./danger.js";
