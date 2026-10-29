@@ -77,7 +77,14 @@ export interface WorktreeDiff {
 export type ApplyStrategy = "merge" | "squash" | "patch";
 
 export type ApplyResult =
-  | { ok: true; strategy: ApplyStrategy; changed: boolean; commit?: string }
+  | {
+      ok: true;
+      strategy: ApplyStrategy;
+      changed: boolean;
+      commit?: string;
+      /** Set when the commit landed but a later hook (post-commit / post-merge) failed or was killed. */
+      warning?: string;
+    }
   | { ok: false; strategy: ApplyStrategy; conflicts: string[]; message: string };
 
 export interface CleanupReport {
@@ -743,10 +750,12 @@ export class WorktreeManager {
     ])).stdout
       .split("\0")
       .filter((entry) => entry.startsWith("?? ") || entry.startsWith("!! "))
-      .map((entry) => entry.slice(3).toLowerCase());
+      .map((entry) => entry.slice(3).toLowerCase().replace(/\/$/, ""));
+    // Either side may contain the other: a seat file `build` replaces an ignored dir
+    // `build/`, and a seat file `cfg/x` replaces an ignored file or symlink `cfg`.
     const clobbered = changed.filter((p) => {
       const lower = p.toLowerCase();
-      return present.some((e) => e === lower || (e.endsWith("/") && lower.startsWith(e)));
+      return present.some((e) => lower === e || lower.startsWith(`${e}/`) || e.startsWith(`${lower}/`));
     });
     if (clobbered.length > 0) {
       throw new WorktreeError(
@@ -817,9 +826,12 @@ export class WorktreeManager {
       throw new WorktreeError(`${wt} exists but is not a registered git worktree; remove it by hand`);
     }
     const branch = worktreeBranch(record);
-    if (await this.branchExists(ctx, branch)) {
-      if (!record.removeTip) {
-        throw new WorktreeError(`Branch ${branch} was not verified for deletion; keeping it (discard to remove)`);
+    const current = await this.branchTip(ctx, record);
+    if (current !== null) {
+      if (current !== record.removeTip) {
+        throw new WorktreeError(
+          `Seat branch ${branch} moved after removal began; run discard to drop it, or apply it first`,
+        );
       }
       // Atomic check-and-delete: fails, keeping the branch, if it moved since it was verified.
       await this.gitOk(ctx.top, ["update-ref", "-d", `refs/heads/${branch}`, record.removeTip]);
@@ -880,6 +892,17 @@ export class WorktreeManager {
       const commit = (await this.gitOk(targetPath, ["rev-parse", "HEAD"])).stdout.trim();
       return { ok: true, strategy, changed: commit !== before, commit };
     } catch (error) {
+      // The commit landed and only a later hook failed or was killed: the apply succeeded.
+      const now = (await this.git(targetPath, ["rev-parse", "HEAD"]).catch(() => undefined))?.stdout.trim();
+      if (now && now !== before) {
+        return {
+          ok: true,
+          strategy,
+          changed: true,
+          commit: now,
+          warning: `Applied as ${now.slice(0, 12)}, but a hook after the commit failed: ${(error as Error).message}`,
+        };
+      }
       // Hook failure, timeout or kill mid-merge: never leave a partial merge behind.
       try {
         await this.restoreTarget(targetPath);

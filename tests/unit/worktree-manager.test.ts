@@ -368,7 +368,7 @@ describe("WorktreeManager: crash recovery", () => {
     await setState(repo, "opus-1", "removing", { removeTip: base });
 
     const report = await wm.reconcile();
-    expect(report.actions[0]?.action).toBe("failed");
+    expect(report.actions[0]).toMatchObject({ action: "failed", detail: expect.stringMatching(/moved after removal began; run discard/) });
     expect(await git(repo, "rev-parse", info.branch)).toBe(late);
     // A removal record without a verified tip never deletes the branch either.
     await setState(repo, "opus-1", "removing", { removeTip: undefined });
@@ -667,5 +667,84 @@ describe("WorktreeManager: review regressions (O2 probe)", () => {
     await fs.symlink(elsewhere, path.join(repo, ".assentor", "worktrees", "11111111"));
     await expect(new WorktreeManager({ repoPath: repo }).create(seat)).rejects.toThrow(/symlink/);
     expect(await fs.readdir(elsewhere)).toEqual([]);
+  });
+
+  it("P8: refuses a seat file that would replace an ignored directory", async () => {
+    const repo = await makeRepo();
+    await fs.appendFile(path.join(repo, ".gitignore"), "build/\n");
+    await git(repo, "commit", "-q", "-am", "ignore build");
+    await fs.mkdir(path.join(repo, "build"));
+    await fs.writeFile(path.join(repo, "build", "keep.bin"), "user\n");
+    const wm = new WorktreeManager({ repoPath: repo });
+    const w = await wm.create(seat);
+    await fs.writeFile(path.join(w.path, "build"), "seat\n");
+    await git(w.path, "add", "-f", "build");
+    await git(w.path, "commit", "-q", "-m", "x");
+    for (const strategy of ["merge", "squash", "patch"] as const) {
+      await expect(wm.applyTo("main", seat, { strategy })).rejects.toThrow(/overwrite untracked or ignored files.*build/);
+    }
+    expect(await fs.readFile(path.join(repo, "build", "keep.bin"), "utf8")).toBe("user\n");
+  });
+
+  it("Q1: refuses a seat directory that would replace an ignored file", async () => {
+    const repo = await makeRepo();
+    await fs.appendFile(path.join(repo, ".gitignore"), "cfg\n");
+    await git(repo, "commit", "-q", "-am", "ignore cfg");
+    await fs.writeFile(path.join(repo, "cfg"), "user secret\n");
+    const wm = new WorktreeManager({ repoPath: repo });
+    const w = await wm.create(seat);
+    await fs.mkdir(path.join(w.path, "cfg"));
+    await fs.writeFile(path.join(w.path, "cfg", "x"), "seat\n");
+    await git(w.path, "add", "-f", "cfg");
+    await git(w.path, "commit", "-q", "-m", "x");
+    for (const strategy of ["merge", "squash", "patch"] as const) {
+      await expect(wm.applyTo("main", seat, { strategy })).rejects.toThrow(/overwrite untracked or ignored files.*cfg\/x/);
+    }
+    expect(await fs.readFile(path.join(repo, "cfg"), "utf8")).toBe("user secret\n");
+  });
+
+  it("Q3: refuses a seat path that runs through an ignored symlink", async () => {
+    if (process.platform === "win32") return;
+    const repo = await makeRepo();
+    const outside = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "assentor-out-")));
+    dirs.push(outside);
+    await fs.appendFile(path.join(repo, ".gitignore"), "link\n");
+    await git(repo, "commit", "-q", "-am", "ignore link");
+    await fs.symlink(outside, path.join(repo, "link"));
+    const wm = new WorktreeManager({ repoPath: repo });
+    const w = await wm.create(seat);
+    await fs.mkdir(path.join(w.path, "link"));
+    await fs.writeFile(path.join(w.path, "link", "x"), "x\n");
+    await git(w.path, "add", "-f", "link");
+    await git(w.path, "commit", "-q", "-m", "x");
+    await expect(wm.applyTo("main", seat, { strategy: "merge" })).rejects.toThrow(/link\/x/);
+    expect((await fs.lstat(path.join(repo, "link"))).isSymbolicLink()).toBe(true);
+    expect(await fs.readdir(outside)).toEqual([]);
+  });
+
+  it("a hook killed after the commit landed still counts as applied, with a warning", async () => {
+    if (process.platform === "win32") return;
+    const repo = await makeRepo();
+    const wm = new WorktreeManager({ repoPath: repo });
+    const w = await wm.create(seat);
+    await fs.writeFile(path.join(w.path, "b.txt"), "1\n");
+    // Commit the seat work first: hooks are shared by all worktrees of the repo.
+    await git(w.path, "add", ".");
+    await git(w.path, "commit", "-q", "-m", "seat work");
+    const hook = path.join(repo, ".git", "hooks", "post-commit");
+    await fs.mkdir(path.dirname(hook), { recursive: true });
+    // Kills the `git commit` that ran it, after the commit was written.
+    await fs.writeFile(hook, "#!/bin/sh\nkill -9 $PPID\n", { mode: 0o755 });
+    const head = await git(repo, "rev-parse", "HEAD");
+
+    const res = await wm.applyTo("main", seat, { strategy: "squash" });
+    expect(res).toMatchObject({ ok: true, changed: true });
+    if (res.ok) {
+      expect(res.warning).toMatch(/hook after the commit failed/);
+      expect(res.commit).toBe(await git(repo, "rev-parse", "HEAD"));
+    }
+    expect(await git(repo, "rev-parse", "HEAD")).not.toBe(head);
+    expect(await fs.readFile(path.join(repo, "b.txt"), "utf8")).toBe("1\n");
+    expect((await wm.list())[0]?.outcome).toBe("applied");
   });
 });
