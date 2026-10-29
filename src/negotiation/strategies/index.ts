@@ -1,4 +1,5 @@
 import type { NegotiationStrategy } from "../strategy.js";
+import { debateStrategy } from "./debate.js";
 import { synthesizeStrategy } from "./synthesize.js";
 import { voteStrategy } from "./vote.js";
 
@@ -30,7 +31,7 @@ export function listStrategies(): string[] {
  * isolated. Safe to call twice.
  */
 export function registerBuiltinStrategies(): void {
-  for (const strategy of [voteStrategy, synthesizeStrategy]) {
+  for (const strategy of [voteStrategy, debateStrategy, synthesizeStrategy]) {
     if (!strategies.has(strategy.id)) {
       registerStrategy(strategy);
     }
