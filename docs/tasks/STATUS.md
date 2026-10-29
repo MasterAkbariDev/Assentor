@@ -54,13 +54,13 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**39 of 80 cards done** (2026-10-29; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 24/41 · 🟡 Sonnet-tier 6/17 · 🔴 Opus-tier 9/22. Tests: 1713 passing. Core (Phases 0–3 + 2b) left: 13 cards.
+**40 of 80 cards done** (2026-10-29; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 24/41 · 🟡 Sonnet-tier 7/17 · 🔴 Opus-tier 9/22. Tests: 1756 passing. Core (Phases 0–3 + 2b) left: 12 cards.
 
 | Phase | Done | Open |
 |---|---|---|
 | 0 Foundations | 9/9 | — |
 | 1 Review & models | 7/7 | — |
-| 2 Negotiate | 9/10 | T02-08 divide (rework after Opus review) |
+| 2 Negotiate | 10/10 | — |
 | 2b Lead & modes | 7/19 (+01b) | T02B-07 classifier (O2 round 3); T02B-02 Lead, 09, 10, 11, 14 in progress; then 06, 13, 15, 16, 18, 19 |
 | 3 Prompt library | 6/6 | — |
 | 4 Engine & web UI | 1/17 | web preview fast path merged (§6); rest paused (core first) |
@@ -146,8 +146,8 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
   - T02-08 divide (Opus NEEDS_WORK: rework as an Executor like best-of-N, run parts through the scheduler, no stuck `waiting` seat, rename and late-write ownership bypasses. The R1/R2 fixes change the T02-01 worktree manager, so they need O2 plus **user sign-off**).
   - ✅ T02B-01 controller contract merged (`f1a5a3d`): O2 PASS after 2 rounds; user signed off. Must-do for T02B-02: approval/answer channel for dynamic controllers, `stages` gated under `manual`, resume re-applies the autonomy floor.
   - ✅ Worktree manager follow-up merged (`2dde8f9`, cherry-picked from `6966bd6` without the superseded divide commit): renames at both ends, `applyTo` `allowedPaths`. O2 PASS; user signed off.
-  - T02-08 divide: round-2 fixes at `9787195` (seat cancel no longer merges half work, conflicts return failed, late symlinks blocked); Opus round-3 re-check running; then user sign-off.
-- T02B-07 danger classifier: O2 round 2 found two regex gaps (`readonly` object keys, aliased `spawn`/`execFileAsync`); Opus fixing; then O2 and **user sign-off**. Follow-up after it lands: a project `.assentor/config.yaml` with this repo's danger files (13 listed in the reviews).
+  - ✅ T02-08 divide & conquer merged (`e9e7331`): Opus PASS after 3 rounds; user signed off. Phase 2 complete.
+- T02B-07 danger classifier: **O2 PASS after 3 rounds** at `2a5eb23`; waiting for **user sign-off**. Merge note: `src/config/schema.ts` conflicts on imports only; the `cascade` entry must get `.passthrough()` (else unknown `modes.cascade` keys are dropped on save) and preferably `dangerAreas` `.optional()` instead of `.default([])`. Follow-up: project `.assentor/config.yaml` with this repo's danger files.
 
 **Direction (user, 2026-10-27): core engine first.** After the Haiku agents finish their current cards, UI and app work (rest of Phase 4, Phase 5) pauses. Finish the core (Phases 0–3, 2b) first, then build the UI and apps on top of it.
 
