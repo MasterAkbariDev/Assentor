@@ -7,6 +7,7 @@ import {
   type AssentorConfig,
 } from "./schema.js";
 import { defaultTransportForProvider } from "../review/backends.js";
+import { runModeForAutonomy, type Autonomy } from "../core/run-mode.js";
 import {
   assentorConfigPath,
   projectConfigPath,
@@ -82,7 +83,9 @@ export async function loadAssentorConfig(
     reviewer: string;
     maxRounds: number;
     maxMessages: number;
+    /** Deprecated: legacy `--mode supervised|autopilot`. `autonomy` wins when both are set. */
     mode: AssentorConfig["run"]["mode"];
+    autonomy: Autonomy;
   }> = {},
 ): Promise<AssentorConfig> {
   const userRaw = (await readYamlFile(userConfigPath())) as Record<
@@ -107,8 +110,11 @@ export async function loadAssentorConfig(
       overrides.executor,
     ) as AssentorConfig["executor"]["provider"];
   }
-  if (overrides.mode) {
-    parsed.run.mode = overrides.mode;
+  // CLI beats config; the config's own autonomy-vs-mode precedence is applied by the schema.
+  const cliAutonomy = overrides.autonomy ?? overrides.mode;
+  if (cliAutonomy) {
+    parsed.run.autonomy = cliAutonomy;
+    parsed.run.mode = runModeForAutonomy(cliAutonomy);
   }
   if (overrides.reviewer) {
     const provider =

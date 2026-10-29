@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   doctorAssentor,
   initAssentorProject,
+  parseModeFlags,
   resumeAssentorTask,
   runAssentorTask,
   statusAssentorTask,
@@ -180,8 +181,12 @@ program
   .option("--max-messages <n>", "Maximum messages", (v: string) => Number(v))
   .option("-v, --verbose", "Verbose event logging", false)
   .option("--skip-gates", "Skip deterministic pre-review verification", false)
-  .option("--mode <mode>", "Run mode (supervised|autopilot)")
-  .option("--autopilot", "Shortcut for --mode autopilot (auto next-phase)", false)
+  .option(
+    "--mode <mode>",
+    "Session mode (solo; more coming). supervised|autopilot still work but are deprecated: use --autonomy",
+  )
+  .option("--autonomy <level>", "How much runs without asking: manual|supervised|autopilot")
+  .option("--autopilot", "Shortcut for --autonomy autopilot (auto next-phase)", false)
   .action(
     async (
       promptParts: string[],
@@ -196,6 +201,7 @@ program
         verbose?: boolean;
         skipGates?: boolean;
         mode?: string;
+        autonomy?: string;
         autopilot?: boolean;
       },
     ) => {
@@ -206,12 +212,8 @@ program
         return;
       }
 
-      const mode =
-        options.autopilot
-          ? "autopilot"
-          : options.mode === "autopilot" || options.mode === "supervised"
-            ? options.mode
-            : undefined;
+      const flags = parseModeFlags(options);
+      if (flags.notice) console.error(flags.notice);
 
       const { result } = await runAssentorTask({
         projectPath: options.project,
@@ -224,8 +226,8 @@ program
         maxMessages: options.maxMessages,
         verbose: options.verbose,
         skipGates: options.skipGates,
-        mode,
-        autopilot: options.autopilot,
+        autonomy: flags.autonomy,
+        modeId: flags.modeId,
       });
 
       console.log(`Task ${result.taskId} finished: ${result.status}`);
@@ -263,6 +265,7 @@ program
     "Model for the executor CLI (overrides config executor.model)",
   )
   .option("--team <name>", "Review with this configured team (overrides modes.review.team)")
+  .option("--autonomy <level>", "How much runs without asking: manual|supervised|autopilot")
   .action(
     async (
       taskId: string | undefined,
@@ -275,8 +278,10 @@ program
         maxMessages?: number;
         executorModel?: string;
         team?: string;
+        autonomy?: string;
       },
     ) => {
+    const { autonomy } = parseModeFlags({ autonomy: options.autonomy });
     const result = await resumeAssentorTask({
       projectPath: options.project,
       taskId,
@@ -287,6 +292,7 @@ program
       maxMessages: options.maxMessages,
       executorModel: options.executorModel,
       team: options.team,
+      autonomy,
     });
       console.log(`Task ${result.taskId} finished: ${result.status}`);
       if (result.status !== "DONE") {

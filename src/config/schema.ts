@@ -1,8 +1,10 @@
 import { z } from "zod";
 import {
+  AutonomySchema,
   DEFAULT_RUN_MODE,
   parseRunMode,
   RUN_MODES,
+  runModeForAutonomy,
 } from "../core/run-mode.js";
 import {
   EXECUTOR_PROVIDER_IDS,
@@ -62,7 +64,16 @@ export const AssentorConfigSchema = z.object({
     .object({
       /** Supervised is default; Autopilot auto-steers next phases. */
       mode: z.preprocess(parseRunMode, z.enum(RUN_MODES)).default(DEFAULT_RUN_MODE),
+      /**
+       * manual | supervised | autopilot. When set it wins over `mode`, and `mode` is
+       * rewritten to match so the engine (and older Assentor versions, which drop this
+       * field) keep reading `mode`.
+       */
+      autonomy: AutonomySchema.optional(),
     })
+    .transform((run) =>
+      run.autonomy ? { ...run, mode: runModeForAutonomy(run.autonomy) } : run,
+    )
     .default({ mode: DEFAULT_RUN_MODE }),
   reviewers: z
     .array(

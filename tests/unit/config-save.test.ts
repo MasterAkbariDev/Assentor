@@ -41,7 +41,7 @@ async function readYaml(file: string): Promise<Record<string, unknown>> {
 /** Every section set to a non-default value, so a dropped field changes the result. */
 const FULL_CONFIG = {
   executor: { provider: "claude-code", model: "opus" },
-  run: { mode: "autopilot" },
+  run: { mode: "autopilot", autonomy: "manual" },
   reviewers: [
     {
       provider: "claude",
@@ -89,6 +89,27 @@ describe("saveAssentorConfig", () => {
     const loaded = await loadAssentorConfig(dir);
 
     expect(loaded).toEqual({ ...config, project: { path: path.resolve(dir) } });
+  });
+
+  it("keeps run.autonomy and writes run.mode to match it for older readers", async () => {
+    const dir = await projectDir();
+    const file = await saveAssentorConfig(
+      dir,
+      parseAssentorConfig({ run: { mode: "supervised", autonomy: "autopilot" } }),
+      { scope: "project" },
+    );
+
+    expect((await readYaml(file)).run).toEqual({ mode: "autopilot", autonomy: "autopilot" });
+    expect((await loadAssentorConfig(dir)).run).toEqual({ mode: "autopilot", autonomy: "autopilot" });
+  });
+
+  it("does not add run.autonomy to a legacy config", async () => {
+    const dir = await projectDir();
+    const file = await saveAssentorConfig(dir, parseAssentorConfig({ run: { mode: "autopilot" } }), {
+      scope: "project",
+    });
+
+    expect((await readYaml(file)).run).toStrictEqual({ mode: "autopilot" });
   });
 
   it("writes every top-level schema section", async () => {

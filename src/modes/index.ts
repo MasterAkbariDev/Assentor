@@ -52,3 +52,12 @@ export {
   type ApplyBoardOpResult,
   type BoardColumns,
 } from "./lead/board.js";
+export {
+  MODE_IDS,
+  MODE_ALIASES,
+  ModeIdSchema,
+  listModes,
+  getMode,
+  type ModeId,
+  type ModeDefinition,
+} from "./registry.js";

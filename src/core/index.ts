@@ -12,7 +12,11 @@ export {
   parseRunMode,
   isAutopilot,
   formatRunMode,
+  AUTONOMY_LEVELS,
+  AutonomySchema,
+  runModeForAutonomy,
   type RunMode,
+  type Autonomy,
 } from "./run-mode.js";
 
 export {
