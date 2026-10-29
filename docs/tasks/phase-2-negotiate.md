@@ -14,6 +14,8 @@ Strategy tasks (T02-04…08) implement against the **strategy contract** deliver
 
 **✅ Done — O2 PASS after 4 rounds at `a4edd48`; user signed off 2026-10-29** on: seat = `{sessionId, seatId}`; `--no-verify` on private snapshot commits; no manifest lock yet (needed before two Assentor processes share a repo); `.gitignore` left to the existing helpers. Known limits: a formatter-style pre-commit hook makes a squash "unverified", so the branch is kept until `discard`; git < 2.38 cannot verify squashes; not yet run on Windows.
 
+**Follow-up (2026-10-29, for T02-08; O2 PASS, user signed off):** `diff()` lists renames at both ends (`--no-renames`); `applyTo(..., { allowedPaths })` checks the exact tip it applies (inside the lock, after its own snapshot commit) and refuses anything outside the set, keeping the worktree and marking it failed. Cherry-picked from `6966bd6` without the superseded divide code beneath it. Optional hardening left: refuse mode-120000 entries pointing outside the repo; check the merge-base range for rewritten branches.
+
 **Goal** — Safe per-seat git worktrees: create, diff, merge into the task branch, discard, cleanup.
 
 **Context to read** — `src/git/local.ts`, `src/git/types.ts`, `src/persistence/paths.ts`, `src/security/paths.ts`, existing checkpoint/rollback in `supervisor.ts`.

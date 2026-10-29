@@ -153,6 +153,17 @@ export function worktreeBranch(seat: SeatKey): string {
   return `assentor/${seat.sessionId.slice(0, 8)}/${shortSeatName(seat.seatId)}`;
 }
 
+/** `allowedPaths` entries are repo-relative files or directories; anything else would widen the check. */
+function normalizeAllowedPaths(paths: readonly string[]): string[] {
+  return paths.map((raw) => {
+    const segments = raw.split("/").filter((s) => s !== "" && s !== ".");
+    if (segments.length === 0 || segments.includes("..") || raw.startsWith("/") || raw.includes("\\") || raw.includes("\0")) {
+      throw new WorktreeError(`Invalid allowed path: ${JSON.stringify(raw)}`);
+    }
+    return segments.join("/");
+  });
+}
+
 function isInside(root: string, candidate: string): boolean {
   const rel = path.relative(root, candidate);
   return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
@@ -382,7 +393,8 @@ export class WorktreeManager {
         const realIndex = path.resolve(wt, (await this.gitOk(wt, ["rev-parse", "--git-path", "index"])).stdout.trim());
         await fs.copyFile(realIndex, env.GIT_INDEX_FILE).catch(() => undefined);
         await this.gitOk(wt, ["add", "-A"], env);
-        const files = (await this.gitOk(wt, ["diff", "--cached", "--name-only", "-z", record.baseSha], env)).stdout
+        // --no-renames: a rename must list the path it left as well as the one it reached.
+        const files = (await this.gitOk(wt, ["diff", "--cached", "--name-only", "--no-renames", "-z", record.baseSha], env)).stdout
           .split("\0")
           .filter(Boolean);
         const diff = (await this.gitOk(wt, ["diff", "--cached", record.baseSha], env)).stdout;
@@ -402,13 +414,20 @@ export class WorktreeManager {
    * failure (conflict, hook, timeout) the target is reset to its previous state;
    * conflicts are returned, other failures rethrown. `patch` leaves the changes
    * staged but uncommitted and keeps the seat branch.
+   *
+   * `allowedPaths` (repo-relative files or directories) limits what the seat may
+   * change: the exact tip being applied is checked inside this lock, before
+   * anything is merged, and a change outside the set (renames count at both
+   * ends) throws, leaves the target untouched, keeps the worktree and marks the
+   * seat failed.
    */
   async applyTo(
     target: "main" | SeatKey,
     seat: SeatKey,
-    options: { strategy: ApplyStrategy; message?: string },
+    options: { strategy: ApplyStrategy; message?: string; allowedPaths?: readonly string[] },
   ): Promise<ApplyResult> {
     const { strategy } = options;
+    const allowed = options.allowedPaths ? normalizeAllowedPaths(options.allowedPaths) : undefined;
     return this.locked(async (ctx) => {
       const record = await this.requireReady(ctx, seat);
       const wt = this.pathFor(ctx, record);
@@ -447,6 +466,24 @@ export class WorktreeManager {
       const tip = (await this.gitOk(wt, ["rev-parse", "HEAD"])).stdout.trim();
       if (tip === record.baseSha) {
         return { ok: true, strategy, changed: false };
+      }
+      if (allowed) {
+        // Checked on the exact tip being applied, so a write that landed after the caller's own check is caught.
+        const touched = (await this.gitOk(wt, ["diff-tree", "-r", "--name-only", "--no-renames", "-z", record.baseSha, tip])).stdout
+          .split("\0")
+          .filter(Boolean);
+        const outside = touched.filter((file) => !allowed.some((p) => file === p || file.startsWith(`${p}/`)));
+        if (outside.length > 0) {
+          const manifest = await this.readManifest(ctx);
+          const current = manifest.records.find((r) => sameSeat(r, seat));
+          if (current) {
+            current.outcome = "failed";
+            await this.writeManifest(ctx, manifest);
+          }
+          throw new WorktreeError(
+            `Seat work changes paths outside the allowed set (${outside.slice(0, 10).join(", ")}); refusing to apply. The worktree is kept and marked failed`,
+          );
+        }
       }
       await this.assertSafeToWrite(targetPath, strategy, record.baseSha, tip);
       const message = options.message ?? `assentor: apply ${record.seatId} (${strategy})`;

@@ -809,3 +809,73 @@ describe("WorktreeManager: review regressions (O2 probe)", () => {
     }
   });
 });
+
+describe("WorktreeManager: renames and allowedPaths", () => {
+  async function repoWithSecret() {
+    const repo = await makeRepo();
+    await fs.mkdir(path.join(repo, "other"));
+    await fs.writeFile(path.join(repo, "other", "secret.ts"), "l1\nl2\nl3\nl4\nl5\n");
+    await git(repo, "add", ".");
+    await git(repo, "commit", "-q", "-m", "secret");
+    return repo;
+  }
+  const seat = { sessionId: S1, seatId: "ren-1" };
+
+  it("diff lists both ends of a rename", async () => {
+    const repo = await repoWithSecret();
+    const wm = new WorktreeManager({ repoPath: repo });
+    const w = await wm.create(seat);
+    await fs.mkdir(path.join(w.path, "owned"));
+    await git(w.path, "mv", "other/secret.ts", "owned/secret.ts");
+    expect((await wm.diff(seat)).files.sort()).toEqual(["other/secret.ts", "owned/secret.ts"]);
+  });
+
+  it("applyTo with allowedPaths applies work inside the set", async () => {
+    const repo = await repoWithSecret();
+    const wm = new WorktreeManager({ repoPath: repo });
+    const w = await wm.create(seat);
+    await fs.mkdir(path.join(w.path, "owned"));
+    await fs.writeFile(path.join(w.path, "owned", "a.ts"), "a\n");
+    expect(await wm.applyTo("main", seat, { strategy: "merge", allowedPaths: ["./owned/"] })).toMatchObject({ ok: true, changed: true });
+    expect(await git(repo, "show", "HEAD:owned/a.ts")).toBe("a");
+  });
+
+  it.each(["merge", "squash", "patch"] as const)(
+    "applyTo (%s) refuses a rename out of a path outside allowedPaths: target unchanged, worktree kept, seat marked failed",
+    async (strategy) => {
+      const repo = await repoWithSecret();
+      const wm = new WorktreeManager({ repoPath: repo });
+      const w = await wm.create(seat);
+      await fs.mkdir(path.join(w.path, "owned"));
+      await git(w.path, "mv", "other/secret.ts", "owned/secret.ts");
+      const before = await git(repo, "rev-parse", "HEAD");
+      await expect(wm.applyTo("main", seat, { strategy, allowedPaths: ["owned"] })).rejects.toThrow(/outside the allowed set \(other\/secret\.ts\)/);
+      expect(await git(repo, "rev-parse", "HEAD")).toBe(before);
+      expect(await git(repo, "status", "--porcelain")).toBe("");
+      expect(await exists(path.join(repo, "other", "secret.ts"))).toBe(true);
+      expect(await exists(w.path)).toBe(true);
+      expect((await wm.list(S1)).find((r) => r.seatId === seat.seatId)).toMatchObject({ outcome: "failed" });
+    },
+  );
+
+  it("applyTo checks the tip it applies: a write made after an earlier check is refused", async () => {
+    const repo = await repoWithSecret();
+    const wm = new WorktreeManager({ repoPath: repo });
+    const w = await wm.create(seat);
+    await fs.mkdir(path.join(w.path, "owned"));
+    await fs.writeFile(path.join(w.path, "owned", "a.ts"), "a\n");
+    expect((await wm.diff(seat)).files).toEqual(["owned/a.ts"]); // the caller's own check passes
+    await fs.writeFile(path.join(w.path, "other", "secret.ts"), "PWNED\n"); // a late write
+    await expect(wm.applyTo("main", seat, { strategy: "merge", allowedPaths: ["owned"] })).rejects.toThrow(/other\/secret\.ts/);
+    expect(await git(repo, "show", "HEAD:other/secret.ts")).toBe("l1\nl2\nl3\nl4\nl5");
+  });
+
+  it("rejects unsafe allowedPaths entries", async () => {
+    const repo = await repoWithSecret();
+    const wm = new WorktreeManager({ repoPath: repo });
+    await wm.create(seat);
+    for (const bad of ["", ".", "../x", "/abs", "a\\b"]) {
+      await expect(wm.applyTo("main", seat, { strategy: "merge", allowedPaths: [bad] })).rejects.toThrow(/Invalid allowed path/);
+    }
+  });
+});
