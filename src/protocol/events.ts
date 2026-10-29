@@ -128,6 +128,32 @@ const BudgetWarning = z
   .object({ kind: z.string(), used: z.number(), limit: z.number() })
   .passthrough();
 
+// Mode events (modes.md §8, T02B-01). Producers arrive with their modes; the
+// payloads name only what every producer must send.
+const ModeSelected = z
+  .object({ mode: z.string(), kind: z.enum(["static", "dynamic"]), autonomy: z.string() })
+  .passthrough();
+const LeadTurn = z.object({ turn: z.number().int().positive(), note: z.string().optional() }).passthrough();
+const LeadAction = z
+  .object({ action: z.string(), accepted: z.boolean(), reason: z.string().optional() })
+  .passthrough();
+const TaskEvent = z.object({ taskId: z.string() }).passthrough();
+const TaskAssigned = TaskEvent.extend({ seatId: z.string() });
+const TaskStatus = TaskEvent.extend({ status: z.string() });
+const TaskEscalated = TaskEvent.extend({ to: z.string(), from: z.string().optional(), reason: z.string().optional() });
+const TaskRejected = TaskEvent.extend({ reason: z.string() });
+const CascadeEscalated = z
+  .object({ fromTier: z.number().int().nonnegative(), toTier: z.number().int().nonnegative(), reason: z.string() })
+  .passthrough();
+const PairInterjection = z.object({ text: z.string() }).passthrough();
+const RedteamAttack = z.object({ round: z.number().int().positive() }).passthrough();
+const TddGate = z.object({ gate: z.enum(["A", "B"]), passed: z.boolean() }).passthrough();
+const SwarmItem = z.object({ itemId: z.string(), status: z.string() }).passthrough();
+const UserQuestion = z
+  .object({ question: z.string(), options: z.array(z.string()).optional() })
+  .passthrough();
+const UserAnswer = z.object({ answer: z.string() }).passthrough();
+
 /**
  * Catalog: event type → payload schema. Adding a type here is the only way to
  * introduce a new event; the envelope schema rejects unknown types.
@@ -174,6 +200,24 @@ export const EngineEventDataSchemas = {
 
   "budget.warning": BudgetWarning,
   "budget.exceeded": Open,
+
+  "mode.selected": ModeSelected,
+  "lead.turn": LeadTurn,
+  "lead.action": LeadAction,
+  "task.created": TaskEvent,
+  "task.assigned": TaskAssigned,
+  "task.status": TaskStatus,
+  "task.report": TaskStatus,
+  "task.escalated": TaskEscalated,
+  "task.accepted": TaskEvent,
+  "task.rejected": TaskRejected,
+  "cascade.escalated": CascadeEscalated,
+  "pair.interjection": PairInterjection,
+  "redteam.attack": RedteamAttack,
+  "tdd.gate": TddGate,
+  "swarm.item": SwarmItem,
+  "user.question": UserQuestion,
+  "user.answer": UserAnswer,
 } as const satisfies Record<string, z.ZodTypeAny>;
 
 export type EngineEventType = keyof typeof EngineEventDataSchemas;

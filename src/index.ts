@@ -167,6 +167,13 @@ export {
 } from "./negotiation/engine.js";
 export * from "./worktrees/index.js";
 export {
+  prepareModeSession,
+  ModeValidationError,
+  type ModeSessionInput,
+  type ModeRunResult,
+  type PreparedModeSession,
+} from "./modes/session.js";
+export {
   createStageRunners,
   createDebateTiebreak,
   type StageRunnerDeps,
