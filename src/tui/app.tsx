@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useApp, useInput, render, Box, Text } from "ink";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -20,7 +20,7 @@ import {
   type AssentorServices,
   type DiagnosticItem,
 } from "../services/app.js";
-import { formatRunMode } from "../core/run-mode.js";
+import { formatRunMode, type Autonomy } from "../core/run-mode.js";
 import { formatExecutorProvider } from "../executors/providers.js";
 import { loadAssentorConfig, type AssentorConfig } from "../config/load.js";
 import { explainReviewPlan } from "../review/complexity.js";
@@ -101,7 +101,8 @@ export type TuiHandoff =
       projectPath: string;
       prompt: string;
       executor?: string;
-      mode?: AssentorConfig["run"]["mode"];
+      /** Effective autonomy, so `manual` is not turned into supervised on the way to the run. */
+      autonomy?: Autonomy;
     }
   | { kind: "resume"; projectPath: string; taskId: string }
   | { kind: "relaunch"; args: string[] }
@@ -158,6 +159,8 @@ export function App({
   const [promptNotice, setPromptNotice] = useState<string[]>(initialNotice ?? []);
   const [promptLoadError, setPromptLoadError] = useState<string | null>(null);
   const [config, setConfig] = useState<AssentorConfig>(initialConfig);
+  // Run mode as last loaded or saved: a save writes `run` only when the user changed it since.
+  const savedRunMode = useRef(initialConfig.run.mode);
   const [message, setMessage] = useState("");
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
   const [keysVersion, setKeysVersion] = useState(0);
@@ -449,7 +452,10 @@ export function App({
   }
 
   async function saveConfigDefaults() {
-    await saveGlobalDefaults(services, config);
+    await saveGlobalDefaults(services, config, {
+      runChanged: config.run.mode !== savedRunMode.current,
+    });
+    savedRunMode.current = config.run.mode;
     setMessage("Saved defaults to ~/.assentor/config.yaml");
   }
 
@@ -567,7 +573,7 @@ export function App({
       projectPath: path.resolve(startTaskPath),
       prompt: taskPrompt.trim(),
       executor: config.executor.provider,
-      mode: config.run.mode,
+      autonomy: config.run.autonomy ?? config.run.mode,
     });
     exit();
   }

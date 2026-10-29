@@ -35,6 +35,8 @@ Order: **T02B-01 → (T02B-03, 04, 05, 08, 12, 17 in parallel for Haiku) → T02
 ### T02B-01b · Mode registry metadata + autonomy axis (split from T02B-01)
 **Tier:** 🔴 O · **Review:** O2 + human · **Size:** M · **Depends:** T02B-01a, T00-09
 
+**✅ Done — O2 PASS after 3 rounds at `3475843`; user signed off 2026-10-29** on: an unknown `--mode` errors (with a "did you mean --autonomy …?" hint for mis-cased levels); `review` stays unavailable (error points to `run --team`); only `solo` is runnable of the 17 registered modes; `assentor init` keeps writing `run.mode: supervised`. The project layer wins over the user layer for autonomy, and a TUI save keeps the user file's own `run` unless the mode was toggled.
+
 Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list modes before T02-09. Deliverables 1 (metadata only: `ModeDefinition` without `buildSession`/`createController`, which arrive with T02-09/T02B-02) and 5 (autonomy axis) of T02B-01. Deliverables 6–7 and the runnable registry stay in T02B-01.
 
 ---

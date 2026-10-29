@@ -33,7 +33,13 @@ import {
   formatExecutorProvider,
   SELECTABLE_EXECUTOR_PROVIDERS,
 } from "../executors/providers.js";
-import { type RunMode } from "../core/run-mode.js";
+import {
+  AUTONOMY_LEVELS,
+  AutonomySchema,
+  type Autonomy,
+  type RunMode,
+} from "../core/run-mode.js";
+import { getMode, MODE_IDS, ModeIdSchema, type ModeId } from "../modes/registry.js";
 import {
   CliReviewer,
   isCliReviewerAvailable,
@@ -81,8 +87,14 @@ export interface RunAssentorInput {
   verbose?: boolean;
   skipPreflight?: boolean;
   skipGates?: boolean;
+  /** Deprecated: use `autonomy`, which wins when both are set. */
   mode?: RunMode;
+  /** Deprecated: same as `mode: "autopilot"`. */
   autopilot?: boolean;
+  /** Overrides config `run.autonomy` / `run.mode`. */
+  autonomy?: Autonomy;
+  /** Registry mode (`--mode <id>`). Only `available` modes run; today they all run as solo. */
+  modeId?: ModeId;
   /** Live seat-scoped engine events (T00-07), in log order. Errors thrown here are reported, not propagated. */
   onEngineEvent?: (event: EngineEvent) => void;
 }
@@ -699,6 +711,57 @@ export function assertReviewerOrTeam(input: { reviewer?: string; team?: string }
   }
 }
 
+/** What `--mode`, `--autonomy` and `--autopilot` ask for; `notice` is a deprecation line to print. */
+export interface ModeFlags {
+  autonomy?: Autonomy;
+  modeId?: ModeId;
+  notice?: string;
+}
+
+/**
+ * Parses the run/resume mode flags. `--mode supervised|autopilot` (exact spelling,
+ * as before) is the deprecated autonomy alias and yields a notice; any other
+ * `--mode` must be a registry id or alias. Throws on an unknown mode or level, and
+ * when `--autonomy` disagrees with a legacy flag.
+ */
+export function parseModeFlags(options: {
+  mode?: string;
+  autonomy?: string;
+  autopilot?: boolean;
+}): ModeFlags {
+  const flags: ModeFlags = {};
+  // As before, --autopilot beats --mode supervised.
+  let legacy: Autonomy | undefined = options.autopilot ? "autopilot" : undefined;
+  if (options.mode === "supervised" || options.mode === "autopilot") {
+    legacy ??= options.mode;
+    flags.notice = `Note: --mode ${options.mode} is deprecated; use --autonomy ${options.mode}.`;
+  } else if (options.mode !== undefined) {
+    const id = ModeIdSchema.safeParse(options.mode);
+    if (!id.success) {
+      const level = AutonomySchema.safeParse(options.mode);
+      const hint = level.success ? ` Did you mean --autonomy ${level.data}?` : "";
+      throw new Error(`Unknown mode "${options.mode}". Modes: ${MODE_IDS.join(", ")}.${hint}`);
+    }
+    flags.modeId = id.data;
+  }
+  if (options.autonomy !== undefined) {
+    const level = AutonomySchema.safeParse(options.autonomy);
+    if (!level.success) {
+      throw new Error(
+        `Unknown autonomy "${options.autonomy}". Use one of: ${AUTONOMY_LEVELS.join(", ")}.`,
+      );
+    }
+    if (legacy && legacy !== level.data) {
+      const source = options.autopilot ? "--autopilot" : `--mode ${options.mode}`;
+      throw new Error(`--autonomy ${level.data} conflicts with ${source}.`);
+    }
+    flags.autonomy = level.data;
+  } else {
+    flags.autonomy = legacy;
+  }
+  return flags;
+}
+
 /**
  * `config` with `modes.review.team` set to `team`, for one run. Returns a new
  * object and writes nothing to disk. An unknown team throws the `resolveTeams`
@@ -729,6 +792,10 @@ function seatEventListener(
 
 export async function runAssentorTask(input: RunAssentorInput) {
   assertReviewerOrTeam(input);
+  if (input.modeId && !getMode(input.modeId)?.available) {
+    const hint = input.modeId === "review" ? " For a review panel use run --team." : "";
+    throw new Error(`Mode ${input.modeId} is not available yet.${hint}`);
+  }
   const projectPath = path.resolve(input.projectPath);
   const executorLabel = input.executor
     ? formatExecutorProvider(normalizeExecutorProvider(input.executor))
@@ -790,6 +857,7 @@ async function runAssentorTaskBody(
     maxRounds: input.maxRounds,
     maxMessages: input.maxMessages,
     mode: input.autopilot ? "autopilot" : input.mode,
+    autonomy: input.autonomy,
   });
   const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
   const runMode = config.run.mode;
@@ -986,6 +1054,8 @@ export async function resumeAssentorTask(input: {
   onEngineEvent?: (event: EngineEvent) => void;
   /** Config `teams` entry to review with; see `RunAssentorInput.team`. */
   team?: string;
+  /** Overrides config `run.autonomy` / `run.mode` for this resume. */
+  autonomy?: Autonomy;
 }) {
   assertReviewerOrTeam(input);
   const projectPath = path.resolve(input.projectPath);
@@ -1017,6 +1087,7 @@ export async function resumeAssentorTask(input: {
       reviewer: input.reviewer,
       maxRounds: input.maxRounds,
       maxMessages: input.maxMessages,
+      autonomy: input.autonomy,
     });
     const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
 

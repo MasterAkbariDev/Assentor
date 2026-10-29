@@ -226,8 +226,7 @@ export function cycleAiField(
   const next = structuredClone(config);
   switch (idx) {
     case 0:
-      next.run.mode = cycle(RUN_MODE_OPTIONS, next.run.mode, dir);
-      break;
+      return cycleRunMode(config, dir);
     case 1: {
       const options =
         availableExecutors && availableExecutors.length > 0
@@ -259,6 +258,9 @@ export function cycleAiField(
 export function cycleRunMode(config: AssentorConfig, dir: 1 | -1 = 1): AssentorConfig {
   const next = structuredClone(config);
   next.run.mode = cycle(RUN_MODE_OPTIONS, next.run.mode as RunMode, dir);
+  // run.autonomy wins over run.mode on load, so keep it in step or the toggle is lost on save.
+  // Two-way toggle by design: manual cycles to autopilot and then back to supervised, not manual.
+  if (next.run.autonomy) next.run.autonomy = next.run.mode;
   return next;
 }
 
