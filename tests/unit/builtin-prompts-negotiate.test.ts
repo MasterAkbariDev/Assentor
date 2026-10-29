@@ -11,6 +11,7 @@ import {
 } from "../../src/negotiation/strategy.js";
 import { createMockNegotiationContext, type MockAsk } from "../../src/negotiation/testing/mock-context.js";
 import { debateStrategy } from "../../src/negotiation/strategies/debate.js";
+import { createDivideStrategy } from "../../src/negotiation/strategies/divide.js";
 import { synthesizeStrategy } from "../../src/negotiation/strategies/synthesize.js";
 import { voteStrategy } from "../../src/negotiation/strategies/vote.js";
 import {
@@ -277,6 +278,8 @@ describe("variables the engine really passes", () => {
         return { consensus: false, preferred: first, reasons: ["safer"] };
       case "judge":
         return { winner: last, reasons: ["clearer"] };
+      case "divide-plan":
+        return { subtasks: [] }; // rejected right after the ask, so the divide deps are never used
       default:
         return { fail: `no script for ${ask.step}` };
     }
@@ -285,13 +288,15 @@ describe("variables the engine really passes", () => {
   it("every step renders from exactly the variables a strategy passes", async () => {
     const seats = expandSeatSpecs([
       { provider: "claude-code", model: "opus", count: 2 },
-      { provider: "codex", model: "sol" },
+      { provider: "codex", model: "sol", permissions: "edit" },
     ]);
+    const unusedDivideDeps = { worktrees: {} as never, createExecutor: () => ({}) as never };
     const runs: Array<{ strategy: NegotiationStrategy; options: Record<string, unknown> }> = [
       { strategy: voteStrategy, options: {} },
       { strategy: debateStrategy, options: { maxRounds: 2 } },
       { strategy: debateStrategy, options: { maxRounds: 1, moderator: "sol-1" } },
       { strategy: synthesizeStrategy, options: { aggregator: "sol-1" } },
+      { strategy: createDivideStrategy(unusedDivideDeps), options: {} },
     ];
 
     const seen = new Map<string, Array<Readonly<Record<string, unknown>>>>();
