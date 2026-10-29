@@ -39,6 +39,11 @@ export const AutonomySchema = z.preprocess(
   z.enum(AUTONOMY_LEVELS),
 );
 
+/** YAML `autonomy:` left empty (null) or blank means unset, not an invalid value. */
+export function blankToUndefined(value: unknown): unknown {
+  return value === null || (typeof value === "string" && value.trim() === "") ? undefined : value;
+}
+
 /**
  * The run mode the engine reads today (`config.run.mode`). `manual` has no engine
  * behaviour of its own yet, so it runs like `supervised` (never auto-steers).

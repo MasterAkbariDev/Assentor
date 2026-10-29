@@ -20,7 +20,7 @@ import {
   type AssentorServices,
   type DiagnosticItem,
 } from "../services/app.js";
-import { formatRunMode } from "../core/run-mode.js";
+import { formatRunMode, type Autonomy } from "../core/run-mode.js";
 import { formatExecutorProvider } from "../executors/providers.js";
 import { loadAssentorConfig, type AssentorConfig } from "../config/load.js";
 import { explainReviewPlan } from "../review/complexity.js";
@@ -101,7 +101,8 @@ export type TuiHandoff =
       projectPath: string;
       prompt: string;
       executor?: string;
-      mode?: AssentorConfig["run"]["mode"];
+      /** Effective autonomy, so `manual` is not turned into supervised on the way to the run. */
+      autonomy?: Autonomy;
     }
   | { kind: "resume"; projectPath: string; taskId: string }
   | { kind: "relaunch"; args: string[] }
@@ -567,7 +568,7 @@ export function App({
       projectPath: path.resolve(startTaskPath),
       prompt: taskPrompt.trim(),
       executor: config.executor.provider,
-      mode: config.run.mode,
+      autonomy: config.run.autonomy ?? config.run.mode,
     });
     exit();
   }

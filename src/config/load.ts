@@ -7,7 +7,12 @@ import {
   type AssentorConfig,
 } from "./schema.js";
 import { defaultTransportForProvider } from "../review/backends.js";
-import { runModeForAutonomy, type Autonomy } from "../core/run-mode.js";
+import {
+  AutonomySchema,
+  blankToUndefined,
+  runModeForAutonomy,
+  type Autonomy,
+} from "../core/run-mode.js";
 import {
   assentorConfigPath,
   projectConfigPath,
@@ -72,6 +77,37 @@ export function mergeConfigLayers(
   return out;
 }
 
+function runSection(layer: Record<string, unknown> | null | undefined): Record<string, unknown> | undefined {
+  const run = layer?.run;
+  return run && typeof run === "object" && !Array.isArray(run)
+    ? (run as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * `lower` without its `run.autonomy` when `upper` sets `run.mode` but no autonomy.
+ * The layers merge key by key and the schema then lets autonomy beat mode, so
+ * without this a user-file `autonomy: autopilot` would beat a project's pinned
+ * `mode: supervised`. A layer's `mode` alone is its autonomy; the higher layer wins whole.
+ */
+function dropShadowedAutonomy(
+  lower: Record<string, unknown>,
+  upper: Record<string, unknown>,
+): Record<string, unknown> {
+  const upperRun = runSection(upper);
+  const lowerRun = runSection(lower);
+  if (
+    !lowerRun ||
+    !upperRun ||
+    blankToUndefined(upperRun.mode) === undefined ||
+    blankToUndefined(upperRun.autonomy) !== undefined
+  ) {
+    return lower;
+  }
+  const { autonomy: _shadowed, ...run } = lowerRun;
+  return { ...lower, run };
+}
+
 /**
  * Load run defaults: built-in → ~/.assentor/config.yaml → project .assentor/config.yaml → CLI overrides.
  * Project files are optional overrides; you do not need one in every folder.
@@ -102,7 +138,7 @@ export async function loadAssentorConfig(
           unknown
         >);
 
-  const merged = mergeConfigLayers(userRaw, projectRaw);
+  const merged = mergeConfigLayers(dropShadowedAutonomy(userRaw, projectRaw), projectRaw);
   const parsed = parseAssentorConfig(merged);
 
   if (overrides.executor) {
@@ -141,7 +177,7 @@ export async function loadAssentorConfig(
 export type ConfigSaveScope = "user" | "project";
 
 /** Top-level sections a caller can ask `saveAssentorConfig` to keep from the existing file. */
-export type PreservableConfigSection = "teams" | "modes";
+export type PreservableConfigSection = "teams" | "modes" | "run.autonomy";
 
 /**
  * Every schema section is written, in schema order, so a field added to the
@@ -152,6 +188,19 @@ export type PreservableConfigSection = "teams" | "modes";
 function toSerializable(config: AssentorConfig): Record<string, unknown> {
   const { project: _project, ...sections } = config;
   return { project: { path: "." }, ...sections };
+}
+
+/**
+ * `run` with the file's own `autonomy` instead of the merged one, so a project's
+ * autonomy is never copied into the user file. The file's value is kept only while it
+ * still gives the `mode` being saved: a TUI toggle that changed the mode drops it.
+ */
+function keepOwnAutonomy(run: AssentorConfig["run"], own: unknown): Record<string, unknown> {
+  const { autonomy: _merged, ...rest } = run;
+  const parsed = AutonomySchema.safeParse(blankToUndefined(own));
+  return parsed.success && runModeForAutonomy(parsed.data) === run.mode
+    ? { ...rest, autonomy: parsed.data }
+    : rest;
 }
 
 /**
@@ -180,6 +229,10 @@ export async function saveAssentorConfig(
   if (options.preserveFromExisting?.length) {
     const existing = (await readYamlFile(configPath)) as Record<string, unknown>;
     for (const section of options.preserveFromExisting) {
+      if (section === "run.autonomy") {
+        output.run = keepOwnAutonomy(config.run, runSection(existing)?.autonomy);
+        continue;
+      }
       if (existing && Object.prototype.hasOwnProperty.call(existing, section)) {
         output[section] = existing[section];
       } else {

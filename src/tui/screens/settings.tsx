@@ -259,6 +259,7 @@ export function cycleRunMode(config: AssentorConfig, dir: 1 | -1 = 1): AssentorC
   const next = structuredClone(config);
   next.run.mode = cycle(RUN_MODE_OPTIONS, next.run.mode as RunMode, dir);
   // run.autonomy wins over run.mode on load, so keep it in step or the toggle is lost on save.
+  // Two-way toggle by design: manual cycles to autopilot and then back to supervised, not manual.
   if (next.run.autonomy) next.run.autonomy = next.run.mode;
   return next;
 }

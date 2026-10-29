@@ -738,7 +738,9 @@ export function parseModeFlags(options: {
   } else if (options.mode !== undefined) {
     const id = ModeIdSchema.safeParse(options.mode);
     if (!id.success) {
-      throw new Error(`Unknown mode "${options.mode}". Modes: ${MODE_IDS.join(", ")}.`);
+      const level = AutonomySchema.safeParse(options.mode);
+      const hint = level.success ? ` Did you mean --autonomy ${level.data}?` : "";
+      throw new Error(`Unknown mode "${options.mode}". Modes: ${MODE_IDS.join(", ")}.${hint}`);
     }
     flags.modeId = id.data;
   }
@@ -791,7 +793,8 @@ function seatEventListener(
 export async function runAssentorTask(input: RunAssentorInput) {
   assertReviewerOrTeam(input);
   if (input.modeId && !getMode(input.modeId)?.available) {
-    throw new Error(`Mode ${input.modeId} is not available yet.`);
+    const hint = input.modeId === "review" ? " For a review panel use run --team." : "";
+    throw new Error(`Mode ${input.modeId} is not available yet.${hint}`);
   }
   const projectPath = path.resolve(input.projectPath);
   const executorLabel = input.executor

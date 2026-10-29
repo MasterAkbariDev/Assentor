@@ -102,8 +102,15 @@ describe("--mode / --autonomy / --autopilot flags", () => {
       modeId: "lead",
       autonomy: "manual",
     });
-    expect(() => parseModeFlags({ mode: "Autopilot" })).toThrow('Unknown mode "Autopilot".');
+    expect(() => parseModeFlags({ mode: "nope" })).toThrow(/^Unknown mode "nope"\. Modes: solo, .*, watch\.$/);
     expect(() => parseModeFlags({ mode: "" })).toThrow('Unknown mode "".');
+  });
+
+  it("points a mis-cased legacy --mode at --autonomy", () => {
+    expect(() => parseModeFlags({ mode: "Autopilot" })).toThrow(
+      /Unknown mode "Autopilot"\..* Did you mean --autonomy autopilot\?$/,
+    );
+    expect(() => parseModeFlags({ mode: "MANUAL" })).toThrow("Did you mean --autonomy manual?");
   });
 });
 
@@ -236,10 +243,13 @@ describe("autonomy precedence and mode availability in runs", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     try {
-      for (const id of ["negotiate", "review", "lead"] as const) {
+      await expect(
+        runAssentorTask({ projectPath: projectDir, prompt: "goal", modeId: "review" }),
+      ).rejects.toThrow("Mode review is not available yet. For a review panel use run --team.");
+      for (const id of ["negotiate", "lead"] as const) {
         await expect(
-          runAssentorTask({ projectPath: projectDir, prompt: "goal", modeId: id, skipPreflight: true }),
-        ).rejects.toThrow(`Mode ${id} is not available yet.`);
+          runAssentorTask({ projectPath: projectDir, prompt: "goal", modeId: id }),
+        ).rejects.toThrow(new RegExp(`^Mode ${id} is not available yet\\.$`));
       }
       expect(log).not.toHaveBeenCalled();
       expect(write).not.toHaveBeenCalled();
@@ -249,5 +259,4 @@ describe("autonomy precedence and mode availability in runs", () => {
     }
     await expect(fs.stat(path.join(projectDir, ".assentor", "tasks"))).rejects.toThrow();
   });
-
 });

@@ -57,7 +57,7 @@ program
         projectPath: handoff.projectPath,
         prompt: handoff.prompt,
         executor: handoff.executor,
-        mode: handoff.mode,
+        autonomy: handoff.autonomy,
       });
       console.log(`Task ${result.taskId} finished: ${result.status}`);
       if (result.status !== "DONE") process.exitCode = 1;

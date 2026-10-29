@@ -10,6 +10,7 @@ import {
   userConfigPath,
 } from "../../src/index.js";
 import { saveGlobalDefaults, type AssentorServices } from "../../src/services/app.js";
+import { initAssentorProject } from "../../src/cli/commands.js";
 
 const TEMP_ROOT = path.join(process.cwd(), ".tmp", "config-save-tests");
 const tempDirs: string[] = [];
@@ -37,6 +38,21 @@ async function projectDir(): Promise<string> {
 async function readYaml(file: string): Promise<Record<string, unknown>> {
   return parseYaml(await fs.readFile(file, "utf8")) as Record<string, unknown>;
 }
+
+/** A user file and an optional project file; returns the project dir. */
+async function layered(user: string[], project: string[] | null): Promise<string> {
+  const dir = await projectDir();
+  await fs.mkdir(path.dirname(userConfigPath()), { recursive: true });
+  await fs.writeFile(userConfigPath(), user.join("\n"), "utf8");
+  if (project) {
+    await fs.mkdir(path.join(dir, ".assentor"), { recursive: true });
+    await fs.writeFile(path.join(dir, ".assentor", "config.yaml"), project.join("\n"), "utf8");
+  }
+  return dir;
+}
+
+const tui = (dir: string) =>
+  ({ projectPath: dir, audit: { append: async () => undefined } }) as unknown as AssentorServices;
 
 /** Every section set to a non-default value, so a dropped field changes the result. */
 const FULL_CONFIG = {
@@ -226,5 +242,57 @@ describe("saveGlobalDefaults (TUI save)", () => {
     const written = await readYaml(userConfigPath());
     expect(written).not.toHaveProperty("teams");
     expect(written.executor).toEqual({ provider: "mock" });
+  });
+
+  it("does not copy a project's run.autonomy into the user config", async () => {
+    const dir = await layered(["executor:", "  provider: mock"], ["run:", "  autonomy: manual"]);
+    const merged = await loadAssentorConfig(dir);
+    expect(merged.run).toEqual({ mode: "supervised", autonomy: "manual" });
+
+    await saveGlobalDefaults(tui(dir), merged);
+
+    expect((await readYaml(userConfigPath())).run).toStrictEqual({ mode: "supervised" });
+  });
+
+  it("keeps the user's own run.autonomy, and drops it when a toggle changed the mode", async () => {
+    const dir = await layered(["run:", "  autonomy: manual"], null);
+    const merged = await loadAssentorConfig(dir);
+    await saveGlobalDefaults(tui(dir), merged);
+    expect((await readYaml(userConfigPath())).run).toEqual({ mode: "supervised", autonomy: "manual" });
+
+    await saveGlobalDefaults(tui(dir), { ...merged, run: { mode: "autopilot", autonomy: "autopilot" } });
+    expect((await readYaml(userConfigPath())).run).toStrictEqual({ mode: "autopilot" });
+    expect((await loadAssentorConfig(dir)).run.mode).toBe("autopilot");
+  });
+});
+
+describe("autonomy across user and project layers", () => {
+  it("a project's run.mode beats the user's run.autonomy", async () => {
+    const dir = await layered(["run:", "  autonomy: autopilot"], ["run:", "  mode: supervised"]);
+    expect((await loadAssentorConfig(dir)).run).toStrictEqual({ mode: "supervised" });
+  });
+
+  it("a project's run.autonomy beats the user's run.mode", async () => {
+    const dir = await layered(["run:", "  mode: autopilot"], ["run:", "  autonomy: supervised"]);
+    expect((await loadAssentorConfig(dir)).run).toEqual({ mode: "supervised", autonomy: "supervised" });
+  });
+
+  it("the user's run.autonomy applies when the project has no run section", async () => {
+    const dir = await layered(["run:", "  autonomy: manual"], ["executor:", "  provider: mock"]);
+    expect((await loadAssentorConfig(dir)).run).toEqual({ mode: "supervised", autonomy: "manual" });
+  });
+
+  it("an `assentor init` project file pins the project against a user autopilot", async () => {
+    const dir = await layered(["run:", "  autonomy: autopilot"], null);
+    await initAssentorProject(dir);
+    expect((await loadAssentorConfig(dir)).run.mode).toBe("supervised");
+  });
+
+  it("treats a null or blank run.autonomy as unset", async () => {
+    const dir = await layered(["run:", "  mode: autopilot", "  autonomy:"], null);
+    expect((await loadAssentorConfig(dir)).run).toStrictEqual({ mode: "autopilot" });
+    expect(parseAssentorConfig({ run: { mode: "autopilot", autonomy: "  " } }).run).toStrictEqual({
+      mode: "autopilot",
+    });
   });
 });

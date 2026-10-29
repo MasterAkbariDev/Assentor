@@ -1,10 +1,13 @@
 import { z } from "zod";
 import {
   AutonomySchema,
+  blankToUndefined,
   DEFAULT_RUN_MODE,
   parseRunMode,
   RUN_MODES,
   runModeForAutonomy,
+  type Autonomy,
+  type RunMode,
 } from "../core/run-mode.js";
 import {
   EXECUTOR_PROVIDER_IDS,
@@ -69,10 +72,10 @@ export const AssentorConfigSchema = z.object({
        * rewritten to match so the engine (and older Assentor versions, which drop this
        * field) keep reading `mode`.
        */
-      autonomy: AutonomySchema.optional(),
+      autonomy: z.preprocess(blankToUndefined, AutonomySchema.optional()),
     })
-    .transform((run) =>
-      run.autonomy ? { ...run, mode: runModeForAutonomy(run.autonomy) } : run,
+    .transform(({ autonomy, ...run }): { mode: RunMode; autonomy?: Autonomy } =>
+      autonomy ? { ...run, mode: runModeForAutonomy(autonomy), autonomy } : run,
     )
     .default({ mode: DEFAULT_RUN_MODE }),
   reviewers: z
