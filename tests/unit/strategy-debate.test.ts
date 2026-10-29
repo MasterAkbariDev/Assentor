@@ -299,3 +299,119 @@ describe("debate: validation and registry", () => {
     expect(listStrategies()).toContain("debate");
   });
 });
+
+describe("debate: seat roles", () => {
+  // Roles only, no options. Seat order: opus-1 (A), opus-2 devil's advocate (B), sol-1 (C), mod moderator.
+  const roleSeats = expandSeatSpecs([
+    { provider: "claude-code", model: "opus" },
+    { provider: "claude-code", model: "opus", role: "devils-advocate" },
+    { provider: "codex", model: "sol" },
+    { provider: "antigravity", model: "mod", role: "moderator" },
+  ]);
+  const [R1, RDA, R3, RMOD] = roleSeats.map((s) => s.id) as [string, string, string, string];
+
+  it("a devils-advocate role never counts toward consensus and a moderator role never debates", async () => {
+    const { result, asks } = await run({ agree: () => ({ agree: true, preferred: A, confidence: 1 }) }, {}, roleSeats);
+    expect(result.consensus).toEqual({ score: 1, reached: true });
+    expect(asks.filter((a) => a.step === "negotiate-agree").map((a) => a.seatId)).toEqual([R1, R3]);
+    expect(asks.some((a) => a.seatId === RMOD)).toBe(false);
+    expect(result.proposals.map((p) => p.seatId)).toEqual([R1, RDA, R3]);
+  });
+
+  it("the moderator role rules when the seats do not converge", async () => {
+    const { result, asks } = await run(
+      { agree: (ask) => ({ agree: false, preferred: ask.seatId === R1 ? A : C, confidence: 0.5 }), moderator: { consensus: true, preferred: C, reasons: ["x"] } },
+      { maxRounds: 1 },
+      roleSeats,
+    );
+    expect(asks.filter((a) => a.step === "moderator").map((a) => a.seatId)).toEqual([RMOD]);
+    expect(result.rationale).toContain("the moderator chose Proposal C");
+    expect(result.consensus.reached).toBe(false); // the moderator's own `consensus` flag is ignored
+  });
+
+  it("a failed moderator reply is dissent and the last leader stands", async () => {
+    const { result } = await run({ agree: split, moderator: { fail: "down" } }, { maxRounds: 1 }, roleSeats);
+    expect(result.rationale).toContain("no usable ruling");
+    expect(result.dissent.map((d) => d.reason)).toContain("moderator failed in round 1: down");
+  });
+
+  it("validate rejects two moderators and a moderator that is also a devil's advocate", () => {
+    const twoMods = expandSeatSpecs([
+      { provider: "claude-code", model: "opus", count: 2 },
+      { provider: "codex", model: "sol", role: "moderator" },
+      { provider: "antigravity", model: "mod", role: "moderator" },
+    ]);
+    expect(debateStrategy.validate(twoMods, {})).toMatch(/only one moderator/);
+    expect(debateStrategy.validate(roleSeats, { moderator: R3 })).toMatch(/only one moderator/);
+    expect(debateStrategy.validate(roleSeats, { moderator: RMOD })).toBeUndefined();
+    expect(debateStrategy.validate(roleSeats, { devilsAdvocate: RMOD })).toMatch(/different seats/);
+  });
+
+  it("maxRounds 1 with a devil's advocate still reaches consensus without it", async () => {
+    const { result, asks } = await run({}, { maxRounds: 1, devilsAdvocate: S2 });
+    expect(result.rounds).toBe(1);
+    expect(result.consensus.reached).toBe(true);
+    expect(asks.some((a) => a.seatId === S2 && a.step === "negotiate-agree")).toBe(false);
+  });
+});
+
+describe("debate: judge choice", () => {
+  const judgeTeam = expandSeatSpecs([
+    { provider: "claude-code", model: "opus", role: "devils-advocate" },
+    { provider: "claude-code", model: "opus" },
+    { provider: "codex", model: "sol", role: "judge" },
+  ]);
+  const [JDA, J2, JJ] = judgeTeam.map((s) => s.id) as [string, string, string];
+  const splitJ = (ask: MockAsk) => ({ agree: false, preferred: ask.seatId === J2 ? B : C, confidence: 0.8 });
+
+  it("uses the judge role seat and passes it the last round's critiques", async () => {
+    const { asks } = await run(
+      { agree: splitJ, critique: (ask) => (ask.seatId === J2 ? { critiques: [{ target: A, text: "weak", citations: ["a.ts:1"] }] } : { critiques: [] }) },
+      { maxRounds: 1 },
+      judgeTeam,
+    );
+    const judge = asks.filter((a) => a.step === "judge");
+    expect(judge.map((a) => a.seatId)).toEqual([JJ]);
+    expect(judge[0]!.vars.critiques).toEqual([{ target: A, text: "weak", citations: ["a.ts:1"] }]);
+  });
+
+  it("without a judge role, skips the devil's advocate and failed proposers", async () => {
+    const team = judgeTeam.map((s) => ({ ...s, role: "general" }));
+    const { asks } = await run(
+      { agree: splitJ, propose: (ask) => (ask.seatId === J2 ? { fail: "down" } : { proposal: `plan from ${ask.seatId}` }), judge: { winner: A, reasons: ["ok"] } },
+      { maxRounds: 1, devilsAdvocate: JDA },
+      team,
+    );
+    expect(asks.filter((a) => a.step === "judge").map((a) => a.seatId)).toEqual([JJ]);
+  });
+
+  it("a judge that picks its own proposal is overruled", async () => {
+    // JJ proposes C; it rules for C, which must not stand.
+    const { result } = await run({ agree: (ask) => ({ agree: false, preferred: ask.seatId === JJ ? C : A, confidence: 0.5 }), judge: { winner: C, reasons: ["mine"] } }, { maxRounds: 1 }, judgeTeam);
+    expect(result.rationale).toContain("no usable ruling");
+    expect(result.dissent.some((d) => d.seatId === JJ && d.reason.includes("its own proposal"))).toBe(true);
+    expect(result.decision).toContain(JDA); // the leader of the last check (A, earliest on the tie) stands
+  });
+});
+
+describe("debate: critique weighting", () => {
+  it("one critic sending many critiques against the leader counts once, at its heaviest weight", async () => {
+    const spam = (ask: MockAsk) =>
+      ask.seatId === S2
+        ? { critiques: [1, 2, 3, 4].map((n) => ({ target: A, text: `c${n}`, citations: n === 4 ? ["a.ts:1"] : [] })) }
+        : { critiques: [] };
+    const { result } = await run({ critique: spam }, { consensus: 0 });
+    expect(result.consensus.score).toBeCloseTo(1 - (0.5 * 1) / (1 + 3)); // W = 1, not 2.5
+  });
+
+  it("a devil's advocate sending 5 critiques against the leader does not block consensus", async () => {
+    const attack = (ask: MockAsk) =>
+      ask.seatId === S2
+        ? { critiques: Array.from({ length: 5 }, (_, n) => ({ target: A, text: `c${n}`, citations: ["a.ts:1"] })) }
+        : { critiques: [] };
+    const { result, events } = await run({ critique: attack }, { devilsAdvocate: S2, consensus: 1 });
+    expect(result.consensus).toEqual({ score: 1, reached: true });
+    // The attack is still visible in the transcript.
+    expect(events.filter((e) => e.type === "negotiation.critique")).toHaveLength(5);
+  });
+});
