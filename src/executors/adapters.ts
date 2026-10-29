@@ -93,6 +93,14 @@ export class CursorExecutorAdapter implements ExecutorAdapter {
   async cancel(taskId: string): Promise<void> {
     return this.inner.cancel(taskId);
   }
+
+  setModel(model: string): void {
+    this.inner.setModel(model);
+  }
+
+  interrupt(): boolean {
+    return this.inner.interrupt();
+  }
 }
 
 export class ClaudeCodeExecutorAdapter extends CliExecutorAdapter {

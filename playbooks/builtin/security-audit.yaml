@@ -1,0 +1,20 @@
+id: security-audit
+title: Security audit
+description: Read-only. Security reviewers debate the findings, then vote on what to fix first.
+readOnly: true
+teams:
+  auditors:
+    description: Reads the code for auth, input handling and secret exposure. Never edits.
+    seats:
+      - { provider: AUTO, role: security-reviewer, count: 2 }
+      - { provider: AUTO, role: code-reviewer }
+stages:
+  - id: audit
+    kind: negotiate
+    team: auditors
+    strategy: debate
+    next: prioritize
+  - id: prioritize
+    kind: negotiate
+    team: auditors
+    strategy: vote

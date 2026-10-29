@@ -108,7 +108,7 @@ Legend: 🟢 H · 🟡 S · 🔴 O · Size S/M/L (≈ <150 / 150–500 / >500 ch
 | T01-02 | Seat factory: expand teams into reviewer seats ✅ | 🟡 S | O | M | T00-02, T00-04 |
 | T01-03 | Panel decision policies ✅ | 🟡 S | O | M | T01-02 |
 | T01-04 | Finding agreement counts ✅ | 🟢 H | S | S | — |
-| T01-05 | Model switch at turn boundary + interrupt-now | 🔴 O | O2 + human | M | T00-07 |
+| T01-05 | Model switch at turn boundary + interrupt-now ✅ | 🔴 O | O2 + human | M | T00-07 |
 | T01-06 | Shared status icon map + TUI seat board ✅ | 🟢 H | S | M | T00-07 |
 | T01-07 | `assentor run --team` + doctor seat listing ✅ | 🟢 H | S | S | T01-02, T01-06 |
 
@@ -146,7 +146,7 @@ Design: [modes.md](../plans/modes.md)
 | T02B-14 | Red-team mode | 🟡 S | O | M | T02B-01, T02-01 |
 | T02B-15 | Swarm mode | 🟡 S | O | L | T02B-01, T02-01, T02-02, T02B-06 |
 | T02B-16 | Debug mode | 🟡 S | O | M | T02B-01, T02-01 |
-| T02B-17 | CLI: `--mode`, `--autonomy`, `assentor modes` | 🟢 H | S | S | T02B-01 |
+| T02B-17 | CLI: `--mode`, `--autonomy`, `assentor modes` ✅ | 🟢 H | S | S | T02B-01 |
 | T02B-18 | TUI: Lead team board + lead log | 🟢 H | S | M | T02B-02, T01-06 |
 | T02B-19 | Retro stage | 🟢 H | S | S | T02B-01, T02B-10 |
 
@@ -156,7 +156,7 @@ Design: [modes.md](../plans/modes.md)
 | T03-01 | Prompt format, layered loader, safe templating ✅ | 🟡 S | O | M | T00-01 |
 | T03-02 | Built-in builder roles (planner, coder, …) ✅ | 🟢 H | O (quality) | M | T03-01 |
 | T03-03 | Built-in reviewer & meta roles ✅ | 🟢 H | O (quality) | M | T03-01 |
-| T03-04 | Built-in playbooks | 🟢 H | S | S | T03-01, T02-09 |
+| T03-04 | Built-in playbooks ✅ | 🟢 H | S | S | T03-01, T02-09 |
 | T03-05 | `assentor prompts` CLI commands ✅ | 🟢 H | S | S | T03-01 |
 | T03-06 | TUI Agents screen: fork/edit prompts ✅ | 🟢 H | S | M | T03-01, T03-05 |
 

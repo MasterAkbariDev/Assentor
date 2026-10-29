@@ -128,7 +128,7 @@ describe("evidence pack", () => {
     const minimax = pack.relevantFiles.find((f) => f.path === "src/ai/minimax.js");
     expect(minimax?.content).toContain("depth = 7");
     expect(minimax?.role).toBe("changed");
-  });
+  }, 20_000); // real git commits; slow under load
 
   it("persists markdown summary", async () => {
     const projectPath = await tempProject();

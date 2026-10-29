@@ -80,8 +80,12 @@ export interface PrintCliExecutorOptions {
 export class PrintCliExecutor implements Executor {
   readonly name: string;
   private readonly recipe: PrintCliRecipe;
-  private readonly model?: string;
+  private model?: string;
   private modelWarningSent = false;
+  /** Present only when the recipe has a model flag. Applies to the next invocation. */
+  readonly setModel?: (model: string) => void;
+  /** Set by `interrupt()` for the turn in flight; reset when the next turn starts. */
+  private turnInterrupted = false;
   private readonly timeoutMs: number;
   private readonly resultGraceMs: number;
   private readonly spawnFn: PrintCliSpawnFn;
@@ -108,6 +112,11 @@ export class PrintCliExecutor implements Executor {
       options.binary ??
       locateBinary(options.recipe.tool) ??
       options.recipe.tool;
+    if (options.recipe.modelFlag) {
+      this.setModel = (model) => {
+        this.model = model;
+      };
+    }
   }
 
   capabilities(): ExecutorCapabilities {
@@ -148,6 +157,17 @@ export class PrintCliExecutor implements Executor {
     this.forceComplete?.();
   }
 
+  interrupt(): boolean {
+    if (!this.forceComplete || this.turnInterrupted) {
+      return false; // no turn in flight, or this one is already being stopped
+    }
+    this.turnInterrupted = true;
+    this.activeChild?.abandon?.();
+    killProcessTree(this.activeChild);
+    this.forceComplete();
+    return true;
+  }
+
   private async execute(
     taskId: string,
     projectPath: string,
@@ -161,6 +181,7 @@ export class PrintCliExecutor implements Executor {
         sessionId: this.sessionId,
       };
     }
+    this.turnInterrupted = false;
 
     const binary =
       this.binaryOverride ?? locateBinary(this.recipe.tool) ?? this.binary;
@@ -202,7 +223,7 @@ export class PrintCliExecutor implements Executor {
           return;
         }
         forcedResult = {
-          code: this.cancelled.has(taskId) ? null : 0,
+          code: this.cancelled.has(taskId) || this.turnInterrupted ? null : 0,
           stdout: capturedStdout,
           stderr: capturedStderr,
           signal: "SIGTERM",
@@ -250,6 +271,12 @@ export class PrintCliExecutor implements Executor {
           timeoutMs: this.timeoutMs,
           resultGraceMs: useStreamJson ? this.resultGraceMs : undefined,
           onSpawn: (child) => {
+            if (forcedResult) {
+              // Stopped before the process existed: it must not outlive the turn.
+              child.abandon?.();
+              killProcessTree(child);
+              return;
+            }
             this.activeChild = child;
           },
           onOutput: (chunk, stream) => {
@@ -334,6 +361,20 @@ export class PrintCliExecutor implements Executor {
         summary: "Interrupted (Ctrl+C)",
         error: "Interrupted (Ctrl+C). Resume with: assentor resume",
         sessionId: this.sessionId,
+        rawOutput: result.stdout,
+      };
+    }
+
+    // A turn whose result already arrived is complete; restarting it would redo work.
+    if (this.turnInterrupted && !streamParser?.hasFinalResult()) {
+      return {
+        status: "cancelled",
+        interrupted: true,
+        summary:
+          summarizeExecutorStreamOutput(result.stdout) ||
+          (!isExecutorStreamBlob(result.stdout) ? summarizePrintOutput(stdout) : ""),
+        error: `${this.name} turn interrupted`,
+        sessionId: streamParser?.getSessionId() ?? this.sessionId,
         rawOutput: result.stdout,
       };
     }

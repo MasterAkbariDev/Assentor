@@ -54,15 +54,15 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**34 of 80 cards done** (2026-10-29; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 22/41 · 🟡 Sonnet-tier 5/17 · 🔴 Opus-tier 7/22. Tests: 1609 passing. Core (Phases 0–3 + 2b) left: 18 cards.
+**37 of 80 cards done** (2026-10-29; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 24/41 · 🟡 Sonnet-tier 5/17 · 🔴 Opus-tier 8/22. Tests: 1675 passing. Core (Phases 0–3 + 2b) left: 15 cards.
 
 | Phase | Done | Open |
 |---|---|---|
 | 0 Foundations | 9/9 | — |
-| 1 Review & models | 6/7 | T01-05 model switch (O2 PASS after 3 rounds; waiting for user sign-off) |
+| 1 Review & models | 7/7 | — |
 | 2 Negotiate | 8/10 | T02-06 best-of-N, T02-08 divide (Sonnet) |
 | 2b Lead & modes | 5/19 (+01b) | T02B-01 controller contract, T02B-07 classifier, T02B-17 CLI, then T02B-02 Lead and the modes |
-| 3 Prompt library | 5/6 | T03-04 playbooks |
+| 3 Prompt library | 6/6 | — |
 | 4 Engine & web UI | 1/17 | web preview fast path merged (§6); rest paused (core first) |
 | 5 Desktop | 0/12 | — |
 
@@ -136,9 +136,16 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 **Planner handover (user, 2026-10-29):** session "Repository status review" (Opus) is the planner again; "Multi-model CLI app architecture" stays idle. The user asked for parallel subagents to finish faster. Found on takeover: merged since the last STATUS edit — T02-02 seat scheduler (`a7c8732`), T02-04 vote (`e516ff4`), T02B-05 Lead board (`f875a48`), T01-03 panel policies + T00-08 CI matrix (`2292270`). Uncommitted in this worktree: the previous planner's **T02-03 negotiation engine** (`src/negotiation/engine.ts`, test, export) — gate green, under O2 review now. Unmerged on side branches: T02B-03 report parser (`claude/haiku-two-cards-fd2328`, `bd5fdf9`, review fixes in), T02-05 debate (`claude/priceless-kirch-952d9c`, `9483d1f`), T02-07 synthesize (`claude/youthful-galileo-a41523`, `2ec5361`) — all under review now. New implementer subagents (own worktrees `card-*` off integration): T02B-04, T02B-08, T02B-17 (Haiku), T02-01 worktree manager (Opus, 🔴, O2 + sign-off). Gate on takeover: 1,277 tests green.
 
 **Parallel wave (2026-10-29) — merged so far:** T02-07 synthesize (`2dae7c0`), T02B-04 roster (`eb64ae5`), T02B-03 report parser (`95113db`), T02B-08 auto router (`f1ca175`, follow-ups `4884c13`), T02-05 debate (`f72f60f`), T02-03 negotiation engine (`db3a8a4`), T03-03b negotiation prompts (`7b3a0cd`), FU-06 config safety (`885b5cd`), **T02-01 worktree manager (`3f17a20`), T02-09 stage-graph runner (`07392f5`), T02B-01b mode registry + autonomy (`2c28797`)** — the last three O2 PASS and signed off by the user on 2026-10-29. Card notes record each sign-off and known limit.
-- T01-05 model switch (`claude/card-t01-05`, `6cb9933`): **O2 PASS after 3 rounds**; waiting for **user sign-off** (shared kill-tree change: one `ps` snapshot per kill burst, 500 ms cap, falls back to today's behaviour under heavy load; TUI `m` → T01-06; `run`/`modelChoices` wiring → engine API; panel/reviewer switching refused; brief red `seat.done` on an interrupt-restart).
+- ✅ T01-05 model switch merged (`031b9bc`): O2 PASS after 3 rounds; user signed off on 2026-10-29, including the shared kill-tree change.
 - Follow-ups to file: FU-07 kill-tree SIGSTOP the root before the `ps` snapshot plus an async `ps` fallback; `setModel` rejecting invalid ids itself (defence in depth); manifest lock for the worktree manager before two Assentor processes share a repo; per-session lock + grace timeout in the session host; `saveConfig` atomic write.
 - Next wave (started 2026-10-29): T02-06 best-of-N and T02-08 divide (Sonnet), T02B-17 modes CLI and T03-04 playbooks (Haiku), T02B-01 controller contract and T02B-07 danger classifier (Opus).
+- ✅ T02B-17 `assentor modes` merged (`a96ab80`, Sonnet PASS). Open: spec 5 `--mode auto` waits for a runnable non-solo mode (T02B-01).
+- ✅ T03-04 built-in playbooks merged (`05eaffb`, Sonnet PASS); Phase 3 complete. Running playbooks waits for a real `SeatStepRunner` and team binding.
+- In fix rounds after review:
+  - T02-06 best-of-N (Opus NEEDS_WORK: `apply: patch` breaks later rounds; cancel during judging discards good work; `keepLosers` default → true).
+  - T02-08 divide (Opus NEEDS_WORK: rework as an Executor like best-of-N, run parts through the scheduler, no stuck `waiting` seat, rename and late-write ownership bypasses. The R1/R2 fixes change the T02-01 worktree manager, so they need O2 plus **user sign-off**).
+  - T02B-01 controller contract (O2 CHANGES REQUIRED: sessionId not validated, `mode.selected` emitted before the existing-graph check, `existing-work` honoured outside review mode).
+- In O2 review: T02B-07 danger classifier.
 
 **Direction (user, 2026-10-27): core engine first.** After the Haiku agents finish their current cards, UI and app work (rest of Phase 4, Phase 5) pauses. Finish the core (Phases 0–3, 2b) first, then build the UI and apps on top of it.
 
@@ -159,7 +166,7 @@ Web preview fast path: done enough to pause. T04-02p, T04-03p, T04-06p, T04-07p 
 4. 🔴 T02-09 stage-graph runner (needs T02-03 + T01-03) → 🔴 T02B-01 mode registry/controller contract (opens Haiku cards T02B-03/04/05/08/17) → 🔴 T02B-07 danger classifier → 🔴 T02B-02 Lead controller.
 5. 🔴 T01-05 model switch; Phase 3 rest (T03-03 meta prompts after T02-03, T03-04 playbooks after T02-09).
 
-**Gate under load:** FU-04 (`ad4fe08`, Haiku #3) fixed the two load-sensitive tests (rpc-core catch-up writes its 2,000-line log in one write; the supervisor test that spawns a real `npm test` has a 20 s timeout). The full gate passes with default workers again; if a different test times out under heavy load, rerun with `--maxWorkers=3` and record the test name here.
+**Gate under load:** FU-04 (`ad4fe08`, Haiku #3) fixed the two load-sensitive tests (rpc-core catch-up writes its 2,000-line log in one write; the supervisor test that spawns a real `npm test` has a 20 s timeout). The full gate passes with default workers again; if a different test times out under heavy load, rerun with `--maxWorkers=3` and record the test name here. 2026-10-29 at load ~150 (six agents gating at once): `modes-registry` "autonomy precedence…" runs and `evidence-pack` "includes committed files since git baseline" timed out; a timed-out run leaked its `MockExecutor` spy into the next test. Fixed in `a96ab80` with 30 s / 20 s timeouts.
 
 ## 9. Known follow-ups (not scheduled)
 

@@ -146,7 +146,8 @@ describe("run.autonomy in config", () => {
   });
 });
 
-describe("autonomy precedence and mode availability in runs", () => {
+// Full end-to-end runs; a timeout abandons a run whose MockExecutor spy then leaks into the next test.
+describe("autonomy precedence and mode availability in runs", { timeout: 30_000 }, () => {
   let projectDir: string;
   let userDir: string;
   const savedUserDir = process.env.ASSENTOR_USER_DIR;

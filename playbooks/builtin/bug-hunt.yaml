@@ -1,0 +1,31 @@
+id: bug-hunt
+title: Bug hunt
+description: Debate the likely root cause, fix it after approval, then verify it with a review panel.
+readOnly: false
+teams:
+  investigators:
+    description: Debates the root cause from the reproduction and the code.
+    seats:
+      - { provider: AUTO, role: debugger, count: 2 }
+      - { provider: AUTO, role: devils-advocate }
+  verifiers:
+    description: Checks the fix and its test.
+    seats:
+      - { provider: AUTO, role: test-reviewer }
+      - { provider: AUTO, role: code-reviewer }
+stages:
+  - id: investigate
+    kind: negotiate
+    team: investigators
+    strategy: debate
+    next: fix
+  - id: fix
+    kind: execute
+    requireApproval: true
+    next: verify
+  - id: verify
+    kind: review
+    team: verifiers
+    strategy: panel
+    options: { policy: unanimous, maxRounds: 3 }
+    onNeedsWork: fix

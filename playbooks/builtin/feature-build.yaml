@@ -1,0 +1,35 @@
+id: feature-build
+title: Feature build
+description: Debate the approach, build it best-of-2 after approval, then review with a security veto.
+readOnly: false
+teams:
+  planning:
+    description: Debates the approach before any file changes.
+    seats:
+      - { provider: AUTO, role: architect }
+      - { provider: AUTO, role: planner }
+      - { provider: AUTO, role: devils-advocate }
+  review-panel:
+    description: Reviews the change; a security finding can veto it.
+    seats:
+      - { provider: AUTO, role: code-reviewer }
+      - { provider: AUTO, role: security-reviewer }
+      - { provider: AUTO, role: test-reviewer }
+stages:
+  - id: plan
+    kind: plan
+    team: planning
+    strategy: debate
+    next: build
+  - id: build
+    kind: execute
+    strategy: best-of-n
+    options: { n: 2 }
+    requireApproval: true
+    next: review
+  - id: review
+    kind: review
+    team: review-panel
+    strategy: panel
+    options: { policy: security-veto, maxRounds: 3 }
+    onNeedsWork: build

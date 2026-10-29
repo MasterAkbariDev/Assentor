@@ -16,6 +16,7 @@
     "dist",
     "bin",
     "prompts",
+    "playbooks",
     "ui/dist"
   ],
   "engines": {

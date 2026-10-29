@@ -3,6 +3,7 @@ export {
   AUTO_MODEL_ID,
   CliModelCatalog,
   SEED_MODELS,
+  isModelId,
   parseDiscoveryOutput,
   type CatalogEntry,
   type CliModelCatalogOptions,

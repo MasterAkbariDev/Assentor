@@ -10,6 +10,7 @@ import {
   statusAssentorTask,
 } from "./commands.js";
 import { TaskStore } from "../persistence/store.js";
+import { registerModesCommand } from "./modes.js";
 import {
   editPrompt,
   forkPrompt,
@@ -17,6 +18,7 @@ import {
   showPrompt,
   validatePrompts,
 } from "./prompts.js";
+import { checkPlaybookRun, listPlaybooks } from "./playbooks.js";
 import {
   createAssentorServices,
   runFullDiagnostics,
@@ -187,6 +189,7 @@ program
   )
   .option("--autonomy <level>", "How much runs without asking: manual|supervised|autopilot")
   .option("--autopilot", "Shortcut for --autonomy autopilot (auto next-phase)", false)
+  .option("--playbook <id>", "Playbook to run (validates the id only; running playbooks is not wired yet)")
   .action(
     async (
       promptParts: string[],
@@ -203,8 +206,18 @@ program
         mode?: string;
         autonomy?: string;
         autopilot?: boolean;
+        playbook?: string;
       },
     ) => {
+      if (options.playbook !== undefined) {
+        process.exitCode = await checkPlaybookRun({
+          projectPath: options.project,
+          id: options.playbook,
+          out: (line) => console.log(line),
+          err: (line) => console.error(line),
+        });
+        return;
+      }
       const prompt = promptParts.join(" ").trim();
       if (!prompt) {
         console.error("Provide a task prompt, e.g. assentor run \"Add average()\"");
@@ -300,6 +313,8 @@ program
       }
     },
   );
+
+registerModesCommand(program);
 
 program
   .command("status")
@@ -421,6 +436,14 @@ promptsCmd
   .option("-p, --project <path>", "Project directory", ".")
   .action(async (options: { project: string }) => {
     process.exitCode = await validatePrompts({ projectPath: options.project, ...promptIo });
+  });
+
+program
+  .command("playbooks")
+  .description("List built-in, user and project playbooks")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(async (options: { project: string }) => {
+    process.exitCode = await listPlaybooks({ projectPath: options.project, ...promptIo });
   });
 
 const keysCmd = program.command("keys").description("Manage API keys");
