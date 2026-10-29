@@ -1605,14 +1605,14 @@ export async function startTui(
   }
 
   const services = await createAssentorServices(projectPath);
-  const initialConfig = await loadAssentorConfig(projectPath);
+  let config = await loadAssentorConfig(projectPath);
   let initialUi: Partial<UiState> | undefined;
   let initialNotice: string[] | undefined;
   let initialPromptId: string | undefined;
   for (;;) {
     const { handoff, relaunchArgs } = await renderApp({
       services,
-      initialConfig,
+      initialConfig: config,
       inkStdout,
       initialUi,
       initialNotice,
@@ -1634,6 +1634,15 @@ export async function startTui(
     // is named after its id, so the basename is the id.
     initialPromptId = path.basename(handoff.file, ".md");
     initialNotice = await openPromptEditor(handoff.file, options.runEditor);
+    // The TUI may have saved config before the round trip; remount with what is on disk.
+    try {
+      config = await loadAssentorConfig(projectPath);
+    } catch (error) {
+      initialNotice = [
+        ...(initialNotice ?? []),
+        `Could not reload config, keeping the previous one: ${error instanceof Error ? error.message : String(error)}`,
+      ];
+    }
     initialUi = {
       screen: "agents",
       navIndex: NAV_SCREENS.findIndex((screen) => screen.id === "agents"),

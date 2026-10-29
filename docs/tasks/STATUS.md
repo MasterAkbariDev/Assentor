@@ -143,7 +143,7 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 - T01-05 model switch (`claude/card-t01-05`, `97763b0`): O2 CHANGES REQUIRED — cursor interrupt killed every tracked process; the new `ps`-snapshot kill-tree blocked the event loop (4 `ps` calls, 1.3 s per interrupt). Opus fixing; then O2 and **user sign-off**.
 - T02-09 stage-graph runner (`claude/card-t02-09`, `398fd88`): implemented (SessionRunner, graph.json persistence, debate tiebreak, coordinator guard); `--playbook` CLI deferred to T03-04. O2 review running; then **user sign-off**.
 - ✅ T03-03b negotiation prompts merged (`7b3a0cd`) after an Opus prompt-quality NEEDS_WORK round (proposal text is data, fixed label list, `<proposal>` tags, no backticks in JSON strings).
-- FU-06 (`claude/card-fu-06`, Sonnet): `rememberBinary` wipes the user config when its YAML does not parse; the TUI keeps a stale config after an edit-prompt round trip.
+- ✅ FU-06 merged: `rememberBinary` no longer wipes a user config whose YAML does not parse (or is not a mapping); its write is atomic and goes through a symlinked config; the TUI reloads the config after each edit-prompt round trip. Left: `saveConfig` in `src/config/load.ts` is still a plain `writeFile` (not atomic).
 - ✅ T02B-08 router review follow-ups merged (`4884c13`).
 - Next once these land: T02-06 best-of-N and T02-08 divide (Sonnet, need T02-01), T02B-17 (Haiku, needs T02B-01b), T02B-07 danger classifier, T03-04 playbooks (needs T02-09), T02B-01 rest (controller contract, needs T02-09).
 
