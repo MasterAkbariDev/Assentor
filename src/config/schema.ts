@@ -15,7 +15,7 @@ import {
 } from "../executors/providers.js";
 import { NegotiateModeSchema, ReviewModeSchema } from "./teams.js";
 import { SEAT_PROVIDERS, TeamSchema } from "../core/seats.js";
-import { MODE_IDS } from "../modes/registry.js";
+import { MODE_ALIASES, MODE_IDS } from "../modes/registry.js";
 
 const ExecutorProviderSchema = z.preprocess(
   (value) =>
@@ -113,14 +113,17 @@ export const AssentorConfigSchema = z.object({
       negotiate: NegotiateModeSchema.optional(),
       review: ReviewModeSchema.optional(),
     })
-    .catchall(z.record(z.unknown()))
+    // `.optional()` so `config.modes.lead.x` needs a guard in TypeScript; YAML null is still refused.
+    .catchall(z.record(z.unknown()).optional())
     .superRefine((modes, ctx) => {
       for (const key of Object.keys(modes)) {
         if (!(MODE_IDS as readonly string[]).includes(key)) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: [key],
-            message: `unknown mode "${key}" (modes: ${MODE_IDS.join(", ")})`,
+            message: MODE_ALIASES[key]
+              ? `unknown mode "${key}"; did you mean modes.${MODE_ALIASES[key]}?`
+              : `unknown mode "${key}" (modes: ${MODE_IDS.join(", ")})`,
           });
         }
       }

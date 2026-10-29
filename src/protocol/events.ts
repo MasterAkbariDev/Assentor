@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AUTONOMY_LEVELS } from "../core/run-mode.js";
 import { SeatStatusSchema } from "../core/seats.js";
 
 /**
@@ -131,7 +132,7 @@ const BudgetWarning = z
 // Mode events (modes.md §8, T02B-01). Producers arrive with their modes; the
 // payloads name only what every producer must send.
 const ModeSelected = z
-  .object({ mode: z.string(), kind: z.enum(["static", "dynamic"]), autonomy: z.string() })
+  .object({ mode: z.string(), kind: z.enum(["static", "dynamic"]), autonomy: z.enum(AUTONOMY_LEVELS) })
   .passthrough();
 const LeadTurn = z.object({ turn: z.number().int().positive(), note: z.string().optional() }).passthrough();
 const LeadAction = z

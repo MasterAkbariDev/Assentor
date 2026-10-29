@@ -295,6 +295,51 @@ describe("failure paths", () => {
     expect(events).toEqual([]);
   });
 
+  it("an invalid session id is refused for static and dynamic modes before anything runs", async () => {
+    let controllers = 0;
+    for (const mode of ["solo", dynamicMode(() => (controllers++, { run: async () => ({ status: "completed" }) }))]) {
+      const { value, events } = await input({ mode, sessionId: "../../evil" });
+      expect(problems(() => prepareModeSession(value))).toEqual(['invalid session id "../../evil"']);
+      expect(events).toEqual([]);
+    }
+    expect(controllers).toBe(0);
+  });
+
+  it("a reused session id is refused before mode.selected reaches that session's log", async () => {
+    const first = await input();
+    await prepareModeSession(first.value).run();
+    const events: EngineEventDraft[] = [];
+    const again = prepareModeSession({
+      ...first.value,
+      deps: deps(first.projectPath),
+      emit: (e) => void events.push(e),
+    });
+    await expect(again.run()).rejects.toThrow(/already has a stage graph/);
+    expect(events).toEqual([]);
+  });
+
+  it("only review mode may skip the executor with existing-work", async () => {
+    let hostExecutors = 0;
+    const pipeline: ModeDefinition = {
+      ...getMode("pipeline")!,
+      buildSession: ({ goal, title }) => ({
+        title,
+        goal,
+        stages: [
+          { id: "implement", kind: "execute", strategy: "existing-work", next: "review" },
+          { id: "review", kind: "review", strategy: "panel" },
+        ],
+      }),
+    };
+    const { value, events, projectPath } = await input({ mode: pipeline });
+    value.deps = deps(projectPath, { createExecutor: () => (hostExecutors++, executor()) });
+    expect(problems(() => prepareModeSession(value))).toEqual([
+      'stage "implement": strategy "existing-work" (no executor) is only for review mode',
+    ]);
+    expect(events).toEqual([]);
+    expect(hostExecutors).toBe(0);
+  });
+
   it("a controller that throws fails the session with terminal events", async () => {
     for (const mode of [
       dynamicMode(() => ({ run: async () => Promise.reject(new Error("lead crashed")) })),
@@ -363,5 +408,6 @@ describe("mode events (modes.md §8)", () => {
     });
     expect(() => parseEngineEvent({ ...envelope, type: "task.assigned", data: { taskId: "t1" } })).toThrow();
     expect(() => parseEngineEvent({ ...envelope, type: "tdd.gate", data: { gate: "C", passed: true } })).toThrow();
+    expect(() => parseEngineEvent({ ...envelope, type: "mode.selected", data: { mode: "solo", kind: "static", autonomy: "yolo" } })).toThrow();
   });
 });

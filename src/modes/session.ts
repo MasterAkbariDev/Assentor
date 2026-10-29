@@ -1,4 +1,6 @@
+import { promises as fs } from "node:fs";
 import type { AssentorConfig } from "../config/schema.js";
+import { isId } from "../core/ids.js";
 import { AutonomySchema, type Autonomy } from "../core/run-mode.js";
 import { SessionSpecSchema, type SessionSpec } from "../core/seats.js";
 import {
@@ -88,6 +90,8 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
   if (!mode) problems.push(`unknown mode "${String(input.mode)}"`);
   if (!level.success) problems.push(`unknown autonomy ${JSON.stringify(input.autonomy)}`);
   if (!input.goal?.trim()) problems.push("the goal is empty");
+  // Session ids become paths (graph, event log); check before a controller or emit sees one.
+  if (!isId(input.sessionId)) problems.push(`invalid session id ${JSON.stringify(input.sessionId)}`);
   if (!mode || !level.success || problems.length > 0) throw new ModeValidationError(problems);
   const autonomy = level.data;
 
@@ -101,8 +105,11 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
   const deps: StageRunnerDeps = {
     ...input.deps,
     supervisor: { ...input.deps.supervisor, autopilot: autonomy === "autopilot" },
+    // Only review may skip the executor; staticSpec refuses the strategy in any other mode.
     createExecutor: (stage) =>
-      stage.strategy === EXISTING_WORK_STRATEGY ? existingWorkExecutor() : input.deps.createExecutor(stage),
+      mode.id === "review" && stage.strategy === EXISTING_WORK_STRATEGY
+        ? existingWorkExecutor()
+        : input.deps.createExecutor(stage),
   };
   const stages = createStageRunners(deps);
   const title = input.title?.trim() || input.goal.trim().split("\n")[0]!.slice(0, 80);
@@ -115,14 +122,15 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
     }
   };
   let started = false;
-  const start = () => {
+  const claim = () => {
     if (started) throw new Error("a prepared mode session runs once; prepare a new one");
     started = true;
-    emit({ type: "mode.selected", sessionId: input.sessionId, data: { mode: mode.id, kind: mode.kind, autonomy } });
   };
+  const selected = () =>
+    emit({ type: "mode.selected", sessionId: input.sessionId, data: { mode: mode.id, kind: mode.kind, autonomy } });
 
   if (mode.kind === "static") {
-    const spec = staticSpec(mode.buildSession!(buildInput), autonomy, stages.validate);
+    const spec = staticSpec(mode.buildSession!(buildInput), autonomy, stages.validate, mode.id);
     const runner = new SessionRunner({
       sessionId: input.sessionId,
       projectPath: deps.projectPath,
@@ -137,7 +145,13 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
       spec,
       approve: (stageId) => runner.approve(stageId),
       run: async () => {
-        start();
+        claim();
+        // SessionRunner.run refuses an existing graph too, but only after we would have emitted.
+        const file = runner.graphFile;
+        if (file && (await fs.stat(file).catch(() => undefined))) {
+          throw new Error(`session ${input.sessionId} already has a stage graph; use resume()`);
+        }
+        selected();
         return { ...(await runner.run(spec)), mode: mode.id, autonomy };
       },
     };
@@ -148,7 +162,8 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
     autonomy,
     approve: () => false,
     run: async () => {
-      start();
+      claim();
+      selected();
       const { sessionId } = input;
       const signal = input.signal ?? new AbortController().signal;
       const finish = (status: SessionRunResult["status"], reason?: string): ModeRunResult => {
@@ -196,6 +211,7 @@ function staticSpec(
   built: SessionSpecInput,
   autonomy: Autonomy,
   validateStage: ReturnType<typeof createStageRunners>["validate"],
+  modeId: ModeId,
 ): SessionSpec {
   const gated =
     autonomy === "manual"
@@ -204,6 +220,11 @@ function staticSpec(
   const problems = validateSessionGraph(gated);
   if (problems.length > 0) throw new ModeValidationError(problems);
   const spec = SessionSpecSchema.parse(gated);
+  for (const stage of spec.stages) {
+    if (stage.strategy === EXISTING_WORK_STRATEGY && modeId !== "review") {
+      problems.push(`stage "${stage.id}": strategy "${EXISTING_WORK_STRATEGY}" (no executor) is only for review mode`);
+    }
+  }
   for (const stage of spec.stages) {
     const problem = validateStage?.(stage, spec);
     if (problem) problems.push(`stage "${stage.id}": ${problem}`);

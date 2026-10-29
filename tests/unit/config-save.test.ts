@@ -122,6 +122,7 @@ describe("saveAssentorConfig", () => {
     expect((await loadAssentorConfig(dir)).modes.lead).toEqual(FULL_CONFIG.modes.lead);
     expect(() => parseAssentorConfig({ modes: { reveiw: { team: "x" } } })).toThrow(/unknown mode .{0,2}"reveiw/);
     expect(() => parseAssentorConfig({ modes: { lead: "opus" } })).toThrow();
+    expect(() => parseAssentorConfig({ modes: { supervisor: {} } })).toThrow(/did you mean modes\.lead/);
     expect(() => parseAssentorConfig({ modes: { review: { policy: "majority" } } })).toThrow(); // typed: team required
   });
 
