@@ -32,6 +32,13 @@ Order: **T02B-01 → (T02B-03, 04, 05, 08, 12, 17 in parallel for Haiku) → T02
 
 ---
 
+### T02B-01b · Mode registry metadata + autonomy axis (split from T02B-01)
+**Tier:** 🔴 O · **Review:** O2 + human · **Size:** M · **Depends:** T02B-01a, T00-09
+
+Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list modes before T02-09. Deliverables 1 (metadata only: `ModeDefinition` without `buildSession`/`createController`, which arrive with T02-09/T02B-02) and 5 (autonomy axis) of T02B-01. Deliverables 6–7 and the runnable registry stay in T02B-01.
+
+---
+
 ### T02B-02 · Lead controller (the Supervisor)
 **Tier:** 🔴 O · **Review:** O2 + human · **Size:** L · **Depends:** T02B-01, T02B-03, T02B-04, T02B-05, T02-01, T02-02
 
