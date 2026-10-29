@@ -9,6 +9,7 @@ export {
   AgreeReplySchema,
   JudgeReplySchema,
   ModeratorReplySchema,
+  DividePlanReplySchema,
   NegotiationResultSchema,
   NegotiationCancelledError,
   proposalLabel,
@@ -27,3 +28,21 @@ export {
   type NegotiationStrategy,
 } from "./strategy.js";
 export { registerStrategy, getStrategy, listStrategies } from "./strategies/index.js";
+export {
+  createDivideExecutor,
+  createPlanStrategy,
+  parseDivideOptions,
+  buildSplitPlanSchema,
+  SplitPlanSchema,
+  SubtaskSchema,
+  DividePathSchema,
+  DIVIDE_STRATEGY_ID,
+  planWaves,
+  pathsOverlap,
+  isOwned,
+  type DivideDeps,
+  type DivideOptions,
+  type DivideWorker,
+  type SplitPlan,
+  type Subtask,
+} from "./strategies/divide.js";
