@@ -345,6 +345,8 @@ describe("debate: seat roles", () => {
     expect(debateStrategy.validate(roleSeats, { moderator: R3 })).toMatch(/only one moderator/);
     expect(debateStrategy.validate(roleSeats, { moderator: RMOD })).toBeUndefined();
     expect(debateStrategy.validate(roleSeats, { devilsAdvocate: RMOD })).toMatch(/different seats/);
+    const allAdvocates = expandSeatSpecs([{ provider: "claude-code", model: "opus", count: 2, role: "devils-advocate" }]);
+    expect(debateStrategy.validate(allAdvocates, {})).toMatch(/neither the moderator nor a devil's advocate/);
   });
 
   it("maxRounds 1 with a devil's advocate still reaches consensus without it", async () => {

@@ -327,6 +327,8 @@ function resolveRoles(seats: readonly Seat[], options: DebateOptions): { moderat
   const advocates = new Set(seats.filter((seat) => seat.role === "devils-advocate").map((seat) => seat.id));
   if (options.devilsAdvocate !== undefined) advocates.add(options.devilsAdvocate);
   if (moderator !== undefined && advocates.has(moderator)) return "moderator and devilsAdvocate must be different seats";
+  // Without a voter the agreement score is 0/0 and consensus can never be measured.
+  if (!seats.some((seat) => seat.id !== moderator && !advocates.has(seat.id))) return "debate needs at least one seat that is neither the moderator nor a devil's advocate";
   return { ...(moderator !== undefined ? { moderator } : {}), advocates };
 }
 
