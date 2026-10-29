@@ -165,3 +165,4 @@ export {
   type NegotiationRunInput,
   type NegotiationRunOutput,
 } from "./negotiation/engine.js";
+export * from "./worktrees/index.js";

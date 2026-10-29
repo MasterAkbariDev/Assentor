@@ -12,12 +12,14 @@ Strategy tasks (T02-04…08) implement against the **strategy contract** deliver
 ### T02-01 · Worktree manager
 **Tier:** 🔴 O · **Review:** O2 + human · **Size:** L · **Depends:** T00-01
 
+**✅ Done — O2 PASS after 4 rounds at `a4edd48`; user signed off 2026-10-29** on: seat = `{sessionId, seatId}`; `--no-verify` on private snapshot commits; no manifest lock yet (needed before two Assentor processes share a repo); `.gitignore` left to the existing helpers. Known limits: a formatter-style pre-commit hook makes a squash "unverified", so the branch is kept until `discard`; git < 2.38 cannot verify squashes; not yet run on Windows.
+
 **Goal** — Safe per-seat git worktrees: create, diff, merge into the task branch, discard, cleanup.
 
 **Context to read** — `src/git/local.ts`, `src/git/types.ts`, `src/persistence/paths.ts`, `src/security/paths.ts`, existing checkpoint/rollback in `supervisor.ts`.
 
 **Deliverables**
-1. `WorktreeManager` (`src/worktrees/`): `create(sessionId, seatId, baseRef)`, `list(sessionId)`, `diff(seatId)`, `applyTo(targetWorktreeOrMain, seatId, { strategy: "merge" | "squash" | "patch" })`, `discard(seatId)`, `cleanup(sessionId, { keepFailed })`.
+1. `WorktreeManager` (`src/worktrees/`), where `seat = { sessionId, seatId }` (seat ids are unique only within a session): `create(seat, baseRef)`, `list(sessionId)`, `diff(seat)`, `applyTo("main" | targetSeat, seat, { strategy: "merge" | "squash" | "patch" })`, `markFailed(seat)`, `discard(seat, { force })`, `cleanup(sessionId, { keepFailed })`, `reconcile()`.
 2. Location `.assentor/worktrees/<short-session>/<short-seat>` (short ids to avoid Windows MAX_PATH); branch names `assentor/<session>/<seat>`.
 3. Refuse when the main checkout is dirty unless the user opted in; never force-delete branches with unmerged commits unless `discard` was explicit.
 4. Recovery: on startup, detect orphaned worktrees (`git worktree list --porcelain`) and report, don't auto-delete.
