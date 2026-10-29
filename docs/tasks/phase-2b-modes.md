@@ -141,6 +141,8 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 ### T02B-07 · Danger-area classifier
 **Tier:** 🔴 O · **Review:** O2 · **Size:** S · **Depends:** T02B-01
 
+**Status: implemented, awaiting O2 review.** `src/modes/danger.ts` (exported from `src/modes/index.ts`), tests `tests/unit/danger-classifier.test.ts`; `modes.cascade.dangerAreas` added to the config schema. `classifyRisk(input, { extraRules })` returns `{ level, categories, reasons }`: ten built-in categories (Danger list §1 incl. shell and contracts) plus `unscanned` (input over a size limit, always danger). Paths are normalised (separators, case, `..`, Windows trailing dots/spaces) and matched with a regex-free glob matcher; rules match at any depth. User areas add only (literal keywords, never regex). Not wired into Cascade/Lead (T02B-06/T02B-02 do that).
+
 **Deliverables** — `classifyRisk({ taskText, paths?, diff? }) → { level: "normal" | "danger", reasons[] }`; default rules mirror `docs/tasks/README.md` §1 (process spawn/kill, git mutations, permission/bypass flags, secrets/vault/keychain, network listeners/auth, file deletion & path policy, release/signing/CI secrets, user config rewrite) as path globs + keyword patterns; user-extendable via `modes.cascade.dangerAreas`; false-negative-biased tests using this repo's real danger files (`src/process/*`, `src/keys/*`, `src/git/*`, `src/security/*`, `scripts/install*`).
 
 ---

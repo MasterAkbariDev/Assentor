@@ -15,6 +15,7 @@ import {
 } from "../executors/providers.js";
 import { NegotiateModeSchema, ReviewModeSchema } from "./teams.js";
 import { SEAT_PROVIDERS, TeamSchema } from "../core/seats.js";
+import { DangerAreaRuleSchema } from "../modes/danger.js";
 
 const ExecutorProviderSchema = z.preprocess(
   (value) =>
@@ -106,6 +107,10 @@ export const AssentorConfigSchema = z.object({
     .object({
       negotiate: NegotiateModeSchema.optional(),
       review: ReviewModeSchema.optional(),
+      /** Cascade mode (T02B-06 adds tiers). `dangerAreas` add to the built-in danger rules, never remove them. */
+      cascade: z
+        .object({ dangerAreas: z.array(DangerAreaRuleSchema).max(50).default([]) })
+        .optional(),
     })
     .default({}),
   routing: z
