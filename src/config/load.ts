@@ -48,6 +48,14 @@ async function readYamlFile(filePath: string): Promise<unknown> {
   }
 }
 
+function withoutBlankAutonomy(run: unknown): unknown {
+  if (!run || typeof run !== "object" || Array.isArray(run)) return run;
+  const record = run as Record<string, unknown>;
+  if (!("autonomy" in record) || blankToUndefined(record.autonomy) !== undefined) return run;
+  const { autonomy: _blank, ...rest } = record;
+  return rest;
+}
+
 /**
  * Shallow-merge nested config objects. Arrays (reviewers) replace wholesale.
  */
@@ -56,7 +64,9 @@ export function mergeConfigLayers(
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const layer of layers) {
-    for (const [key, value] of Object.entries(layer)) {
+    for (const [key, raw] of Object.entries(layer)) {
+      // A blank `run.autonomy:` (null in YAML) is unset, so it inherits the lower layer's value.
+      const value = key === "run" ? withoutBlankAutonomy(raw) : raw;
       if (
         value &&
         typeof value === "object" &&
@@ -177,7 +187,11 @@ export async function loadAssentorConfig(
 export type ConfigSaveScope = "user" | "project";
 
 /** Top-level sections a caller can ask `saveAssentorConfig` to keep from the existing file. */
-export type PreservableConfigSection = "teams" | "modes" | "run.autonomy";
+/**
+ * "run.autonomy" writes `run.mode` from `config` but keeps the file's own autonomy
+ * (see `keepOwnAutonomy`); the others keep the whole section from the file.
+ */
+export type PreservableConfigSection = "teams" | "modes" | "run" | "run.autonomy";
 
 /**
  * Every schema section is written, in schema order, so a field added to the

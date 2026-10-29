@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useApp, useInput, render, Box, Text } from "ink";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -159,6 +159,8 @@ export function App({
   const [promptNotice, setPromptNotice] = useState<string[]>(initialNotice ?? []);
   const [promptLoadError, setPromptLoadError] = useState<string | null>(null);
   const [config, setConfig] = useState<AssentorConfig>(initialConfig);
+  // Run mode as last loaded or saved: a save writes `run` only when the user changed it since.
+  const savedRunMode = useRef(initialConfig.run.mode);
   const [message, setMessage] = useState("");
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResult | null>(null);
   const [keysVersion, setKeysVersion] = useState(0);
@@ -450,7 +452,10 @@ export function App({
   }
 
   async function saveConfigDefaults() {
-    await saveGlobalDefaults(services, config);
+    await saveGlobalDefaults(services, config, {
+      runChanged: config.run.mode !== savedRunMode.current,
+    });
+    savedRunMode.current = config.run.mode;
     setMessage("Saved defaults to ~/.assentor/config.yaml");
   }
 

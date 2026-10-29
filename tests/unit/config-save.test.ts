@@ -11,6 +11,7 @@ import {
 } from "../../src/index.js";
 import { saveGlobalDefaults, type AssentorServices } from "../../src/services/app.js";
 import { initAssentorProject } from "../../src/cli/commands.js";
+import { cycleRunMode } from "../../src/tui/screens/settings.js";
 
 const TEMP_ROOT = path.join(process.cwd(), ".tmp", "config-save-tests");
 const tempDirs: string[] = [];
@@ -251,16 +252,45 @@ describe("saveGlobalDefaults (TUI save)", () => {
 
     await saveGlobalDefaults(tui(dir), merged);
 
-    expect((await readYaml(userConfigPath())).run).toStrictEqual({ mode: "supervised" });
+    expect(await readYaml(userConfigPath())).not.toHaveProperty("run");
   });
 
-  it("keeps the user's own run.autonomy, and drops it when a toggle changed the mode", async () => {
+  it("(a) a save without a toggle keeps the user's own run section, ignoring a project autopilot", async () => {
+    const dir = await layered(["run:", "  autonomy: manual"], ["run:", "  mode: autopilot"]);
+    const merged = await loadAssentorConfig(dir);
+    expect(merged.run.mode).toBe("autopilot");
+
+    await saveGlobalDefaults(tui(dir), { ...merged, executor: { provider: "codex" } });
+
+    const written = await readYaml(userConfigPath());
+    expect(written.run).toStrictEqual({ autonomy: "manual" });
+    expect(written.executor).toEqual({ provider: "codex" });
+  });
+
+  it("(b) a save without a toggle adds no run section from a project autopilot", async () => {
+    for (const project of [["run:", "  mode: autopilot"], ["run:", "  autonomy: autopilot"]]) {
+      const dir = await layered(["executor:", "  provider: mock"], project);
+      await saveGlobalDefaults(tui(dir), await loadAssentorConfig(dir));
+      expect(await readYaml(userConfigPath())).not.toHaveProperty("run");
+    }
+  });
+
+  it("(c) a mode toggle is saved, keeping the user's own autonomy when it agrees", async () => {
+    const dir = await layered(["run:", "  autonomy: autopilot"], ["run:", "  mode: supervised"]);
+    const merged = await loadAssentorConfig(dir);
+    expect(merged.run).toStrictEqual({ mode: "supervised" });
+
+    await saveGlobalDefaults(tui(dir), cycleRunMode(merged), { runChanged: true });
+
+    expect((await readYaml(userConfigPath())).run).toEqual({ mode: "autopilot", autonomy: "autopilot" });
+  });
+
+  it("a toggle away from the user's own autonomy drops it so the toggle survives a reload", async () => {
     const dir = await layered(["run:", "  autonomy: manual"], null);
     const merged = await loadAssentorConfig(dir);
-    await saveGlobalDefaults(tui(dir), merged);
-    expect((await readYaml(userConfigPath())).run).toEqual({ mode: "supervised", autonomy: "manual" });
 
-    await saveGlobalDefaults(tui(dir), { ...merged, run: { mode: "autopilot", autonomy: "autopilot" } });
+    await saveGlobalDefaults(tui(dir), cycleRunMode(merged), { runChanged: true });
+
     expect((await readYaml(userConfigPath())).run).toStrictEqual({ mode: "autopilot" });
     expect((await loadAssentorConfig(dir)).run.mode).toBe("autopilot");
   });
@@ -286,6 +316,11 @@ describe("autonomy across user and project layers", () => {
     const dir = await layered(["run:", "  autonomy: autopilot"], null);
     await initAssentorProject(dir);
     expect((await loadAssentorConfig(dir)).run.mode).toBe("supervised");
+  });
+
+  it("a blank project run.autonomy inherits the user's value", async () => {
+    const dir = await layered(["run:", "  autonomy: manual"], ["run:", "  autonomy:"]);
+    expect((await loadAssentorConfig(dir)).run).toEqual({ mode: "supervised", autonomy: "manual" });
   });
 
   it("treats a null or blank run.autonomy as unset", async () => {

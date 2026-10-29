@@ -302,12 +302,15 @@ export async function loadAuditEvents(
 export async function saveGlobalDefaults(
   services: AssentorServices,
   config: AssentorConfig,
+  options: { runChanged?: boolean } = {},
 ): Promise<string> {
-  // The TUI edits a merged user + project config but has no teams/modes/autonomy editor
-  // yet: keep the user file's own ones so project-only values aren't copied into it.
+  // The TUI edits a merged user + project config but has no teams/modes editor yet:
+  // keep the user file's own ones so project-only values aren't copied into it. The
+  // same goes for `run` (a project's mode or autonomy must not go global) unless the
+  // user toggled the mode in this session; then only that mode is written.
   const saved = await saveAssentorConfig(services.projectPath, config, {
     scope: "user",
-    preserveFromExisting: ["teams", "modes", "run.autonomy"],
+    preserveFromExisting: ["teams", "modes", options.runChanged ? "run.autonomy" : "run"],
   });
   await services.audit.append(
     "agent.updated",
