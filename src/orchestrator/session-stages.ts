@@ -69,6 +69,8 @@ export interface StageRunnerDeps {
 }
 
 const MAX_REVIEW_ROUNDS = 50;
+/** Strategies a review stage may name; negotiation strategies belong on plan/negotiate stages. */
+const REVIEW_STRATEGIES: readonly string[] = ["panel"];
 
 export function createStageRunners(deps: StageRunnerDeps): StageRunners {
   registerBuiltinStrategies();
@@ -93,6 +95,9 @@ export function createStageRunners(deps: StageRunnerDeps): StageRunners {
         return typeof team === "string" ? team : strategy.validate(team, stage.options);
       }
       if (stage.kind === "review") {
+        if (stage.strategy !== undefined && !REVIEW_STRATEGIES.includes(stage.strategy)) {
+          return `a review stage's strategy must be ${REVIEW_STRATEGIES.map((s) => `"${s}"`).join(" or ")} (got "${stage.strategy}")`;
+        }
         const { maxRounds, tiebreak } = stage.options;
         if (
           maxRounds !== undefined &&

@@ -30,6 +30,12 @@ import type { EngineEventDraft } from "../protocol/events.js";
  *   after every stage; `resume()` re-runs an interrupted stage from its start;
  * - `requireApproval` stages wait (`session.state` → `waiting`) until
  *   `approve(stageId)`; approvals are not persisted, so a resumed stage asks again.
+ *
+ * Host duties: `graph.json` is trusted like `tasks/<id>/state.json` (shape and
+ * stage ids are checked, not its origin); hold a per-session lock around
+ * run/resume and own a grace timeout for stage runners that ignore abort.
+ * Supervisor budgets are per execute visit, and the scheduler's session usage
+ * is not persisted, so it starts from zero after a resume.
  */
 
 export const STAGE_OUTCOMES = ["pass", "needs_work", "blocked", "failed", "cancelled", "budget"] as const;
@@ -281,9 +287,16 @@ export class SessionRunner {
       throw new Error("resume needs a projectPath");
     }
     const state = GraphStateSchema.parse(JSON.parse(await fs.readFile(file, "utf8")));
-    this.checkSpec(state.spec);
-    if (state.status === "completed") {
+    const spec = this.checkSpec(state.spec);
+    if (state.status === "completed" && state.current === undefined) {
       return toResult(state);
+    }
+    const current = spec.stages.find((stage) => stage.id === state.current);
+    if (state.status === "completed" || !current || current.kind === "review") {
+      // A review stage only runs with its execute stage; resuming at one would skip the execute.
+      throw new Error(
+        `invalid stage graph file ${file}: status "${state.status}" cannot resume at ${JSON.stringify(state.current)}`,
+      );
     }
     return this.walk({ ...state, status: "running" });
   }
@@ -321,14 +334,18 @@ export class SessionRunner {
   private async save(state: GraphState): Promise<void> {
     const file = this.graphFile;
     if (file) {
-      await writeJsonAtomic(file, state);
+      await writeJsonAtomic(file, state).catch((error: unknown) => {
+        throw new Error(`checkpoint write failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
     }
   }
 
   private async walk(state: GraphState): Promise<SessionRunResult> {
     const { sessionId } = this.options;
     const byId = new Map(state.spec.stages.map((stage) => [stage.id, stage]));
+    let ended = false;
     const finish = async (status: SessionRunResult["status"], reason?: string): Promise<SessionRunResult> => {
+      ended = true;
       state.status = status;
       state.reason = reason;
       if (status === "completed") delete state.current;
@@ -342,12 +359,30 @@ export class SessionRunner {
             ? { type: "session.blocked", sessionId, data }
             : { type: "session.failed", sessionId, data },
       );
+      // Terminal events are already out; a failing save still rejects so the host knows the file is stale.
       await this.save(state);
       return toResult(state);
     };
 
+    try {
+      return await this.steps(state, byId, finish);
+    } catch (error) {
+      if (ended) throw error;
+      return finish("failed", error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private async steps(
+    state: GraphState,
+    byId: ReadonlyMap<string, StageSpec>,
+    finish: (status: SessionRunResult["status"], reason?: string) => Promise<SessionRunResult>,
+  ): Promise<SessionRunResult> {
+    const { sessionId } = this.options;
     while (state.current) {
-      const stage = byId.get(state.current)!;
+      const stage = byId.get(state.current);
+      if (!stage || stage.kind === "review") {
+        return finish("failed", `cannot run stage ${JSON.stringify(state.current)} on its own`);
+      }
       if (this.signal.aborted) {
         return finish("cancelled", "cancelled");
       }
@@ -361,6 +396,7 @@ export class SessionRunner {
         if (!approved) {
           return finish("cancelled", "cancelled while waiting for approval");
         }
+        this.emit({ type: "session.state", sessionId, stageId: stage.id, data: { from: "waiting", to: "running" } });
       }
 
       state.attempts += 1;
@@ -396,8 +432,13 @@ export class SessionRunner {
         result = review
           ? await this.options.runners.execute({ ...input, review })
           : await this.options.runners.negotiate(input);
-        outcome = result.outcome;
-        summary = result.summary;
+        if ((["pass", "needs_work", "blocked", "budget"] as unknown[]).includes(result?.outcome)) {
+          outcome = result.outcome;
+          summary = String(result.summary);
+        } else {
+          outcome = "failed";
+          summary = `unknown stage outcome ${JSON.stringify(result?.outcome)}`;
+        }
       } catch (error) {
         outcome =
           error instanceof NegotiationCancelledError ? (error.reason === "budget" ? "budget" : "cancelled") : "failed";
@@ -406,6 +447,7 @@ export class SessionRunner {
       // A stage that finished while the session was being cancelled is not trusted (e.g. a tiebreak cut short).
       if (this.signal.aborted && outcome !== "budget") {
         outcome = "cancelled";
+        summary = "cancelled"; // not e.g. the Supervisor's "Interrupted (Ctrl+C)…" hint
       }
 
       for (const s of [...together].reverse()) {
@@ -447,6 +489,8 @@ export class SessionRunner {
           state.current = target;
           break;
         }
+        default:
+          return finish("failed", `stage "${stage.id}" returned an unknown outcome ${JSON.stringify(outcome)}`);
       }
       await this.save(state);
     }

@@ -327,6 +327,28 @@ describe("SessionRunner resume", () => {
     await fs.writeFile(file, JSON.stringify(graph));
     await expect(new SessionRunner({ sessionId, projectPath, runners: stubRunners() }).resume()).rejects.toThrow();
   });
+
+  it("refuses to resume at a review stage, an unknown stage, or a completed graph with a current stage", async () => {
+    for (const [status, current] of [
+      ["running", "check"],
+      ["failed", "nope"],
+      ["completed", "build"],
+    ] as const) {
+      const projectPath = await tempProject();
+      const sessionId = createId();
+      await new SessionRunner({ sessionId, projectPath, runners: stubRunners() }).run(spec);
+      const file = path.join(projectPath, ".assentor", "sessions", sessionId, "graph.json");
+      const graph = JSON.parse(await fs.readFile(file, "utf8"));
+      await fs.writeFile(file, JSON.stringify({ ...graph, status, current }));
+      const runners = stubRunners();
+      const { events, emit } = recorder();
+      await expect(new SessionRunner({ sessionId, projectPath, runners, emit }).resume(), current).rejects.toThrow(
+        "invalid stage graph file",
+      );
+      expect(events).toEqual([]);
+      expect(runners.executed).toBe(0);
+    }
+  });
 });
 
 function stubRunners(over: Partial<StageRunners> = {}): StageRunners & { executed: number } {
@@ -363,6 +385,7 @@ describe("approval gates", () => {
     expect(runner.approve("build")).toBe(true);
     expect((await done).status).toBe("completed");
     expect(runners.executed).toBe(1);
+    expect(events.filter((e) => e.type === "session.state").map((e) => e.data.to)).toEqual(["waiting", "running", "completed"]);
     expect(runner.approve("build")).toBe(false);
   });
 
@@ -463,9 +486,10 @@ describe("failure paths", () => {
     session.abort();
     const result = await done;
 
-    expect(result).toMatchObject({ status: "cancelled", current: "build" });
+    expect(result).toMatchObject({ status: "cancelled", current: "build", reason: "cancelled" });
     expect(exec.cancelled).toHaveLength(1);
     expect(reviews).toBe(0);
+    expect(events.filter((e) => e.type === "stage.completed").at(-1)?.data.summary).toBe("cancelled");
     expect(stageEvents(events)).toEqual([
       "start plan",
       "end plan pass",
@@ -513,6 +537,68 @@ describe("failure paths", () => {
       runners: createStageRunners(deps(projectPath)),
     }).resume();
     expect(retried.status).toBe("completed");
+  });
+
+  it("a checkpoint write that fails still ends with terminal stage and session events", async () => {
+    if (process.getuid?.() === 0) return; // root ignores directory permissions
+    const projectPath = await tempProject();
+    const sessionId = createId();
+    const dir = path.join(projectPath, ".assentor", "sessions", sessionId);
+    const { events, emit } = recorder();
+    const runners = stubRunners({
+      negotiate: async () => {
+        await fs.chmod(dir, 0o500);
+        return { outcome: "pass" as const, summary: "ok", decision: "p" };
+      },
+    });
+    try {
+      await expect(new SessionRunner({ sessionId, projectPath, runners, emit }).run(spec)).rejects.toThrow(
+        "checkpoint write failed",
+      );
+    } finally {
+      await fs.chmod(dir, 0o700);
+    }
+    expect(stageEvents(events)).toEqual(["start plan", "end plan pass"]);
+    expect(events.at(-1)).toMatchObject({ type: "session.failed", data: { status: "failed" } });
+    expect(String(events.at(-1)?.data.reason)).toContain("checkpoint write failed");
+    expect(runners.executed).toBe(0);
+  });
+
+  it("an unknown stage outcome fails the session instead of looping", async () => {
+    const { events, emit } = recorder();
+    const result = await new SessionRunner({
+      sessionId: createId(),
+      emit,
+      runners: stubRunners({ negotiate: async () => ({ outcome: "maybe", summary: "?" }) as never }),
+    }).run(spec);
+    expect(result).toMatchObject({ status: "failed", current: "plan" });
+    expect(result.reason).toContain('unknown stage outcome "maybe"');
+    expect(stageEvents(events)).toEqual(["start plan", "end plan failed"]);
+  });
+
+  it("a cancelled Supervisor does not retry an executor that died on cancel", async () => {
+    const projectPath = await tempProject();
+    const session = new AbortController();
+    let calls = 0;
+    let release: (() => void) | undefined;
+    const exec = executor(() => {
+      calls += 1;
+      // A killed CLI often looks like a timeout, which is otherwise retried.
+      return new Promise<ExecutorResult>((resolve) => {
+        release = () => resolve({ status: "timeout", summary: "killed", error: "Executor timed out" });
+      });
+    });
+    exec.cancel = async () => release?.();
+    const done = new SessionRunner({
+      sessionId: createId(),
+      projectPath,
+      signal: session.signal,
+      runners: createStageRunners(deps(projectPath, { createExecutor: () => exec })),
+    }).run(spec);
+    await until(() => release !== undefined);
+    session.abort();
+    expect((await done).status).toBe("cancelled");
+    expect(calls).toBe(1);
   });
 
   it("a custom stage runner that throws is recorded as failed too", async () => {
@@ -628,6 +714,10 @@ describe("invalid graphs", () => {
     expect(String(error)).toContain('stage "check": options.maxRounds must be an integer from 1 to 50');
     const noTeam = { ...spec, stages: base.map((s) => (s.id === "check" ? { ...s, team: "ghosts" } : s)) };
     await expect(new SessionRunner({ sessionId: createId(), runners }).run(noTeam)).rejects.toThrow('unknown team "ghosts"');
+    const debateReview = { ...spec, stages: base.map((s) => (s.id === "check" ? { ...s, strategy: "debate" } : s)) };
+    await expect(new SessionRunner({ sessionId: createId(), runners }).run(debateReview)).rejects.toThrow(
+      `a review stage's strategy must be "panel"`,
+    );
   });
 });
 

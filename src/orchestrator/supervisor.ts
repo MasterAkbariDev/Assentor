@@ -672,7 +672,8 @@ export class Supervisor {
       }
 
       failures += 1;
-      if (failures >= maxAttempts) {
+      // A cancelled run never retries (a killed executor often looks like a timeout).
+      if (failures >= maxAttempts || this.cancelRequested) {
         return result;
       }
 
@@ -686,6 +687,9 @@ export class Supervisor {
           .trim(),
       });
       await sleep(delayMs);
+      if (this.cancelRequested) {
+        return result;
+      }
     }
   }
 
@@ -706,7 +710,7 @@ export class Supervisor {
       }
 
       failures += 1;
-      if (failures >= maxAttempts) {
+      if (failures >= maxAttempts || this.cancelRequested) {
         return outcome;
       }
 
@@ -718,6 +722,9 @@ export class Supervisor {
         reason: outcome.review.summary,
       });
       await sleep(delayMs);
+      if (this.cancelRequested) {
+        return outcome;
+      }
     }
   }
 
