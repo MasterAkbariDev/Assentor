@@ -275,6 +275,8 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 
 **Tests** — table output, JSON, unknown id, deprecation message (exactly once), alias, auto confirmation skipped under autopilot (inject prompt fn).
 
+**Status: 🔶 built (Haiku), Sonnet review pending.** `assentor modes` and `--json` live in `src/cli/modes.ts` (registered from `src/cli/index.ts`); tests in `tests/unit/cli-modes.test.ts`. Spec 1 done; it reads the registry only and never loads config. Specs 2–4 were already met by T02B-01b. Spec 2's wording is still `Modes: …`, not the card's `Available: …`, because `modes-registry.test.ts` pins it. Spec 5 (`--mode auto` running `suggestMode`) waits for the stage-graph runner (T02-09) and is skipped; `auto` stays unavailable.
+
 ---
 
 ### T02B-18 · TUI: Lead team board + lead log

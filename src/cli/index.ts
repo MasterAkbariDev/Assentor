@@ -10,6 +10,7 @@ import {
   statusAssentorTask,
 } from "./commands.js";
 import { TaskStore } from "../persistence/store.js";
+import { registerModesCommand } from "./modes.js";
 import {
   editPrompt,
   forkPrompt,
@@ -300,6 +301,8 @@ program
       }
     },
   );
+
+registerModesCommand(program);
 
 program
   .command("status")
