@@ -54,7 +54,7 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**36 of 80 cards done** (2026-10-29; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 23/41 · 🟡 Sonnet-tier 5/17 · 🔴 Opus-tier 8/22. Tests: 1656 passing. Core (Phases 0–3 + 2b) left: 16 cards.
+**37 of 80 cards done** (2026-10-29; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 24/41 · 🟡 Sonnet-tier 5/17 · 🔴 Opus-tier 8/22. Tests: 1675 passing. Core (Phases 0–3 + 2b) left: 15 cards.
 
 | Phase | Done | Open |
 |---|---|---|
@@ -62,7 +62,7 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 | 1 Review & models | 7/7 | — |
 | 2 Negotiate | 8/10 | T02-06 best-of-N, T02-08 divide (Sonnet) |
 | 2b Lead & modes | 5/19 (+01b) | T02B-01 controller contract, T02B-07 classifier, T02B-17 CLI, then T02B-02 Lead and the modes |
-| 3 Prompt library | 5/6 | T03-04 playbooks |
+| 3 Prompt library | 6/6 | — |
 | 4 Engine & web UI | 1/17 | web preview fast path merged (§6); rest paused (core first) |
 | 5 Desktop | 0/12 | — |
 
@@ -140,6 +140,12 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 - Follow-ups to file: FU-07 kill-tree SIGSTOP the root before the `ps` snapshot plus an async `ps` fallback; `setModel` rejecting invalid ids itself (defence in depth); manifest lock for the worktree manager before two Assentor processes share a repo; per-session lock + grace timeout in the session host; `saveConfig` atomic write.
 - Next wave (started 2026-10-29): T02-06 best-of-N and T02-08 divide (Sonnet), T02B-17 modes CLI and T03-04 playbooks (Haiku), T02B-01 controller contract and T02B-07 danger classifier (Opus).
 - ✅ T02B-17 `assentor modes` merged (`a96ab80`, Sonnet PASS). Open: spec 5 `--mode auto` waits for a runnable non-solo mode (T02B-01).
+- ✅ T03-04 built-in playbooks merged (`05eaffb`, Sonnet PASS); Phase 3 complete. Running playbooks waits for a real `SeatStepRunner` and team binding.
+- In fix rounds after review:
+  - T02-06 best-of-N (Opus NEEDS_WORK: `apply: patch` breaks later rounds; cancel during judging discards good work; `keepLosers` default → true).
+  - T02-08 divide (Opus NEEDS_WORK: rework as an Executor like best-of-N, run parts through the scheduler, no stuck `waiting` seat, rename and late-write ownership bypasses. The R1/R2 fixes change the T02-01 worktree manager, so they need O2 plus **user sign-off**).
+  - T02B-01 controller contract (O2 CHANGES REQUIRED: sessionId not validated, `mode.selected` emitted before the existing-graph check, `existing-work` honoured outside review mode).
+- In O2 review: T02B-07 danger classifier.
 
 **Direction (user, 2026-10-27): core engine first.** After the Haiku agents finish their current cards, UI and app work (rest of Phase 4, Phase 5) pauses. Finish the core (Phases 0–3, 2b) first, then build the UI and apps on top of it.
 
