@@ -417,16 +417,19 @@ export class Supervisor {
       target.setModel!(model);
     } catch (error) {
       this.seatWarning(seatId, "model_change_failed", error);
-      // Close the pending switch so the seat doesn't show it forever.
-      const current = this.appliedModels.get(seatId);
-      if (current !== undefined) {
-        this.config.seatEvents?.emit({
-          type: "seat.model.changed",
-          sessionId: this.config.seatEvents.sessionId,
-          seatId,
-          data: { from: model, to: current, pending: false, reverted: true },
-        });
-      }
+      // Close the pending switch so the seat doesn't show it forever. With no
+      // configured model the seat still runs its starting model, shown as AUTO.
+      this.config.seatEvents?.emit({
+        type: "seat.model.changed",
+        sessionId: this.config.seatEvents.sessionId,
+        seatId,
+        data: {
+          from: model,
+          to: this.appliedModels.get(seatId) ?? AUTO_MODEL_ID,
+          pending: false,
+          reverted: true,
+        },
+      });
       return;
     }
     this.emitModelChanged(seatId, model, false);

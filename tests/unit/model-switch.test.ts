@@ -549,6 +549,23 @@ describe("Supervisor.requestModelChange (review fixes)", () => {
     expect(run.events.reduce(reduceSeatEvents, {}).executor?.model).toBe("opus");
   });
 
+  it("a setModel that throws with no configured model reverts to AUTO", async () => {
+    const stub = stubExecutor({
+      setModel: () => {
+        throw new Error("cannot switch now");
+      },
+    });
+    const run = await startRun({ executor: stub.executor });
+    expect(run.supervisor.requestModelChange("executor", "sonnet").ok).toBe(true);
+    await vi.waitFor(() => expect(stub.calls).toHaveLength(1));
+    stub.finish(completed);
+    await run.done;
+    expect(modelChanges(run.events)).toEqual([
+      { to: "sonnet", pending: true },
+      { from: "sonnet", to: "AUTO", pending: false, reverted: true },
+    ]);
+  });
+
   it("a switch to the configured model does nothing, even with immediate", async () => {
     const { spawnFn, turns } = fakeSpawn();
     const run = await startRun({ executor: claudeExecutor(spawnFn), seatModels: { executor: "opus" } });
