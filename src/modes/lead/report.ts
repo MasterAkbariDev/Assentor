@@ -46,9 +46,11 @@ export function parseAgentReport(text: string, taskId: string): ParseAgentReport
 
   const reported = (data as Record<string, unknown>).taskId;
   if (reported !== undefined && (typeof reported !== "string" || !sameTask(reported, taskId))) {
+    const id = [...String(reported)];
+    const shown = id.length > 100 ? `${id.slice(0, 100).join("")}...` : id.join("");
     return {
       ok: false,
-      error: `report is for task ${String(reported)}, expected ${taskId}`,
+      error: `report is for task ${shown}, expected ${taskId}`,
       needsRepair: false,
     };
   }
@@ -238,14 +240,16 @@ function findReportJson(text: string, truncated: boolean): FoundJson {
     }
   }
 
-  const bare = extractJsonCandidate(text);
-  if (bare.ok) {
+  // No `}` means no object to extract. Skipping the call avoids its quadratic
+  // rescan from every `{` on brace-only input.
+  const bare = text.includes("}") ? extractJsonCandidate(text) : null;
+  if (bare?.ok) {
     return { ok: true, data: bare.data };
   }
   if (text.includes("{")) {
     return {
       ok: false,
-      error: `JSON found but it could not be parsed: ${bareParseError(text) ?? bare.error}`,
+      error: `JSON found but it could not be parsed: ${bareParseError(text) ?? bare?.error ?? "no matching closing brace"}`,
     };
   }
   return { ok: false, error: "no JSON report found" };

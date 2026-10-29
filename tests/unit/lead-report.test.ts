@@ -78,6 +78,17 @@ describe("parseAgentReport: taskId", () => {
     expect(result).toEqual({ ok: false, error: "report is for task T2, expected T1", needsRepair: false });
   });
 
+  it("truncates a long wrong task id to 100 characters with an ellipsis", () => {
+    const longId = "X".repeat(500);
+    const result = parseAgentReport(fenced({ ...REPORT, taskId: longId }), "T1");
+
+    expect(result).toEqual({
+      ok: false,
+      error: `report is for task ${"X".repeat(100)}..., expected T1`,
+      needsRepair: false,
+    });
+  });
+
   it("treats a case difference as the same task and returns the argument's spelling", () => {
     const result = parseAgentReport(fenced({ ...REPORT, taskId: "t1" }), "T1");
 
@@ -119,6 +130,22 @@ describe("parseAgentReport: failures", () => {
       error: "JSON found but it could not be parsed: no matching closing brace",
       needsRepair: true,
     });
+  });
+
+  it("brace-only input with no closing brace fails fast with a clear error", () => {
+    const text = "{\n".repeat(32 * 1024);
+    expect(Buffer.byteLength(text, "utf8")).toBe(MAX_REPORT_SCAN_BYTES);
+
+    const start = performance.now();
+    const result = parseAgentReport(text, "T1");
+    const elapsed = performance.now() - start;
+
+    expect(result).toEqual({
+      ok: false,
+      error: "JSON found but it could not be parsed: no matching closing brace",
+      needsRepair: true,
+    });
+    expect(elapsed).toBeLessThan(200);
   });
 
   it("keeps 'no JSON report found' for text with no brace at all", () => {
