@@ -148,8 +148,14 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
   - ✅ Worktree manager follow-up merged (`2dde8f9`, cherry-picked from `6966bd6` without the superseded divide commit): renames at both ends, `applyTo` `allowedPaths`. O2 PASS; user signed off.
   - ✅ T02-08 divide & conquer merged (`e9e7331`): Opus PASS after 3 rounds; user signed off. Phase 2 complete.
 - ✅ T02B-07 danger classifier merged (`9716d2a`): O2 PASS after 3 rounds; user signed off. Merge fix: `modes.cascade` passthrough, `dangerAreas` optional. Follow-up: project `.assentor/config.yaml` with this repo's danger files.
-- In review: T02B-10 mode prompts (`ddb08cf`, Opus prompt quality), T02B-09 Pipeline/Explore/Plan (`234e62b`, Sonnet).
-- Started: T02B-06 Cascade and T02B-16 debug (Sonnet).
+- **Paused by the user on 2026-10-29.** All agents stopped. State per card (worktree `.claude/worktrees/card-<id>`, branch `claude/card-<id>`):
+  - T02B-02 Lead (Opus): in progress, **uncommitted** work in the worktree (9 files). Resume by reviewing the diff, then finishing. Must-do from T02B-01: approval/answer channel, `stages` gated under manual, resume re-applies the floor. lead.md caller vars: goal, autonomy, tasks (with assignee), roster, reports (taskId, status, summary, blockers, questions, filesChanged, claimIssues; testsRun as a string), results; escape `</report`.
+  - T02B-11 TDD (Sonnet): in progress, **uncommitted** (10 files).
+  - T02B-06 Cascade (Sonnet): in progress, **uncommitted** (5 files).
+  - T02B-16 debug (Sonnet): in progress, **uncommitted** (4 files).
+  - T02B-10 mode prompts: committed `ddb08cf`; Opus prompt review NEEDS_WORK (8 items: red-team-attacker must be read-only + JSON reply matching redteam.ts; lead.md inputs, report fencing, autonomy rule, retry wording; navigator fencing; report-instructions data rule; no-test-weakening rule in swarm-worker and hypothesis-investigator). Fixes not started.
+  - T02B-09 Pipeline/Explore/Plan: committed `234e62b`; Sonnet review was stopped before reporting — rerun it.
+  - T02B-14 red-team: committed `46a2006`; Opus review was stopped before reporting — rerun it.
 
 **Direction (user, 2026-10-27): core engine first.** After the Haiku agents finish their current cards, UI and app work (rest of Phase 4, Phase 5) pauses. Finish the core (Phases 0–3, 2b) first, then build the UI and apps on top of it.
 
