@@ -368,11 +368,11 @@ describe("WorktreeManager: crash recovery", () => {
     await setState(repo, "opus-1", "removing", { removeTip: base });
 
     const report = await wm.reconcile();
-    expect(report.actions[0]).toMatchObject({ action: "failed", detail: expect.stringMatching(/moved after removal began; run discard/) });
+    expect(report.actions[0]).toMatchObject({ action: "branch-moved", detail: expect.stringMatching(/moved after removal began; run discard/) });
     expect(await git(repo, "rev-parse", info.branch)).toBe(late);
     // A removal record without a verified tip never deletes the branch either.
     await setState(repo, "opus-1", "removing", { removeTip: undefined });
-    expect((await wm.cleanup(S1)).kept[0]?.reason).toBe("error");
+    expect((await wm.cleanup(S1)).kept[0]?.reason).toBe("branch-moved");
     expect(await git(repo, "rev-parse", info.branch)).toBe(late);
   });
 
@@ -740,11 +740,72 @@ describe("WorktreeManager: review regressions (O2 probe)", () => {
     const res = await wm.applyTo("main", seat, { strategy: "squash" });
     expect(res).toMatchObject({ ok: true, changed: true });
     if (res.ok) {
-      expect(res.warning).toMatch(/hook after the commit failed/);
+      expect(res.warning).toMatch(/failure after the commit landed/);
       expect(res.commit).toBe(await git(repo, "rev-parse", "HEAD"));
     }
     expect(await git(repo, "rev-parse", "HEAD")).not.toBe(head);
     expect(await fs.readFile(path.join(repo, "b.txt"), "utf8")).toBe("1\n");
-    expect((await wm.list())[0]?.outcome).toBe("applied");
+    expect((await wm.list())[0]).toMatchObject({ outcome: "applied", appliedTip: await git(w.path, "rev-parse", "HEAD") });
+  });
+
+  for (const [name, body] of [
+    ["moves HEAD back (reset --soft) and fails", "git reset -q --soft HEAD~1\nexit 1"],
+    ["commits other content and fails", "echo hook > hook.txt\ngit add hook.txt\ngit commit -q --no-verify -m hook-commit\nexit 1"],
+  ] as const) {
+    it(`a pre-commit hook that ${name} is not taken as an apply; the seat branch survives cleanup`, async () => {
+      if (process.platform === "win32") return;
+      const repo = await makeRepo();
+      await fs.writeFile(path.join(repo, "a.txt"), "two\n");
+      await git(repo, "commit", "-q", "-am", "second");
+      const wm = new WorktreeManager({ repoPath: repo });
+      const w = await wm.create(seat);
+      await fs.writeFile(path.join(w.path, "seat.txt"), "seat work\n");
+      await git(w.path, "add", ".");
+      await git(w.path, "commit", "-q", "-m", "seat");
+      const seatTip = await git(w.path, "rev-parse", "HEAD");
+      const hook = path.join(repo, ".git", "hooks", "pre-commit");
+      await fs.mkdir(path.dirname(hook), { recursive: true });
+      await fs.writeFile(hook, `#!/bin/sh\nunset GIT_INDEX_FILE\n${body}\n`, { mode: 0o755 });
+
+      await expect(wm.applyTo("main", seat, { strategy: "squash" })).rejects.toThrow(/changed during the apply/);
+      await fs.rm(hook);
+      expect((await wm.list())[0]?.outcome).toBeUndefined();
+      expect((await wm.list())[0]?.appliedTip).toBeUndefined();
+      expect((await wm.cleanup(S1)).kept).toEqual([{ ...seat, reason: "unmerged" }]);
+      expect(await git(repo, "rev-parse", w.branch)).toBe(seatTip);
+    });
+  }
+
+  it("a hook that commits exactly the staged squash and fails still counts as applied", async () => {
+    if (process.platform === "win32") return;
+    const repo = await makeRepo();
+    const wm = new WorktreeManager({ repoPath: repo });
+    const w = await wm.create(seat);
+    await fs.writeFile(path.join(w.path, "seat.txt"), "seat work\n");
+    await git(w.path, "add", ".");
+    await git(w.path, "commit", "-q", "-m", "seat");
+    const hook = path.join(repo, ".git", "hooks", "pre-commit");
+    await fs.mkdir(path.dirname(hook), { recursive: true });
+    await fs.writeFile(hook, "#!/bin/sh\nunset GIT_INDEX_FILE\ngit commit -q --allow-empty --no-verify -m hook-commit\nexit 1\n", { mode: 0o755 });
+
+    const res = await wm.applyTo("main", seat, { strategy: "squash" });
+    expect(res).toMatchObject({ ok: true, changed: true, warning: expect.stringMatching(/failure after the commit landed/) });
+    expect(await git(repo, "show", "HEAD:seat.txt")).toBe("seat work");
+    expect(await git(repo, "status", "--porcelain")).toBe("");
+  });
+
+  it("verifies a normal merge and squash landing before recording the applied tip", async () => {
+    const repo = await makeRepo();
+    const wm = new WorktreeManager({ repoPath: repo });
+    for (const strategy of ["merge", "squash"] as const) {
+      const key = { sessionId: S1, seatId: `seat-${strategy}` };
+      const w = await wm.create(key);
+      await fs.writeFile(path.join(w.path, `${strategy}.txt`), "x\n");
+      const res = await wm.applyTo("main", key, { strategy });
+      expect(res).toMatchObject({ ok: true, changed: true });
+      if (res.ok) expect(res.warning).toBeUndefined();
+      const rec = (await wm.list(S1)).find((r) => r.seatId === key.seatId);
+      expect(rec?.appliedTip).toBe(await git(w.path, "rev-parse", "HEAD"));
+    }
   });
 });

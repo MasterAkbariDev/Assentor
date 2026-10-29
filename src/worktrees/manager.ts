@@ -34,6 +34,9 @@ export class WorktreeError extends AssentorError {
   }
 }
 
+/** A started removal found the seat branch past the tip it verified; the branch is kept. */
+class BranchMovedError extends WorktreeError {}
+
 export interface WorktreeManagerOptions {
   /** Any path inside the main checkout; its top level is the "main" target. */
   repoPath: string;
@@ -89,13 +92,16 @@ export type ApplyResult =
 
 export interface CleanupReport {
   removed: SeatKey[];
-  kept: Array<SeatKey & { reason: "failed" | "dirty" | "unmerged" | "error"; detail?: string }>;
+  kept: Array<
+    SeatKey & { reason: "failed" | "dirty" | "unmerged" | "branch-moved" | "error"; detail?: string }
+  >;
 }
 
 export interface ReconcileReport {
   actions: Array<
     SeatKey & {
-      action: "completed" | "rolled-back" | "removed" | "missing" | "failed";
+      /** `branch-moved`: stuck in `removing` because the seat branch moved; discard or apply it. */
+      action: "completed" | "rolled-back" | "removed" | "missing" | "branch-moved" | "failed";
       detail?: string;
     }
   >;
@@ -439,7 +445,7 @@ export class WorktreeManager {
       }
       await this.assertSafeToWrite(targetPath, strategy, record.baseSha, tip);
       const message = options.message ?? `assentor: apply ${record.seatId} (${strategy})`;
-      const result = await this.runApply(targetPath, strategy, record.baseSha, tip, message);
+      const { result, verified } = await this.runApply(targetPath, strategy, record.baseSha, tip, message);
       if (result.ok) {
         const manifest = await this.readManifest(ctx);
         const current = manifest.records.find((r) => sameSeat(r, seat));
@@ -449,7 +455,10 @@ export class WorktreeManager {
             delete current.appliedTip;
           } else {
             current.outcome = "applied";
-            current.appliedTip = tip;
+            // Only a verified landing lets cleanup delete the branch at this tip;
+            // otherwise cleanup falls back to the merged-into-HEAD check.
+            if (verified) current.appliedTip = tip;
+            else delete current.appliedTip;
           }
           await this.writeManifest(ctx, manifest);
         }
@@ -526,7 +535,11 @@ export class WorktreeManager {
           await this.remove(ctx, manifest, record, false, tip);
           report.removed.push(key);
         } catch (error) {
-          report.kept.push({ ...key, reason: "error", detail: (error as Error).message });
+          report.kept.push({
+            ...key,
+            reason: error instanceof BranchMovedError ? "branch-moved" : "error",
+            detail: (error as Error).message,
+          });
         }
       }
       return report;
@@ -574,7 +587,11 @@ export class WorktreeManager {
             report.actions.push({ ...key, action: "missing", detail: `${wt} is gone; discard to drop the record` });
           }
         } catch (error) {
-          report.actions.push({ ...key, action: "failed", detail: (error as Error).message });
+          report.actions.push({
+            ...key,
+            action: error instanceof BranchMovedError ? "branch-moved" : "failed",
+            detail: (error as Error).message,
+          });
         }
       }
 
@@ -829,7 +846,7 @@ export class WorktreeManager {
     const current = await this.branchTip(ctx, record);
     if (current !== null) {
       if (current !== record.removeTip) {
-        throw new WorktreeError(
+        throw new BranchMovedError(
           `Seat branch ${branch} moved after removal began; run discard to drop it, or apply it first`,
         );
       }
@@ -848,7 +865,7 @@ export class WorktreeManager {
     baseSha: string,
     tip: string,
     message: string,
-  ): Promise<ApplyResult> {
+  ): Promise<{ result: ApplyResult; verified: boolean }> {
     if (strategy === "patch") {
       const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "assentor-patch-"));
       try {
@@ -861,9 +878,12 @@ export class WorktreeManager {
         await fs.writeFile(patchFile, patch);
         // `git apply` is atomic: on any failure nothing is written.
         const res = await this.git(targetPath, ["apply", "--index", "--", patchFile]);
-        if (res.code === 0) return { ok: true, strategy, changed: true };
+        if (res.code === 0) return { result: { ok: true, strategy, changed: true }, verified: false };
         const conflicts = [...res.stderr.matchAll(/^error: (?!patch failed)(.+?): /gm)].map((m) => m[1]!);
-        return { ok: false, strategy, conflicts: [...new Set(conflicts)], message: res.stderr.trim() };
+        return {
+          result: { ok: false, strategy, conflicts: [...new Set(conflicts)], message: res.stderr.trim() },
+          verified: false,
+        };
       } finally {
         await fs.rm(tmp, { recursive: true, force: true });
       }
@@ -881,27 +901,51 @@ export class WorktreeManager {
           .split("\0")
           .filter(Boolean);
         await this.restoreTarget(targetPath);
-        return { ok: false, strategy, conflicts, message: (res.stderr || res.stdout).trim() };
+        return { result: { ok: false, strategy, conflicts, message: (res.stderr || res.stdout).trim() }, verified: false };
       }
       if (strategy === "squash") {
         if ((await this.git(targetPath, ["diff", "--cached", "--quiet"])).code === 0) {
-          return { ok: true, strategy, changed: false };
+          // Merging the tip changes nothing: its work is already in the target.
+          return { result: { ok: true, strategy, changed: false }, verified: true };
         }
         await this.gitOk(targetPath, ["commit", "-m", message], undefined, HOOK_TIMEOUT_MS);
       }
       const commit = (await this.gitOk(targetPath, ["rev-parse", "HEAD"])).stdout.trim();
-      return { ok: true, strategy, changed: commit !== before, commit };
-    } catch (error) {
-      // The commit landed and only a later hook failed or was killed: the apply succeeded.
-      const now = (await this.git(targetPath, ["rev-parse", "HEAD"]).catch(() => undefined))?.stdout.trim();
-      if (now && now !== before) {
-        return {
+      const landed = await this.verifyLanded(targetPath, strategy, before, tip, commit);
+      return {
+        result: {
           ok: true,
           strategy,
-          changed: true,
-          commit: now,
-          warning: `Applied as ${now.slice(0, 12)}, but a hook after the commit failed: ${(error as Error).message}`,
-        };
+          changed: commit !== before,
+          commit,
+          ...(landed === "verified" ? {} : { warning: `Could not verify that ${commit.slice(0, 12)} is the applied commit; the seat branch is kept` }),
+        },
+        verified: landed === "verified",
+      };
+    } catch (error) {
+      const now = (await this.git(targetPath, ["rev-parse", "HEAD"]).catch(() => undefined))?.stdout.trim();
+      if (now && now !== before) {
+        // HEAD moved. Only a commit we can prove is ours means "applied, a later hook failed".
+        const landed = await this.verifyLanded(targetPath, strategy, before, tip, now).catch(() => "no" as const);
+        if (landed !== "no") {
+          return {
+            result: {
+              ok: true,
+              strategy,
+              changed: true,
+              commit: now,
+              warning: `Applied as ${now.slice(0, 12)}, but git reported a failure after the commit landed (a hook?): ${(error as Error).message}`,
+            },
+            verified: landed === "verified",
+          };
+        }
+        // Someone else (a hook, the user) moved HEAD: it is no longer ours to reset.
+        throw new WorktreeError(
+          `The target ${targetPath} changed during the apply (HEAD moved from ${before.slice(0, 12)} to ` +
+            `${now.slice(0, 12)}, which is not the applied commit). Nothing was reset and the seat branch is kept; ` +
+            `inspect the target by hand. Apply error: ${(error as Error).message}`,
+          { cause: error },
+        );
       }
       // Hook failure, timeout or kill mid-merge: never leave a partial merge behind.
       try {
@@ -915,6 +959,34 @@ export class WorktreeManager {
       }
       throw error;
     }
+  }
+
+  /**
+   * Whether `commit` is exactly the result of applying `tip` onto `before`:
+   * merge → parents [before, tip]; squash → single parent `before` and the tree
+   * `git merge-tree --write-tree before tip` produces. `unverified` when this git
+   * has no `merge-tree --write-tree` (before 2.38).
+   */
+  private async verifyLanded(
+    targetPath: string,
+    strategy: ApplyStrategy,
+    before: string,
+    tip: string,
+    commit: string,
+  ): Promise<"verified" | "unverified" | "no"> {
+    const parents = (await this.gitOk(targetPath, ["rev-list", "--parents", "-n", "1", commit])).stdout
+      .trim()
+      .split(/\s+/)
+      .slice(1);
+    if (strategy === "merge") {
+      return parents.length === 2 && parents[0] === before && parents[1] === tip ? "verified" : "no";
+    }
+    if (parents.length !== 1 || parents[0] !== before) return "no";
+    const merged = await this.git(targetPath, ["merge-tree", "--write-tree", before, tip]);
+    if (merged.code === 1) return "no";
+    if (merged.code !== 0) return "unverified";
+    const tree = (await this.gitOk(targetPath, ["rev-parse", `${commit}^{tree}`])).stdout.trim();
+    return merged.stdout.split("\n")[0]?.trim() === tree ? "verified" : "no";
   }
 
   /** The target was verified clean before applying, so this restores it exactly. */
