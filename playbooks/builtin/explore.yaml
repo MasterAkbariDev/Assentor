@@ -1,0 +1,28 @@
+id: explore
+title: Explore
+description: Read-only. Three investigators debate what they found from different angles; a summarizer answers with citations.
+readOnly: true
+teams:
+  investigators:
+    description: Reads the code from three angles. Never edits.
+    seats:
+      - { provider: AUTO, role: architect }
+      - { provider: AUTO, role: test-reviewer }
+      - { provider: AUTO, role: code-reviewer }
+  summary:
+    description: Writes the answer from the findings; a devil's advocate checks it. Never edits.
+    seats:
+      - { provider: AUTO, role: summarizer }
+      - { provider: AUTO, role: devils-advocate }
+stages:
+  - id: investigate
+    kind: negotiate
+    team: investigators
+    strategy: debate
+    options: { angle: [callers-and-data-flow, tests-and-behaviour, history-and-ownership] }
+    next: summarize
+  - id: summarize
+    kind: negotiate
+    team: summary
+    strategy: debate
+    options: { citations: required }
