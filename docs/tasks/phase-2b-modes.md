@@ -215,6 +215,8 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 ### T02B-10 · Mode prompts
 **Tier:** 🟢 H · **Review:** O (prompt quality) · **Size:** M · **Depends:** T03-01, T02B-01
 
+**Status: built, awaiting Opus prompt-quality review.** The seven prompts ship in `prompts/builtin/` and `tests/unit/builtin-prompts-modes.test.ts` (90 tests) checks them. `lead` uses `output: subtasks` and its example parses as a `ControllerTurnSchema` turn; `lead-report-instructions` is checked by `parseAgentReport`. No caller passes their variables yet, so the names are declared from the card and from `ControllerContext`, `AgentReport` and the retro record. Open: the `output` enum has no value for a controller turn or a report.
+
 **Allowed files** — create: `prompts/builtin/{lead,lead-report-instructions,navigator,red-team-attacker,hypothesis-investigator,swarm-worker,retro}.md`, `tests/unit/builtin-prompts-modes.test.ts`.
 
 **Spec** — Same structure/limits as T03-02. Specifics:
