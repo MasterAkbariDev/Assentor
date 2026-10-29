@@ -54,7 +54,7 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**31 of 80 cards done** (2026-10-29; plus T03-03 half done, follow-ups FU-01…05, gate fixes G-1, G-5). By tier: 🟢 Haiku 21/41 · 🟡 Sonnet-tier 5/17 · 🔴 Opus-tier 5/22. Tests: 1391 passing.
+**32 of 80 cards done** (2026-10-29; follow-ups FU-01…05, gate fixes G-1, G-5). By tier: 🟢 Haiku 22/41 · 🟡 Sonnet-tier 5/17 · 🔴 Opus-tier 5/22. Tests: 1496 passing.
 
 | Phase | Done | Open |
 |---|---|---|
@@ -62,7 +62,7 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 | 1 Review & models | 6/7 | T01-05 model switch (🔴, Opus implementing) |
 | 2 Negotiate | 6/10 | T02-01 worktrees (fixing O2 data-loss findings), T02-09 stage graph (Opus implementing), T02-06/08 (need T02-01) |
 | 2b Lead & modes | 5/19 | T02B-01b registry (in review), then T02B-17, T02B-07, T02B-02 |
-| 3 Prompt library | 4/6 | T03-03b negotiation prompts (Haiku implementing), T03-04 playbooks (needs T02-09) |
+| 3 Prompt library | 5/6 | T03-04 playbooks (needs T02-09) |
 | 4 Engine & web UI | 1/17 | web preview fast path merged (§6); rest paused (core first) |
 | 5 Desktop | 0/12 | — |
 
@@ -138,11 +138,12 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 **Parallel wave (2026-10-29, live — each card on its own branch/worktree `claude/card-*`, merged by the planner after review):**
 - ✅ Merged: T02-07 synthesize (`2dae7c0`), T02B-04 roster (`eb64ae5`), T02B-03 report parser (`95113db`), T02B-08 auto router (`f1ca175`), T02-05 debate (`f72f60f`, with an Opus no-voter guard `8245d53`). Optional follow-ups are on each card.
 - ✅ T02-03 negotiation engine merged (`db3a8a4`): O2 PASS at `83159aa`; user signed off on one file per run, nothing saved on cancel, refusing a reused runId. Known limit: late `seat.done` events after a strategy bug; a crash mid-write blocks a rerun of that runId.
-- T02-01 worktree manager (`claude/card-t02-01`, `77cc522`): O2 CHANGES REQUIRED — four data-loss paths (merge overwrites ignored files like `.env`; cleanup deletes post-apply commits; cleanup ignores a detached worktree HEAD; target not restored when a hook fails). Opus fixing; then O2 re-review and **user sign-off** (open questions: manifest file lock — reviewer says later, before UI server + CLI share a repo; `--no-verify` snapshots — reviewer says fine; seat = `{sessionId, seatId}` — agreed; `.gitignore` stays out of the manager).
-- T02B-01b registry + autonomy (`claude/card-t02b-01b`, `cd1d9e6`): O2 CHANGES REQUIRED — a user-layer `run.autonomy` beat the project-layer `run.mode`, turning on autopilot in projects pinned to supervised. Opus fixing; then O2 re-review and **user sign-off** (unknown `--mode` now errors — reviewer: accept; `review` stays unavailable — reviewer: keep; only `solo` runnable of 17 vs the card's "3 modes registered" — needs explicit OK). T02B-17 waits for it.
-- T01-05 model switch (`claude/card-t01-05`): Opus implementing.
-- T02-09 stage-graph runner (`claude/card-t02-09`): Opus implementing (🔴 O2 + sign-off).
-- T03-03b moderator, judge and negotiate-* prompts (`claude/card-t03-03`): Haiku implementing; Opus prompt-quality review next.
+- T02-01 worktree manager (`claude/card-t02-01`): O2 rounds 1–3 found data-loss paths (ignored files overwritten in both clash directions, post-apply commits deleted, detached commits lost, hook failure leaving main dirty, "HEAD moved" taken as proof of an apply). All but the last fixed at `679edd3`; Opus fixing the last; then O2 and **user sign-off**.
+- T02B-01b registry + autonomy (`claude/card-t02b-01b`, `3475843`): **O2 PASS after 3 rounds** (project layer wins again; TUI save keeps the user file's own `run`). Waiting for **user sign-off**: unknown `--mode` errors with a hint; `review` unavailable; only `solo` runnable of 17; `assentor init` still pins `mode: supervised`.
+- T01-05 model switch (`claude/card-t01-05`, `97763b0`): O2 CHANGES REQUIRED — cursor interrupt killed every tracked process; the new `ps`-snapshot kill-tree blocked the event loop (4 `ps` calls, 1.3 s per interrupt). Opus fixing; then O2 and **user sign-off**.
+- T02-09 stage-graph runner (`claude/card-t02-09`, `398fd88`): implemented (SessionRunner, graph.json persistence, debate tiebreak, coordinator guard); `--playbook` CLI deferred to T03-04. O2 review running; then **user sign-off**.
+- ✅ T03-03b negotiation prompts merged (`7b3a0cd`) after an Opus prompt-quality NEEDS_WORK round (proposal text is data, fixed label list, `<proposal>` tags, no backticks in JSON strings).
+- FU-06 (`claude/card-fu-06`, Sonnet): `rememberBinary` wipes the user config when its YAML does not parse; the TUI keeps a stale config after an edit-prompt round trip.
 - ✅ T02B-08 router review follow-ups merged (`4884c13`).
 - Next once these land: T02-06 best-of-N and T02-08 divide (Sonnet, need T02-01), T02B-17 (Haiku, needs T02B-01b), T02B-07 danger classifier, T03-04 playbooks (needs T02-09), T02B-01 rest (controller contract, needs T02-09).
 
