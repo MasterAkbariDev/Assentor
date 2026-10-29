@@ -119,6 +119,8 @@ Strategy tasks (T02-04…08) implement against the **strategy contract** deliver
 ### T02-07 · Strategy: Synthesize
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T02-03
 
+**Status: ✅ done.** Shipped in `2ec5361` (Haiku #3). Sonnet review PASS. Decisions: non-aggregator seats propose in parallel in round 1; the aggregator gets `{ goal, proposals }` anonymized and read-only; sources via `matchLabel`, unknown labels become dissent, uncited proposals listed as "not used"; consensus score = cited / total; a failed aggregator gives an empty decision with dissent. `run()` throws when `validate` fails (vote does not) — the engine should call `validate` first. Merge note: debate (T02-05) also edits `strategies/index.ts`; keep the loop over `[voteStrategy, debateStrategy, synthesizeStrategy]`.
+
 **Goal** — All seats propose; one aggregator seat writes a merged answer that cites which proposal each part came from.
 
 **Allowed files** — create: `src/negotiation/strategies/synthesize.ts`, `tests/unit/strategy-synthesize.test.ts`; modify: strategies `index.ts`.
