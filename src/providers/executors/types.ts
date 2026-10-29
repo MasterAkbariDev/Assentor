@@ -58,7 +58,8 @@ export interface Executor {
   /**
    * Stop only the turn in flight: kill this executor's process tree and resolve
    * that turn as `cancelled` with `interrupted: true`. Unlike `cancel`, later
-   * turns still run. No-op between turns.
+   * turns still run. Returns false (and does nothing) when no turn is in flight
+   * or it is already being stopped.
    */
-  interrupt?(): Promise<void>;
+  interrupt?(): boolean;
 }

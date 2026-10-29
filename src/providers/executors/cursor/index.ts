@@ -16,11 +16,7 @@ import {
 } from "./stream-status.js";
 import { locateBinary, spawnCliProcess } from "../../../executors/cli-locator.js";
 import { killProcessTree } from "../../../process/kill-tree.js";
-import {
-  killAllTrackedProcesses,
-  trackChildProcess,
-  untrackChildProcess,
-} from "../../../process/tracker.js";
+import { trackChildProcess, untrackChildProcess } from "../../../process/tracker.js";
 import { buildAutonomousContinuationPrompt, buildSupervisedContinuationPrompt } from "../../../orchestrator/phase-steering.js";
 
 export type CursorOutputFormat = "text" | "json" | "stream-json";
@@ -193,7 +189,6 @@ export class CursorExecutor implements Executor {
     this.cancelled.add(taskId);
     this.activeChild?.abandon?.();
     killProcessTree(this.activeChild);
-    killAllTrackedProcesses();
     this.forceComplete?.();
   }
 
@@ -202,15 +197,16 @@ export class CursorExecutor implements Executor {
     this.model = model;
   }
 
-  /** Kills only this executor's process tree (not every tracked process, unlike `cancel`). */
-  async interrupt(): Promise<void> {
+  /** Kills only this executor's process tree. */
+  interrupt(): boolean {
     if (!this.forceComplete || this.turnInterrupted) {
-      return; // no turn in flight, or this one is already being stopped
+      return false; // no turn in flight, or this one is already being stopped
     }
     this.turnInterrupted = true;
     this.activeChild?.abandon?.();
     killProcessTree(this.activeChild);
     this.forceComplete();
+    return true;
   }
 
   private async execute(
@@ -667,8 +663,8 @@ export async function defaultSpawn(
     };
 
     const abandon = () => {
+      // Only this process tree: a session-wide stop goes through the tracker (CLI SIGINT handler).
       killProcessTree(child);
-      killAllTrackedProcesses();
       finish({
         code: parser.hasFinalResult() ? 0 : null,
         stdout,

@@ -157,14 +157,15 @@ export class PrintCliExecutor implements Executor {
     this.forceComplete?.();
   }
 
-  async interrupt(): Promise<void> {
+  interrupt(): boolean {
     if (!this.forceComplete || this.turnInterrupted) {
-      return; // no turn in flight, or this one is already being stopped
+      return false; // no turn in flight, or this one is already being stopped
     }
     this.turnInterrupted = true;
     this.activeChild?.abandon?.();
     killProcessTree(this.activeChild);
     this.forceComplete();
+    return true;
   }
 
   private async execute(

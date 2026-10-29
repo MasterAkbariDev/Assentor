@@ -55,6 +55,7 @@ import {
 } from "../config/detect-commands.js";
 import { ArtifactType } from "../artifacts/types.js";
 import { AUTO_MODEL_ID, isModelId } from "../models/cli-catalog.js";
+import { redactSecrets } from "../security/redact.js";
 import { LoopDetector } from "./loop-detector.js";
 import type { SeatEventSink } from "./seat-events.js";
 import {
@@ -164,6 +165,8 @@ export interface SupervisorConfig {
    * always allowed.
    */
   modelChoices?: (seatId: string) => readonly string[] | undefined;
+  /** The model each seat starts with, by seat id (blank = `AUTO`). Lets a switch to it be a no-op. */
+  seatModels?: Record<string, string | undefined>;
 }
 
 /** Outcome of `Supervisor.requestModelChange` (T01-05). */
@@ -184,10 +187,18 @@ interface ExecutorRestart {
 }
 
 const MAX_PARTIAL_OUTPUT_CHARS = 2_000;
+/** Interrupt-now restarts per turn; later immediate requests apply at the next turn. */
+const MAX_TURN_RESTARTS = 3;
+
+/** `AUTO` for blank or any-case "auto", else the trimmed id. */
+function normalizeModel(model: string | undefined): string {
+  const trimmed = model?.trim() ?? "";
+  return trimmed === "" || trimmed.toUpperCase() === AUTO_MODEL_ID ? AUTO_MODEL_ID : trimmed;
+}
 
 /** Told to the executor when it re-runs an interrupted turn. */
 function restartNote(partial: string): string {
-  const tail = partial.trim().slice(-MAX_PARTIAL_OUTPUT_CHARS);
+  const tail = redactSecrets(partial.trim().slice(-MAX_PARTIAL_OUTPUT_CHARS)).text;
   return [
     "[Assentor] Your previous attempt at this turn was interrupted to switch models. Files may already be partly changed.",
     tail
@@ -274,6 +285,8 @@ export class Supervisor {
   private executorTurnActive = false;
   /** An immediate switch interrupted the turn in flight; restart it. */
   private restartRequested = false;
+  /** Interrupt-now restarts of the current executor turn. */
+  private turnRestarts = 0;
   private finished = false;
 
   constructor(private readonly config: SupervisorConfig) {
@@ -288,6 +301,9 @@ export class Supervisor {
     this.maxEvidenceIterations =
       config.maxEvidenceIterations ?? MAX_EVIDENCE_ITERATIONS;
     this.contract = config.contract;
+    for (const [seatId, model] of Object.entries(config.seatModels ?? {})) {
+      this.appliedModels.set(seatId, normalizeModel(model));
+    }
 
     if (config.resumeFrom) {
       this.restoreFromSnapshot(config.resumeFrom);
@@ -341,8 +357,7 @@ export class Supervisor {
     if (!target.setModel) {
       return { ok: false, error: `Seat "${seatId}" (${target.name}) cannot switch models.` };
     }
-    const trimmed = model.trim();
-    const wanted = trimmed.toUpperCase() === AUTO_MODEL_ID ? AUTO_MODEL_ID : trimmed;
+    const wanted = model.trim() === "" ? "" : normalizeModel(model);
     // Also keeps flag-like text ("--yolo") out of the CLI's argv.
     if (wanted !== AUTO_MODEL_ID && !isModelId(wanted)) {
       return { ok: false, error: `Invalid model id "${model}".` };
@@ -366,16 +381,21 @@ export class Supervisor {
       this.pendingModels.set(seatId, wanted);
       this.emitModelChanged(seatId, wanted, true);
     }
-    if (!options.immediate || !this.executorTurnActive) {
+    if (!options.immediate || !this.executorTurnActive || this.turnRestarts >= MAX_TURN_RESTARTS) {
       return { ok: true, interrupting: false };
     }
-    if (!this.restartRequested) {
-      this.restartRequested = true;
-      this.config.executor.interrupt!().catch((error: unknown) => {
-        this.seatWarning(seatId, "interrupt_failed", error);
-      });
+    if (this.restartRequested) {
+      return { ok: true, interrupting: true }; // already stopping this turn
     }
-    return { ok: true, interrupting: true };
+    let stopped = false;
+    try {
+      stopped = this.config.executor.interrupt!();
+    } catch (error) {
+      this.seatWarning(seatId, "interrupt_failed", error);
+    }
+    // Not stopped (e.g. still before the spawn): the switch applies at the next turn.
+    this.restartRequested = stopped;
+    return { ok: true, interrupting: stopped };
   }
 
   private get executorSeatId(): string {
@@ -397,6 +417,16 @@ export class Supervisor {
       target.setModel!(model);
     } catch (error) {
       this.seatWarning(seatId, "model_change_failed", error);
+      // Close the pending switch so the seat doesn't show it forever.
+      const current = this.appliedModels.get(seatId);
+      if (current !== undefined) {
+        this.config.seatEvents?.emit({
+          type: "seat.model.changed",
+          sessionId: this.config.seatEvents.sessionId,
+          seatId,
+          data: { from: model, to: current, pending: false, reverted: true },
+        });
+      }
       return;
     }
     this.emitModelChanged(seatId, model, false);
@@ -859,12 +889,8 @@ export class Supervisor {
   /** Re-runs of an interrupted turn get the same input plus a note about the partial attempt. */
   private invokeExecutor(call: ExecutorCall, restart?: ExecutorRestart): Promise<ExecutorResult> {
     const executor = this.config.executor;
-    const note = restart ? restartNote(restart.partial) : undefined;
-    if (call.kind === "run") {
-      return executor.run(note ? { ...call.task, prompt: `${call.task.prompt}\n\n${note}` } : call.task);
-    }
-    if (!note) {
-      return executor.continue(call.input);
+    if (!restart) {
+      return call.kind === "run" ? executor.run(call.task) : executor.continue(call.input);
     }
     const noteMessage = createProtocolMessage({
       conversationId: this.conversationId,
@@ -872,8 +898,13 @@ export class Supervisor {
       from: SUPERVISOR_ID,
       to: EXECUTOR_ID,
       type: MessageType.Warning,
-      content: { message: note, code: "turn_interrupted" },
+      content: { message: restartNote(restart.partial), code: "turn_interrupted" },
     });
+    if (call.kind === "run") {
+      // Same JSON-quoted rendering the continuation prompts use, so the partial output stays data.
+      const fenced = `[${noteMessage.type} from ${noteMessage.from}]\n${JSON.stringify(noteMessage.content, null, 2)}`;
+      return executor.run({ ...call.task, prompt: `${call.task.prompt}\n\n${fenced}` });
+    }
     return executor.continue({
       ...call.input,
       // Resume the session the interrupted attempt reported, when there is one.
@@ -893,6 +924,7 @@ export class Supervisor {
     const maxAttempts = this.maxFailureRetries();
     let failures = 0;
     let restart: ExecutorRestart | undefined;
+    this.turnRestarts = 0;
 
     while (true) {
       const turn = await this.runExecutor(taskId, conversationId, restart);
@@ -900,6 +932,7 @@ export class Supervisor {
       restart = turn.restart;
       if (restart) {
         if (!this.cancelRequested) {
+          this.turnRestarts += 1;
           continue; // same turn again: not a round, not a failure attempt
         }
         return result;

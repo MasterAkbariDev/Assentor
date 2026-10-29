@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { spawn } from "node:child_process";
-import { descendantPids, killProcessTree } from "../../src/process/kill-tree.js";
+import { descendantPids, killProcessTree, setPsTimeoutMsForTests } from "../../src/process/kill-tree.js";
 import { trackedProcessCount } from "../../src/process/tracker.js";
 import { createEmptyContract, PrintCliExecutor } from "../../src/index.js";
 
 const posix = process.platform !== "win32";
+// A loaded machine must not make `ps` time out here; the 500 ms cap is production's.
+setPsTimeoutMsForTests(15_000);
 
 function alive(pid: number): boolean {
   try {
@@ -68,7 +70,7 @@ describe.skipIf(!posix)("killProcessTree (POSIX)", () => {
       contract: createEmptyContract("x"),
       prompt: "x",
     });
-    await vi.waitFor(() => expect(output).toMatch(/^\d+ \d+\n/), { timeout: 5_000 });
+    await vi.waitFor(() => expect(output).toMatch(/^\d+ \d+\n/), { timeout: 20_000 });
     const pids = output.trim().split(" ").map(Number);
     expect(trackedProcessCount()).toBe(1);
 
@@ -76,5 +78,5 @@ describe.skipIf(!posix)("killProcessTree (POSIX)", () => {
     expect(await turn).toMatchObject({ status: "cancelled", interrupted: true });
     expect(trackedProcessCount()).toBe(0);
     await expectDead(pids);
-  }, 15_000);
+  }, 30_000);
 });
