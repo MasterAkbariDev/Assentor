@@ -43,10 +43,14 @@ import { NegotiationCancelledError, type NegotiationStrategy } from "../strategy
  *    integration never counts as success and never reaches the target.
  *
  * Results: `completed` only when everything landed. A merge conflict (inside the
- * integration worktree or at the target) is `needs_input` with the instructions
- * as `summary` plus a `session.warning` (`kind: "divide.conflict"`); nothing is
- * forced and every worktree is kept. A failed part, a rejected plan or a
- * refusal is `failed`; a cancel is `cancelled`.
+ * integration worktree or at the target) is `failed` with the instructions in
+ * `summary`/`error` plus a `session.warning` (`kind: "divide.conflict"`), like
+ * best-of-n: the Supervisor only stops on failed/timeout/cancelled and would
+ * otherwise review an unchanged target. Nothing is forced and every worktree is
+ * kept. A failed or seat-cancelled part, a rejected plan, a refusal or an
+ * exhausted session budget is `failed`; a cancel of the round is `cancelled`.
+ * Before the final apply the integration worktree's symlinks are checked once
+ * more (nothing writes there, so a late write in a part cannot race it).
  *
  * Cancel: `cancel(taskId)` aborts the round; scheduler jobs stop and their
  * executors are cancelled, and `cancel` resolves when the round has settled.
@@ -327,7 +331,7 @@ interface PartRun {
   applied?: boolean;
 }
 
-/** Added symlinks whose target resolves outside the worktree. */
+/** Symlinks among `files` whose target resolves outside the worktree or into its `.git` / `.assentor`. */
 async function escapingSymlinks(root: string, files: readonly string[]): Promise<string[]> {
   const realRoot = await fs.realpath(root);
   const bad: string[] = [];
@@ -342,7 +346,9 @@ async function escapingSymlinks(root: string, files: readonly string[]): Promise
     }
     const resolved = path.resolve(await fs.realpath(path.dirname(abs)), link);
     const rel = path.relative(realRoot, resolved);
-    if (rel.startsWith("..") || path.isAbsolute(rel)) bad.push(`${file} -> ${link}`);
+    const top = rel.split(path.sep)[0]!.toLowerCase();
+    // Out of the worktree, or into git's or Assentor's own state inside it (e.g. `../.git/hooks`).
+    if (rel.startsWith("..") || path.isAbsolute(rel) || top === ".git" || top === ".assentor") bad.push(`${file} -> ${link}`);
   }
   return bad;
 }
@@ -373,12 +379,13 @@ export function createDivideExecutor(deps: DivideDeps): Executor {
 
   async function execute(taskId: string, task: Omit<ExecutorTask, "taskId" | "projectPath">): Promise<ExecutorResult> {
     round += 1;
-    const tag = `r${round}${randomBytes(2).toString("hex")}`;
+    const tag = `r${round}${randomBytes(4).toString("hex")}`;
     const controller = new AbortController();
     const goal = String(task.contract.goal);
     const runs: PartRun[] = [];
     const integrationKey: SeatKey = { sessionId: deps.sessionId, seatId: `${tag}-int` };
     let integrationCreated = false;
+    let budgetStop: string | undefined;
 
     const fail = (summary: string, error?: string): ExecutorResult => ({ status: "failed", summary, ...(error ? { error } : {}) });
     const cancelled = (): ExecutorResult => ({ status: "cancelled", summary: "divide cancelled" });
@@ -506,9 +513,13 @@ export function createDivideExecutor(deps: DivideDeps): Executor {
             },
           );
           if (!outcome.ok) {
-            if (outcome.scope === "session") controller.abort(); // cancel or session budget: stop the other parts too
+            if (outcome.scope === "session") {
+              if (outcome.reason === "budget") budgetStop ??= outcome.error;
+              controller.abort(); // cancel or session budget: stop the other parts too
+            }
             if (outcome.reason === "cancelled" || controller.signal.aborted) return cancelPart();
-            return failPart(`${outcome.reason}: ${outcome.error}`);
+            // Worded to stay out of `isRetryableExecutorResult`: a retry would rerun the whole round.
+            return failPart(outcome.reason === "timeout" ? `part deadline of ${options.partTimeoutMs} ms exceeded` : `${outcome.reason}: ${outcome.error}`);
           }
           if (controller.signal.aborted) return cancelPart();
           const result = outcome.value;
@@ -544,13 +555,15 @@ export function createDivideExecutor(deps: DivideDeps): Executor {
             }
           }),
         );
+        if (budgetStop) return finish(fail(`divide: the session budget ran out (${budgetStop}); nothing was applied to the target. ${report()}`));
         if (controller.signal.aborted) return finish(cancelled());
-        const failed = waveRuns.filter((r) => r.state === "failed");
-        if (failed.length > 0) {
+        // A part that is not `ok` (failed, or cancelled on its own seat) must never be merged.
+        const notOk = waveRuns.filter((r) => r.state !== "ok" && r.state !== "pending");
+        if (notOk.length > 0) {
           return finish(
             fail(
-              `divide: part ${failed.map((r) => r.part.id).join(", ")} failed; nothing was applied to the target. ${report()}`,
-              failed.map((r) => `${r.part.id}: ${r.reason}`).join("; "),
+              `divide: part ${notOk.map((r) => r.part.id).join(", ")} did not complete; nothing was applied to the target. ${report()}`,
+              notOk.map((r) => `${r.part.id}: ${r.reason}`).join("; "),
             ),
           );
         }
@@ -558,6 +571,7 @@ export function createDivideExecutor(deps: DivideDeps): Executor {
         // --- 4. merge this wave into the integration worktree, in plan order ---
         for (const run of waveRuns) {
           if (controller.signal.aborted) return finish(cancelled());
+          if (run.state !== "ok") continue;
           try {
             const applied = await deps.manager.applyTo(integrationKey, run.key, {
               strategy: "merge",
@@ -577,12 +591,19 @@ export function createDivideExecutor(deps: DivideDeps): Executor {
               sessionId: deps.sessionId,
               data: { kind: "divide.conflict", message: prompt, part: run.part.id, files: applied.conflicts, worktree: run.path, integration: integrationPath },
             });
-            return finish({ status: "needs_input", summary: `divide: ${prompt} ${report()}` });
+            // `failed`, not `needs_input`: the Supervisor would run reviews on an unchanged target and call continue() again.
+            return finish(fail(`divide: ${prompt} ${report()}`, prompt));
           } catch (error) {
             run.state = "failed";
             run.reason = `merge refused: ${error instanceof Error ? error.message : String(error)}`;
             return finish(fail(`divide: part ${run.part.id} could not be merged; nothing was applied to the target. ${report()}`, run.reason));
           }
+        }
+
+        // Nothing writes to the integration worktree, so this check cannot race a late write in a part's worktree.
+        const links = await escapingSymlinks(integrationPath, (await deps.manager.diff(integrationKey)).files);
+        if (links.length > 0) {
+          return finish(fail(`divide: merged work contains symlinks that leave the worktree or point into .git; nothing was applied to the target. ${report()}`, links.slice(0, 5).join(", ")));
         }
       }
 
@@ -603,7 +624,7 @@ export function createDivideExecutor(deps: DivideDeps): Executor {
             sessionId: deps.sessionId,
             data: { kind: "divide.conflict", message: prompt, files: landed.conflicts, integration: integrationPath },
           });
-          return finish({ status: "needs_input", summary: `divide: ${prompt}` });
+          return finish(fail(`divide: ${prompt}`, prompt));
         }
         return {
           status: "completed",

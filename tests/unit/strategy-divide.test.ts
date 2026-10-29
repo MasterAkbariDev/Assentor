@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createId } from "../../src/core/ids.js";
 import { expandSeatSpecs } from "../../src/core/seats.js";
+import { isRetryableExecutorResult } from "../../src/core/retry.js";
 import { createEmptyContract } from "../../src/core/task-contract.js";
 import type { SeatStepRunner } from "../../src/negotiation/engine.js";
 import {
@@ -275,7 +276,7 @@ describe("divide executor: failure paths", () => {
       ]),
     );
     expect(result.status).toBe("failed");
-    expect(result.summary).toContain("part S2 failed; nothing was applied to the target");
+    expect(result.summary).toContain("part S2 did not complete; nothing was applied to the target");
     expect(result.summary).toContain("S3: not run");
     expect(result.error).toContain("S2: executor failed: compile error");
     expect(t.fake.started.sort()).toEqual(["S1", "S2"]);
@@ -349,6 +350,70 @@ describe("divide executor: failure paths", () => {
     expect(good.status).toBe("completed");
   });
 
+  it("never merges half-finished work from a part whose seat was cancelled on its own (scheduler.cancelSeat)", async () => {
+    let t!: Awaited<ReturnType<typeof setup>>;
+    t = await setup(async (part, dir) => {
+      if (part === "S1") {
+        await write(dir, { "a1.ts": "HALF\n" });
+        setTimeout(() => t.scheduler.cancelSeat("sol-1"), 100);
+        await new Promise((r) => setTimeout(r, 5_000));
+      }
+      if (part === "S2") await write(dir, { "b1.ts": "b\n" });
+    });
+    // sol-1 takes S1 (the first waiting part); sol-2 takes S2.
+    const result = await t.run(plan([{ id: "S1", ownedPaths: ["a1.ts"] }, { id: "S2", ownedPaths: ["b1.ts"] }]));
+    expect(result.status).toBe("failed");
+    expect(result.summary).toContain("did not complete");
+    expect(result.error).toContain("S1: cancelled");
+    expect(await exists(path.join(t.repo, "a1.ts"))).toBe(false);
+    expect(await exists(path.join(t.repo, "b1.ts"))).toBe(false);
+    expect(await git(t.repo, "rev-list", "--count", "HEAD")).toBe("1");
+    expectOneTerminalPerStart(t.events);
+  });
+
+  it("fails, not cancelled, when the session budget runs out during a part", async () => {
+    let t!: Awaited<ReturnType<typeof setup>>;
+    t = await setup(async (_part, dir) => {
+      await write(dir, { "a1.ts": "HALF\n" });
+      setTimeout(() => (t.scheduler as unknown as { stopAll(r: string, m: string): void }).stopAll("budget", "token budget used up"), 100);
+      await new Promise((r) => setTimeout(r, 5_000));
+    });
+    const result = await t.run(plan([{ id: "S1", ownedPaths: ["a1.ts"] }]));
+    expect(result.status).toBe("failed");
+    expect(result.summary).toContain("session budget ran out (token budget used up)");
+    expect(await exists(path.join(t.repo, "a1.ts"))).toBe(false);
+  });
+
+  it("refuses a symlink written into a part's worktree after its own check (P6), before anything reaches main", async () => {
+    const dirsByPart: Record<string, string> = {};
+    let t!: Awaited<ReturnType<typeof setup>>;
+    t = await setup(async (part, dir) => {
+      dirsByPart[part] = dir;
+      if (part === "S1") await write(dir, { "owned/x.ts": "x\n" });
+      if (part === "S2") {
+        await until(() => t.events.some((e) => e.type === "seat.done" && e.data.summary === "S1"));
+        await fs.symlink("/etc/hosts", path.join(dirsByPart.S1!, "owned/link"));
+        await write(dir, { "b1.ts": "b\n" });
+      }
+    });
+    const result = await t.run(plan([{ id: "S1", ownedPaths: ["owned"] }, { id: "S2", ownedPaths: ["b1.ts"] }]));
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("owned/link -> /etc/hosts");
+    expect(await exists(path.join(t.repo, "owned"))).toBe(false);
+    expect(await git(t.repo, "rev-list", "--count", "HEAD")).toBe("1");
+  });
+
+  it.each(["../.git/hooks", "../.assentor", "../.GIT/config"])("fails a part whose symlink points into git or Assentor state (%s)", async (target) => {
+    const t = await setup(async (_part, dir) => {
+      await fs.mkdir(path.join(dir, "owned"));
+      await fs.symlink(target, path.join(dir, "owned/h"));
+    });
+    const result = await t.run(plan([{ id: "S1", ownedPaths: ["owned"] }]));
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("owned/h");
+    expect(await exists(path.join(t.repo, "owned"))).toBe(false);
+  });
+
   it("treats an executor that needs input, throws or times out as a failed part", async () => {
     const t = await setup(async (part) => {
       if (part === "S1") return { status: "needs_input", summary: "which db?" };
@@ -364,12 +429,13 @@ describe("divide executor: failure paths", () => {
     const t = await setup(hang);
     const result = await t.run(plan([{ id: "S1", ownedPaths: ["a1"] }]), { options: { partTimeoutMs: 100 } });
     expect(result.status).toBe("failed");
-    expect(result.error).toContain("timeout");
+    expect(result.error).toContain("part deadline of 100 ms exceeded");
+    expect(isRetryableExecutorResult(result)).toBe(false); // the Supervisor must not rerun the whole round
     expect(t.fake.cancelled).toHaveLength(1); // the deadline cancelled the executor
     expectOneTerminalPerStart(t.events);
   });
 
-  it("stops on a merge conflict inside the integration worktree: needs_input, nothing reaches main, no seat left waiting", async () => {
+  it("stops on a merge conflict inside the integration worktree: failed (the Supervisor stops), nothing reaches main, no seat left waiting", async () => {
     const t = await setup(
       async (part, dir) => {
         if (part === "S1") await write(dir, { "s1.txt": "s1\n" });
@@ -400,8 +466,9 @@ describe("divide executor: failure paths", () => {
         { id: "S3", ownedPaths: ["s3.txt"], dependsOn: ["S2"] },
       ]),
     );
-    expect(result.status).toBe("needs_input");
+    expect(result.status).toBe("failed");
     expect(result.summary).toContain("Part S2 conflicts with work already merged (a.txt)");
+    expect(result.error).toContain("Resolve it by hand");
     expect(result.summary).toContain("S1: merged");
     expect(result.summary).toContain("S3: not run");
     expect(t.fake.started.sort()).toEqual(["S1", "S2"]);
@@ -419,7 +486,7 @@ describe("divide executor: failure paths", () => {
     expectOneTerminalPerStart(t.events);
   });
 
-  it("a conflict at the target leaves the target as it was and asks the user", async () => {
+  it("a conflict at the target leaves the target as it was and fails with instructions", async () => {
     const t = await setup(async (_part, dir) => write(dir, { "a.txt": "mine\n" }), {
       manager: (real, repo) => {
         const wrapped = Object.create(real) as WorktreeManager;
@@ -434,8 +501,9 @@ describe("divide executor: failure paths", () => {
       },
     });
     const result = await t.run(plan([{ id: "S1", ownedPaths: ["a.txt"] }]));
-    expect(result.status).toBe("needs_input");
+    expect(result.status).toBe("failed");
     expect(result.summary).toContain("conflicts with the target (a.txt); the target is unchanged");
+    expect(t.events.find((e) => e.type === "session.warning")).toMatchObject({ data: { kind: "divide.conflict", files: ["a.txt"] } });
     expect(await git(t.repo, "status", "--porcelain")).toBe("");
     expect(await fs.readFile(path.join(t.repo, "a.txt"), "utf8")).toBe("main moved\n");
     noWaitingSeat(t.events);
