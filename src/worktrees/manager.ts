@@ -50,7 +50,8 @@ export interface SeatKey {
 }
 
 export type WorktreeState = "creating" | "ready" | "removing";
-export type WorktreeOutcome = "applied" | "failed";
+/** `applied-patch`: the work exists in the target only as staged changes, so the branch is kept. */
+export type WorktreeOutcome = "applied" | "applied-patch" | "failed";
 
 export interface WorktreeInfo extends SeatKey {
   path: string;
@@ -58,6 +59,8 @@ export interface WorktreeInfo extends SeatKey {
   baseSha: string;
   state: WorktreeState;
   outcome?: WorktreeOutcome;
+  /** Seat branch tip that was merged/squashed into a target. */
+  appliedTip?: string;
   createdAt: string;
 }
 
@@ -154,6 +157,8 @@ function samePath(a: string, b: string): boolean {
 
 const LOCK_ERROR_RE = /\.lock'?:? File exists|Unable to create '[^']*\.lock'|unable to lock|another git process/i;
 const LOCK_RETRIES = 5;
+/** Merge and commit steps run user hooks (lint, tests), so they get far longer than plumbing calls. */
+const HOOK_TIMEOUT_MS = 600_000;
 
 interface GitRun {
   stdout: string;
@@ -217,7 +222,10 @@ const RecordSchema = z.object({
   seatId: z.string().regex(SEAT_ID_RE),
   baseSha: z.string().regex(SHA_RE),
   state: z.enum(["creating", "ready", "removing"]),
-  outcome: z.enum(["applied", "failed"]).optional(),
+  outcome: z.enum(["applied", "applied-patch", "failed"]).optional(),
+  appliedTip: z.string().regex(SHA_RE).optional(),
+  /** Branch tip a started removal may delete (compare-and-delete); absent = keep the branch. */
+  removeTip: z.string().regex(SHA_RE).optional(),
   createdAt: z.string(),
 });
 type WorktreeRecord = z.infer<typeof RecordSchema>;
@@ -245,6 +253,7 @@ interface RepoContext {
 
 interface RegisteredWorktree {
   path: string;
+  head?: string;
   branch?: string;
 }
 
@@ -265,8 +274,7 @@ export class WorktreeManager {
    * Refuses when the main checkout is dirty (unless `allowDirtyMain`), when the
    * seat already has a worktree, or when the derived path/branch already exists.
    */
-  async create(sessionId: string, seatId: string, baseRef = "HEAD"): Promise<WorktreeInfo> {
-    const seat = { sessionId, seatId };
+  async create(seat: SeatKey, baseRef = "HEAD"): Promise<WorktreeInfo> {
     assertSeatKey(seat);
     if (!baseRef || baseRef.startsWith("-") || /[\0\s]/.test(baseRef)) {
       throw new WorktreeError(`Invalid base ref: ${JSON.stringify(baseRef)}`);
@@ -294,6 +302,7 @@ export class WorktreeManager {
       if (await this.branchExists(ctx, branch)) {
         throw new WorktreeError(`Refusing to reuse existing branch ${branch}`);
       }
+      await this.assertNoSymlink(ctx, wtPath);
       const resolved = await this.git(ctx.top, ["rev-parse", "--verify", "--quiet", `${baseRef}^{commit}`]);
       const baseSha = resolved.stdout.trim();
       if (resolved.code !== 0 || !SHA_RE.test(baseSha)) {
@@ -302,7 +311,7 @@ export class WorktreeManager {
 
       // Intent first: a crash after this point leaves a `creating` record for reconcile().
       const record: WorktreeRecord = {
-        ...seat,
+        ...keyOf(seat),
         baseSha,
         state: "creating",
         createdAt: new Date().toISOString(),
@@ -314,8 +323,11 @@ export class WorktreeManager {
         await this.gitOk(ctx.top, ["worktree", "add", "-b", branch, "--", wtPath, baseSha]);
       } catch (error) {
         // Roll back what git managed to create; a fresh branch still at base holds no work.
-        if (await this.branchIsDisposable(ctx, record, { unchangedOnly: true }).catch(() => false)) {
-          await this.remove(ctx, manifest, record, false).catch(() => undefined);
+        const tip = await this.registeredWorktrees(ctx)
+          .then((registered) => this.disposableTip(ctx, record, registered, { unchangedOnly: true }))
+          .catch(() => false as const);
+        if (tip !== false) {
+          await this.remove(ctx, manifest, record, false, tip).catch(() => undefined);
         }
         throw error;
       }
@@ -366,9 +378,12 @@ export class WorktreeManager {
   /**
    * Apply a seat's work to `"main"` (the main checkout's current branch) or to
    * another seat's worktree. Pending seat changes are first committed on the
-   * seat branch. The target must be clean. On conflict nothing is left behind:
-   * the target is reset to its previous state and the conflicting files are
-   * returned. `patch` leaves the changes staged but uncommitted.
+   * seat branch, and the tip seen at that moment is what gets applied. The
+   * target must be clean and on a branch, and the seat must not touch
+   * `.assentor/` or any untracked/ignored file present in the target. On any
+   * failure (conflict, hook, timeout) the target is reset to its previous state;
+   * conflicts are returned, other failures rethrown. `patch` leaves the changes
+   * staged but uncommitted and keeps the seat branch.
    */
   async applyTo(
     target: "main" | SeatKey,
@@ -381,9 +396,18 @@ export class WorktreeManager {
       const wt = this.pathFor(ctx, record);
       const branch = worktreeBranch(record);
       let targetPath = ctx.top;
+      let targetBranch: string | undefined;
       if (target !== "main") {
         if (sameSeat(target, seat)) throw new WorktreeError("Cannot apply a worktree to itself");
-        targetPath = this.pathFor(ctx, await this.requireReady(ctx, target));
+        const targetRecord = await this.requireReady(ctx, target);
+        targetPath = this.pathFor(ctx, targetRecord);
+        targetBranch = worktreeBranch(targetRecord);
+      }
+      const targetHead = (await this.git(targetPath, ["symbolic-ref", "--quiet", "HEAD"])).stdout.trim();
+      if (!targetHead || (targetBranch !== undefined && targetHead !== `refs/heads/${targetBranch}`)) {
+        throw new WorktreeError(
+          `Target ${targetPath} is not on ${targetBranch ?? "a branch"} (detached HEAD?); refusing to apply`,
+        );
       }
       if (await this.isDirty(targetPath)) {
         throw new WorktreeError(`Target ${targetPath} has uncommitted changes; refusing to apply`);
@@ -396,19 +420,30 @@ export class WorktreeManager {
       if (await this.isDirty(wt)) {
         await this.gitOk(wt, ["add", "-A"]);
         // Assentor's own gates verify seat work; user hooks run on the real apply below.
-        await this.gitOk(wt, ["commit", "--no-verify", "-m", `assentor: snapshot ${record.seatId}`]);
+        await this.gitOk(wt, [
+          ...(await this.identityFallback(wt)),
+          "commit", "--no-verify", "-m", `assentor: snapshot ${record.seatId}`,
+        ]);
       }
+      // Apply this exact SHA: later seat commits and same-named tags cannot slip in.
       const tip = (await this.gitOk(wt, ["rev-parse", "HEAD"])).stdout.trim();
       if (tip === record.baseSha) {
         return { ok: true, strategy, changed: false };
       }
+      await this.assertSafeToWrite(targetPath, strategy, record.baseSha, tip);
       const message = options.message ?? `assentor: apply ${record.seatId} (${strategy})`;
-      const result = await this.runApply(targetPath, strategy, branch, record.baseSha, tip, message);
+      const result = await this.runApply(targetPath, strategy, record.baseSha, tip, message);
       if (result.ok) {
         const manifest = await this.readManifest(ctx);
         const current = manifest.records.find((r) => sameSeat(r, seat));
         if (current) {
-          current.outcome = "applied";
+          if (strategy === "patch") {
+            current.outcome = "applied-patch";
+            delete current.appliedTip;
+          } else {
+            current.outcome = "applied";
+            current.appliedTip = tip;
+          }
           await this.writeManifest(ctx, manifest);
         }
       }
@@ -443,7 +478,8 @@ export class WorktreeManager {
       if (!options.force && (await exists(wt)) && (await this.isDirty(wt))) {
         throw new WorktreeError(`Worktree ${wt} has uncommitted changes; pass force to discard them`);
       }
-      await this.remove(ctx, manifest, record, options.force ?? false);
+      // Explicit discard: the branch goes even with unmerged commits, but only at the tip seen now.
+      await this.remove(ctx, manifest, record, options.force ?? false, await this.branchTip(ctx, record));
     });
   }
 
@@ -458,9 +494,11 @@ export class WorktreeManager {
     return this.locked(async (ctx) => {
       const report: CleanupReport = { removed: [], kept: [] };
       const manifest = await this.readManifest(ctx);
+      const registered = await this.registeredWorktrees(ctx);
       for (const record of manifest.records.filter((r) => r.sessionId === sessionId)) {
         const key = keyOf(record);
         try {
+          let tip: string | null | undefined;
           if (record.state !== "removing") {
             if (keepFailed && record.outcome === "failed") {
               report.kept.push({ ...key, reason: "failed" });
@@ -471,12 +509,14 @@ export class WorktreeManager {
               report.kept.push({ ...key, reason: "dirty" });
               continue;
             }
-            if (record.outcome !== "applied" && !(await this.branchIsDisposable(ctx, record))) {
+            const disposable = await this.disposableTip(ctx, record, registered);
+            if (disposable === false) {
               report.kept.push({ ...key, reason: "unmerged" });
               continue;
             }
+            tip = disposable;
           }
-          await this.remove(ctx, manifest, record, false);
+          await this.remove(ctx, manifest, record, false, tip);
           report.removed.push(key);
         } catch (error) {
           report.kept.push({ ...key, reason: "error", detail: (error as Error).message });
@@ -503,17 +543,22 @@ export class WorktreeManager {
         const key = keyOf(record);
         const wt = this.pathFor(ctx, record);
         const live = isRegistered(wt) && (await exists(wt));
+        let tip: string | null | false;
         try {
           if (record.state === "creating") {
             if (live) {
               record.state = "ready";
               await this.writeManifest(ctx, manifest);
               report.actions.push({ ...key, action: "completed" });
-            } else if (await this.branchIsDisposable(ctx, record, { unchangedOnly: true })) {
-              await this.remove(ctx, manifest, record, false);
+            } else if ((tip = await this.disposableTip(ctx, record, registered, { unchangedOnly: true })) !== false) {
+              await this.remove(ctx, manifest, record, false, tip);
               report.actions.push({ ...key, action: "rolled-back" });
             } else {
-              report.actions.push({ ...key, action: "failed", detail: `branch ${worktreeBranch(record)} has commits; discard explicitly` });
+              report.actions.push({
+                ...key,
+                action: "failed",
+                detail: `branch ${worktreeBranch(record)} or its worktree holds commits; discard explicitly`,
+              });
             }
           } else if (record.state === "removing") {
             await this.remove(ctx, manifest, record, false);
@@ -560,11 +605,7 @@ export class WorktreeManager {
     const ctx = await this.context();
     return serialize(ctx.top, async () => {
       await fs.mkdir(ctx.root, { recursive: true });
-      // A symlinked .assentor could redirect creation/removal outside the project.
-      const real = await fs.realpath(ctx.root);
-      if (!samePath(real, ctx.root)) {
-        throw new WorktreeError(`${ctx.root} resolves to ${real}; refusing to manage worktrees through a symlink`);
-      }
+      await this.assertNoSymlink(ctx, ctx.root);
       return fn(ctx);
     });
   }
@@ -581,9 +622,14 @@ export class WorktreeManager {
     return { ...r, path: this.pathFor(ctx, r), branch: worktreeBranch(r) };
   }
 
-  private async git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<GitRun> {
+  private async git(
+    cwd: string,
+    args: string[],
+    env?: NodeJS.ProcessEnv,
+    timeoutMs = this.timeoutMs,
+  ): Promise<GitRun> {
     for (let attempt = 0; ; attempt += 1) {
-      const res = await execGit(cwd, args, this.timeoutMs, env);
+      const res = await execGit(cwd, args, timeoutMs, env);
       if (res.code === 0 || attempt >= LOCK_RETRIES || !LOCK_ERROR_RE.test(res.stderr)) {
         return res;
       }
@@ -591,8 +637,13 @@ export class WorktreeManager {
     }
   }
 
-  private async gitOk(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<GitRun> {
-    const res = await this.git(cwd, args, env);
+  private async gitOk(
+    cwd: string,
+    args: string[],
+    env?: NodeJS.ProcessEnv,
+    timeoutMs = this.timeoutMs,
+  ): Promise<GitRun> {
+    const res = await this.git(cwd, args, env, timeoutMs);
     if (res.code !== 0) {
       throw new GitError(res.stderr.trim() || `git ${args.join(" ")} exited ${res.code}`);
     }
@@ -611,27 +662,107 @@ export class WorktreeManager {
     return (await this.git(ctx.top, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])).code === 0;
   }
 
-  /** True when the branch is gone, has no commits past base, or (unless unchangedOnly) is merged into main HEAD. */
-  private async branchIsDisposable(
+  private async branchTip(ctx: RepoContext, record: SeatKey): Promise<string | null> {
+    const res = await this.git(ctx.top, ["rev-parse", "--verify", "--quiet", `refs/heads/${worktreeBranch(record)}`]);
+    return res.code === 0 ? res.stdout.trim() : null;
+  }
+
+  /**
+   * The branch tip that may be deleted without losing work (`null`: no branch),
+   * or `false` when removing the seat would lose commits. Safe means: the seat
+   * worktree (if registered) is on its branch at that tip, and the tip is the
+   * base, the tip that was applied, or (unless `unchangedOnly`) merged into the
+   * main checkout's HEAD.
+   */
+  private async disposableTip(
     ctx: RepoContext,
     record: WorktreeRecord,
+    registered: RegisteredWorktree[],
     options: { unchangedOnly?: boolean } = {},
-  ): Promise<boolean> {
-    const tip = await this.git(ctx.top, ["rev-parse", "--verify", "--quiet", `refs/heads/${worktreeBranch(record)}`]);
-    if (tip.code !== 0) return true;
-    if (tip.stdout.trim() === record.baseSha) return true;
+  ): Promise<string | null | false> {
+    const branch = worktreeBranch(record);
+    const tip = await this.branchTip(ctx, record);
+    const wt = registered.find((w) => samePath(w.path, this.pathFor(ctx, record)));
+    // Commits on a detached HEAD or another branch in the seat worktree would vanish with it.
+    if (wt && (wt.branch !== branch || wt.head !== tip)) return false;
+    if (tip === null || tip === record.baseSha) return tip;
     if (options.unchangedOnly) return false;
-    return (await this.git(ctx.top, ["merge-base", "--is-ancestor", tip.stdout.trim(), "HEAD"])).code === 0;
+    if (record.outcome === "applied" && record.appliedTip === tip) return tip;
+    return (await this.git(ctx.top, ["merge-base", "--is-ancestor", tip, "HEAD"])).code === 0 ? tip : false;
+  }
+
+  /** `-c` identity for internal commits, only for the parts the user has not configured. */
+  private async identityFallback(cwd: string): Promise<string[]> {
+    const args: string[] = [];
+    if ((await this.git(cwd, ["config", "--get", "user.name"])).code !== 0) args.push("-c", "user.name=Assentor");
+    if ((await this.git(cwd, ["config", "--get", "user.email"])).code !== 0) args.push("-c", "user.email=assentor@localhost");
+    return args;
+  }
+
+  /** Refuse when `p` (or its deepest existing ancestor) is reached through a symlink. */
+  private async assertNoSymlink(ctx: RepoContext, p: string): Promise<void> {
+    for (let dir = p; samePath(dir, ctx.root) || isInside(ctx.root, dir); dir = path.dirname(dir)) {
+      let real: string;
+      try {
+        real = await fs.realpath(dir);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      if (!samePath(real, dir)) {
+        throw new WorktreeError(`${dir} resolves to ${real}; refusing to manage worktrees through a symlink`);
+      }
+      return;
+    }
+  }
+
+  /**
+   * Git overwrites untracked and ignored files when a merge brings in the same
+   * path (e.g. a seat force-adding `.env`). Refuse those, and any change to
+   * Assentor's own state under `.assentor/`. Compared case-insensitively so it
+   * also holds on macOS/Windows file systems.
+   */
+  private async assertSafeToWrite(targetPath: string, strategy: ApplyStrategy, baseSha: string, tip: string): Promise<void> {
+    let from = baseSha;
+    if (strategy !== "patch") {
+      const mergeBase = await this.git(targetPath, ["merge-base", "HEAD", tip]);
+      if (mergeBase.code === 0) from = mergeBase.stdout.trim();
+    }
+    const changed = (await this.gitOk(targetPath, ["diff-tree", "-r", "--name-only", "--no-renames", "-z", from, tip])).stdout
+      .split("\0")
+      .filter(Boolean);
+    const internal = changed.filter((p) => {
+      const lower = p.toLowerCase();
+      return lower === ASSENTOR_DIR || lower.startsWith(`${ASSENTOR_DIR}/`);
+    });
+    if (internal.length > 0) {
+      throw new WorktreeError(`Seat work changes Assentor state (${internal.join(", ")}); refusing to apply`);
+    }
+    const present = (await this.gitOk(targetPath, [
+      "status", "--porcelain", "-z", "--ignored=matching", "--untracked-files=normal",
+    ])).stdout
+      .split("\0")
+      .filter((entry) => entry.startsWith("?? ") || entry.startsWith("!! "))
+      .map((entry) => entry.slice(3).toLowerCase());
+    const clobbered = changed.filter((p) => {
+      const lower = p.toLowerCase();
+      return present.some((e) => e === lower || (e.endsWith("/") && lower.startsWith(e)));
+    });
+    if (clobbered.length > 0) {
+      throw new WorktreeError(
+        `Applying would overwrite untracked or ignored files in ${targetPath}: ${clobbered.join(", ")}`,
+      );
+    }
   }
 
   private async registeredWorktrees(ctx: RepoContext): Promise<RegisteredWorktree[]> {
     const out = (await this.gitOk(ctx.top, ["worktree", "list", "--porcelain", "-z"])).stdout;
     const list: RegisteredWorktree[] = [];
     for (const field of out.split("\0")) {
+      const last = list[list.length - 1];
       if (field.startsWith("worktree ")) list.push({ path: field.slice("worktree ".length) });
-      else if (field.startsWith("branch ") && list.length > 0) {
-        list[list.length - 1]!.branch = field.slice("branch refs/heads/".length);
-      }
+      else if (field.startsWith("HEAD ") && last) last.head = field.slice("HEAD ".length);
+      else if (field.startsWith("branch ") && last) last.branch = field.slice("branch refs/heads/".length);
     }
     return list;
   }
@@ -644,19 +775,37 @@ export class WorktreeManager {
         `No ready worktree for ${seat.sessionId}/${seat.seatId}${record ? ` (state: ${record.state}; run reconcile)` : ""}`,
       );
     }
-    if (!(await exists(this.pathFor(ctx, record)))) {
+    const wt = this.pathFor(ctx, record);
+    await this.assertNoSymlink(ctx, wt);
+    if (!(await exists(wt))) {
       throw new WorktreeError(`Worktree for ${seat.sessionId}/${seat.seatId} is missing on disk; discard it`);
     }
     return record;
   }
 
-  /** Idempotent removal of a recorded worktree and its branch, intent recorded first. */
-  private async remove(ctx: RepoContext, manifest: Manifest, record: WorktreeRecord, force: boolean): Promise<void> {
-    if (record.state !== "removing") {
+  /**
+   * Idempotent removal of a recorded worktree and its branch, intent recorded
+   * first. `tip` is the branch tip the caller verified as safe to delete (`null`:
+   * none); `undefined` keeps the tip stored by an earlier, interrupted removal.
+   * The branch is deleted compare-and-delete, so a branch that moved is kept.
+   */
+  private async remove(
+    ctx: RepoContext,
+    manifest: Manifest,
+    record: WorktreeRecord,
+    force: boolean,
+    tip?: string | null,
+  ): Promise<void> {
+    if (record.state !== "removing" || tip !== undefined) {
       record.state = "removing";
+      if (tip !== undefined) {
+        if (tip === null) delete record.removeTip;
+        else record.removeTip = tip;
+      }
       await this.writeManifest(ctx, manifest);
     }
     const wt = this.pathFor(ctx, record);
+    await this.assertNoSymlink(ctx, wt);
     const registered = await this.registeredWorktrees(ctx);
     if (samePath(wt, ctx.top) || samePath(wt, registered[0]?.path ?? ctx.top)) {
       throw new WorktreeError("Refusing to remove the main checkout");
@@ -669,7 +818,11 @@ export class WorktreeManager {
     }
     const branch = worktreeBranch(record);
     if (await this.branchExists(ctx, branch)) {
-      await this.gitOk(ctx.top, ["branch", "-D", branch]);
+      if (!record.removeTip) {
+        throw new WorktreeError(`Branch ${branch} was not verified for deletion; keeping it (discard to remove)`);
+      }
+      // Atomic check-and-delete: fails, keeping the branch, if it moved since it was verified.
+      await this.gitOk(ctx.top, ["update-ref", "-d", `refs/heads/${branch}`, record.removeTip]);
     }
     manifest.records = manifest.records.filter((r) => r !== record);
     await this.writeManifest(ctx, manifest);
@@ -680,7 +833,6 @@ export class WorktreeManager {
   private async runApply(
     targetPath: string,
     strategy: ApplyStrategy,
-    branch: string,
     baseSha: string,
     tip: string,
     message: string,
@@ -689,7 +841,11 @@ export class WorktreeManager {
       const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "assentor-patch-"));
       try {
         const patchFile = path.join(tmp, "seat.patch");
-        const patch = (await this.gitOk(targetPath, ["diff", "--binary", baseSha, tip])).stdout;
+        // Plumbing: no external diff drivers, textconv, colour or custom prefixes from user config.
+        const patch = (await this.gitOk(targetPath, ["diff-tree", "-p", "--binary", "--full-index", baseSha, tip])).stdout;
+        if (!patch.trim()) {
+          throw new WorktreeError(`Seat commits ${baseSha.slice(0, 12)}..${tip.slice(0, 12)} have no net changes; nothing to patch`);
+        }
         await fs.writeFile(patchFile, patch);
         // `git apply` is atomic: on any failure nothing is written.
         const res = await this.git(targetPath, ["apply", "--index", "--", patchFile]);
@@ -701,28 +857,46 @@ export class WorktreeManager {
       }
     }
 
+    const before = (await this.gitOk(targetPath, ["rev-parse", "HEAD"])).stdout.trim();
     const args =
       strategy === "merge"
-        ? ["merge", "--no-ff", "-m", message, branch]
-        : ["merge", "--squash", branch];
-    const before = (await this.gitOk(targetPath, ["rev-parse", "HEAD"])).stdout.trim();
-    const res = await this.git(targetPath, args);
-    if (res.code !== 0) {
-      const conflicts = (await this.git(targetPath, ["diff", "--name-only", "--diff-filter=U", "-z"])).stdout
-        .split("\0")
-        .filter(Boolean);
-      // Target was clean before, so this restores it exactly (no partial merge left behind).
-      await this.gitOk(targetPath, ["reset", "--merge"]);
-      return { ok: false, strategy, conflicts, message: (res.stderr || res.stdout).trim() };
-    }
-    if (strategy === "squash") {
-      if ((await this.git(targetPath, ["diff", "--cached", "--quiet"])).code === 0) {
-        return { ok: true, strategy, changed: false };
+        ? ["merge", "--no-ff", "-m", message, tip]
+        : ["merge", "--squash", tip];
+    try {
+      const res = await this.git(targetPath, args, undefined, HOOK_TIMEOUT_MS);
+      if (res.code !== 0) {
+        const conflicts = (await this.git(targetPath, ["diff", "--name-only", "--diff-filter=U", "-z"])).stdout
+          .split("\0")
+          .filter(Boolean);
+        await this.restoreTarget(targetPath);
+        return { ok: false, strategy, conflicts, message: (res.stderr || res.stdout).trim() };
       }
-      await this.gitOk(targetPath, ["commit", "-m", message]);
+      if (strategy === "squash") {
+        if ((await this.git(targetPath, ["diff", "--cached", "--quiet"])).code === 0) {
+          return { ok: true, strategy, changed: false };
+        }
+        await this.gitOk(targetPath, ["commit", "-m", message], undefined, HOOK_TIMEOUT_MS);
+      }
+      const commit = (await this.gitOk(targetPath, ["rev-parse", "HEAD"])).stdout.trim();
+      return { ok: true, strategy, changed: commit !== before, commit };
+    } catch (error) {
+      // Hook failure, timeout or kill mid-merge: never leave a partial merge behind.
+      try {
+        await this.restoreTarget(targetPath);
+      } catch (restoreError) {
+        throw new WorktreeError(
+          `Apply failed (${(error as Error).message}) and restoring ${targetPath} also failed ` +
+            `(${(restoreError as Error).message}); inspect it by hand`,
+          { cause: error },
+        );
+      }
+      throw error;
     }
-    const commit = (await this.gitOk(targetPath, ["rev-parse", "HEAD"])).stdout.trim();
-    return { ok: true, strategy, changed: commit !== before, commit };
+  }
+
+  /** The target was verified clean before applying, so this restores it exactly. */
+  private async restoreTarget(targetPath: string): Promise<void> {
+    await this.gitOk(targetPath, ["reset", "--merge"]);
   }
 
   private async readManifest(ctx: RepoContext): Promise<Manifest> {
