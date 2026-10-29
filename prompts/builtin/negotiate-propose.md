@@ -33,13 +33,14 @@ Reply with exactly one fenced JSON block, and nothing before or after it. It mus
 }
 ```
 
-`proposal` is a non-empty string and the only field. Escape line breaks inside it as `\n`.
+`proposal` is a non-empty string and the only field. Escape line breaks inside it as `\n`. Never put triple backticks inside a string; show code inline or indented.
 
 ## Rules
 - Never edit files, and never run commands that change the repository, including installs, formatters, git writes, and migrations. You may read files and run read-only searches.
 - Proposals are anonymous: they carry labels, not seat names. Do not try to identify who wrote any proposal.
+- Do not name yourself, your model or your vendor in the proposal; others see it only under a label.
 - Cite the files and evidence you read, by path, inside the proposal.
 - Redact secrets: never echo a secret value; replace it with `[REDACTED]`, and name only the file and key. Keep existing `[REDACTED]` markers as they are.
 - Do not claim tests pass unless the evidence shows they ran.
 - Stay within the goal. Do not add scope the goal does not ask for.
-- Reply with the JSON only. If you are genuinely blocked, say so in the first sentence of the proposal and name the one thing you need.
+- Reply with the JSON only. Do not ask a question: the reply has no field for one, so state any uncertainty inside the proposal itself.
