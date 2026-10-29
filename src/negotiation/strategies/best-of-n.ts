@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { realpath } from "node:fs";
 import path from "node:path";
+import { promisify } from "node:util";
 import { resolveVerificationCommands } from "../../config/detect-commands.js";
 import type { AssentorConfig } from "../../config/schema.js";
 import type { Seat } from "../../core/seats.js";
@@ -15,6 +16,7 @@ import { runVerificationGates, type RunVerificationCommand } from "../../review/
 import type { SeatScheduler } from "../../seats/scheduler.js";
 import {
   worktreeBranch,
+  worktreeRelativePath,
   type SeatKey,
   type WorktreeManager,
 } from "../../worktrees/index.js";
@@ -77,6 +79,9 @@ import { voteStrategy } from "./vote.js";
  * the permanent `scheduler.cancelAll`. Finished candidates are kept; only
  * candidates cancelled mid-edit are discarded when `keepLosers` is false.
  */
+
+/** Native realpath resolves Windows 8.3 short names, which the plain one keeps. */
+const nativeRealpath = promisify(realpath.native);
 
 export const BEST_OF_N_STRATEGY_ID = "best-of-n";
 
@@ -197,23 +202,42 @@ interface Candidate {
   text?: string;
 }
 
-/** Seat ids of best-of-n worktrees end in `.r<round><8 hex>` (see the round tag). */
-const ROUND_TAG = /\.r\d+[0-9a-f]{8}$/;
+/** Seat ids of best-of-n worktrees end in `.bon-r<round><8 hex>`; no other strategy or user seat id matches. */
+const ROUND_TAG = /\.bon-r\d+[0-9a-f]{8}$/;
 
 /**
- * Session-end cleanup for kept losers: discards (through the manager) every
- * best-of-n worktree of the session that was not applied. Call it once the
- * session is over; winners that landed are removed by `manager.cleanup`.
+ * Session-end cleanup for kept losers: discards (through the manager) the
+ * best-of-n worktrees of the session that were neither applied nor, with
+ * `keepFailed` (the default, as in `manager.cleanup`), marked failed. Failed
+ * ones are the ones a round kept on purpose: a winner whose `applyTo` was
+ * refused (the only copy of the winning work) and candidates that finished
+ * before a cancel or budget stop. Winners that landed are removed by
+ * `manager.cleanup`. Pass `keepFailed: false` only to throw all of it away.
  */
-export async function discardBestOfNLosers(manager: WorktreeManager, sessionId: string): Promise<SeatKey[]> {
+export async function discardBestOfNLosers(
+  manager: WorktreeManager,
+  sessionId: string,
+  options: { keepFailed?: boolean } = {},
+): Promise<SeatKey[]> {
+  const keepFailed = options.keepFailed ?? true;
   const discarded: SeatKey[] = [];
   for (const info of await manager.list(sessionId)) {
-    if (ROUND_TAG.test(info.seatId) && info.outcome !== "applied") {
+    if (
+      ROUND_TAG.test(info.seatId) &&
+      info.outcome !== "applied" &&
+      !(keepFailed && info.outcome === "failed")
+    ) {
       await manager.discard({ sessionId, seatId: info.seatId }, { force: true });
       discarded.push({ sessionId, seatId: info.seatId });
     }
   }
   return discarded;
+}
+
+/** Replace a worktree's absolute path and its repository-relative form (both slash styles) by `<worktree>`. */
+function redact(text: string, absolute: string, key: SeatKey): string {
+  const relative = worktreeRelativePath(key);
+  return [absolute, relative, relative.replaceAll("/", "\\")].reduce((t, p) => t.split(p).join("<worktree>"), text);
 }
 
 /** Deterministic Fisher-Yates with a mulberry32 stream; the same seed gives the same order. */
@@ -344,7 +368,7 @@ export function createBestOfNExecutor(deps: BestOfNDeps): Executor {
           : diff.diff;
       cand.gatesPassed = gate.passed;
       // The worktree path contains the seat id; judges must not see it in the gate output or the diff.
-      cand.text = `${gate.text}\n\nFiles changed: ${diff.files.join(", ")}\n\n${shown}`.split(cand.path).join("<worktree>");
+      cand.text = redact(`${gate.text}\n\nFiles changed: ${diff.files.join(", ")}\n\n${shown}`, cand.path, key);
       cand.ok = true;
       seatEvent(c.seat.id, "seat.done", { ok: true, summary: "candidate complete" });
     } catch (error) {
@@ -436,8 +460,8 @@ export function createBestOfNExecutor(deps: BestOfNDeps): Executor {
     projectPath: string,
   ): Promise<ExecutorResult> {
     if (target === "main") {
-      const top = await deps.manager.topLevel();
-      const given = await fs.realpath(projectPath).catch(() => path.resolve(projectPath));
+      const top = await nativeRealpath(await deps.manager.topLevel());
+      const given = await nativeRealpath(projectPath).catch(() => path.resolve(projectPath));
       const same = process.platform === "win32" ? given.toLowerCase() === top.toLowerCase() : given === top;
       if (!same) {
         return {
@@ -449,7 +473,7 @@ export function createBestOfNExecutor(deps: BestOfNDeps): Executor {
     round += 1;
     const seed = deps.roundSeed ? deps.roundSeed() >>> 0 : randomBytes(4).readUInt32BE();
     const seedHex = seed.toString(16).padStart(8, "0");
-    const tag = `r${round}${seedHex}`;
+    const tag = `bon-r${round}${seedHex}`;
     const controller = new AbortController();
     const cands: Candidate[] = candidates.map((c) => ({
       c,

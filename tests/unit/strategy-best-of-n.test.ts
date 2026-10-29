@@ -202,7 +202,7 @@ describe("best-of-n: happy path", () => {
       [beta.id, "applied"],
       [gamma.id, "kept"],
     ]);
-    left.forEach((w) => expect(w.seatId).toMatch(/\.r1[0-9a-f]{8}$/));
+    left.forEach((w) => expect(w.seatId).toMatch(/\.bon-r1[0-9a-f]{8}$/));
     // The host discards kept losers at session end, through the manager.
     expect(await discardBestOfNLosers(s.manager, SESSION)).toHaveLength(2);
     expect((await s.manager.list(SESSION)).map((w) => w.seatId.split(".")[0])).toEqual([beta.id]);
@@ -339,7 +339,7 @@ describe("best-of-n: failures", () => {
         },
         runVerificationCommand: async (_c, cwd) => {
           await fs.writeFile(path.join(cwd, "cov.tmp"), "artifact\n"); // a gate artifact
-          return { stdout: "", stderr: `boom at ${cwd}`, code: 2 };
+          return { stdout: "", stderr: `boom at ${cwd} and ${path.relative(s.repo, cwd)}`, code: 2 };
         },
       },
       (judge, proposals) => prefer(judge === "judge-1" ? "alpha.txt" : "beta.txt")(judge, proposals),
@@ -393,6 +393,12 @@ describe("best-of-n: failures", () => {
     expect(left).toHaveLength(2); // the loser is kept too
     const winner = left.find((w) => w.seatId.startsWith(alpha.id));
     expect(winner).toMatchObject({ outcome: "failed" });
+    // The host's session-end cleanup discards the plain loser but never the refused winner's only copy.
+    expect(await discardBestOfNLosers(s.manager, SESSION)).toHaveLength(1);
+    const afterCleanup = await s.manager.list(SESSION);
+    expect(afterCleanup.map((w) => w.seatId)).toEqual([winner!.seatId]);
+    await expect(fs.access(winner!.path)).resolves.toBeUndefined();
+    await expect(fs.access(path.join(winner!.path, "alpha.txt"))).resolves.toBeUndefined();
   });
 });
 
@@ -452,6 +458,11 @@ describe("best-of-n: cancel", () => {
     expect(left).toHaveLength(2);
     left.forEach((w) => expect(w.outcome).toBe("failed"));
     expect(await Promise.all(left.map((w) => fs.access(w.path).then(() => true)))).toEqual([true, true]);
+    // ...and the session-end helper leaves them alone unless asked to drop failed ones too.
+    expect(await discardBestOfNLosers(s.manager, SESSION)).toEqual([]);
+    expect(await s.manager.list(SESSION)).toHaveLength(2);
+    expect(await discardBestOfNLosers(s.manager, SESSION, { keepFailed: false })).toHaveLength(2);
+    expect(await s.manager.list(SESSION)).toEqual([]);
     for (const seat of [alpha, beta, ...judges]) {
       expect(terminal(s.events, seat.id)).toHaveLength(1);
     }
