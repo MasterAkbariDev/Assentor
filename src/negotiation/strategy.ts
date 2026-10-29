@@ -17,7 +17,7 @@ import type { EngineEventData } from "../protocol/events.js";
  * - Implementation steps (best-of-n in worktrees, T02-06) are not in this
  *   contract yet: those cards extend `NEGOTIATION_STEPS` and the reply schemas
  *   under Opus review. Divide-and-conquer (T02-08) adds only `divide-plan`; its
- *   parts run through injected executors, not through `askSeat`.
+ *   parts run as executors in worktrees (strategies/divide.ts), not as asks.
  * - Replies are validated with the step's schema (`STEP_REPLY_SCHEMAS`); an
  *   invalid reply is recorded as dissent, not thrown.
  * - Cancellation: check `ctx.signal` between rounds; `ctx.askSeat` rejects with
@@ -232,12 +232,7 @@ export type NegotiationEventInput =
   | { type: "negotiation.proposal"; seatId?: string; data: EngineEventData<"negotiation.proposal"> }
   | { type: "negotiation.critique"; seatId?: string; data: EngineEventData<"negotiation.critique"> }
   | { type: "negotiation.vote"; seatId?: string; data: EngineEventData<"negotiation.vote"> }
-  | { type: "negotiation.consensus"; seatId?: string; data: EngineEventData<"negotiation.consensus"> }
-  /** Strategies that run work outside `askSeat` (divide: T02-08) report their seats with these. */
-  | { type: "seat.status"; seatId?: string; data: EngineEventData<"seat.status"> }
-  | { type: "seat.done"; seatId?: string; data: EngineEventData<"seat.done"> }
-  | { type: "seat.error"; seatId?: string; data: EngineEventData<"seat.error"> }
-  | { type: "session.warning"; seatId?: string; data: EngineEventData<"session.warning"> };
+  | { type: "negotiation.consensus"; seatId?: string; data: EngineEventData<"negotiation.consensus"> };
 
 export interface NegotiationContext {
   readonly sessionId: string;

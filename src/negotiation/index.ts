@@ -29,14 +29,20 @@ export {
 } from "./strategy.js";
 export { registerStrategy, getStrategy, listStrategies } from "./strategies/index.js";
 export {
-  createDivideStrategy,
+  createDivideExecutor,
+  createPlanStrategy,
+  parseDivideOptions,
+  buildSplitPlanSchema,
   SplitPlanSchema,
   SubtaskSchema,
   DividePathSchema,
+  DIVIDE_STRATEGY_ID,
   planWaves,
   pathsOverlap,
   isOwned,
   type DivideDeps,
+  type DivideOptions,
+  type DivideWorker,
   type SplitPlan,
   type Subtask,
 } from "./strategies/divide.js";
