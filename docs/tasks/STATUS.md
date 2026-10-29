@@ -54,15 +54,15 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**32 of 80 cards done** (2026-10-29; follow-ups FU-01…05, gate fixes G-1, G-5). By tier: 🟢 Haiku 22/41 · 🟡 Sonnet-tier 5/17 · 🔴 Opus-tier 5/22. Tests: 1496 passing.
+**34 of 80 cards done** (2026-10-29; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 22/41 · 🟡 Sonnet-tier 5/17 · 🔴 Opus-tier 7/22. Tests: 1609 passing. Core (Phases 0–3 + 2b) left: 18 cards.
 
 | Phase | Done | Open |
 |---|---|---|
 | 0 Foundations | 9/9 | — |
-| 1 Review & models | 6/7 | T01-05 model switch (🔴, Opus implementing) |
-| 2 Negotiate | 6/10 | T02-01 worktrees (fixing O2 data-loss findings), T02-09 stage graph (Opus implementing), T02-06/08 (need T02-01) |
-| 2b Lead & modes | 5/19 | T02B-01b registry (in review), then T02B-17, T02B-07, T02B-02 |
-| 3 Prompt library | 5/6 | T03-04 playbooks (needs T02-09) |
+| 1 Review & models | 6/7 | T01-05 model switch (O2 PASS after 3 rounds; waiting for user sign-off) |
+| 2 Negotiate | 8/10 | T02-06 best-of-N, T02-08 divide (Sonnet) |
+| 2b Lead & modes | 5/19 (+01b) | T02B-01 controller contract, T02B-07 classifier, T02B-17 CLI, then T02B-02 Lead and the modes |
+| 3 Prompt library | 5/6 | T03-04 playbooks |
 | 4 Engine & web UI | 1/17 | web preview fast path merged (§6); rest paused (core first) |
 | 5 Desktop | 0/12 | — |
 
@@ -135,17 +135,10 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 
 **Planner handover (user, 2026-10-29):** session "Repository status review" (Opus) is the planner again; "Multi-model CLI app architecture" stays idle. The user asked for parallel subagents to finish faster. Found on takeover: merged since the last STATUS edit — T02-02 seat scheduler (`a7c8732`), T02-04 vote (`e516ff4`), T02B-05 Lead board (`f875a48`), T01-03 panel policies + T00-08 CI matrix (`2292270`). Uncommitted in this worktree: the previous planner's **T02-03 negotiation engine** (`src/negotiation/engine.ts`, test, export) — gate green, under O2 review now. Unmerged on side branches: T02B-03 report parser (`claude/haiku-two-cards-fd2328`, `bd5fdf9`, review fixes in), T02-05 debate (`claude/priceless-kirch-952d9c`, `9483d1f`), T02-07 synthesize (`claude/youthful-galileo-a41523`, `2ec5361`) — all under review now. New implementer subagents (own worktrees `card-*` off integration): T02B-04, T02B-08, T02B-17 (Haiku), T02-01 worktree manager (Opus, 🔴, O2 + sign-off). Gate on takeover: 1,277 tests green.
 
-**Parallel wave (2026-10-29, live — each card on its own branch/worktree `claude/card-*`, merged by the planner after review):**
-- ✅ Merged: T02-07 synthesize (`2dae7c0`), T02B-04 roster (`eb64ae5`), T02B-03 report parser (`95113db`), T02B-08 auto router (`f1ca175`), T02-05 debate (`f72f60f`, with an Opus no-voter guard `8245d53`). Optional follow-ups are on each card.
-- ✅ T02-03 negotiation engine merged (`db3a8a4`): O2 PASS at `83159aa`; user signed off on one file per run, nothing saved on cancel, refusing a reused runId. Known limit: late `seat.done` events after a strategy bug; a crash mid-write blocks a rerun of that runId.
-- T02-01 worktree manager (`claude/card-t02-01`): O2 rounds 1–3 found data-loss paths (ignored files overwritten in both clash directions, post-apply commits deleted, detached commits lost, hook failure leaving main dirty, "HEAD moved" taken as proof of an apply). All but the last fixed at `679edd3`; Opus fixing the last; then O2 and **user sign-off**.
-- T02B-01b registry + autonomy (`claude/card-t02b-01b`, `3475843`): **O2 PASS after 3 rounds** (project layer wins again; TUI save keeps the user file's own `run`). Waiting for **user sign-off**: unknown `--mode` errors with a hint; `review` unavailable; only `solo` runnable of 17; `assentor init` still pins `mode: supervised`.
-- T01-05 model switch (`claude/card-t01-05`, `97763b0`): O2 CHANGES REQUIRED — cursor interrupt killed every tracked process; the new `ps`-snapshot kill-tree blocked the event loop (4 `ps` calls, 1.3 s per interrupt). Opus fixing; then O2 and **user sign-off**.
-- T02-09 stage-graph runner (`claude/card-t02-09`, `398fd88`): implemented (SessionRunner, graph.json persistence, debate tiebreak, coordinator guard); `--playbook` CLI deferred to T03-04. O2 review running; then **user sign-off**.
-- ✅ T03-03b negotiation prompts merged (`7b3a0cd`) after an Opus prompt-quality NEEDS_WORK round (proposal text is data, fixed label list, `<proposal>` tags, no backticks in JSON strings).
-- ✅ FU-06 merged: `rememberBinary` no longer wipes a user config whose YAML does not parse (or is not a mapping); its write is atomic and goes through a symlinked config; the TUI reloads the config after each edit-prompt round trip. Left: `saveConfig` in `src/config/load.ts` is still a plain `writeFile` (not atomic).
-- ✅ T02B-08 router review follow-ups merged (`4884c13`).
-- Next once these land: T02-06 best-of-N and T02-08 divide (Sonnet, need T02-01), T02B-17 (Haiku, needs T02B-01b), T02B-07 danger classifier, T03-04 playbooks (needs T02-09), T02B-01 rest (controller contract, needs T02-09).
+**Parallel wave (2026-10-29) — merged so far:** T02-07 synthesize (`2dae7c0`), T02B-04 roster (`eb64ae5`), T02B-03 report parser (`95113db`), T02B-08 auto router (`f1ca175`, follow-ups `4884c13`), T02-05 debate (`f72f60f`), T02-03 negotiation engine (`db3a8a4`), T03-03b negotiation prompts (`7b3a0cd`), FU-06 config safety (`885b5cd`), **T02-01 worktree manager (`3f17a20`), T02-09 stage-graph runner (`07392f5`), T02B-01b mode registry + autonomy (`2c28797`)** — the last three O2 PASS and signed off by the user on 2026-10-29. Card notes record each sign-off and known limit.
+- T01-05 model switch (`claude/card-t01-05`, `6cb9933`): **O2 PASS after 3 rounds**; waiting for **user sign-off** (shared kill-tree change: one `ps` snapshot per kill burst, 500 ms cap, falls back to today's behaviour under heavy load; TUI `m` → T01-06; `run`/`modelChoices` wiring → engine API; panel/reviewer switching refused; brief red `seat.done` on an interrupt-restart).
+- Follow-ups to file: FU-07 kill-tree SIGSTOP the root before the `ps` snapshot plus an async `ps` fallback; `setModel` rejecting invalid ids itself (defence in depth); manifest lock for the worktree manager before two Assentor processes share a repo; per-session lock + grace timeout in the session host; `saveConfig` atomic write.
+- Next wave (started 2026-10-29): T02-06 best-of-N and T02-08 divide (Sonnet), T02B-17 modes CLI and T03-04 playbooks (Haiku), T02B-01 controller contract and T02B-07 danger classifier (Opus).
 
 **Direction (user, 2026-10-27): core engine first.** After the Haiku agents finish their current cards, UI and app work (rest of Phase 4, Phase 5) pauses. Finish the core (Phases 0–3, 2b) first, then build the UI and apps on top of it.
 
