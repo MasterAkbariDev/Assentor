@@ -6,8 +6,10 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createBestOfNExecutor,
+  discardBestOfNLosers,
   expandSeatSpecs,
   parseBestOfNOptions,
+  shuffleWithSeed,
   WorktreeManager,
   type BestOfNDeps,
   type EngineEventDraft,
@@ -107,25 +109,27 @@ interface Setup {
   build(
     executors: Executor[],
     extra?: Partial<BestOfNDeps>,
-    rank?: (seatId: string) => string[],
+    rank?: (seatId: string, proposals: Array<{ label: string; text: string }>) => string[],
   ): Executor;
 }
 
 async function setup(): Promise<Setup> {
   const repo = await makeRepo();
+  currentRepo = repo;
   const manager = new WorktreeManager({ repoPath: repo });
   const events: EngineEventDraft[] = [];
   const asks: Setup["asks"] = [];
+  const seeds = [3, 5, 11, 13];
   return {
     repo,
     manager,
     events,
     asks,
-    build(executors, extra = {}, rank = () => ["Proposal A", "Proposal B", "Proposal C"]) {
+    build(executors, extra = {}, rank = (_seat, proposals) => proposals.map((p) => p.label)) {
       const runStep: SeatStepRunner = async ({ seat, step, vars }) => {
         if (step !== "negotiate-rank") throw new Error(`unexpected step ${step}`);
         asks.push({ seatId: seat.id, vars });
-        return { ranking: rank(seat.id).slice(0, (vars.proposals as unknown[]).length) };
+        return { ranking: rank(seat.id, vars.proposals as Array<{ label: string; text: string }>) };
       };
       return createBestOfNExecutor({
         manager,
@@ -134,6 +138,7 @@ async function setup(): Promise<Setup> {
         runStep,
         candidates: executors.map((executor, i) => ({ seat: candidateSeats[i]!, executor })),
         judges,
+        roundSeed: () => seeds.shift() ?? 7,
         emit: (draft) => events.push(draft),
         ...extra,
       });
@@ -141,9 +146,21 @@ async function setup(): Promise<Setup> {
   };
 }
 
+/** A ballot that ranks proposals mentioning these files first, in this order. */
+const prefer =
+  (...files: string[]) =>
+  (_seat: string, proposals: Array<{ label: string; text: string }>) => {
+    const score = (p: { text: string }) => {
+      const i = files.findIndex((f) => p.text.includes(f));
+      return i < 0 ? files.length : i;
+    };
+    return [...proposals].sort((x, y) => score(x) - score(y)).map((p) => p.label);
+  };
+
+let currentRepo = "";
 const task = (): ExecutorTask => ({
   taskId: "task-1",
-  projectPath: "/unused",
+  projectPath: currentRepo,
   contract: createEmptyContract("Add a feature"),
   prompt: "Add a feature",
 });
@@ -152,13 +169,13 @@ const terminal = (events: EngineEventDraft[], seatId: string) =>
   events.filter((e) => e.seatId === seatId && (e.type === "seat.done" || e.type === "seat.error"));
 
 describe("best-of-n: happy path", () => {
-  it("runs every candidate in its own worktree, applies only the vote winner and discards the rest", async () => {
+  it("runs every candidate in its own worktree, applies only the vote winner and keeps the rest until the host discards them", async () => {
     const s = await setup();
     const a = writes("one.txt");
     const b = writes("two.txt");
     const c = writes("three.txt");
-    // Both judges rank B first, then A, then C.
-    const bon = s.build([a, b, c], {}, () => ["Proposal B", "Proposal A", "Proposal C"]);
+    // Both judges rank two.txt first, whatever label the shuffle gave it.
+    const bon = s.build([a, b, c], {}, prefer("two.txt", "one.txt", "three.txt"));
 
     const result = await bon.run(task());
 
@@ -176,9 +193,19 @@ describe("best-of-n: happy path", () => {
     expect(new Set(paths).size).toBe(3);
     paths.forEach((p) => expect(p).toContain(path.join(".assentor", "worktrees")));
 
-    // Losers are gone through the manager; only the winner's worktree is left for session cleanup.
+    expect(result.summary).toMatch(/order seed [0-9a-f]{8}/);
+
+    // Losers are kept (nothing is deleted behind the user's back); the winner landed.
+    const left = await s.manager.list(SESSION);
+    expect(left.map((w) => [w.seatId.split(".")[0], w.outcome ?? "kept"]).sort()).toEqual([
+      [alpha.id, "kept"],
+      [beta.id, "applied"],
+      [gamma.id, "kept"],
+    ]);
+    left.forEach((w) => expect(w.seatId).toMatch(/\.r1[0-9a-f]{8}$/));
+    // The host discards kept losers at session end, through the manager.
+    expect(await discardBestOfNLosers(s.manager, SESSION)).toHaveLength(2);
     expect((await s.manager.list(SESSION)).map((w) => w.seatId.split(".")[0])).toEqual([beta.id]);
-    expect(await git(s.repo, "branch", "--list", "assentor/*")).toContain("assentor/");
     expect((await git(s.repo, "branch", "--list", "assentor/*")).split("\n")).toHaveLength(1);
 
     // Judges saw anonymized diffs with gate status; no seat id, model or worktree path.
@@ -186,6 +213,7 @@ describe("best-of-n: happy path", () => {
     const seen = JSON.stringify(s.asks[0]!.vars);
     expect(seen).toContain("Proposal A");
     expect(seen).toContain("+work");
+    expect(seen).not.toContain("Proposal D");
     expect(seen).toContain("Verification: not run");
     for (const secret of ["alpha", "beta", "gamma", "mock", ".assentor", s.repo]) {
       expect(seen).not.toContain(secret);
@@ -205,7 +233,7 @@ describe("best-of-n: happy path", () => {
     const second = s.build([writes("r2-a.txt"), writes("r2-b.txt")]);
     const result = await second.continue({
       taskId: "task-1",
-      projectPath: "/unused",
+      projectPath: s.repo,
       contract: createEmptyContract("Add a feature"),
       messages: [],
     });
@@ -254,7 +282,7 @@ describe("best-of-n: failures", () => {
     const slow = hanging();
     const bon = s.build(
       [executor(() => ({ status: "failed", summary: "no", error: "boom" })), slow, writes("gamma.txt")],
-      { options: { candidateTimeoutMs: 100, keepLosers: true } },
+      { options: { candidateTimeoutMs: 100 } },
     );
 
     const result = await bon.run(task());
@@ -265,7 +293,7 @@ describe("best-of-n: failures", () => {
     expect(result.summary).toContain("timeout");
     expect(slow.cancelled).toHaveLength(1); // the timed-out executor was told to stop
     expect(await fs.readFile(path.join(s.repo, "gamma.txt"), "utf8")).toBe("work\n");
-    // keepLosers: the failed candidates' worktrees stay, marked failed for `cleanup({ keepFailed })`.
+    // keepLosers is the default: the failed candidates' worktrees stay, marked failed for `cleanup({ keepFailed })`.
     const left = await s.manager.list(SESSION);
     expect(left.map((w) => [w.seatId.split(".")[0], w.outcome]).sort()).toEqual([
       [alpha.id, "failed"],
@@ -278,11 +306,13 @@ describe("best-of-n: failures", () => {
     expect(terminal(s.events, gamma.id)[0]?.type).toBe("seat.done");
   });
 
-  it("fails when every candidate fails, applies nothing and leaves no worktrees", async () => {
+  it("fails when every candidate fails, applies nothing and (keepLosers: false) leaves no worktrees", async () => {
     const s = await setup();
     const head = await git(s.repo, "rev-parse", "HEAD");
     const noop = executor(() => done("did nothing")); // completed but changed nothing
-    const bon = s.build([executor(() => ({ status: "failed", summary: "no", error: "boom" })), noop]);
+    const bon = s.build([executor(() => ({ status: "failed", summary: "no", error: "boom" })), noop], {
+      options: { keepLosers: false },
+    });
 
     const result = await bon.run(task());
 
@@ -295,10 +325,10 @@ describe("best-of-n: failures", () => {
     expect(terminal(s.events, beta.id)).toHaveLength(1);
   });
 
-  it("a tie goes to the earliest candidate and says so", async () => {
+  it("a tie goes to the earliest label, gate artifacts stay out of the diff and the path is redacted", async () => {
     const s = await setup();
-    // judge-1 prefers A, judge-2 prefers B: equal points.
     // Every candidate fails the gate, so all stay eligible and the judges see the results.
+    // judge-1 prefers alpha.txt, judge-2 prefers beta.txt: equal points.
     const bon = s.build(
       [writes("alpha.txt"), writes("beta.txt")],
       {
@@ -307,9 +337,12 @@ describe("best-of-n: failures", () => {
           commands: { typecheck: "", test: "check", lint: "", build: "" },
           skipReviewOnFailure: { typecheck: true, build: true, test: true, lint: false },
         },
-        runVerificationCommand: async (_c, cwd) => ({ stdout: "", stderr: `boom at ${cwd}`, code: 2 }),
+        runVerificationCommand: async (_c, cwd) => {
+          await fs.writeFile(path.join(cwd, "cov.tmp"), "artifact\n"); // a gate artifact
+          return { stdout: "", stderr: `boom at ${cwd}`, code: 2 };
+        },
       },
-      (judge) => (judge === "judge-1" ? ["Proposal A", "Proposal B"] : ["Proposal B", "Proposal A"]),
+      (judge, proposals) => prefer(judge === "judge-1" ? "alpha.txt" : "beta.txt")(judge, proposals),
     );
 
     const result = await bon.run(task());
@@ -320,20 +353,34 @@ describe("best-of-n: failures", () => {
     expect(seen).toContain("test: FAILED (exit 2)");
     expect(seen).toContain("<worktree>");
     expect(seen).not.toContain(".assentor");
-    expect(await fs.readFile(path.join(s.repo, "alpha.txt"), "utf8")).toBe("work\n");
-    await expect(fs.access(path.join(s.repo, "beta.txt"))).rejects.toThrow();
+    expect(seen).not.toContain("cov.tmp"); // the diff was taken before the gates ran
+    expect(result.summary).toMatch(/warning: .*the gates created cov\.tmp/);
+    const labelA = (s.asks[0]!.vars.proposals as Array<{ label: string; text: string }>)[0]!.text;
+    const expected = labelA.includes("alpha.txt") ? "alpha.txt" : "beta.txt";
+    const other = expected === "alpha.txt" ? "beta.txt" : "alpha.txt";
+    expect(await fs.readFile(path.join(s.repo, expected), "utf8")).toBe("work\n");
+    await expect(fs.access(path.join(s.repo, other))).rejects.toThrow();
   });
 
   it("when applyTo refuses, nothing lands and the winner's worktree is kept, marked failed", async () => {
     const s = await setup();
     const head = await git(s.repo, "rev-parse", "HEAD");
     // Dirtying the main checkout while the candidates run makes applyTo refuse.
+    // (only after the other candidate's worktree exists, since create refuses a dirty main too)
+    let otherStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => (otherStarted = resolve));
     const dirties = executor(async (t) => {
       await fs.writeFile(path.join(t.projectPath, "alpha.txt"), "work\n");
+      await started;
       await fs.writeFile(path.join(s.repo, "stray.txt"), "uncommitted\n");
       return done();
     });
-    const bon = s.build([dirties, writes("beta.txt")], {}, () => ["Proposal A", "Proposal B"]);
+    const other = executor(async (t) => {
+      await fs.writeFile(path.join(t.projectPath, "beta.txt"), "work\n");
+      otherStarted();
+      return done();
+    });
+    const bon = s.build([dirties, other], {}, prefer("alpha.txt", "beta.txt"));
 
     const result = await bon.run(task());
 
@@ -343,17 +390,17 @@ describe("best-of-n: failures", () => {
     expect(await git(s.repo, "rev-parse", "HEAD")).toBe(head);
     await expect(fs.access(path.join(s.repo, "alpha.txt"))).rejects.toThrow();
     const left = await s.manager.list(SESSION);
-    expect(left).toHaveLength(1);
-    expect(left[0]).toMatchObject({ outcome: "failed" });
-    expect(left[0]!.seatId.startsWith(alpha.id)).toBe(true);
+    expect(left).toHaveLength(2); // the loser is kept too
+    const winner = left.find((w) => w.seatId.startsWith(alpha.id));
+    expect(winner).toMatchObject({ outcome: "failed" });
   });
 });
 
 describe("best-of-n: cancel", () => {
-  it("cancel mid-run stops every executor, leaves no worktrees and ends every seat", async () => {
+  it("cancel mid-run stops every executor, discards the unfinished work (keepLosers: false) and ends every seat", async () => {
     const s = await setup();
     const execs = [hanging(), hanging()];
-    const bon = s.build(execs);
+    const bon = s.build(execs, { options: { keepLosers: false } }); // mid-edit work may be discarded
     const running = bon.run(task());
     await vi.waitFor(() => expect(execs.every((x) => x.projectPaths.length === 1)).toBe(true), { timeout: 30_000 });
 
@@ -370,7 +417,7 @@ describe("best-of-n: cancel", () => {
     expect(s.asks).toEqual([]);
   });
 
-  it("cancel while the judges are ranking stops the asks and ends every seat", async () => {
+  it("cancel while the judges are ranking stops the asks, keeps the finished candidates and ends every seat", async () => {
     const s = await setup();
     let ranking = 0;
     let aborted = 0;
@@ -389,6 +436,7 @@ describe("best-of-n: cancel", () => {
         }),
       candidates: [writes("alpha.txt"), writes("beta.txt")].map((x, i) => ({ seat: candidateSeats[i]!, executor: x })),
       judges,
+      options: { keepLosers: false },
       emit: (draft) => s.events.push(draft),
     });
     const running = bon.run(task());
@@ -399,7 +447,11 @@ describe("best-of-n: cancel", () => {
 
     expect(result.status).toBe("cancelled");
     expect(aborted).toBe(2);
-    expect(await s.manager.list(SESSION)).toEqual([]);
+    // Finished work that passed its gates is not force-discarded, even with keepLosers: false.
+    const left = await s.manager.list(SESSION);
+    expect(left).toHaveLength(2);
+    left.forEach((w) => expect(w.outcome).toBe("failed"));
+    expect(await Promise.all(left.map((w) => fs.access(w.path).then(() => true)))).toEqual([true, true]);
     for (const seat of [alpha, beta, ...judges]) {
       expect(terminal(s.events, seat.id)).toHaveLength(1);
     }
@@ -408,18 +460,47 @@ describe("best-of-n: cancel", () => {
 
 describe("best-of-n: options", () => {
   it("validates stage options", () => {
-    expect(parseBestOfNOptions({})).toEqual({ apply: "squash", keepLosers: false });
-    expect(parseBestOfNOptions({ n: 2, apply: "merge", keepLosers: true, candidateTimeoutMs: 5 })).toEqual({
+    expect(parseBestOfNOptions({})).toEqual({ apply: "squash", keepLosers: true });
+    expect(parseBestOfNOptions({ n: 2, apply: "merge", keepLosers: false, candidateTimeoutMs: 5 })).toEqual({
       n: 2,
       apply: "merge",
-      keepLosers: true,
+      keepLosers: false,
       candidateTimeoutMs: 5,
     });
     expect(parseBestOfNOptions({ n: 1 })).toContain("options.n");
     expect(parseBestOfNOptions({ n: 4 }, 3)).toContain("only 3 editing seats");
     expect(parseBestOfNOptions({}, 1)).toContain("at least two");
     expect(parseBestOfNOptions({ apply: "rebase" })).toContain("options.apply");
+    // patch leaves main dirty, which would make every later round's manager.create fail.
+    expect(parseBestOfNOptions({ apply: "patch" })).toContain("options.apply");
     expect(parseBestOfNOptions({ candidateTimeoutMs: 0 })).toContain("candidateTimeoutMs");
     expect(() => createBestOfNExecutor({ options: { n: 1 }, candidates: [] } as unknown as BestOfNDeps)).toThrow("options.n");
+  });
+
+  it("refuses duplicate candidate seat ids", () => {
+    const dup = { seat: alpha, executor: writes("x.txt") };
+    expect(() => createBestOfNExecutor({ candidates: [dup, dup] } as unknown as BestOfNDeps)).toThrow("must be unique");
+  });
+
+  it("orders candidates by a seed: same seed, same order, and some seed changes it", () => {
+    const items = ["a", "b", "c", "d"];
+    expect(shuffleWithSeed(items, 42)).toEqual(shuffleWithSeed(items, 42));
+    expect([...shuffleWithSeed(items, 42)].sort()).toEqual(items);
+    expect(Array.from({ length: 20 }, (_, i) => shuffleWithSeed(items, i).join("")).some((o) => o !== "abcd")).toBe(true);
+  });
+
+  it("fails clearly when the project path is not the repository top level", async () => {
+    const s = await setup();
+    const sub = path.join(s.repo, "packages", "app");
+    await fs.mkdir(sub, { recursive: true });
+    const a = writes("one.txt");
+    const bon = s.build([a, writes("two.txt")]);
+
+    const result = await bon.run({ ...task(), projectPath: sub });
+
+    expect(result.status).toBe("failed");
+    expect(result.summary).toContain("not the repository top level");
+    expect(a.projectPaths).toEqual([]);
+    expect(await s.manager.list(SESSION)).toEqual([]);
   });
 });

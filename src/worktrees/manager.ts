@@ -351,6 +351,11 @@ export class WorktreeManager {
     });
   }
 
+  /** Real path of the main checkout's top level (what `"main"` means). Read-only. */
+  async topLevel(): Promise<string> {
+    return (await this.context()).top;
+  }
+
   /** Recorded worktrees, optionally for one session. */
   async list(sessionId?: string): Promise<WorktreeInfo[]> {
     return this.locked(async (ctx) => {

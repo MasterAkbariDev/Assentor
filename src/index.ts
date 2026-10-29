@@ -168,6 +168,8 @@ export {
 export {
   createBestOfNExecutor,
   parseBestOfNOptions,
+  discardBestOfNLosers,
+  shuffleWithSeed,
   BEST_OF_N_STRATEGY_ID,
   type BestOfNCandidate,
   type BestOfNDeps,

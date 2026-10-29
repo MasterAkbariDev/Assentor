@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { resolveVerificationCommands } from "../../config/detect-commands.js";
 import type { AssentorConfig } from "../../config/schema.js";
 import type { Seat } from "../../core/seats.js";
@@ -13,7 +15,6 @@ import { runVerificationGates, type RunVerificationCommand } from "../../review/
 import type { SeatScheduler } from "../../seats/scheduler.js";
 import {
   worktreeBranch,
-  type ApplyStrategy,
   type SeatKey,
   type WorktreeManager,
 } from "../../worktrees/index.js";
@@ -50,14 +51,31 @@ import { voteStrategy } from "./vote.js";
  *    earliest candidate (vote's rule);
  * 5. `applyTo(target, winner)`; a refusal or conflict fails the round, nothing
  *    is retried with a runner-up;
- * 6. losers are discarded through the manager (`keepLosers` keeps them, failed
- *    ones marked so `cleanup({ keepFailed })` leaves them for inspection). The
- *    winner's worktree is left for the session's `manager.cleanup`.
+ * 6. losers are kept by default (`keepLosers: true`; failed ones are marked so
+ *    `cleanup({ keepFailed })` leaves them): nothing is force-deleted behind the
+ *    user's back. `manager.cleanup` never removes unmerged worktrees, so the host
+ *    must call `discardBestOfNLosers` at session end. `keepLosers: false` opts
+ *    in to discarding losers right after the round. The winner's worktree is
+ *    left for the session's `manager.cleanup`.
+ *
+ * Candidates are shown to the judges in a seeded random order per round (the
+ * seed is in the result summary), so position bias and vote ties do not always
+ * favour seat 1.
+ *
+ * Host duties: install dependencies in each candidate worktree before the gates
+ * run (`pnpm install --frozen-lockfile --prefer-offline`, not a node_modules
+ * symlink); without it the gates fail or pass depending on the machine. Gate
+ * commands run after the diff is taken, and files they create (coverage,
+ * tsbuildinfo) are reported as a warning; keep them in .gitignore, because
+ * `applyTo` commits whatever is in the worktree.
  *
  * Cancel: `cancel(taskId)` aborts the round's signal; scheduler jobs stop and
  * their executors are cancelled, the judge negotiation is cancelled, and
  * `cancel` resolves when the round has settled. Every candidate gets exactly
- * one terminal seat event (`seat.done`, or `seat.error` on failure).
+ * one terminal seat event (`seat.done`, or `seat.error` on failure). Cancel
+ * this executor only at session end: the engine answers the round's abort with
+ * the permanent `scheduler.cancelAll`. Finished candidates are kept; only
+ * candidates cancelled mid-edit are discarded when `keepLosers` is false.
  */
 
 export const BEST_OF_N_STRATEGY_ID = "best-of-n";
@@ -72,9 +90,16 @@ export interface BestOfNCandidate {
 export interface BestOfNOptions {
   /** Use only the first n candidates (2 or more). Default: all. */
   n?: number;
-  /** How the winner lands in the target. Default `squash`. */
-  apply: ApplyStrategy;
-  /** Keep losers' worktrees instead of discarding them. Default false. */
+  /**
+   * How the winner lands in the target. Default `squash`. `patch` is refused: it
+   * leaves the target dirty, so the next round's `manager.create` would fail.
+   */
+  apply: "merge" | "squash";
+  /**
+   * Keep losers' worktrees (default true; the host discards them at session end
+   * with `discardBestOfNLosers`). `false` discards them through the manager
+   * right after the round.
+   */
   keepLosers: boolean;
   /** Per-candidate deadline for the executor run. */
   candidateTimeoutMs?: number;
@@ -85,7 +110,7 @@ export function parseBestOfNOptions(
   options: Readonly<Record<string, unknown>>,
   candidateCount?: number,
 ): BestOfNOptions | string {
-  const { n, apply = "squash", keepLosers = false, candidateTimeoutMs } = options;
+  const { n, apply = "squash", keepLosers = true, candidateTimeoutMs } = options;
   if (n !== undefined && (typeof n !== "number" || !Number.isInteger(n) || n < 2)) {
     return "best-of-n: options.n must be an integer of at least 2";
   }
@@ -95,8 +120,8 @@ export function parseBestOfNOptions(
   if (candidateCount !== undefined && candidateCount < 2) {
     return "best-of-n needs at least two editing seats";
   }
-  if (apply !== "merge" && apply !== "squash" && apply !== "patch") {
-    return `best-of-n: options.apply must be "merge", "squash" or "patch"`;
+  if (apply !== "merge" && apply !== "squash") {
+    return `best-of-n: options.apply must be "merge" or "squash" ("patch" would leave the target dirty for the next round)`;
   }
   if (typeof keepLosers !== "boolean") {
     return "best-of-n: options.keepLosers must be a boolean";
@@ -115,6 +140,12 @@ export function parseBestOfNOptions(
   };
 }
 
+/**
+ * Dependencies of `createBestOfNExecutor`. The executor may only be cancelled at
+ * session end (see the module doc). With `target: "main"` the Supervisor's
+ * `projectPath` must be the manager's top-level checkout (not a monorepo
+ * subpackage); a mismatch fails the round before anything is created.
+ */
 export interface BestOfNDeps {
   manager: WorktreeManager;
   /** Worktree session id (a UUID, like the session's id). */
@@ -141,6 +172,8 @@ export interface BestOfNDeps {
   /** Negotiation run ids are `<prefix>-<round tag>`; give each stage its own (≤ 40 chars). Default `best-of-n`. */
   runIdPrefix?: string;
   askTimeoutMs?: number;
+  /** Per-round seed (uint32) for the candidate order. Default: 4 random bytes. Tests pin it. */
+  roundSeed?: () => number;
   /** Seat and negotiation events; must not throw. */
   emit?: (draft: EngineEventDraft) => void;
 }
@@ -158,8 +191,47 @@ interface Candidate {
   cancelled?: boolean;
   result?: ExecutorResult;
   gatesPassed?: boolean;
+  /** Files the gates created in the worktree. */
+  warning?: string;
   /** What judges see: gate results and the diff. */
   text?: string;
+}
+
+/** Seat ids of best-of-n worktrees end in `.r<round><8 hex>` (see the round tag). */
+const ROUND_TAG = /\.r\d+[0-9a-f]{8}$/;
+
+/**
+ * Session-end cleanup for kept losers: discards (through the manager) every
+ * best-of-n worktree of the session that was not applied. Call it once the
+ * session is over; winners that landed are removed by `manager.cleanup`.
+ */
+export async function discardBestOfNLosers(manager: WorktreeManager, sessionId: string): Promise<SeatKey[]> {
+  const discarded: SeatKey[] = [];
+  for (const info of await manager.list(sessionId)) {
+    if (ROUND_TAG.test(info.seatId) && info.outcome !== "applied") {
+      await manager.discard({ sessionId, seatId: info.seatId }, { force: true });
+      discarded.push({ sessionId, seatId: info.seatId });
+    }
+  }
+  return discarded;
+}
+
+/** Deterministic Fisher-Yates with a mulberry32 stream; the same seed gives the same order. */
+export function shuffleWithSeed<T>(items: readonly T[], seed: number): T[] {
+  let a = seed >>> 0;
+  const next = () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(next() * (i + 1));
+    [out[i], out[j]] = [out[j]!, out[i]!];
+  }
+  return out;
 }
 
 export function createBestOfNExecutor(deps: BestOfNDeps): Executor {
@@ -169,6 +241,10 @@ export function createBestOfNExecutor(deps: BestOfNDeps): Executor {
   }
   const options = parsed;
   const candidates = deps.candidates.slice(0, options.n);
+  const ids = candidates.map((c) => c.seat.id);
+  if (new Set(ids).size !== ids.length) {
+    throw new Error(`best-of-n: candidate seat ids must be unique (got ${ids.join(", ")})`);
+  }
   const target = deps.target ?? "main";
   const baseRef = target === "main" ? "HEAD" : worktreeBranch(target);
   const prefix = deps.runIdPrefix ?? BEST_OF_N_STRATEGY_ID;
@@ -202,8 +278,7 @@ export function createBestOfNExecutor(deps: BestOfNDeps): Executor {
         ? `${run.slot}: FAILED (exit ${run.exitCode ?? "?"})\n${(run.output ?? "").slice(0, 500)}`
         : `${run.slot}: ${run.status}`,
     );
-    // The worktree path contains the seat id; judges must not see it.
-    return { passed: result.passed, text: `Verification:\n${lines.join("\n")}`.split(worktree).join("<worktree>") };
+    return { passed: result.passed, text: `Verification:\n${lines.join("\n")}` };
   }
 
   async function runCandidate(
@@ -251,17 +326,25 @@ export function createBestOfNExecutor(deps: BestOfNDeps): Executor {
       if (outcome.value.status !== "completed") {
         throw new Error(`${outcome.value.status}: ${outcome.value.error ?? outcome.value.summary}`);
       }
-      const gate = await gates(cand.path);
+      // The diff is taken before the gates run, so gate artifacts never reach the judges.
       const diff = await deps.manager.diff(key);
       if (diff.files.length === 0) {
         throw new Error("made no changes");
+      }
+      const gate = await gates(cand.path);
+      if (deps.verification && deps.verification.enabled !== false) {
+        const grown = (await deps.manager.diff(key)).files.filter((f) => !diff.files.includes(f));
+        if (grown.length > 0) {
+          cand.warning = `the gates created ${grown.join(", ")} (applyTo would commit them; ignore them in .gitignore)`;
+        }
       }
       const shown =
         diff.diff.length > DIFF_LIMIT
           ? `${diff.diff.slice(0, DIFF_LIMIT)}\n[diff truncated: ${diff.diff.length - DIFF_LIMIT} more characters]`
           : diff.diff;
       cand.gatesPassed = gate.passed;
-      cand.text = `${gate.text}\n\nFiles changed: ${diff.files.join(", ")}\n\n${shown}`;
+      // The worktree path contains the seat id; judges must not see it in the gate output or the diff.
+      cand.text = `${gate.text}\n\nFiles changed: ${diff.files.join(", ")}\n\n${shown}`.split(cand.path).join("<worktree>");
       cand.ok = true;
       seatEvent(c.seat.id, "seat.done", { ok: true, summary: "candidate complete" });
     } catch (error) {
@@ -350,9 +433,23 @@ export function createBestOfNExecutor(deps: BestOfNDeps): Executor {
   async function execute(
     taskId: string,
     task: Omit<ExecutorTask, "taskId" | "projectPath">,
+    projectPath: string,
   ): Promise<ExecutorResult> {
+    if (target === "main") {
+      const top = await deps.manager.topLevel();
+      const given = await fs.realpath(projectPath).catch(() => path.resolve(projectPath));
+      const same = process.platform === "win32" ? given.toLowerCase() === top.toLowerCase() : given === top;
+      if (!same) {
+        return {
+          status: "failed",
+          summary: `best-of-n: the project path ${given} is not the repository top level ${top} (a monorepo subpackage?); worktrees are created per repository`,
+        };
+      }
+    }
     round += 1;
-    const tag = `r${round}${randomBytes(2).toString("hex")}`;
+    const seed = deps.roundSeed ? deps.roundSeed() >>> 0 : randomBytes(4).readUInt32BE();
+    const seedHex = seed.toString(16).padStart(8, "0");
+    const tag = `r${round}${seedHex}`;
     const controller = new AbortController();
     const cands: Candidate[] = candidates.map((c) => ({
       c,
@@ -378,6 +475,14 @@ export function createBestOfNExecutor(deps: BestOfNDeps): Executor {
         }
       }
     };
+    /** Cancel or budget stop: finished candidates are kept (marked failed), only the rest follows `keepLosers`. */
+    const keepFinished = async () => {
+      const good = cands.filter((x) => x.ok);
+      await settleLosers(good);
+      for (const cand of good) {
+        await deps.manager.markFailed(cand.key).catch(() => undefined);
+      }
+    };
     const failures = () => cands.filter((x) => !x.ok).map((x) => `${x.c.seat.displayName}: ${x.error}`);
     const fail = (summary: string): ExecutorResult => ({
       status: "failed",
@@ -396,7 +501,7 @@ export function createBestOfNExecutor(deps: BestOfNDeps): Executor {
       await Promise.all(cands.map((cand) => runCandidate(cand, task, taskId, controller)));
       const cancelled = (): ExecutorResult => ({ status: "cancelled", summary: "best-of-n cancelled" });
       if (controller.signal.aborted) {
-        await settleLosers();
+        await keepFinished();
         return cancelled();
       }
 
@@ -409,9 +514,9 @@ export function createBestOfNExecutor(deps: BestOfNDeps): Executor {
 
       let verdict: Awaited<ReturnType<typeof judge>>;
       try {
-        verdict = await judge(eligible, String(task.contract.goal), tag, controller);
+        verdict = await judge(shuffleWithSeed(eligible, seed), String(task.contract.goal), tag, controller);
       } catch (error) {
-        await settleLosers();
+        await keepFinished();
         if (error instanceof NegotiationCancelledError && error.reason === "cancelled") return cancelled();
         return fail(`best-of-n: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -437,9 +542,10 @@ export function createBestOfNExecutor(deps: BestOfNDeps): Executor {
 
       const won = winner.result!;
       const note = [
-        `best-of-n: ${winner.c.seat.displayName} won of ${cands.length} (${verdict.rationale}); applied by ${options.apply}`,
+        `best-of-n: ${winner.c.seat.displayName} won of ${cands.length} (${verdict.rationale}); applied by ${options.apply}; order seed ${seedHex}`,
         ...(applied.warning ? [`warning: ${applied.warning}`] : []),
         ...failures().map((f) => `failed candidate ${f}`),
+        ...cands.filter((x) => x.warning).map((x) => `warning: ${x.c.seat.displayName}: ${x.warning}`),
         ...warnings,
       ].join("\n");
       return {
@@ -467,14 +573,15 @@ export function createBestOfNExecutor(deps: BestOfNDeps): Executor {
       canContinueSession: false,
       supportsScreenshots: false,
     }),
-    run: (task) => execute(task.taskId, { contract: task.contract, prompt: task.prompt, ...(task.messages ? { messages: task.messages } : {}) }),
+    run: (task) =>
+      execute(task.taskId, { contract: task.contract, prompt: task.prompt, ...(task.messages ? { messages: task.messages } : {}) }, task.projectPath),
     // Every round starts fresh from the target's tip (which already holds the last winner), with the feedback in the prompt.
     continue: (input) =>
-      execute(input.taskId, {
-        contract: input.contract,
-        prompt: input.nextPhaseDirective ?? input.contract.goal,
-        messages: input.messages,
-      }),
+      execute(
+        input.taskId,
+        { contract: input.contract, prompt: input.nextPhaseDirective ?? input.contract.goal, messages: input.messages },
+        input.projectPath,
+      ),
     async cancel(taskId) {
       const run = active.get(taskId);
       if (run) {
