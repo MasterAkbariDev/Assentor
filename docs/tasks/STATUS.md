@@ -54,14 +54,14 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**40 of 80 cards done** (2026-10-29; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 24/41 · 🟡 Sonnet-tier 7/17 · 🔴 Opus-tier 9/22. Tests: 1756 passing. Core (Phases 0–3 + 2b) left: 12 cards.
+**41 of 80 cards done** (2026-10-29; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 24/41 · 🟡 Sonnet-tier 7/17 · 🔴 Opus-tier 10/22. Tests: 1965 passing. Core (Phases 0–3 + 2b) left: 11 cards.
 
 | Phase | Done | Open |
 |---|---|---|
 | 0 Foundations | 9/9 | — |
 | 1 Review & models | 7/7 | — |
 | 2 Negotiate | 10/10 | — |
-| 2b Lead & modes | 7/19 (+01b) | T02B-07 classifier (O2 round 3); T02B-02 Lead, 09, 10, 11, 14 in progress; then 06, 13, 15, 16, 18, 19 |
+| 2b Lead & modes | 8/19 (+01b) | T02B-02 Lead, 11 TDD, 14 red-team building; 09 and 10 in review; 06 Cascade and 16 debug starting; then 13, 15, 18, 19 |
 | 3 Prompt library | 6/6 | — |
 | 4 Engine & web UI | 1/17 | web preview fast path merged (§6); rest paused (core first) |
 | 5 Desktop | 0/12 | — |
@@ -147,7 +147,9 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
   - ✅ T02B-01 controller contract merged (`f1a5a3d`): O2 PASS after 2 rounds; user signed off. Must-do for T02B-02: approval/answer channel for dynamic controllers, `stages` gated under `manual`, resume re-applies the autonomy floor.
   - ✅ Worktree manager follow-up merged (`2dde8f9`, cherry-picked from `6966bd6` without the superseded divide commit): renames at both ends, `applyTo` `allowedPaths`. O2 PASS; user signed off.
   - ✅ T02-08 divide & conquer merged (`e9e7331`): Opus PASS after 3 rounds; user signed off. Phase 2 complete.
-- T02B-07 danger classifier: **O2 PASS after 3 rounds** at `2a5eb23`; waiting for **user sign-off**. Merge note: `src/config/schema.ts` conflicts on imports only; the `cascade` entry must get `.passthrough()` (else unknown `modes.cascade` keys are dropped on save) and preferably `dangerAreas` `.optional()` instead of `.default([])`. Follow-up: project `.assentor/config.yaml` with this repo's danger files.
+- ✅ T02B-07 danger classifier merged (`9716d2a`): O2 PASS after 3 rounds; user signed off. Merge fix: `modes.cascade` passthrough, `dangerAreas` optional. Follow-up: project `.assentor/config.yaml` with this repo's danger files.
+- In review: T02B-10 mode prompts (`ddb08cf`, Opus prompt quality), T02B-09 Pipeline/Explore/Plan (`234e62b`, Sonnet).
+- Started: T02B-06 Cascade and T02B-16 debug (Sonnet).
 
 **Direction (user, 2026-10-27): core engine first.** After the Haiku agents finish their current cards, UI and app work (rest of Phase 4, Phase 5) pauses. Finish the core (Phases 0–3, 2b) first, then build the UI and apps on top of it.
 
