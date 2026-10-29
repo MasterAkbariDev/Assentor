@@ -108,7 +108,7 @@ Legend: 🟢 H · 🟡 S · 🔴 O · Size S/M/L (≈ <150 / 150–500 / >500 ch
 | T01-02 | Seat factory: expand teams into reviewer seats ✅ | 🟡 S | O | M | T00-02, T00-04 |
 | T01-03 | Panel decision policies ✅ | 🟡 S | O | M | T01-02 |
 | T01-04 | Finding agreement counts ✅ | 🟢 H | S | S | — |
-| T01-05 | Model switch at turn boundary + interrupt-now | 🔴 O | O2 + human | M | T00-07 |
+| T01-05 | Model switch at turn boundary + interrupt-now ✅ | 🔴 O | O2 + human | M | T00-07 |
 | T01-06 | Shared status icon map + TUI seat board ✅ | 🟢 H | S | M | T00-07 |
 | T01-07 | `assentor run --team` + doctor seat listing ✅ | 🟢 H | S | S | T01-02, T01-06 |
 

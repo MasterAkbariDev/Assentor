@@ -16,11 +16,7 @@ import {
 } from "./stream-status.js";
 import { locateBinary, spawnCliProcess } from "../../../executors/cli-locator.js";
 import { killProcessTree } from "../../../process/kill-tree.js";
-import {
-  killAllTrackedProcesses,
-  trackChildProcess,
-  untrackChildProcess,
-} from "../../../process/tracker.js";
+import { trackChildProcess, untrackChildProcess } from "../../../process/tracker.js";
 import { buildAutonomousContinuationPrompt, buildSupervisedContinuationPrompt } from "../../../orchestrator/phase-steering.js";
 
 export type CursorOutputFormat = "text" | "json" | "stream-json";
@@ -119,7 +115,9 @@ export class CursorExecutor implements Executor {
   private readonly outputFormat: CursorOutputFormat;
   private readonly apiKey?: string;
   private readonly extraArgs: string[];
-  private readonly model?: string;
+  private model?: string;
+  /** Set by `interrupt()` for the turn in flight; reset when the next turn starts. */
+  private turnInterrupted = false;
   private readonly spawnFn: CursorSpawnFn;
   private readonly onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   private readonly onStatus?: (status: AgentStatusUpdate) => void;
@@ -191,8 +189,24 @@ export class CursorExecutor implements Executor {
     this.cancelled.add(taskId);
     this.activeChild?.abandon?.();
     killProcessTree(this.activeChild);
-    killAllTrackedProcesses();
     this.forceComplete?.();
+  }
+
+  /** Applies to the next invocation; a running process keeps its model. */
+  setModel(model: string): void {
+    this.model = model;
+  }
+
+  /** Kills only this executor's process tree. */
+  interrupt(): boolean {
+    if (!this.forceComplete || this.turnInterrupted) {
+      return false; // no turn in flight, or this one is already being stopped
+    }
+    this.turnInterrupted = true;
+    this.activeChild?.abandon?.();
+    killProcessTree(this.activeChild);
+    this.forceComplete();
+    return true;
   }
 
   private async execute(
@@ -211,6 +225,7 @@ export class CursorExecutor implements Executor {
         sessionId: this.sessionId,
       };
     }
+    this.turnInterrupted = false;
 
     const args = this.buildArgs(projectPath, prompt, isContinuation);
     this.lastCommand = { command: this.binary, args, cwd: projectPath };
@@ -235,7 +250,7 @@ export class CursorExecutor implements Executor {
           return;
         }
         forcedResult = {
-          code: this.cancelled.has(taskId) ? null : 0,
+          code: this.cancelled.has(taskId) || this.turnInterrupted ? null : 0,
           stdout: capturedStdout,
           stderr: capturedStderr,
           signal: "SIGTERM",
@@ -277,6 +292,12 @@ export class CursorExecutor implements Executor {
           timeoutMs: this.timeoutMs,
           resultGraceMs: this.resultGraceMs,
           onSpawn: (child) => {
+            if (forcedResult) {
+              // Stopped before the process existed: it must not outlive the turn.
+              child.abandon?.();
+              killProcessTree(child);
+              return;
+            }
             this.activeChild = child;
           },
           onOutput: (chunk, stream) => {
@@ -331,6 +352,18 @@ export class CursorExecutor implements Executor {
         summary: "Interrupted (Ctrl+C)",
         error: "Interrupted (Ctrl+C). Resume with: assentor resume",
         sessionId: this.sessionId,
+        rawOutput: result.stdout,
+      };
+    }
+
+    // A turn whose result already arrived is complete; restarting it would redo work.
+    if (this.turnInterrupted && !streamParser?.hasFinalResult()) {
+      return {
+        status: "cancelled",
+        interrupted: true,
+        summary: summarizeStreamJson(result.stdout).summary || summarizeOutput(result.stdout),
+        error: "Cursor turn interrupted",
+        sessionId: streamParser?.getSessionId() ?? this.sessionId,
         rawOutput: result.stdout,
       };
     }
@@ -630,8 +663,8 @@ export async function defaultSpawn(
     };
 
     const abandon = () => {
+      // Only this process tree: a session-wide stop goes through the tracker (CLI SIGINT handler).
       killProcessTree(child);
-      killAllTrackedProcesses();
       finish({
         code: parser.hasFinalResult() ? 0 : null,
         stdout,

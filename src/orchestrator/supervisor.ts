@@ -22,7 +22,12 @@ import {
 import type { ReviewResult, PhaseProgress } from "../protocol/review-result.js";
 import { makeReviewResult } from "../protocol/review-result.js";
 import type { EvidenceRequestItem } from "../protocol/messages.js";
-import type { Executor, ExecutorResult } from "../providers/executors/types.js";
+import type {
+  Executor,
+  ExecutorContinuation,
+  ExecutorResult,
+  ExecutorTask,
+} from "../providers/executors/types.js";
 import type {
   ReviewArtifactRef,
   Reviewer,
@@ -49,6 +54,8 @@ import {
   type VerificationCommands,
 } from "../config/detect-commands.js";
 import { ArtifactType } from "../artifacts/types.js";
+import { AUTO_MODEL_ID, isModelId } from "../models/cli-catalog.js";
+import { redactSecrets } from "../security/redact.js";
 import { LoopDetector } from "./loop-detector.js";
 import type { SeatEventSink } from "./seat-events.js";
 import {
@@ -92,6 +99,7 @@ export type SupervisorEventType =
   | "executor.completed"
   | "executor.failed"
   | "executor.retry"
+  | "executor.interrupted"
   | "review.started"
   | "review.completed"
   | "review.retry"
@@ -151,6 +159,53 @@ export interface SupervisorConfig {
   seatEvents?: SeatEventSink;
   /** Seat ids used when mirroring executor- and reviewer-scoped events. */
   seatScope?: { executorSeatId?: string; reviewerSeatId?: string };
+  /**
+   * Models a seat may switch to (e.g. the CLI catalog's ids for its provider).
+   * When it returns a list, `requestModelChange` refuses other ids. `AUTO` is
+   * always allowed.
+   */
+  modelChoices?: (seatId: string) => readonly string[] | undefined;
+  /** The model each seat starts with, by seat id (blank = `AUTO`). Lets a switch to it be a no-op. */
+  seatModels?: Record<string, string | undefined>;
+}
+
+/** Outcome of `Supervisor.requestModelChange` (T01-05). */
+export type ModelChangeResult =
+  /** `interrupting`: the running turn is being stopped and will restart on the new model. */
+  | { ok: true; interrupting: boolean }
+  | { ok: false; error: string };
+
+/** One executor invocation, kept so an interrupted turn can be re-run as is. */
+type ExecutorCall =
+  | { kind: "run"; task: ExecutorTask }
+  | { kind: "continue"; input: ExecutorContinuation };
+
+interface ExecutorRestart {
+  call: ExecutorCall;
+  /** Output of the interrupted attempt, as the executor summarized it. */
+  partial: string;
+}
+
+const MAX_PARTIAL_OUTPUT_CHARS = 2_000;
+/** Interrupt-now restarts per turn; later immediate requests apply at the next turn. */
+const MAX_TURN_RESTARTS = 3;
+
+/** `AUTO` for blank or any-case "auto", else the trimmed id. */
+function normalizeModel(model: string | undefined): string {
+  const trimmed = model?.trim() ?? "";
+  return trimmed === "" || trimmed.toUpperCase() === AUTO_MODEL_ID ? AUTO_MODEL_ID : trimmed;
+}
+
+/** Told to the executor when it re-runs an interrupted turn. */
+function restartNote(partial: string): string {
+  const tail = redactSecrets(partial.trim().slice(-MAX_PARTIAL_OUTPUT_CHARS)).text;
+  return [
+    "[Assentor] Your previous attempt at this turn was interrupted to switch models. Files may already be partly changed.",
+    tail
+      ? `Output before the interruption (may be incomplete):\n${tail}`
+      : "There was no output before the interruption.",
+    "Redo this turn from the current state of the files; do not repeat work that is already done.",
+  ].join("\n");
 }
 
 const SEAT_EVENTS_FLUSH_MS = 2_000;
@@ -222,6 +277,17 @@ export class Supervisor {
   private contract: TaskContract;
   private phaseProgress?: PhaseProgress;
   private verificationCommands?: VerificationCommands;
+  /** Requested model per seat id, applied when that seat's next turn starts. */
+  private readonly pendingModels = new Map<string, string>();
+  /** Last model applied per seat id (unknown until the first switch). */
+  private readonly appliedModels = new Map<string, string>();
+  /** True only while an executor invocation is awaited. */
+  private executorTurnActive = false;
+  /** An immediate switch interrupted the turn in flight; restart it. */
+  private restartRequested = false;
+  /** Interrupt-now restarts of the current executor turn. */
+  private turnRestarts = 0;
+  private finished = false;
 
   constructor(private readonly config: SupervisorConfig) {
     this.budgets = config.budgets ?? createBudgets();
@@ -235,6 +301,9 @@ export class Supervisor {
     this.maxEvidenceIterations =
       config.maxEvidenceIterations ?? MAX_EVIDENCE_ITERATIONS;
     this.contract = config.contract;
+    for (const [seatId, model] of Object.entries(config.seatModels ?? {})) {
+      this.appliedModels.set(seatId, normalizeModel(model));
+    }
 
     if (config.resumeFrom) {
       this.restoreFromSnapshot(config.resumeFrom);
@@ -255,6 +324,137 @@ export class Supervisor {
 
   requestCancel(): void {
     this.cancelRequested = true;
+  }
+
+  /**
+   * Switch a seat's model (T01-05). By default the switch applies when the
+   * seat's next turn starts. `immediate` (executor only) also stops the turn in
+   * flight by killing its process tree and re-runs that turn on the new model;
+   * it does not use up a round. Emits `seat.model.changed` with
+   * `pending: true` now and `pending: false` when the model is applied.
+   * Never throws; a refused request changes nothing.
+   */
+  requestModelChange(
+    seatId: string,
+    model: string,
+    options: { immediate?: boolean } = {},
+  ): ModelChangeResult {
+    if (this.finished || isTerminalState(this.state)) {
+      return { ok: false, error: "The session has finished; no turn will use a new model." };
+    }
+    if (this.cancelRequested) {
+      return { ok: false, error: "The session is stopping." };
+    }
+    const isExecutor = seatId === this.executorSeatId;
+    const target: { name: string; setModel?(model: string): void } | undefined = isExecutor
+      ? this.config.executor
+      : seatId === this.reviewerSeatId
+        ? this.config.reviewer
+        : undefined;
+    if (!target) {
+      return { ok: false, error: `Unknown seat "${seatId}".` };
+    }
+    if (!target.setModel) {
+      return { ok: false, error: `Seat "${seatId}" (${target.name}) cannot switch models.` };
+    }
+    const wanted = model.trim() === "" ? "" : normalizeModel(model);
+    // Also keeps flag-like text ("--yolo") out of the CLI's argv.
+    if (wanted !== AUTO_MODEL_ID && !isModelId(wanted)) {
+      return { ok: false, error: `Invalid model id "${model}".` };
+    }
+    const choices = this.config.modelChoices?.(seatId);
+    if (choices && wanted !== AUTO_MODEL_ID && !choices.includes(wanted)) {
+      return { ok: false, error: `Model "${wanted}" is not available for seat "${seatId}".` };
+    }
+    if (options.immediate && !(isExecutor && this.config.executor.interrupt)) {
+      return {
+        ok: false,
+        error: `Seat "${seatId}" cannot be interrupted; switch at the next turn instead.`,
+      };
+    }
+
+    const pending = this.pendingModels.get(seatId);
+    if (pending === undefined && this.appliedModels.get(seatId) === wanted) {
+      return { ok: true, interrupting: false }; // already on that model
+    }
+    if (pending !== wanted) {
+      this.pendingModels.set(seatId, wanted);
+      this.emitModelChanged(seatId, wanted, true);
+    }
+    if (!options.immediate || !this.executorTurnActive || this.turnRestarts >= MAX_TURN_RESTARTS) {
+      return { ok: true, interrupting: false };
+    }
+    if (this.restartRequested) {
+      return { ok: true, interrupting: true }; // already stopping this turn
+    }
+    let stopped = false;
+    try {
+      stopped = this.config.executor.interrupt!();
+    } catch (error) {
+      this.seatWarning(seatId, "interrupt_failed", error);
+    }
+    // Not stopped (e.g. still before the spawn): the switch applies at the next turn.
+    this.restartRequested = stopped;
+    return { ok: true, interrupting: stopped };
+  }
+
+  private get executorSeatId(): string {
+    return this.config.seatScope?.executorSeatId ?? EXECUTOR_ID;
+  }
+
+  private get reviewerSeatId(): string {
+    return this.config.seatScope?.reviewerSeatId ?? REVIEWER_ID;
+  }
+
+  /** Apply a pending switch right before the seat's next invocation. */
+  private applyPendingModel(seatId: string, target: { setModel?(model: string): void }): void {
+    const model = this.pendingModels.get(seatId);
+    if (model === undefined) {
+      return;
+    }
+    this.pendingModels.delete(seatId);
+    try {
+      target.setModel!(model);
+    } catch (error) {
+      this.seatWarning(seatId, "model_change_failed", error);
+      // Close the pending switch so the seat doesn't show it forever. With no
+      // configured model the seat still runs its starting model, shown as AUTO.
+      this.config.seatEvents?.emit({
+        type: "seat.model.changed",
+        sessionId: this.config.seatEvents.sessionId,
+        seatId,
+        data: {
+          from: model,
+          to: this.appliedModels.get(seatId) ?? AUTO_MODEL_ID,
+          pending: false,
+          reverted: true,
+        },
+      });
+      return;
+    }
+    this.emitModelChanged(seatId, model, false);
+    this.appliedModels.set(seatId, model);
+  }
+
+  private emitModelChanged(seatId: string, to: string, pending: boolean): void {
+    const sink = this.config.seatEvents;
+    const from = this.appliedModels.get(seatId);
+    sink?.emit({
+      type: "seat.model.changed",
+      sessionId: sink.sessionId,
+      seatId,
+      data: { ...(from ? { from } : {}), to, pending },
+    });
+  }
+
+  private seatWarning(seatId: string, kind: string, error: unknown): void {
+    const sink = this.config.seatEvents;
+    sink?.emit({
+      type: "session.warning",
+      sessionId: sink.sessionId,
+      seatId,
+      data: { kind, message: error instanceof Error ? error.message : String(error) },
+    });
   }
 
   async run(): Promise<SupervisorResult> {
@@ -348,6 +548,7 @@ export class Supervisor {
       this.emit("task.failed", { reason });
     }
 
+    this.finished = true;
     await this.flushPersist();
     await this.persistRoundHistory();
     // A stalled event-log write must not hold back the result; the caller's
@@ -447,10 +648,7 @@ export class Supervisor {
       return true;
     }
     if (result.status === "cancelled") {
-      this.moveTo(
-        TaskState.Failed,
-        result.error ?? "Interrupted (Ctrl+C). Resume with: assentor resume",
-      );
+      this.moveTo(TaskState.Failed, withResumeHint(result.error ?? "Interrupted (Ctrl+C)."));
       return true;
     }
     return false;
@@ -568,49 +766,56 @@ export class Supervisor {
   private async runExecutor(
     taskId: string,
     conversationId: string,
-  ): Promise<ExecutorResult> {
-    this.emit("executor.started", { round: this.round });
+    restart?: ExecutorRestart,
+  ): Promise<{ result: ExecutorResult; restart?: ExecutorRestart }> {
+    this.emit("executor.started", { round: this.round, ...(restart ? { restart: true } : {}) });
 
-    const inbound = this.bus.receive(EXECUTOR_ID);
-
-    let result: ExecutorResult;
-    try {
-      if (this.taskStarted) {
-        result = await this.config.executor.continue({
+    let call: ExecutorCall;
+    if (restart) {
+      call = restart.call;
+    } else if (this.taskStarted) {
+      call = {
+        kind: "continue",
+        input: {
           taskId,
           projectPath: this.config.projectPath,
           contract: this.contract,
-          messages: inbound,
+          messages: this.bus.receive(EXECUTOR_ID),
           sessionId: this.sessionId,
           nextPhaseDirective: this.autopilot
             ? this.phaseProgress?.nextPhaseDirective
             : undefined,
           mode: this.autopilot ? "autopilot" : "supervised",
-        });
-      } else {
-        const taskMessage = createProtocolMessage({
-          conversationId,
-          round: this.round,
-          from: SUPERVISOR_ID,
-          to: EXECUTOR_ID,
-          type: MessageType.Task,
-          content: {
-            goal: this.contract.goal,
-            contract: this.contract as unknown as Record<string, unknown>,
-          },
-        });
-        if (!(await this.spendMessage())) {
-          return {
+        },
+      };
+    } else {
+      this.bus.receive(EXECUTOR_ID);
+      const taskMessage = createProtocolMessage({
+        conversationId,
+        round: this.round,
+        from: SUPERVISOR_ID,
+        to: EXECUTOR_ID,
+        type: MessageType.Task,
+        content: {
+          goal: this.contract.goal,
+          contract: this.contract as unknown as Record<string, unknown>,
+        },
+      });
+      if (!(await this.spendMessage())) {
+        return {
+          result: {
             status: "failed",
             summary: "Message budget exceeded before executor start",
-          };
-        }
-        await this.publishMessage(taskMessage);
-        // Already delivered via publish; avoid double-delivery by not also
-        // passing the same message if it was queued to executor.
-        const queued = this.bus.receive(EXECUTOR_ID);
-
-        result = await this.config.executor.run({
+          },
+        };
+      }
+      await this.publishMessage(taskMessage);
+      // Already delivered via publish; avoid double-delivery by not also
+      // passing the same message if it was queued to executor.
+      const queued = this.bus.receive(EXECUTOR_ID);
+      call = {
+        kind: "run",
+        task: {
           taskId,
           projectPath: this.config.projectPath,
           contract: this.contract,
@@ -618,17 +823,47 @@ export class Supervisor {
             ? buildAutonomousTaskPrompt(this.contract.goal, this.contract)
             : this.contract.goal,
           messages: queued,
-        });
+        },
+      };
+    }
+
+    // Apply, mark active and invoke with no await in between, so a switch
+    // request sees either "not started yet" (applies now) or "running" (interrupt).
+    this.applyPendingModel(this.executorSeatId, this.config.executor);
+    let result: ExecutorResult;
+    let restartWanted = false;
+    this.executorTurnActive = true;
+    try {
+      result = await this.invokeExecutor(call, restart);
+      if (call.kind === "run") {
         this.taskStarted = true;
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.emit("executor.failed", { error: message });
-      return { status: "failed", summary: message, error: message };
+      return { result: { status: "failed", summary: message, error: message } };
+    } finally {
+      this.executorTurnActive = false;
+      restartWanted = this.restartRequested;
+      this.restartRequested = false;
     }
 
     if (result.sessionId) {
       this.sessionId = result.sessionId;
+    }
+
+    if (
+      result.status === "cancelled" &&
+      result.interrupted === true &&
+      restartWanted &&
+      !this.cancelRequested
+    ) {
+      // Partial turn: its messages are dropped and it does not count as a round.
+      this.emit("executor.interrupted", {
+        round: this.round,
+        reason: "Interrupted to switch models; restarting the turn",
+      });
+      return { result, restart: { call, partial: result.summary ?? "" } };
     }
 
     if (result.messages) {
@@ -651,7 +886,34 @@ export class Supervisor {
         error: result.error,
       },
     );
-    return result;
+    return { result };
+  }
+
+  /** Re-runs of an interrupted turn get the same input plus a note about the partial attempt. */
+  private invokeExecutor(call: ExecutorCall, restart?: ExecutorRestart): Promise<ExecutorResult> {
+    const executor = this.config.executor;
+    if (!restart) {
+      return call.kind === "run" ? executor.run(call.task) : executor.continue(call.input);
+    }
+    const noteMessage = createProtocolMessage({
+      conversationId: this.conversationId,
+      round: this.round,
+      from: SUPERVISOR_ID,
+      to: EXECUTOR_ID,
+      type: MessageType.Warning,
+      content: { message: restartNote(restart.partial), code: "turn_interrupted" },
+    });
+    if (call.kind === "run") {
+      // Same JSON-quoted rendering the continuation prompts use, so the partial output stays data.
+      const fenced = `[${noteMessage.type} from ${noteMessage.from}]\n${JSON.stringify(noteMessage.content, null, 2)}`;
+      return executor.run({ ...call.task, prompt: `${call.task.prompt}\n\n${fenced}` });
+    }
+    return executor.continue({
+      ...call.input,
+      // Resume the session the interrupted attempt reported, when there is one.
+      sessionId: this.sessionId ?? call.input.sessionId,
+      messages: [...call.input.messages, noteMessage],
+    });
   }
 
   private maxFailureRetries(): number {
@@ -664,9 +926,20 @@ export class Supervisor {
   ): Promise<ExecutorResult> {
     const maxAttempts = this.maxFailureRetries();
     let failures = 0;
+    let restart: ExecutorRestart | undefined;
+    this.turnRestarts = 0;
 
     while (true) {
-      const result = await this.runExecutor(taskId, conversationId);
+      const turn = await this.runExecutor(taskId, conversationId, restart);
+      const result = turn.result;
+      restart = turn.restart;
+      if (restart) {
+        if (!this.cancelRequested) {
+          this.turnRestarts += 1;
+          continue; // same turn again: not a round, not a failure attempt
+        }
+        return result;
+      }
       if (!isRetryableExecutorResult(result)) {
         return result;
       }
@@ -796,6 +1069,7 @@ export class Supervisor {
     const inbound = this.bus.receive(REVIEWER_ID);
     let turn: ReviewerTurnResult;
 
+    this.applyPendingModel(this.reviewerSeatId, this.config.reviewer);
     try {
       turn = await this.config.reviewer.review({
         taskId,

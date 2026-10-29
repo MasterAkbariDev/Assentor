@@ -86,8 +86,26 @@ export abstract class CliExecutorAdapter implements ExecutorAdapter {
   /** When set, detection uses PATH + well-known install locations. */
   readonly binaryTool?: BinaryTool;
   private inner?: PrintCliExecutor;
+  /** A switch requested before the inner executor exists; used when it is created. */
+  private requestedModel?: string;
 
   constructor(protected readonly options: CliExecutorOptions = {}) {}
+
+  /** Present only when this CLI's recipe has a model flag. Applies to the next invocation. */
+  get setModel(): ((model: string) => void) | undefined {
+    if (!PRINT_CLI_RECIPES[this.id]?.modelFlag) {
+      return undefined;
+    }
+    return (model) => {
+      this.requestedModel = model;
+      this.inner?.setModel?.(model);
+    };
+  }
+
+  /** False when no turn has started yet (no inner executor) or none is in flight. */
+  interrupt(): boolean {
+    return this.inner?.interrupt() ?? false;
+  }
 
   capabilities(): ExecutorCapabilities {
     return {
@@ -167,7 +185,7 @@ export abstract class CliExecutorAdapter implements ExecutorAdapter {
     }
     this.inner = new PrintCliExecutor({
       recipe,
-      model: this.options.model,
+      model: this.requestedModel ?? this.options.model,
       timeoutMs: this.options.timeoutMs,
       onOutput: this.options.onOutput,
       onStatus: this.options.onStatus,

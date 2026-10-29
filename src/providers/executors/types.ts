@@ -36,6 +36,8 @@ export interface ExecutorResult {
   messages?: ProtocolMessage[];
   rawOutput?: string;
   error?: string;
+  /** With `cancelled`: `interrupt()` stopped this turn; the caller may restart it. */
+  interrupted?: boolean;
 }
 
 /**
@@ -48,4 +50,16 @@ export interface Executor {
   run(task: ExecutorTask): Promise<ExecutorResult>;
   continue(input: ExecutorContinuation): Promise<ExecutorResult>;
   cancel(taskId: string): Promise<void>;
+  /**
+   * Model for the next invocation (`AUTO` = CLI default). A process already
+   * running keeps its model. Absent when the adapter cannot switch models.
+   */
+  setModel?(model: string): void;
+  /**
+   * Stop only the turn in flight: kill this executor's process tree and resolve
+   * that turn as `cancelled` with `interrupted: true`. Unlike `cancel`, later
+   * turns still run. Returns false (and does nothing) when no turn is in flight
+   * or it is already being stopped.
+   */
+  interrupt?(): boolean;
 }
