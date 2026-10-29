@@ -1,0 +1,31 @@
+id: incident-debug
+title: Incident debug
+description: Debate the likely cause of an incident, apply the fix after approval, then review it with a security veto.
+readOnly: false
+teams:
+  responders:
+    description: Debates the likely cause from logs, recent changes and the code.
+    seats:
+      - { provider: AUTO, role: debugger, count: 2 }
+      - { provider: AUTO, role: devops }
+  review-panel:
+    description: Reviews the fix; a security finding can veto it.
+    seats:
+      - { provider: AUTO, role: code-reviewer }
+      - { provider: AUTO, role: security-reviewer }
+stages:
+  - id: triage
+    kind: negotiate
+    team: responders
+    strategy: debate
+    next: fix
+  - id: fix
+    kind: execute
+    requireApproval: true
+    next: review
+  - id: review
+    kind: review
+    team: review-panel
+    strategy: panel
+    options: { policy: security-veto, maxRounds: 3 }
+    onNeedsWork: fix

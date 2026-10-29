@@ -1,0 +1,15 @@
+id: explain-codebase
+title: Explain codebase
+description: Read-only. An architect and a docs writer debate how the codebase fits together.
+readOnly: true
+teams:
+  explainers:
+    description: Reads the code and explains it. Never edits.
+    seats:
+      - { provider: AUTO, role: architect }
+      - { provider: AUTO, role: docs-writer }
+stages:
+  - id: explain
+    kind: negotiate
+    team: explainers
+    strategy: debate

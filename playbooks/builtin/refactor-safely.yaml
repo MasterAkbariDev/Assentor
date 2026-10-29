@@ -1,0 +1,33 @@
+id: refactor-safely
+title: Refactor safely
+description: Agree the refactor plan first, apply it after approval, then review it with a unanimous panel.
+readOnly: false
+teams:
+  planning:
+    description: Debates the refactor plan and what must stay the same.
+    seats:
+      - { provider: AUTO, role: architect }
+      - { provider: AUTO, role: refactorer }
+      - { provider: AUTO, role: devils-advocate }
+  reviewers:
+    description: Checks that behaviour is unchanged and the structure is better.
+    seats:
+      - { provider: AUTO, role: architecture-reviewer }
+      - { provider: AUTO, role: code-reviewer }
+      - { provider: AUTO, role: test-reviewer }
+stages:
+  - id: plan
+    kind: plan
+    team: planning
+    strategy: debate
+    next: refactor
+  - id: refactor
+    kind: execute
+    requireApproval: true
+    next: review
+  - id: review
+    kind: review
+    team: reviewers
+    strategy: panel
+    options: { policy: unanimous, maxRounds: 3 }
+    onNeedsWork: refactor

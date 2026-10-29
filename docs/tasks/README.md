@@ -156,7 +156,7 @@ Design: [modes.md](../plans/modes.md)
 | T03-01 | Prompt format, layered loader, safe templating ✅ | 🟡 S | O | M | T00-01 |
 | T03-02 | Built-in builder roles (planner, coder, …) ✅ | 🟢 H | O (quality) | M | T03-01 |
 | T03-03 | Built-in reviewer & meta roles ✅ | 🟢 H | O (quality) | M | T03-01 |
-| T03-04 | Built-in playbooks | 🟢 H | S | S | T03-01, T02-09 |
+| T03-04 | Built-in playbooks ✅ | 🟢 H | S | S | T03-01, T02-09 |
 | T03-05 | `assentor prompts` CLI commands ✅ | 🟢 H | S | S | T03-01 |
 | T03-06 | TUI Agents screen: fork/edit prompts ✅ | 🟢 H | S | M | T03-01, T03-05 |
 
