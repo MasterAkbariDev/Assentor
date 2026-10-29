@@ -7,7 +7,7 @@ How a team of seats reaches one answer. Design: [docs/plans/app-and-multi-model.
 | `strategy.ts` | **The contract** (T02-03a): `NegotiationStrategy`, `NegotiationContext`, step reply schemas, `anonymizeProposals`, `NegotiationResultSchema`, `NegotiationCancelledError`. |
 | `strategies/index.ts` | Registry: `registerStrategy`, `getStrategy`, `listStrategies`. |
 | `testing/mock-context.ts` | `createMockNegotiationContext({ seats, script })` — scripted seats for strategy tests. |
-| `engine.ts` | *(T02-03, later)* the real context on top of the seat scheduler, persistence and events. |
+| `engine.ts` | (T02-03) `createNegotiationContext` (call its `dispose()` when done: it detaches from the caller signal and stops asks still in flight) / `runNegotiation`: the real context on top of the seat scheduler (`askSeat` → `scheduler.run` with a per-ask timeout → parse + validate), seat status and `negotiation.*` events, a transcript, and `negotiations/<runId>.json` in the session dir (never overwritten; not written on cancel or error). Node-only (exported from the package root, not from this folder's browser-safe `index.ts`). The model call is an injected `SeatStepRunner`. A caller cancel stops the scheduler (`cancelAll`): use one scheduler per session. |
 
 ## Writing a strategy
 
