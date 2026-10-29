@@ -1,0 +1,21 @@
+id: write-tests
+title: Write tests
+description: Add tests for the current code after approval, then review them with a test panel.
+readOnly: false
+teams:
+  reviewers:
+    description: Checks that the tests are meaningful and pass for the right reason.
+    seats:
+      - { provider: AUTO, role: test-reviewer }
+      - { provider: AUTO, role: code-reviewer }
+stages:
+  - id: write
+    kind: execute
+    requireApproval: true
+    next: review
+  - id: review
+    kind: review
+    team: reviewers
+    strategy: panel
+    options: { policy: unanimous, maxRounds: 3 }
+    onNeedsWork: write

@@ -93,6 +93,16 @@ Phase exit criteria:
 ### T03-04 · Built-in playbooks
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T03-01, T02-09
 
+**Status: implemented, awaiting Sonnet review** (branch `claude/card-t03-04`). Decisions:
+- Files: `playbooks/builtin/*.yaml` (nine playbooks), `src/playbooks/library.ts` (schema, graph check, layered loader), `src/cli/playbooks.ts` plus the `playbooks` command and `run --playbook` option in `src/cli/index.ts`, `playbooks` added to `package.json` `files` so built-ins ship. The card's allowed-file list did not cover the loader or CLI; the planner's brief asked for both.
+- Format is YAML, not front-matter (the card names `.yaml` files). Keys: `id`, `title`, `description`, `readOnly`, `teams` (name → `{ description, seats: [{ provider: AUTO|<provider>, model, role (prompt id), count, permissions }] }`), `stages` (`StageSpecSchema`, strict). Every `team` a stage names must be defined in the same file. `plan`, `negotiate` and `review` stages need a team; `plan` and `negotiate` need a registered strategy; a review strategy must be `panel`. Every playbook must pass `validateSessionGraph` with its title as the placeholder goal.
+- Layers and safety follow the prompt library: built-in → `~/.assentor/playbooks` → `<project>/.assentor/playbooks`; `.yaml` only (lowercase); the file name is the id; symlinks must stay inside the dir; 64 KB cap. A bad file is recorded in `errors` and skipped, so a bad override keeps the lower playbook.
+- Read-only: `readOnly: true` rejects execute stages and edit seats. `security-audit`, `pr-review` and `explain-codebase` set it.
+- "requireApproval before any merge stage": there is no merge stage kind, so every `execute` stage (the one that edits the workspace) has `requireApproval: true`. A test enforces this for built-ins.
+- Assumption to verify against T02-06: best-of-n is written as `options: { n: 2 }`. Its option key is not confirmed because T02-06 is not merged. `best-of-n` and `divide` are not registered strategies, so no plan or negotiate stage uses them.
+- Tests: `tests/unit/builtin-playbooks.test.ts` (load, `validateSessionGraph`, prompt and team references, read-only rule, approval gate, and `createStageRunners.validate` with AUTO bound to `mock`), `tests/unit/playbook-library.test.ts` (layering, override, and bad-file cases), `tests/unit/cli-playbooks.test.ts`.
+- CLI: `assentor playbooks` lists playbooks. `assentor run --playbook <id>` validates the id only: unknown gives exit 1 with the available ids; a valid id gives exit 1 with "not wired yet". Running is deferred, because nothing merged can run it: `runStep` (the `SeatStepRunner`) is injected and no production implementation exists, playbook `AUTO` team templates have no binding to config `teams`, and the executor and reviewer factories are not built. A fake runner was not added.
+
 **Goal** — Ready-made scenarios users pick instead of wiring stages by hand.
 
 **Context to read** — `SessionSpec`/`StageSpec` (T00-01), `SessionRunner` (T02-09) docs, built-in prompt ids (T03-02/03).

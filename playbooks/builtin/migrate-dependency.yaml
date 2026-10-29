@@ -1,0 +1,33 @@
+id: migrate-dependency
+title: Migrate dependency
+description: Plan the move with devops and architecture input, apply it after approval, then review with a security veto.
+readOnly: false
+teams:
+  planning:
+    description: Debates the migration path, rollback and compatibility risks.
+    seats:
+      - { provider: AUTO, role: devops }
+      - { provider: AUTO, role: architect }
+      - { provider: AUTO, role: devils-advocate }
+  review-panel:
+    description: Reviews the migrated code; a security finding can veto it.
+    seats:
+      - { provider: AUTO, role: code-reviewer }
+      - { provider: AUTO, role: security-reviewer }
+      - { provider: AUTO, role: test-reviewer }
+stages:
+  - id: plan
+    kind: plan
+    team: planning
+    strategy: debate
+    next: migrate
+  - id: migrate
+    kind: execute
+    requireApproval: true
+    next: review
+  - id: review
+    kind: review
+    team: review-panel
+    strategy: panel
+    options: { policy: security-veto, maxRounds: 3 }
+    onNeedsWork: migrate

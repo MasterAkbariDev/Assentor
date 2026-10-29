@@ -1,0 +1,21 @@
+id: pr-review
+title: PR review
+description: Read-only. Reviewers debate the change, then vote on the verdict.
+readOnly: true
+teams:
+  reviewers:
+    description: Reads the change for correctness, tests and security. Never edits.
+    seats:
+      - { provider: AUTO, role: code-reviewer }
+      - { provider: AUTO, role: test-reviewer }
+      - { provider: AUTO, role: security-reviewer }
+stages:
+  - id: review
+    kind: negotiate
+    team: reviewers
+    strategy: debate
+    next: verdict
+  - id: verdict
+    kind: negotiate
+    team: reviewers
+    strategy: vote
