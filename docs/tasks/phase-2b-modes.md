@@ -83,6 +83,8 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 ### T02B-04 · Roster builder
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T02B-01, T01-01
 
+**Status: ✅ done.** Shipped in `67a685d` (Haiku subagent). Sonnet review PASS. Decisions: `src/modes/capabilities.ts` seeds (8 keys, "seed — user-editable"), `src/modes/roster-build.ts` (`buildRoster`, `formatRosterForPrompt`, `rosterKey`); locale-independent sort; duplicate catalog rows collapse to the first; `rateLimitedUntil` attached but not excluded and not shown in the prompt table (T02B-02 must check it); the catalog's `AUTO` row is an ordinary model when availability lists it (policy for T02B-02). Not exported from `src/modes/index.ts` (import by path). Follow-ups: `maxRows` NaN/fraction handling; tests for `maxRows: 0`, AUTO, neutral-profile `maxCost`, `allowedProviders: []`.
+
 **Goal** — Produce the list of hireable agents the Lead sees each turn.
 
 **Context to read** — `src/modes/roster.ts` (types from T02B-01), `src/models/cli-catalog.ts` (T01-01), `src/core/seats.ts`, modes.md §4.4.
