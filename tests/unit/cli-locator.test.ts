@@ -2,6 +2,7 @@ import { describe, expect, it, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parse as parseYaml } from "yaml";
 import {
   findOnPath,
   locateBinary,
@@ -96,6 +97,52 @@ describe("CLI locator", () => {
       },
     });
     expect(found).toBe(cmd);
+  });
+
+  describe("rememberBinary and the user config file", () => {
+    async function cachePath(): Promise<string> {
+      const cache = path.join(await tempDir(), "config.yaml");
+      process.env.ASSENTOR_BINARY_CACHE_PATH = cache;
+      return cache;
+    }
+
+    it("leaves a corrupt YAML file byte-for-byte unchanged", async () => {
+      const cache = await cachePath();
+      const corrupt = "run:\n  mode: [unclosed\n\tbad: : yaml\n";
+      await fs.writeFile(cache, corrupt);
+      expect(() => rememberBinary("claude", "/bin/claude")).not.toThrow();
+      expect(await fs.readFile(cache, "utf8")).toBe(corrupt);
+      expect(await fs.readdir(path.dirname(cache))).toEqual(["config.yaml"]);
+    });
+
+    it("leaves a file that is not a mapping unchanged", async () => {
+      const cache = await cachePath();
+      await fs.writeFile(cache, "- a\n- b\n");
+      rememberBinary("claude", "/bin/claude");
+      expect(await fs.readFile(cache, "utf8")).toBe("- a\n- b\n");
+    });
+
+    it("creates a missing file with just binaries", async () => {
+      const cache = await cachePath();
+      rememberBinary("claude", "/bin/claude");
+      expect(parseYaml(await fs.readFile(cache, "utf8"))).toEqual({
+        binaries: { claude: "/bin/claude" },
+      });
+      expect(await fs.readdir(path.dirname(cache))).toEqual(["config.yaml"]);
+    });
+
+    it("keeps every other key of a valid file", async () => {
+      const cache = await cachePath();
+      await fs.writeFile(
+        cache,
+        "run:\n  mode: supervised\nbinaries:\n  codex: /bin/codex\n",
+      );
+      rememberBinary("claude", "/bin/claude");
+      expect(parseYaml(await fs.readFile(cache, "utf8"))).toEqual({
+        run: { mode: "supervised" },
+        binaries: { codex: "/bin/codex", claude: "/bin/claude" },
+      });
+    });
   });
 
   it("treats cursor.cmd as the Cursor.app-style binary", () => {

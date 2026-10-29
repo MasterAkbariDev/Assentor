@@ -2,7 +2,7 @@ import React from "react";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { render } from "ink";
 import { PassThrough } from "node:stream";
-import { existsSync, promises as fs } from "node:fs";
+import { existsSync, promises as fs, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseAssentorConfig } from "../../src/config/schema.js";
@@ -617,6 +617,45 @@ describe("startTui edit loop", () => {
     await startTui(projectDir, { runEditor: async () => 3, render: fn });
 
     expect(renders[1]!.initialNotice).toEqual(["Editor exited with code 3."]);
+  });
+
+  it("remounts with the config saved before the edit round trip", async () => {
+    const userConfig = path.join(process.env.ASSENTOR_USER_DIR!, "config.yaml");
+    const file = path.join(root, "user", "alpha.md");
+    const { fn, renders } = fakeRender([
+      (props) => {
+        expect((props.initialConfig as { run: { mode: string } }).run.mode).toBe("autopilot");
+        // The user switched to Supervised and saved while the first App was mounted.
+        writeFileSync(userConfig, "run:\n  mode: supervised\n");
+        handOff(props, { kind: "edit-prompt", file });
+      },
+      (props) => handOff(props, { kind: "exit" }),
+    ]);
+    await fs.mkdir(path.dirname(userConfig), { recursive: true });
+    await fs.writeFile(userConfig, "run:\n  mode: autopilot\n");
+
+    await startTui(projectDir, { runEditor: async () => 0, render: fn });
+
+    expect((renders[1]!.initialConfig as { run: { mode: string } }).run.mode).toBe("supervised");
+  });
+
+  it("keeps the previous config and shows a notice when the reload fails", async () => {
+    const userConfig = path.join(process.env.ASSENTOR_USER_DIR!, "config.yaml");
+    const file = path.join(root, "user", "alpha.md");
+    const { fn, renders } = fakeRender([
+      (props) => {
+        writeFileSync(userConfig, "run: [unclosed\n");
+        handOff(props, { kind: "edit-prompt", file });
+      },
+      (props) => handOff(props, { kind: "exit" }),
+    ]);
+    await fs.mkdir(path.dirname(userConfig), { recursive: true });
+    await fs.writeFile(userConfig, "run:\n  mode: autopilot\n");
+
+    await startTui(projectDir, { runEditor: async () => 0, render: fn });
+
+    expect(renders[1]!.initialConfig).toBe(renders[0]!.initialConfig);
+    expect((renders[1]!.initialNotice as string[])[0]).toMatch(/^Could not reload config, keeping the previous one/);
   });
 
   it("any other handoff is returned unchanged, and no editor runs", async () => {

@@ -5,6 +5,8 @@ import {
   existsSync,
   readdirSync,
   readFileSync,
+  renameSync,
+  rmSync,
   statSync,
   writeFileSync,
   mkdirSync,
@@ -354,24 +356,35 @@ export function rememberBinary(tool: BinaryTool, filePath: string): void {
   const cachePath = binaryCachePath();
   let current: Record<string, unknown> = {};
   try {
-    const raw = readFileSync(cachePath, "utf8");
-    const parsed = parseYaml(raw);
+    const parsed = parseYaml(readFileSync(cachePath, "utf8"));
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       current = parsed as Record<string, unknown>;
+    } else if (parsed != null) {
+      return; // valid YAML but not a mapping: not ours to overwrite
     }
-  } catch {
-    current = {};
+  } catch (error) {
+    // Only a missing file may start from {}. Unreadable or corrupt config is
+    // left untouched: losing the user's config is worse than not caching.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      return;
+    }
   }
-  const binaries = {
+  current.binaries = {
     ...((current.binaries as Record<string, unknown> | undefined) ?? {}),
     [tool]: filePath,
   };
-  current.binaries = binaries;
+  const tmp = `${cachePath}.${process.pid}.${Date.now()}.tmp`;
   try {
     mkdirSync(path.dirname(cachePath), { recursive: true });
-    writeFileSync(cachePath, stringifyYaml(current, { lineWidth: 100 }), "utf8");
+    writeFileSync(tmp, stringifyYaml(current, { lineWidth: 100 }), "utf8");
+    renameSync(tmp, cachePath);
   } catch {
     // Best-effort cache: do not fail when user config dir is read-only or restricted
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      // nothing more to clean up
+    }
   }
 }
 
