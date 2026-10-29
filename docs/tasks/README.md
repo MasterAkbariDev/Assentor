@@ -123,7 +123,7 @@ Legend: 🟢 H · 🟡 S · 🔴 O · Size S/M/L (≈ <150 / 150–500 / >500 ch
 | T02-06 | Strategy: Best-of-N | 🟡 S | O | M | T02-01, T02-03 |
 | T02-07 | Strategy: Synthesize ✅ | 🟢 H | S | S | T02-03 |
 | T02-08 | Strategy: Divide & conquer | 🟡 S | O | L | T02-01, T02-03 |
-| T02-09 | Stage-graph runner (plan → execute → review, tiebreak) | 🔴 O | O2 + human | L | T02-03, T01-03 |
+| T02-09 | Stage-graph runner (plan → execute → review, tiebreak) ✅ | 🔴 O | O2 + human | L | T02-03, T01-03 |
 | T02-10 | Pre-run cost estimator ✅ | 🟢 H | S | S | T00-02 |
 
 ### Phase 2b — Lead (Supervisor), Cascade & more modes · [phase-2b-modes.md](./phase-2b-modes.md)

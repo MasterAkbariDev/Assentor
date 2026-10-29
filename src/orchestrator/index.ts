@@ -42,6 +42,21 @@ export {
 } from "./supervisor.js";
 
 export {
+  SessionRunner,
+  validateSessionGraph,
+  STAGE_OUTCOMES,
+  SESSION_RUN_STATUSES,
+  type StageOutcome,
+  type SessionRunStatus,
+  type StageResult,
+  type StageRunInput,
+  type StageRunners,
+  type StageRecord,
+  type SessionRunResult,
+  type SessionRunnerOptions,
+} from "./session-runner.js";
+
+export {
   fromSupervisorEvent,
   engineTypeForSupervisorEvent,
   type SupervisorEventContext,
