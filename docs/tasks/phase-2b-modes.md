@@ -59,6 +59,8 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 ### T02B-03 · Agent report parser + claim verification
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T02B-01
 
+**Status: ✅ done.** Shipped in `4e475e7`, review fixes `bd5fdf9` and `1535152` (Haiku subagent). Sonnet review: fence parity after the 64 KB cut, named bare-JSON parse errors, brace-only input bounded (<200 ms on 64 KB), wrong task id truncated to 100 chars. `src/modes/lead/report.ts`: `parseAgentReport`, repair prompt, claim checks; exported from `src/modes/index.ts`.
+
 **Goal** — Turn an agent's final text into a validated `AgentReport`, and check its claims against reality.
 
 **Context to read** — `src/modes/lead/types.ts` (`AgentReportSchema`), `src/protocol/parse.ts` (`extractJsonCandidate` — reuse it), `src/review/verification-gates.ts` (gate result shapes), modes.md §4.3.
