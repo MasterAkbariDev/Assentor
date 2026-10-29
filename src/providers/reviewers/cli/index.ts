@@ -50,6 +50,8 @@ export interface CliTransport {
     timeoutMs: number;
     env?: NodeJS.ProcessEnv;
   }): Promise<CliSpawnResult>;
+  /** Model for the next `run`. Absent when the transport cannot switch models. */
+  setModel?(model: string): void;
 }
 
 export interface MockCliTransportStep {
@@ -151,7 +153,7 @@ export class ProcessCliTransport implements CliTransport {
   private readonly extraArgs: string[];
   private readonly spawnFn: CliSpawnFn;
   private readonly env?: NodeJS.ProcessEnv;
-  private readonly model?: string;
+  private model?: string;
   lastCommand?: { command: string; args: string[]; cwd: string };
 
   constructor(options: ProcessCliTransportOptions) {
@@ -162,6 +164,10 @@ export class ProcessCliTransport implements CliTransport {
     this.spawnFn = options.spawnFn ?? defaultCliSpawn;
     this.env = options.env;
     this.model = options.model;
+  }
+
+  setModel(model: string): void {
+    this.model = model;
   }
 
   async run(input: {
@@ -212,6 +218,8 @@ export class CliReviewer implements Reviewer {
   private readonly timeoutMs: number;
   private readonly specialtyAddendum?: string;
   private readonly onStatus?: (message: string) => void;
+  /** Present only when the transport can switch models. */
+  readonly setModel?: (model: string) => void;
   callCount = 0;
 
   constructor(options: CliReviewerOptions = {}) {
@@ -247,6 +255,10 @@ export class CliReviewer implements Reviewer {
         spawnFn: options.spawnFn,
         model: options.model,
       });
+    }
+    const transport = this.transport;
+    if (transport.setModel) {
+      this.setModel = (model) => transport.setModel!(model);
     }
   }
 

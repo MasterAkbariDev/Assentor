@@ -54,6 +54,12 @@ const RULES: Record<SupervisorEventType, MappingRule> = {
     build: (d) => ({ message: text(d.error ?? d.summary, "executor failed") }),
   },
   "executor.retry": { type: "seat.retry", seat: "executor" },
+  // The interrupted attempt ends here; the restart starts a new turn on the seat.
+  "executor.interrupted": {
+    type: "seat.done",
+    seat: "executor",
+    build: (d) => ({ ok: false, summary: text(d.reason, "turn interrupted") }),
+  },
   "review.started": { type: "seat.status", seat: "reviewer", build: status("starting") },
   "review.completed": {
     type: "review.verdict",

@@ -48,6 +48,11 @@ export const SEED_MODELS: Record<SeatCliProvider, DiscoveredModel[]> = {
 };
 
 const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/:-]*$/;
+
+/** A model id safe to pass as one CLI argument: starts alphanumeric, so never a flag. */
+export function isModelId(id: string): boolean {
+  return MODEL_ID_PATTERN.test(id);
+}
 const DISCOVERY_TIMEOUT_MS = 15_000;
 const OUTPUT_CAP_BYTES = 1024 * 1024;
 /** A binary path with any of these is refused before spawning. Paths with spaces are fine. */

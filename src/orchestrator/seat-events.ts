@@ -441,5 +441,6 @@ export function trackReviewerSeat(
     name: reviewer.name,
     review: (input: ReviewInput) => turn(() => reviewer.review(input)),
     continue: (input: ReviewContinuation) => turn(() => reviewer.continue(input)),
+    ...(reviewer.setModel ? { setModel: (model: string) => reviewer.setModel!(model) } : {}),
   };
 }

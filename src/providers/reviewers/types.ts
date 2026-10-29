@@ -65,4 +65,6 @@ export interface Reviewer {
   readonly name: string;
   review(input: ReviewInput): Promise<ReviewerTurnResult>;
   continue(input: ReviewContinuation): Promise<ReviewerTurnResult>;
+  /** Model for the next turn (`AUTO` = default). Absent when the reviewer cannot switch models. */
+  setModel?(model: string): void;
 }

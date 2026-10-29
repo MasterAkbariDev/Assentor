@@ -30,5 +30,9 @@ export function withAssentorGitignore(executor: Executor): Executor {
     cancel(taskId: string): Promise<void> {
       return executor.cancel(taskId);
     },
+    // shortcut: an interrupt landing during the gitignore await (before the inner
+    // spawn) is a no-op, so that switch applies at the next turn instead.
+    ...(executor.setModel ? { setModel: (model: string) => executor.setModel!(model) } : {}),
+    ...(executor.interrupt ? { interrupt: () => executor.interrupt!() } : {}),
   };
 }

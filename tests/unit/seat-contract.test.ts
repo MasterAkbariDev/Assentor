@@ -240,6 +240,7 @@ describe("fromSupervisorEvent", () => {
     "executor.completed": { status: "completed", summary: "edited 2 files" },
     "executor.failed": { error: "timeout" },
     "executor.retry": { attempt: 1, maxAttempts: 3, delayMs: 2000 },
+    "executor.interrupted": { round: 1, reason: "Interrupted to switch models" },
     "review.started": { round: 1 },
     "review.completed": { status: "PASS", summary: "ok", confidence: 0.9 },
     "review.retry": { attempt: 2, maxAttempts: 3, delayMs: 4000 },

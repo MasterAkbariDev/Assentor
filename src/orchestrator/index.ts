@@ -35,6 +35,7 @@ export {
 export {
   Supervisor,
   reviewRequiresExecutor,
+  type ModelChangeResult,
   type SupervisorConfig,
   type SupervisorEvent,
   type SupervisorEventType,
