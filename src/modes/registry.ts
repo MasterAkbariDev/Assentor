@@ -7,6 +7,7 @@ import type { StageRunnerDeps } from "../orchestrator/session-stages.js";
 import type { StageRunners } from "../orchestrator/session-runner.js";
 import type { EngineEventDraft } from "../protocol/events.js";
 import type { WorktreeManager } from "../worktrees/manager.js";
+import { createRedteamController, redteamProblems } from "./redteam.js";
 
 /**
  * Mode registry and mode contract (T02B-01b metadata, T02B-01 contract). A mode
@@ -213,7 +214,11 @@ const MODES: readonly ModeDefinition[] = [
   mode("pipeline", "Pipeline", "Requirements, architect, coder, tester, reviewer and docs stages in order.", "static", true),
   mode("pair", "Pair", "A driver codes while a navigator watches the stream and interjects.", "static", true),
   mode("race", "Race", "Several seats implement in parallel worktrees; a judge picks one.", "static", true),
-  mode("redteam", "Red team", "An attacker writes failing tests or exploits; a builder fixes; repeat.", "static", true),
+  // A controller loop (attacker round, builder fix, gates), not a stage graph: the number of rounds depends on the attacker.
+  mode("redteam", "Red team", "An attacker writes failing tests or exploits; a builder fixes; repeat.", "dynamic", true, false, {
+    validate: (config) => [...teamProblems(config), ...redteamProblems(config)],
+    createController: createRedteamController,
+  }),
   mode("tdd", "TDD", "Failing tests first, then code that passes them without touching the tests.", "static", true),
   mode("swarm", "Swarm", "Many small independent items split across cheap seats, then merged.", "static", true),
   mode("debug", "Debug", "Seats test competing hypotheses in their own worktrees; evidence picks the fix.", "static", true),
