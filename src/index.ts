@@ -176,6 +176,29 @@ export {
   type BestOfNDeps,
   type BestOfNOptions,
 } from "./negotiation/strategies/best-of-n.js";
+export {
+  createTddExecutor,
+  parseTestChangeRequests,
+  reviewerTestChangeDecision,
+  TDD_STRATEGY_ID,
+  TEST_CHANGE_REQUEST_TAG,
+  type TddDeps,
+  type TddGateRunner,
+  type TddSeat,
+  type TestChangeDecision,
+  type TestChangeFile,
+  type TestChangeRequest,
+} from "./modes/tdd/executor.js";
+export { parseTddOptions, selectTddSeats, TddModeSchema, type TddModeConfig, type TddOptions } from "./modes/tdd/config.js";
+export {
+  DEFAULT_TEST_PATTERNS,
+  detectTamper,
+  isTestFile,
+  lockTests,
+  RUNNER_CONFIG,
+  type TamperInput,
+  type TamperResult,
+} from "./modes/tdd/tamper.js";
 export * from "./worktrees/index.js";
 export {
   prepareModeSession,
