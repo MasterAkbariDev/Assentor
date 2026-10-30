@@ -148,7 +148,7 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
   - ✅ Worktree manager follow-up merged (`2dde8f9`, cherry-picked from `6966bd6` without the superseded divide commit): renames at both ends, `applyTo` `allowedPaths`. O2 PASS; user signed off.
   - ✅ T02-08 divide & conquer merged (`e9e7331`): Opus PASS after 3 rounds; user signed off. Phase 2 complete.
 - ✅ T02B-07 danger classifier merged (`9716d2a`): O2 PASS after 3 rounds; user signed off. Merge fix: `modes.cascade` passthrough, `dangerAreas` optional. Follow-up: project `.assentor/config.yaml` with this repo's danger files.
-- **Paused by the user on 2026-10-29.** All agents stopped. State per card (worktree `.claude/worktrees/card-<id>`, branch `claude/card-<id>`):
+- **Resumed 2026-10-30.** Builds restarted on T02B-02, 11, 06, 16 (each reviews the uncommitted work first); T02B-10 fixer started on the 8 review items; T02B-09 (Sonnet) and T02B-14 (Opus) reviews rerun. Paused on 2026-10-29; state at pause per card (worktree `.claude/worktrees/card-<id>`, branch `claude/card-<id>`):
   - T02B-02 Lead (Opus): in progress, **uncommitted** work in the worktree (9 files). Resume by reviewing the diff, then finishing. Must-do from T02B-01: approval/answer channel, `stages` gated under manual, resume re-applies the floor. lead.md caller vars: goal, autonomy, tasks (with assignee), roster, reports (taskId, status, summary, blockers, questions, filesChanged, claimIssues; testsRun as a string), results; escape `</report`.
   - T02B-11 TDD (Sonnet): in progress, **uncommitted** (10 files).
   - T02B-06 Cascade (Sonnet): in progress, **uncommitted** (5 files).
