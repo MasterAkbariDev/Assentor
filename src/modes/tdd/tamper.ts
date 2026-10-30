@@ -23,6 +23,13 @@ export const DEFAULT_TEST_PATTERNS: readonly string[] = [
   "**/test_*.py",
 ];
 
+/**
+ * Files that decide what the test command runs or whether it exits 0 (by basename, any depth).
+ * TDD mode treats a change to one, or a new one, as tampering. Not covered: babel, tsconfig and the like.
+ */
+export const RUNNER_CONFIG =
+  /(?:^|\/)(?:[^/]*(?:vitest|vite|jest|playwright|cypress|ava)\.(?:config|workspace)\.[^/]*|karma\.conf\.[^/]*|\.mocharc\.[^/]*|setupTests\.[^/]*|package\.json|\.?pytest\.ini|pyproject\.toml|setup\.cfg|tox\.ini|conftest\.py|noxfile\.py|Cargo\.toml|Makefile|justfile|\.gitignore)$/i;
+
 export interface TamperInput {
   /** Test files the test writer produced; the coder must not change them. */
   lockedTests: string[];

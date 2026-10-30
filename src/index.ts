@@ -195,6 +195,7 @@ export {
   detectTamper,
   isTestFile,
   lockTests,
+  RUNNER_CONFIG,
   type TamperInput,
   type TamperResult,
 } from "./modes/tdd/tamper.js";

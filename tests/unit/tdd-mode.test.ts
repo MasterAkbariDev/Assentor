@@ -479,13 +479,23 @@ describe("tamper check", () => {
     await mainIsUntouched(s);
   });
 
-  it("a new test file added by the coder is not tampering", async () => {
+  it("a new test file added by the coder needs a test change request and approval", async () => {
     const s = await setup();
     const extra = `const { add } = require("../add.js");\nif (add(0, 0) !== 0) process.exit(1);\n`;
-    const result = await s.run(s.build(writer(), coder(IMPL, { "tests/zero.test.js": extra })));
+    const blocked = await s.run(s.build(writer(), coder(IMPL, { "tests/zero.test.js": extra })));
+    expect(blocked.status).toBe("failed");
+    expect(blocked.summary).toContain("without a test change request");
+
+    const ok = await setup();
+    const result = await ok.run(
+      ok.build(writer(), coder(IMPL, { "tests/zero.test.js": extra }, "TEST-CHANGE-REQUEST: tests/zero.test.js | edge case"), {
+        decideTestChange: async () => ({ approved: true }),
+      }),
+    );
     expect(result.status).toBe("completed");
-    expect(await fs.readFile(path.join(s.repo, "tests/zero.test.js"), "utf8")).toBe(extra);
+    expect(await fs.readFile(path.join(ok.repo, "tests/zero.test.js"), "utf8")).toBe(extra);
   });
+
 });
 
 describe("protected files: tests and test runner config", () => {
@@ -505,6 +515,10 @@ describe("protected files: tests and test runner config", () => {
     ["an existing test file is edited", { "tests/old.test.js": "process.exit(1);\n" }],
     ["the vitest config gets an exclude", { "vitest.config.js": "module.exports = { test: { exclude: ['**'] } };\n" }],
     ["package.json's test script becomes exit 0", { "package.json": JSON.stringify({ name: "demo", scripts: { test: "exit 0" } }) + "\n" }],
+    ["a new vite.config.ts appears (vitest reads test: from it)", { "vite.config.ts": "export default { test: { exclude: ['**'] } };\n" }],
+    [".gitignore hides a new conftest.py", { ".gitignore": ".assentor/\nconftest.py\n", "conftest.py": "import os\n" }],
+    ["a Makefile appears", { Makefile: "test:\n\ttrue\n" }],
+    ["a new test file appears (it could end the whole run with exit 0)", { "tests/exit.test.js": "process.exit(0);\n" }],
     ["a new conftest.py appears", { "tests/conftest.py": "import pytest\n" }],
     ["a new root-level pytest.ini appears", { "pytest.ini": "[pytest]\n" }],
   ])("blocks when %s", async (_name, edits) => {
@@ -576,6 +590,9 @@ describe("base is red", () => {
     expect(result.status).toBe("failed");
     expect(result.summary).toContain("base is red");
     expect(result.summary).toContain("{files}");
+    const other = await setup();
+    const cannotRun = await other.run(other.build(writer(), coder(), { options: { testCommand: "exit 127" } }));
+    expect(cannotRun.summary).toContain("could not run on the base commit (exit 127)");
     expect(w.tasks).toHaveLength(0);
     await mainIsUntouched(s);
   });
@@ -643,6 +660,7 @@ describe("continue: a review asked for changes", () => {
     const result = await next(s, s.build(w, c));
     expect(result.status).toBe("failed");
     expect(result.summary).toContain("locks lost");
+    expect(result.error).toContain("start a new session");
     expect(w.tasks).toHaveLength(0);
     expect(c.tasks).toHaveLength(0);
     expect(await s.manager.list(SESSION)).toEqual([]);

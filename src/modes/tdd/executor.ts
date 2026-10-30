@@ -25,7 +25,7 @@ import { redactSecrets } from "../../security/redact.js";
 import type { SeatScheduler } from "../../seats/scheduler.js";
 import type { SeatKey, WorktreeManager } from "../../worktrees/index.js";
 import { parseTddOptions } from "./config.js";
-import { detectTamper, isTestFile, lockTests, normalizePath } from "./tamper.js";
+import { detectTamper, isTestFile, lockTests, normalizePath, RUNNER_CONFIG } from "./tamper.js";
 
 /**
  * TDD mode's execute stage (T02B-11): `strategy: "tdd"` on an execute stage, with the usual review
@@ -46,10 +46,10 @@ import { detectTamper, isTestFile, lockTests, normalizePath } from "./tamper.js"
  * 3. the coder implements. Gate B: the test command must pass; while it does not, the coder runs
  *    again (up to `maxCoderAttempts`) with the failing output;
  * 4. tamper check, after each coder run, over every **protected** file: the locked tests, every test file
- *    that existed when the coder started, and the test runner's config (package.json, vitest/jest
- *    config, pytest.ini, pyproject.toml, setup.cfg, tox.ini, conftest.py at any depth; a new conftest.py
- *    or config file counts). A protected file whose bytes changed, that is gone, or that became a symlink
- *    is tampered (`detectTamper`); new test files are allowed. Tampering ends the round: nothing is applied, even when Gate B is
+ *    that existed when the coder started, and the test runner's config (`RUNNER_CONFIG`, ./tamper.ts).
+ *    A protected file whose bytes changed, that is gone, or that became a symlink is tampered
+ *    (`detectTamper`); so is a **new** test file or runner config file: the tests are already written.
+ *    Tampering ends the round: nothing is applied, even when Gate B is
  *    green. The one way out is an explicit **test change request**: the coder leaves the test alone
  *    and ends its message with `TEST-CHANGE-REQUEST: <path> | <reason>` for each file. If it changed
  *    a locked test anyway, every changed file must have such a line, and `decideTestChange` (a
@@ -80,7 +80,7 @@ import { detectTamper, isTestFile, lockTests, normalizePath } from "./tamper.js"
  * level.
  *
  * Known limits: a coder can still weaken tests through helpers or fixtures that are not test files by
- * the patterns; and a process the coder left running could change a test between the tamper check and
+ * the patterns, or through config that is not on the `RUNNER_CONFIG` list (babel, tsconfig, ...); and a process the coder left running could change a test between the tamper check and
  * `applyTo` (not detected: the lock is re-read from the target afterwards).
  */
 
@@ -94,9 +94,6 @@ const OUTPUT_LIMIT = 4_000;
 /** Timeout, command not executable, command not found: the test command did not say "tests fail". */
 const NOT_A_TEST_RESULT = new Set([124, 126, 127]);
 const DEFAULT_GATE_TIMEOUT_MS = 5 * 60_000;
-/** Files that decide what the test command runs; the coder may not change or add them without a test change request. */
-const RUNNER_CONFIG =
-  /(?:^|\/)(?:[^/]*(?:vitest|jest)\.(?:config|workspace)\.[^/]*|package\.json|pytest\.ini|pyproject\.toml|setup\.cfg|tox\.ini|conftest\.py)$/i;
 
 export interface TddSeat {
   seat: Seat;
@@ -362,14 +359,14 @@ export function createTddExecutor(deps: TddDeps): Executor {
     return guard;
   }
 
-  /** Protected files whose bytes changed or that are gone, plus test runner config files that are new. */
+  /** Protected files whose bytes changed or that are gone, plus new test files and new test runner config files. */
   async function changedProtected(worktree: string, guard: ReadonlyMap<string, Snapshot>): Promise<string[]> {
     const changed: string[] = [];
     for (const [file, snapshot] of guard) {
       if ((await read(worktree, file))?.hash !== snapshot.hash) changed.push(file);
     }
     for (const file of await listFiles(worktree)) {
-      if (!guard.has(file) && RUNNER_CONFIG.test(normalizePath(file)) && (await read(worktree, file))) changed.push(file);
+      if (!guard.has(file) && isProtected(file) && (await read(worktree, file))) changed.push(file);
     }
     return changed;
   }
@@ -379,7 +376,7 @@ export function createTddExecutor(deps: TddDeps): Executor {
       "TDD, step 2 of 2: make the failing tests pass.",
       `Task:\n${goal}`,
       `The tests are already written and locked. Do not modify, rename, delete or skip any of them:\n${files.map((f) => `- ${f}`).join("\n")}`,
-      "Do not change any other existing test file or the test runner's configuration either (package.json, vitest/jest config, pytest.ini, pyproject.toml, setup.cfg, tox.ini, conftest.py). You may add new test files.",
+      "Do not change any other existing test file or the test runner's configuration either (package.json, vite/vitest/jest/playwright/cypress config, pytest.ini, pyproject.toml, setup.cfg, tox.ini, conftest.py, Makefile, .gitignore, ...). Do not add new test files either: the tests are already written.",
       "Change only what the implementation needs; do not commit.",
       `If a locked test is wrong, leave it as it is and end your final message with one line per file: ${TEST_CHANGE_REQUEST_TAG}: <path> | <reason>. A reviewer decides; a protected file you change without that is rejected.`,
     ].join("\n\n");
@@ -427,7 +424,8 @@ export function createTddExecutor(deps: TddDeps): Executor {
       if (continuing && locked.size === 0) {
         return {
           status: "failed",
-          summary: "tdd: locks lost: no round landed in this process (a resume starts a new executor), so there are no locked tests to continue against; start the session again",
+          summary: "tdd: locks lost: no round landed in this process (a resume starts a new executor), so there are no locked tests to continue against; start a new session",
+          error: "tdd: locks lost; start a new session (resuming cannot restore the locked tests)",
         };
       }
       const writing = !continuing;
@@ -446,7 +444,9 @@ export function createTddExecutor(deps: TddDeps): Executor {
           const base = await gate(seatKey, worktree, template, [], controller.signal, warnings);
           if (base.code !== 0) {
             throw new TddBlocked(
-              `base is red: the test command already fails on the base commit (exit ${base.code}); fix it or put {files} in modes.tdd.testCommand`,
+              NOT_A_TEST_RESULT.has(base.code)
+                ? `base: the test command could not run on the base commit (exit ${base.code})`
+                : `base is red: the test command already fails on the base commit (exit ${base.code}); fix it or put {files} in modes.tdd.testCommand`,
               base.output,
             );
           }
@@ -483,7 +483,6 @@ export function createTddExecutor(deps: TddDeps): Executor {
         });
 
         // Gate A: the worktree is the base commit plus only the new tests, so the tests must fail here.
-        guard = await snapshotProtected(worktree);
         const a = await gate(seatKey, worktree, template, files, controller.signal, warnings);
         const red = a.code !== 0 && !NOT_A_TEST_RESULT.has(a.code);
         event("tdd.gate", { gate: "A", passed: red, exitCode: a.code, files });
@@ -495,6 +494,7 @@ export function createTddExecutor(deps: TddDeps): Executor {
             a.output,
           );
         }
+        guard = await snapshotProtected(worktree); // after Gate A: what the test command itself writes is not the coder's
         notes.push(`Gate A red (exit ${a.code}) for ${files.length} locked test file(s): ${files.join(", ")}`);
       } else {
         guard = await snapshotProtected(worktree);
@@ -597,12 +597,12 @@ export function createTddExecutor(deps: TddDeps): Executor {
       const unrequested = tampered.filter((f) => !requests.has(f.toLowerCase()));
       if (unrequested.length > 0) {
         throw new TddBlocked(
-          `tamper check: the coder changed protected files (tests or test runner config) without a test change request: ${unrequested.join(", ")}`,
+          `tamper check: the coder or the test command changed protected files (tests or test runner config) without a test change request: ${unrequested.join(", ")}`,
           gateOutput,
         );
       }
       if (!deps.decideTestChange) {
-        throw new TddBlocked(`tamper check: the coder asked to change protected files (${list}) but nobody can approve it`, gateOutput);
+        throw new TddBlocked(`tamper check: the coder or the test command changed protected files (${list}) but nobody can approve it`, gateOutput);
       }
       const files: TestChangeFile[] = [];
       for (const file of tampered) {
