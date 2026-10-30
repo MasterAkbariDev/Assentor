@@ -148,6 +148,7 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
   - ✅ Worktree manager follow-up merged (`2dde8f9`, cherry-picked from `6966bd6` without the superseded divide commit): renames at both ends, `applyTo` `allowedPaths`. O2 PASS; user signed off.
   - ✅ T02-08 divide & conquer merged (`e9e7331`): Opus PASS after 3 rounds; user signed off. Phase 2 complete.
 - ✅ T02B-07 danger classifier merged (`9716d2a`): O2 PASS after 3 rounds; user signed off. Merge fix: `modes.cascade` passthrough, `dangerAreas` optional. Follow-up: project `.assentor/config.yaml` with this repo's danger files.
+- **Owner direction (2026-10-30): merge without asking for sign-off.** Cards still need an independent O2 review that ends PASS (or only nits) and a green staged-tree gate; the planner then merges and records it here instead of asking the owner.
 - **Resumed 2026-10-30.** State now:
   - T02B-09 playbook modes: **merged `93a2bdf`** (owner signed off with both deviations). Notes for later: explore seat roles stand in for the three angles; generic team names (builders, reviewers…) share `config.teams` with other modes — namespace them in the routing card.
   - T02B-14 red-team: fixed `40e1e3c` (on integration merge `8e2aaf2`); re-review NEEDS_WORK (must-fix: quadratic `{…}` regex in shared `src/protocol/parse.ts` can freeze the process on a hostile reply; should-fix: refuse yield+attacks, allowlist attack test paths, more runner files, false blocks from `__pycache__`/snapshots) → fixer running.
