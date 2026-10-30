@@ -7,7 +7,7 @@ const DEFAULT_MAX_BUFFER = 10 * 1024 * 1024; // 10MB
 export async function runShellCommand(
   command: string,
   cwd: string,
-  options: { timeoutMs?: number; maxBufferBytes?: number } = {},
+  options: { timeoutMs?: number; maxBufferBytes?: number; env?: Readonly<Record<string, string>> } = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   const maxBuffer = options.maxBufferBytes ?? DEFAULT_MAX_BUFFER;
   return new Promise((resolve) => {
@@ -15,7 +15,7 @@ export async function runShellCommand(
       spawn(command, {
         cwd,
         shell: true,
-        env: process.env,
+        env: options.env ? { ...process.env, ...options.env } : process.env,
         windowsHide: true,
       }),
     );

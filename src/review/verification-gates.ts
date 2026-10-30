@@ -35,7 +35,7 @@ export interface VerificationGateResult {
 export type RunVerificationCommand = (
   command: string,
   cwd: string,
-  options?: { timeoutMs?: number },
+  options?: { timeoutMs?: number; env?: Readonly<Record<string, string>> },
 ) => Promise<{ stdout: string; stderr: string; code: number }>;
 
 const SLOTS: VerificationSlot[] = ["typecheck", "build", "test", "lint"];

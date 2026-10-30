@@ -22,6 +22,7 @@ import {
 } from "../../src/index.js";
 import { createRedteamController, redteamProblems, testPathProblem, type RedteamExtras } from "../../src/modes/redteam.js";
 import { SeatScheduler } from "../../src/seats/index.js";
+import { DEFAULT_TEST_PATTERNS } from "../../src/modes/tdd/tamper.js";
 
 const exec = promisify(execFile);
 // Real git in temp repos, like worktree-manager.test.ts.
@@ -103,7 +104,7 @@ function scripted(name: string, turn: (task: ExecutorTask, index: number) => Pro
 const runCommand: NonNullable<RedteamExtras["runCommand"]> = async (command, cwd) => {
   if (command !== "TEST") return { stdout: "", stderr: "", code: 0 };
   const tests = await fs.readdir(path.join(cwd, "tests")).catch(() => [] as string[]);
-  for (const file of tests) {
+  for (const file of tests.filter((f) => f.includes(".test."))) {
     const need = /needs:(\S+)/.exec(await fs.readFile(path.join(cwd, "tests", file), "utf8"))?.[1];
     if (need && !(await fs.stat(path.join(cwd, "src", `${need}.txt`)).catch(() => undefined))) {
       return { stdout: `FAIL tests/${file}`, stderr: "", code: 1 };
@@ -337,6 +338,7 @@ describe("red-team mode", () => {
     ["an empty object", {}],
     ["a wrong-shaped object", { findings: [] }],
     ["no yield and no attacks", { yield: false, attacks: [] }],
+    ["a yield with attacks", { yield: true, attacks: [attack(1)] }],
   ])("a reply that is %s is blocked, never read as a yield", async (_name, body) => {
     const s = await setup(() => ({ status: "completed", summary: JSON.stringify(body), rawOutput: JSON.stringify(body) }));
     const result = await s.run();
@@ -352,13 +354,19 @@ describe("red-team mode", () => {
     expect(await s.run()).toMatchObject({ status: "completed", reason: "the attacker found nothing" });
   });
 
-  it("confirms each attack on its own: only a reproduced attack is locked, listed and applied", async () => {
+  it("confirms each attack on its own: only a reproduced attack is locked, listed and applied; exploit-only ones are marked unverified", async () => {
     const s = await setup((_t, i) =>
-      i === 0 ? reply([attack(1), attack(2, { tests: [{ path: "tests/passes.test.ts", content: "all good\n" }] })]) : reply([], true),
+      i === 0
+        ? reply([attack(1), attack(2, { tests: [{ path: "tests/passes.test.ts", content: "all good\n" }] }), attack(3, { tests: [], exploit: "send a NUL byte" })])
+        : reply([], true),
     );
-    expect((await s.run()).status).toBe("completed");
-    expect(s.events.find((e) => e.type === "redteam.attack")?.data).toMatchObject({ attacks: 1, titles: ["Attack 1"], tests: ["tests/attack-1.test.ts"] });
-    expect(s.builder.prompts[0]).not.toContain("Attack 2");
+    const review = vi.spyOn(s.reviewer, "review");
+    const result = await s.run();
+    expect(result.status).toBe("completed");
+    expect(result.reason).toContain("fixed in 2 file(s): Attack 1; unverified (exploit text only): Attack 3");
+    expect(review.mock.calls[0]![0].artifacts.find((a) => a.type === "attacker-report")?.content).toMatch(/Reproduced by attacker tests:\nAttack 1\n\nUnverified[^\n]*\nAttack 3/);
+    expect(s.events.find((e) => e.type === "redteam.attack")?.data).toMatchObject({ attacks: 2, titles: ["Attack 1", "Attack 3"], tests: ["tests/attack-1.test.ts"] });
+    expect(s.builder.prompts[0]).not.toContain("Input 2 breaks");
     expect(await fs.stat(path.join(s.repo, "tests", "passes.test.ts")).catch(() => undefined)).toBeUndefined();
   });
 
@@ -373,6 +381,27 @@ describe("red-team mode", () => {
     expect(result.status).toBe("blocked");
     expect(result.reason).toContain("changed the worktree beyond its own test files");
     expect(s.builder.prompts).toEqual([]);
+  });
+
+  it("attack runs get CI=1 and PYTHONDONTWRITEBYTECODE=1; snapshot/bytecode files next to the attack's tests are not a violation", async () => {
+    const s = await setup((_t, i) => (i === 0 ? reply([attack(1)]) : reply([], true)));
+    const envs: Array<Record<string, string> | undefined> = [];
+    const writesArtifacts: RedteamExtras["runCommand"] = async (command, cwd, options) => {
+      envs.push(options?.env ? { ...options.env } : undefined);
+      if (options?.env?.CI === "1") {
+        // A runner that ignores CI and writes next to the test anyway.
+        await fs.mkdir(path.join(cwd, "tests", "__snapshots__"), { recursive: true });
+        await fs.writeFile(path.join(cwd, "tests", "__snapshots__", "attack-1.test.ts.snap"), "snap");
+        await fs.mkdir(path.join(cwd, "tests", "__pycache__"), { recursive: true });
+        await fs.writeFile(path.join(cwd, "tests", "__pycache__", "attack_1.cpython-312.pyc"), "pyc");
+      }
+      return runCommand(command, cwd, options);
+    };
+    expect(await s.run({ extras: { runCommand: writesArtifacts } })).toMatchObject({ status: "completed" });
+    expect(envs).toContainEqual({ CI: "1", PYTHONDONTWRITEBYTECODE: "1" });
+    expect(envs[0]).toBeUndefined(); // the baseline and final checks run with the user's environment
+    expect(await fs.stat(path.join(s.repo, "tests", "__snapshots__")).catch(() => undefined)).toBeUndefined();
+    expect(await fs.readFile(path.join(s.repo, "tests", "attack-1.test.ts"), "utf8")).toBe("needs:fix-1\n");
   });
 
   it("refuses an attack test path through a symlinked directory; nothing is written outside", async () => {
@@ -407,19 +436,45 @@ describe("red-team mode", () => {
     expect(await fs.readdir(outside)).toEqual([]);
   });
 
-  it("a builder that edits the test runner config loses the attempt", async () => {
+  const nestedPackage = (repo: string) =>
+    fs.mkdir(path.join(repo, "pkg")).then(() =>
+      fs.writeFile(path.join(repo, "pkg", "package.json"), JSON.stringify({ name: "pkg", version: "1.0.0", scripts: { test: "vitest" } })),
+    );
+
+  it("a builder that edits the test runner config loses the attempt, naming each file", async () => {
     const s = await setup(
       () => reply([attack(1)]),
       scripted("builder", async (task) => {
         await fs.writeFile(path.join(task.projectPath, "src", "fix-1.txt"), "fixed\n");
         await fs.writeFile(path.join(task.projectPath, "vitest.config.ts"), "export default { test: { include: [] } };\n");
+        await fs.writeFile(path.join(task.projectPath, "tsconfig.json"), "{}\n");
+        await fs.writeFile(path.join(task.projectPath, "pkg", "package.json"), JSON.stringify({ name: "pkg", version: "1.0.0", scripts: { test: "true" } }));
         return { status: "completed", summary: "fixed" };
       }),
+      undefined,
+      nestedPackage,
     );
     const result = await s.run({ config: withRedteam({ fixAttempts: 1 }) });
     expect(result.status).toBe("blocked");
     expect(result.reason).toContain("test-runner configuration");
+    for (const file of ["vitest.config.ts", "tsconfig.json", "pkg/package.json"]) expect(result.reason).toContain(file);
     expect(await fs.stat(path.join(s.repo, "vitest.config.ts")).catch(() => undefined)).toBeUndefined();
+  });
+
+  it("a nested package.json change outside the runner keys is allowed (compared with its base version)", async () => {
+    const s = await setup(
+      (_t, i) => (i === 0 ? reply([attack(1)]) : reply([], true)),
+      scripted("builder", async (task) => {
+        await fs.writeFile(path.join(task.projectPath, "src", "fix-1.txt"), "fixed\n");
+        await fs.writeFile(path.join(task.projectPath, "pkg", "package.json"), JSON.stringify({ name: "pkg", version: "1.0.1", scripts: { test: "vitest" } }));
+        return { status: "completed", summary: "fixed" };
+      }),
+      undefined,
+      nestedPackage,
+    );
+    // A version bump is a `release` danger area, so it needs approval even under autopilot.
+    expect(await s.run({ extras: { approve: async () => true } })).toMatchObject({ status: "completed" });
+    expect(JSON.parse(await fs.readFile(path.join(s.repo, "pkg", "package.json"), "utf8"))).toMatchObject({ version: "1.0.1" });
   });
 
   it("an exploit-only attack 'fixed' with no change ends blocked, listing the attack", async () => {
@@ -553,11 +608,14 @@ describe("red-team config", () => {
   });
 
   it("checks attacker test paths", () => {
-    expect(testPathProblem("tests/a.test.ts")).toBeUndefined();
+    for (const good of ["tests/a.test.ts", "src/a.spec.tsx", "tests/test_parse.py", "tests/parse_test.py", "test/parse_test.go", "tests/ParserTest.java"]) {
+      expect(testPathProblem(good, [...DEFAULT_TEST_PATTERNS, "**/*Test.java"]), good).toBeUndefined();
+    }
     for (const bad of [
       "../a.test.ts", "/etc/a.test.ts", "tests\\a.test.ts", "tests//a.test.ts", "node_modules/x/a.test.ts", ".git/a.test.ts", "src/app.ts", "C:/a.test.ts",
       ".github/workflows/a.test.ts", ".husky/a.test.ts", "tests/.vscode/a.test.ts", "tests/.hidden.test.ts",
       "tests/conftest.py", "__tests__/vitest.setup.ts", "tests/jest.config.test.js", "vitest.config.test.ts", "tests/setupTests.ts", "tests/global.setup.ts",
+      "tests/pyproject.toml", "tests/package.json", "tests/go.mod", "tests/tsconfig.test.json", "tests/karma.conf.js", "tests/helpers.ts", "__tests__/fixture.json",
     ]) {
       expect(testPathProblem(bad), bad).toBeDefined();
     }
