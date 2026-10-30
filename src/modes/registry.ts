@@ -7,6 +7,7 @@ import type { StageRunnerDeps } from "../orchestrator/session-stages.js";
 import type { StageRunners } from "../orchestrator/session-runner.js";
 import type { EngineEventDraft } from "../protocol/events.js";
 import type { WorktreeManager } from "../worktrees/manager.js";
+import { createDebugController, debugProblems } from "./debug.js";
 
 /**
  * Mode registry and mode contract (T02B-01b metadata, T02B-01 contract). A mode
@@ -216,7 +217,11 @@ const MODES: readonly ModeDefinition[] = [
   mode("redteam", "Red team", "An attacker writes failing tests or exploits; a builder fixes; repeat.", "static", true),
   mode("tdd", "TDD", "Failing tests first, then code that passes them without touching the tests.", "static", true),
   mode("swarm", "Swarm", "Many small independent items split across cheap seats, then merged.", "static", true),
-  mode("debug", "Debug", "Seats test competing hypotheses in their own worktrees; evidence picks the fix.", "static", true),
+  // A controller loop (hypothesis rounds, then a fix), not a stage graph: how many rounds it takes depends on the evidence.
+  mode("debug", "Debug", "Seats test competing hypotheses in their own worktrees; evidence picks the fix.", "dynamic", true, false, {
+    validate: (config) => [...teamProblems(config), ...debugProblems(config)],
+    createController: createDebugController,
+  }),
   mode("explore", "Explore", "Read-only seats investigate a question; a synthesizer answers with citations.", "static", false),
   mode("plan", "Plan", "Produce a spec and task cards, no code.", "static", true),
   mode("interactive", "Interactive", "Chat with the team; a lead routes messages to seats.", "dynamic", true),

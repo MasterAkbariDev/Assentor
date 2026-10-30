@@ -142,6 +142,7 @@ describe("mode contract", () => {
       "solo",
       "review",
       "negotiate",
+      "debug",
     ]);
     expect(listModes().filter((m) => m.available).map((m) => m.id)).toEqual(["solo"]);
   });
