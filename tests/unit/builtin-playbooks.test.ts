@@ -18,15 +18,18 @@ import { validateSessionGraph } from "../../src/orchestrator/session-runner.js";
 const EXPECTED_IDS = [
   "bug-hunt",
   "explain-codebase",
+  "explore",
   "feature-build",
   "incident-debug",
   "migrate-dependency",
+  "pipeline",
+  "plan",
   "pr-review",
   "refactor-safely",
   "security-audit",
   "write-tests",
 ];
-const READ_ONLY_IDS = ["explain-codebase", "pr-review", "security-audit"];
+const READ_ONLY_IDS = ["explain-codebase", "explore", "plan", "pr-review", "security-audit"];
 
 describe("built-in playbooks", () => {
   let root: string;

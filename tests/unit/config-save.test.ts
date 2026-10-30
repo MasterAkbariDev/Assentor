@@ -129,6 +129,11 @@ describe("saveAssentorConfig", () => {
     expect(() => parseAssentorConfig({ modes: { review: { policy: "majority" } } })).toThrow(); // typed: team required
   });
 
+  it("keeps untyped modes.cascade keys and adds no dangerAreas default", () => {
+    const config = parseAssentorConfig({ modes: { cascade: { tiers: [{ id: "fast" }] } } });
+    expect(config.modes.cascade).toEqual({ tiers: [{ id: "fast" }] });
+  });
+
   it("keeps run.autonomy and writes run.mode to match it for older readers", async () => {
     const dir = await projectDir();
     const file = await saveAssentorConfig(

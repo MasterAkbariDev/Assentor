@@ -68,7 +68,7 @@ describe("PlaybookLibrary", () => {
   it("loads the built-ins with no errors", async () => {
     const library = await load();
     expect(library.errors).toEqual([]);
-    expect(library.list().length).toBe(9);
+    expect(library.list().length).toBe(12);
   });
 
   it("a user playbook replaces the built-in with the same id and records it", async () => {
@@ -92,7 +92,7 @@ describe("PlaybookLibrary", () => {
     const file = await write(userDir, "bug-hunt.yaml", playbookText("bug-hunt").replace("role: planner", "role: nope"));
     const library = await load();
     expect(library.get("bug-hunt")!.layer).toBe("builtin");
-    expect(library.list().length).toBe(9);
+    expect(library.list().length).toBe(12);
     expect(errorFor(library.errors, file)).toContain('unknown prompt id "nope"');
   });
 
@@ -124,7 +124,7 @@ describe("PlaybookLibrary", () => {
       expect(errorFor(library.errors, file), name).toContain(expected);
     }
     expect(library.list().map((playbook) => playbook.layer).every((layer) => layer === "builtin")).toBe(true);
-    expect(library.list().length).toBe(9);
+    expect(library.list().length).toBe(12);
   });
 
   it("refuses a symlink that points outside the playbook directory", async () => {

@@ -1,0 +1,16 @@
+id: plan
+title: Plan
+description: Read-only. A planner and an architect debate the plan, written as task cards under docs/tasks.
+readOnly: true
+teams:
+  planning:
+    description: Debates the plan and how it splits into task cards. Never edits code.
+    seats:
+      - { provider: AUTO, role: planner }
+      - { provider: AUTO, role: architect }
+stages:
+  - id: plan
+    kind: plan
+    team: planning
+    strategy: debate
+    options: { maxRounds: 2, output: task-cards }

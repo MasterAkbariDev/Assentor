@@ -10,6 +10,7 @@ import type { Usage } from "../seats/scheduler.js";
 import type { WorktreeManager } from "../worktrees/manager.js";
 import { leadConfigProblems } from "./lead/config.js";
 import type { RosterEntry } from "./roster.js";
+import { builtinPlaybookSession, builtinPlaybookTeamProblems } from "./playbook-modes.js";
 
 /**
  * Mode registry and mode contract (T02B-01b metadata, T02B-01 contract). A mode
@@ -279,6 +280,22 @@ const lead: ModeRuntime = {
   }),
 };
 
+// Built-in playbooks (playbooks/builtin): read-only explore and plan have no execute stage or edit seat.
+const pipeline: ModeRuntime = {
+  validate: (config) => builtinPlaybookTeamProblems("pipeline", config),
+  buildSession: ({ goal, title }) => builtinPlaybookSession("pipeline", { goal, title }),
+};
+
+const explore: ModeRuntime = {
+  validate: (config) => builtinPlaybookTeamProblems("explore", config),
+  buildSession: ({ goal, title }) => builtinPlaybookSession("explore", { goal, title }),
+};
+
+const plan: ModeRuntime = {
+  validate: (config) => builtinPlaybookTeamProblems("plan", config),
+  buildSession: ({ goal, title }) => builtinPlaybookSession("plan", { goal, title }),
+};
+
 const MODES: readonly ModeDefinition[] = [
   // Today's `assentor run`: one executor in a review loop (one reviewer or a `--team` panel).
   mode("solo", "Solo", "One executor with a review loop; today's assentor run.", "static", true, true, solo),
@@ -289,15 +306,15 @@ const MODES: readonly ModeDefinition[] = [
   // Runs through prepareModeSession with host services (T02B-02); the CLI does not route it yet.
   mode("lead", "Lead (Supervisor)", "A lead seat plans tasks, picks agents and accepts or rejects their reports.", "dynamic", true, false, lead),
   mode("cascade", "Cascade", "Start with a cheap model; escalate on failure or risk.", "dynamic", true),
-  mode("pipeline", "Pipeline", "Requirements, architect, coder, tester, reviewer and docs stages in order.", "static", true),
+  mode("pipeline", "Pipeline", "Requirements, architect, coder, tester, reviewer and docs stages in order.", "static", true, false, pipeline),
   mode("pair", "Pair", "A driver codes while a navigator watches the stream and interjects.", "static", true),
   mode("race", "Race", "Several seats implement in parallel worktrees; a judge picks one.", "static", true),
   mode("redteam", "Red team", "An attacker writes failing tests or exploits; a builder fixes; repeat.", "static", true),
   mode("tdd", "TDD", "Failing tests first, then code that passes them without touching the tests.", "static", true),
   mode("swarm", "Swarm", "Many small independent items split across cheap seats, then merged.", "static", true),
   mode("debug", "Debug", "Seats test competing hypotheses in their own worktrees; evidence picks the fix.", "static", true),
-  mode("explore", "Explore", "Read-only seats investigate a question; a synthesizer answers with citations.", "static", false),
-  mode("plan", "Plan", "Produce a spec and task cards, no code.", "static", true),
+  mode("explore", "Explore", "Read-only seats investigate a question; a synthesizer answers with citations.", "static", false, false, explore),
+  mode("plan", "Plan", "Produce a spec and task cards, no code.", "static", true, false, plan),
   mode("interactive", "Interactive", "Chat with the team; a lead routes messages to seats.", "dynamic", true),
   mode("auto", "Auto", "Suggest a mode from the task and ask before running it.", "dynamic", true),
   mode("watch", "Watch", "React to commits, PRs or CI failures by running a chosen mode.", "static", true),

@@ -166,6 +166,10 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 ### T02B-07 · Danger-area classifier
 **Tier:** 🔴 O · **Review:** O2 · **Size:** S · **Depends:** T02B-01
 
+**✅ Done — O2 PASS after 3 rounds at `2a5eb23`; user signed off 2026-10-29.** Merge fix (planner, per the reviewer): `modes.cascade` uses `.passthrough()` so untyped keys (T02B-06 tiers) survive a config save, and `dangerAreas` is `.optional()` (no `dangerAreas: []` written on save). Release note: a malformed `modes.cascade.dangerAreas` now fails config load. Known limits: cross-script homoglyphs and string-built module names; spawn aliases with >40 characters after the keyword. Follow-up: project `.assentor/config.yaml` listing this repo's danger files that generic rules miss.
+
+**Status: implemented, awaiting O2 review (round 3).** `src/modes/danger.ts` (exported from `src/modes/index.ts`), tests `tests/unit/danger-classifier.test.ts`; `modes.cascade.dangerAreas` added to the config schema. `classifyRisk(input, { extraRules, projectRoot })` returns `{ level, categories, reasons }`: ten built-in categories (Danger list §1 incl. shell and contracts) plus `unscanned` (input over a limit, binary content, unreadable diff formats, or the glob work budget spent; always danger). Paths are NFKC-normalised with invisible characters stripped, case-folded, `..`/Windows trailing dots resolved; absolute paths are `paths` unless inside `projectRoot`; bare-name rules also match with an extension (`keys` ~ `keys.tsx`). Diffs: symlink/gitlink/100755 modes, context of changed hunks and `@@` function context are checked. User areas add only (literal keywords, never regex). Round-1 and round-2 O2 evasions are tests. Callers pass plain `git diff` (no colour, not `git show`/format-patch); other formats are `unscanned`. Known limit: keyword matching cannot see through obfuscation (`process['\x6bill']` is caught as `process[`, but string-built names and cross-script homoglyphs are not); it is a triage signal, not a security boundary. Not wired into Cascade/Lead (T02B-06/T02B-02 do that).
+
 **Deliverables** — `classifyRisk({ taskText, paths?, diff? }) → { level: "normal" | "danger", reasons[] }`; default rules mirror `docs/tasks/README.md` §1 (process spawn/kill, git mutations, permission/bypass flags, secrets/vault/keychain, network listeners/auth, file deletion & path policy, release/signing/CI secrets, user config rewrite) as path globs + keyword patterns; user-extendable via `modes.cascade.dangerAreas`; false-negative-biased tests using this repo's real danger files (`src/process/*`, `src/keys/*`, `src/git/*`, `src/security/*`, `scripts/install*`).
 
 ---
@@ -202,6 +206,8 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 ### T02B-09 · Playbooks: Pipeline, Explore, Plan
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T02B-01, T03-01, T03-04
 
+**Signed off by the owner (2026-10-30):** merged with both deviations approved — the mode wiring beyond the card's file list (`src/modes/playbook-modes.ts`, registry entries) and docs-writer inside the build stage instead of after review. Review NEEDS_WORK → fixed in `044d5dc`.
+
 **Allowed files** — create: `playbooks/builtin/{pipeline,explore,plan}.yaml`, `tests/unit/playbooks-modes.test.ts`.
 
 **Spec**
@@ -211,6 +217,15 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 - Same validation rules as T03-04 (prompt ids exist; read-only playbooks have no edit seats).
 
 **Tests** — parse, prompt ids exist, read-only rules.
+
+**Status: implemented, awaiting Sonnet review** (branch `claude/card-t02b-09`). `pipeline`, `explore` and `plan` build their `SessionSpec` from the built-in playbooks (`playbooks/builtin/{pipeline,explore,plan}.yaml`) through `buildSession`, and `validate` refuses bad config. `available` stays false: `assentor run` routing through `prepareModeSession` is a separate Danger follow-up. Decisions:
+- Files: the three playbooks; `src/modes/playbook-modes.ts` (new: a synchronous built-in loader and the config team checks, because `buildSession` and `validate` are sync); three entries in `src/modes/registry.ts`; `tests/unit/playbooks-modes.test.ts`. Pinned lists updated for the new playbooks and modes: `builtin-playbooks.test.ts` and `playbook-library.test.ts` (9 → 12 built-ins, explore and plan read-only), and `mode-session.test.ts` (the mode list; its "cannot run" and skip-executor checks now use `swarm`, which still has no builder).
+- A playbook's stage `team` is a config team name, bound by the host's `seatsFor`. `validate` refuses a missing team, an edit seat in explore or plan, and an execute stage whose team has no edit seat. Team seat counts are checked by the strategy at prepare time.
+- Graph shape (the runner's rules, not the card's wording): an edit stage must be followed by its review, so `docs-writer` sits inside `build` rather than after `review` (card order was review, then docs-writer; a deviation awaiting the owner's sign-off); negotiation strategies need at least two debating seats, so each card role pair is a debate (`requirements-analyst` + `devils-advocate`, then `architect` + `planner`); explore is one three-seat debate, then a summarizer debate with a devil's advocate.
+- The `build` stage is ONE executor: `session-stages.ts` `execute()` calls `createExecutor(stage)` once and never reads the team's seats. engineer, test-writer and docs-writer are metadata until the runner runs seats in sequence; nothing runs them one after another today.
+- Not wired, metadata only: `options.angle` (seat order; per-seat angles need the host to put them in each prompt), `options.citations`, `options.artifact` and `options.output`. No strategy or runner reads them yet. `synthesize` is not used: its aggregator must be a config seat id, which a playbook cannot name.
+- `plan` keeps `editsCode: true` because it writes task cards under `docs/`; that write is host-side, since the graph has no edit stage.
+- Tests: each mode builds a spec that passes `validateSessionGraph`; each runs through `prepareModeSession` on mock seats (explore and plan never call an executor; pipeline's build waits for approval, then the review runs); explore and plan have no execute stage or edit seat; invalid config is refused with no events and no `.assentor` directory.
 
 ---
 
