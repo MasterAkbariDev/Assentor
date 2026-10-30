@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -62,9 +63,9 @@ interface Script {
 function setup(script: Script = {}, over: Partial<StageRunnerDeps> = {}) {
   const prompts: Array<{ team: string; prompt: string }> = [];
   const events: EngineEventDraft[] = [];
-  const deps = async (): Promise<StageRunnerDeps> => {
-    const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "cascade-"));
-    dirs.push(projectPath);
+  const deps = async (existing?: string): Promise<StageRunnerDeps> => {
+    const projectPath = existing ?? (await fs.mkdtemp(path.join(os.tmpdir(), "cascade-")));
+    if (!existing) dirs.push(projectPath);
     return {
       projectPath,
       scheduler: new SeatScheduler({ sessionId: "s", backoffBaseMs: 1 }),
@@ -105,21 +106,24 @@ interface RunOptions {
   cfg?: typeof config;
   extras?: CascadeExtras;
   signal?: AbortSignal;
+  /** Use this directory and the real git reader (no `readChanges` stub). */
+  projectPath?: string;
 }
 
 async function run(script: Script, options: RunOptions = {}) {
   const s = setup(script);
   const cascade = {
     ...getMode("cascade")!,
-    createController: (input: ModeControllerInput) => createCascadeController(input, { readChanges: async () => ({ files: [], diff: "" }), ...options.extras }),
+    createController: (input: ModeControllerInput) =>
+      createCascadeController(input, { ...(options.projectPath ? {} : { readChanges: async () => ({ files: [], diff: "" }) }), ...options.extras }),
   };
   const session = prepareModeSession({
-    mode: cascade,
+    mode: options.projectPath ? "cascade" : cascade, // a real project path uses the registry controller as shipped
     sessionId: createId(),
     goal: options.goal ?? GOAL,
     autonomy: options.autonomy ?? "autopilot",
     config: options.cfg ?? config,
-    deps: await s.deps(),
+    deps: await s.deps(options.projectPath),
     emit: (e) => void s.events.push(e),
     ...(options.signal ? { signal: options.signal } : {}),
   });
@@ -290,7 +294,8 @@ describe("danger", () => {
     const { result, prompts, escalated } = await run({}, { goal: dangerGoal, extras: { approve: async (s) => (asked.push(s), true) } });
     expect(result.status).toBe("completed");
     expect(prompts.map((p) => p.team)).toEqual(["top"]);
-    expect(escalated).toEqual([expect.objectContaining({ fromTier: 0, toTier: 2, trigger: "danger" })]);
+    expect(escalated).toEqual([expect.objectContaining({ toTier: 2, trigger: "danger_start" })]);
+    expect(escalated[0]).not.toHaveProperty("fromTier"); // no lower tier ran
     expect(prompts[0]?.prompt).toContain("danger area");
     expect(asked).toEqual([]);
   });
@@ -419,5 +424,154 @@ describe("autonomy, cancel and budget", () => {
     const result = await createCascadeController(input, { readChanges: async () => ({ files: [], diff: "" }) }).run();
     expect(result).toEqual({ status: "budget_exceeded", reason: "out of tokens" });
     expect(calls).toEqual(["cheap"]);
+  });
+});
+
+const killDiff = (extra = "process.kill(pid, 'SIGKILL');") =>
+  [
+    "diff --git a/src/process/kill.ts b/src/process/kill.ts",
+    "index 1111111..2222222 100644",
+    "--- a/src/process/kill.ts",
+    "+++ b/src/process/kill.ts",
+    "@@ -1,1 +1,2 @@",
+    " export {};",
+    `+${extra}`,
+    "",
+  ].join("\n");
+
+describe("danger after every tier, not only after a pass", () => {
+  /** Reads: the clean start, then `after` for every later call. */
+  const afterStart = (after: { files: string[]; diff: string }) => {
+    let calls = 0;
+    return async () => (calls++ === 0 ? { files: [], diff: "" } : after);
+  };
+
+  it("a tier that edits a danger path and ends NEEDS_WORK jumps to the top tier, asking first under supervised", async () => {
+    const asked: string[] = [];
+    const { result, prompts, escalated } = await run(
+      { review: { r1: needsWork(2) } },
+      {
+        autonomy: "supervised",
+        extras: { approve: async (q) => (asked.push(q), true), readChanges: afterStart({ files: ["src/process/kill.ts"], diff: killDiff() }) },
+      },
+    );
+    expect(result.status).toBe("completed");
+    expect(prompts.map((p) => p.team)).toEqual(["cheap", "top"]); // mid never ran
+    expect(escalated).toEqual([expect.objectContaining({ fromTier: 0, toTier: 2, trigger: "danger" })]);
+    expect(asked).toHaveLength(1);
+  });
+
+  it("a tier that crashes after editing a danger path still gets the danger check", async () => {
+    const { escalated, prompts } = await run(
+      { exec: { cheap: async () => { throw new Error("provider crashed"); } } },
+      { extras: { readChanges: afterStart({ files: ["src/process/kill.ts"], diff: killDiff() }) } },
+    );
+    expect(escalated.map((e) => [e.toTier, e.trigger])).toEqual([[2, "danger"]]);
+    expect(prompts.at(-1)?.team).toBe("top");
+  });
+
+  it("new danger in an already-dirty category is not hidden by the baseline", async () => {
+    const dirty = { files: ["src/process/kill.ts"], diff: "" };
+    let calls = 0;
+    const { prompts, escalated } = await run(
+      {},
+      { extras: { readChanges: async () => (calls++ === 0 ? dirty : { files: dirty.files, diff: killDiff("child_process.spawn('rm', ['-rf', dir]);") }) } },
+    );
+    expect(escalated.map((e) => e.trigger)).toEqual(["danger"]);
+    expect(prompts.map((p) => p.team)).toEqual(["cheap", "top"]);
+  });
+
+  it("a cut-off reasons list cannot be compared with the start, so it counts as danger", async () => {
+    const many = { files: Array.from({ length: 60 }, (_, i) => `src/process/f${i}.ts`), diff: "" };
+    const { escalated } = await run({}, { extras: { readChanges: async () => many } });
+    expect(escalated.map((e) => e.trigger)).toEqual(["danger"]);
+  });
+});
+
+describe("tier outcome record and warnings", () => {
+  it("emits cascade.tier_succeeded with the triggers; a throwing callback does not fail the session", async () => {
+    const { result, events } = await run(
+      { review: { r1: needsWork(2) } },
+      { extras: { onTierSucceeded: () => { throw new Error("scoreboard down"); } } },
+    );
+    expect(result.status).toBe("completed");
+    expect(events.filter((e) => e.type === "cascade.tier_succeeded").map((e) => e.data)).toEqual([
+      { tier: 1, team: "mid", escalations: 1, triggers: ["needs_work"] },
+    ]);
+  });
+
+  it("a danger start is not counted as an escalation", async () => {
+    const { events } = await run({}, { goal: "Use the credentials from the secrets vault to rotate the signing key" });
+    expect(events.find((e) => e.type === "cascade.tier_succeeded")?.data).toEqual({ tier: 2, team: "top", escalations: 0, triggers: [] });
+  });
+
+  it("the top tier ending blocked ends the session blocked", async () => {
+    const { result, escalated } = await run({
+      review: { r1: [{ type: "blocked" }], r2: [{ type: "blocked" }], r3: [{ type: "blocked", summary: "needs a human" }] },
+    });
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("top tier (top) ended blocked");
+    expect(escalated.map((e) => e.trigger)).toEqual(["blocked", "blocked"]);
+  });
+
+  it("warns when a reviewer seat uses the same provider/model as an implementer", async () => {
+    const teams = { ...baseConfig.teams, same: { seats: [{ provider: "mock", model: "a", permissions: "read-only" }] } };
+    const cfg = parseAssentorConfig({
+      teams,
+      modes: { cascade: { tiers: [{ team: "cheap", reviewTeam: "same" }, { team: "top", reviewTeam: "r3" }] } },
+    });
+    const { events } = await run({}, { cfg });
+    const warnings = events.filter((e) => e.type === "session.warning");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.data).toMatchObject({ kind: "cascade.self_review" });
+    expect(String((warnings[0]?.data as { message?: string }).message)).toContain("tiers[0]");
+  });
+});
+
+describe("the default git reader (registry controller)", () => {
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd, encoding: "utf8" });
+
+  async function repo(): Promise<string> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "cascade-git-"));
+    dirs.push(dir);
+    git(dir, "init", "-q");
+    git(dir, "commit", "-q", "--allow-empty", "-m", "init");
+    return dir;
+  }
+
+  it("an untracked new file whose content spawns a process escalates to the top tier", async () => {
+    const dir = await repo();
+    const write = (name: string, body: string) => async (): Promise<ExecutorResult> => {
+      await fs.mkdir(path.dirname(path.join(dir, name)), { recursive: true });
+      await fs.writeFile(path.join(dir, name), body);
+      return { status: "completed", summary: "done" };
+    };
+    const { result, escalated, prompts } = await run(
+      { exec: { cheap: write("src/helper.ts", 'import { spawn } from "node:child_process";\nspawn("sh", ["-c", cmd]);\n') } },
+      { projectPath: dir },
+    );
+    expect(result.status).toBe("completed");
+    expect(prompts.map((p) => p.team)).toEqual(["cheap", "top"]);
+    expect(escalated).toEqual([expect.objectContaining({ fromTier: 0, toTier: 2, trigger: "danger" })]);
+    expect(git(dir, "status", "--porcelain")).toContain("?? src/"); // nothing was staged by the check
+  });
+
+  it("an untracked harmless file does not escalate", async () => {
+    const dir = await repo();
+    const { result, escalated, prompts } = await run(
+      { exec: { cheap: async () => (await fs.writeFile(path.join(dir, "notes.txt"), "average = sum / n\n"), { status: "completed" as const, summary: "done" }) } },
+      { projectPath: dir },
+    );
+    expect(result.status).toBe("completed");
+    expect(escalated).toEqual([]);
+    expect(prompts.map((p) => p.team)).toEqual(["cheap"]);
+  });
+
+  it("a directory that is not a git repo is unscanned danger", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "cascade-nogit-"));
+    dirs.push(dir);
+    const { escalated } = await run({}, { projectPath: dir });
+    expect(escalated).toEqual([expect.objectContaining({ toTier: 2, trigger: "danger", categories: ["unscanned"] })]);
   });
 });

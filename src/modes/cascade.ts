@@ -3,7 +3,7 @@ import type { CascadeTier } from "../config/teams.js";
 import { expandSeatSpecs, StageSpecSchema, type Seat, type StageSpec } from "../core/seats.js";
 import type { EngineEventDraft } from "../protocol/events.js";
 import { DEFAULT_CAPABILITIES } from "./capabilities.js";
-import { classifyRisk, RISK_UNSCANNED, type RiskAssessment } from "./danger.js";
+import { classifyRisk, MAX_RISK_DIFF_CHARS, RISK_UNSCANNED, type RiskAssessment } from "./danger.js";
 import type { ModeController, ModeControllerInput, ModeControllerResult } from "./registry.js";
 import { costRank } from "./roster.js";
 
@@ -25,12 +25,17 @@ import { costRank } from "./roster.js";
  *   a failure at the top tier fails the session;
  * - danger: `classifyRisk` (T02B-07, plus `modes.cascade.dangerAreas`) on the
  *   task text before anything runs, and on the changes since the start after
- *   each tier that passed. A danger task starts on the TOP tier; danger found
- *   later jumps straight to the top tier. `unscanned` counts as danger, and so
- *   does a failure to read the changes. Categories already present in the
- *   working tree at the start are not blamed on a tier (known limit: danger of
- *   the same category in a dirty start is missed after the start);
+ *   every tier below the top, whatever its outcome (untracked files included).
+ *   A danger task starts on the TOP tier (event trigger `danger_start`, no
+ *   `fromTier`, not counted as an escalation); danger found later jumps
+ *   straight to the top tier (trigger `danger`). `unscanned`, a truncated
+ *   reasons list and a failure to read the changes all count as danger. Danger
+ *   already in the working tree at the start is not blamed on a tier: only
+ *   reasons that were not in the start's assessment count;
  * - a budget stop ends the session `budget_exceeded`; it never escalates.
+ * Each tier gets fresh budgets (every `stages.execute` builds its own), so the
+ * worst case is tiers x maxRounds rounds.
+ * shortcut: no session-wide round or token cap, upgrade when the host needs one.
  * Not implemented: "low confidence" (stage results carry none) and a separate
  * "reviewer flags danger" signal (the diff check covers it).
  *
@@ -55,7 +60,10 @@ export interface CascadeExtras {
   approve?: (summary: string) => Promise<boolean>;
   /** Files and diff changed since the session started; default reads git in `deps.projectPath`. */
   readChanges?: () => Promise<{ files: string[]; diff: string }>;
-  /** The tier that finally succeeded, for the scoreboard (T02B-19). */
+  /**
+   * The tier that finally succeeded. The same record is emitted as `cascade.tier_succeeded`
+   * (the scoreboard, T02B-19, reads the log). A throwing callback is ignored.
+   */
   onTierSucceeded?: (record: { tier: number; team: string; reviewTeam: string; escalations: number }) => void;
 }
 
@@ -120,19 +128,50 @@ export function cascadeProblems(config: AssentorConfig): string[] {
   return problems;
 }
 
-/** The default `readChanges`: git changes (committed, staged, unstaged, untracked) since the first call. */
+/** Run state the engine itself writes into the project; not a change the tier made. */
+const ENGINE_STATE = /^\.assentor\/(tasks|sessions|worktrees)(\/|$)/;
+
+/**
+ * The default `readChanges`: git changes (committed, staged, unstaged, untracked) since the first call.
+ * `git diff <head>` leaves out untracked files, so each gets a read-only `--no-index` diff against
+ * /dev/null (exit 1 is how git says "differs"); the total stops at the classifier's cap, which then
+ * reports `unscanned`. Nothing is staged or written.
+ */
 function gitChanges(cwd: string): () => Promise<{ files: string[]; diff: string }> {
   let head: string | null | undefined;
   return async () => {
     // Loaded on use: the registry (and the config schema) must stay free of node-only imports.
-    const { LocalGitService } = await import("../git/local.js");
+    const [{ LocalGitService }, { execFile }] = await Promise.all([import("../git/local.js"), import("node:child_process")]);
+    const run = (args: string[]) =>
+      new Promise<string>((resolve, reject) =>
+        execFile("git", args, { cwd, maxBuffer: 2 * MAX_RISK_DIFF_CHARS, encoding: "utf8" }, (error, stdout) => {
+          const code = (error as { code?: unknown } | null)?.code;
+          if (!error || (code === 1 && args.includes("--no-index"))) resolve(stdout);
+          else reject(error);
+        }),
+      );
     const git = new LocalGitService({ cwd });
     if (head === undefined) {
       head = null;
       head = (await git.status()).head;
     }
-    return git.changesSince(head);
+    const tracked = await git.changesSince(head);
+    const untracked = (await run(["ls-files", "--others", "--exclude-standard", "-z"])).split("\0").filter((f) => f && !ENGINE_STATE.test(f));
+    let diff = tracked.diff;
+    for (const file of untracked) {
+      if (diff.length > MAX_RISK_DIFF_CHARS) break;
+      const part = await run(["diff", "--no-index", "--no-color", "--no-ext-diff", "--", "/dev/null", file]);
+      diff += `${diff && !diff.endsWith("\n") ? "\n" : ""}${part}`;
+    }
+    return { files: [...new Set([...tracked.files.map((f) => f.replace(/\/$/, "")), ...untracked])].filter((f) => !ENGINE_STATE.test(f)).sort(), diff };
   };
+}
+
+/** A note when a tier's reviewer shares a provider/model with one of its implementers, else undefined. */
+function sharedSeats(config: AssentorConfig, tier: ResolvedTier): string | undefined {
+  const impl = seatsOf(config, tier.team) ?? [];
+  const same = (seatsOf(config, tier.reviewTeam) ?? []).find((r) => impl.some((i) => i.provider === r.provider && i.model === r.model));
+  return same ? `reviewer seat "${same.id}" uses the same ${same.provider}/${same.model} as an implementer of team "${tier.team}"` : undefined;
 }
 
 class Stop extends Error {
@@ -190,7 +229,7 @@ async function runCascade(input: ModeControllerInput, extras: CascadeExtras): Pr
   };
 
   /** Danger of the changes since the start; an unreadable diff is `unscanned` danger. */
-  const assessChanges = async (): Promise<RiskAssessment> => {
+  const assessChanges = async (): Promise<RiskAssessment & { unreadable?: true }> => {
     try {
       const { files, diff } = await guard(readChanges());
       return classifyRisk({ paths: files, diff }, riskOptions);
@@ -200,6 +239,7 @@ async function runCascade(input: ModeControllerInput, extras: CascadeExtras): Pr
         level: "danger",
         categories: [RISK_UNSCANNED],
         reasons: [`could not read the changes: ${error instanceof Error ? error.message : String(error)}`],
+        unreadable: true,
       };
     }
   };
@@ -208,26 +248,65 @@ async function runCascade(input: ModeControllerInput, extras: CascadeExtras): Pr
   let escalations = 0;
   let attempt = 0;
   let feedback: string[] | undefined;
+  const triggers: string[] = [];
 
-  /** Why the next tier start needs approval beyond the autonomy floor (a danger escalation). */
+  /** Why the next tier start needs approval beyond the autonomy floor (a danger move). */
   let pendingApproval: string | undefined;
 
-  /** Moves up to `to` (never down) and emits `cascade.escalated`; a danger move must be approved before the tier starts. */
+  /**
+   * Moves up to `to` (never down) and emits `cascade.escalated`; a danger move must be approved before
+   * the tier starts. A danger start is not an escalation: no lower tier ran, so no `fromTier`.
+   */
   const escalate = (to: number, trigger: string, reason: string, categories?: string[]) => {
     if (to <= tier) return;
-    emit({ type: "cascade.escalated", sessionId, data: { fromTier: tier, toTier: to, reason, trigger, ...(categories ? { categories } : {}) } });
-    if (trigger === "danger") pendingApproval = reason;
+    const start = trigger === "danger_start";
+    emit({
+      type: "cascade.escalated",
+      sessionId,
+      data: { ...(start ? {} : { fromTier: tier }), toTier: to, reason, trigger, ...(categories ? { categories } : {}) },
+    });
+    if (trigger === "danger" || start) pendingApproval = reason;
     tier = to;
-    escalations += 1;
+    if (!start) {
+      escalations += 1;
+      triggers.push(trigger);
+    }
   };
 
   try {
     checkAbort();
     const baseline = await assessChanges();
+    const known = new Set(baseline.reasons);
+    // Danger the start did not already have. A cut-off reasons list or unreadable changes cannot be compared.
+    const newDanger = (after: RiskAssessment & { unreadable?: true }): string[] => {
+      if (after.level !== "danger") return [];
+      const added = after.unreadable || after.reasons.some((r) => r.startsWith("… and "))
+        ? after.reasons
+        : after.reasons.filter((r) => !known.has(r));
+      return added;
+    };
+    /** After a tier below the top: new danger in its changes jumps to the top tier. True when it did. */
+    const jumpOnDanger = async (): Promise<boolean> => {
+      if (tier >= top) return false;
+      const after = await assessChanges();
+      const added = newDanger(after);
+      if (added.length === 0) return false;
+      const reason = `the changes touch a danger area (${after.categories.join(", ")}): ${added[0]}`;
+      escalate(top, "danger", reason, after.categories);
+      feedback = [`The previous tier's changes touch a danger area (${after.categories.join(", ")}). Review them with extra care and fix anything unsafe.`];
+      return true;
+    };
+
+    for (const [index, t] of tiers.entries()) {
+      const shared = sharedSeats(config, t);
+      if (shared) emit({ type: "session.warning", sessionId, data: { kind: "cascade.self_review", message: `modes.cascade.tiers[${index}]: ${shared}` } });
+    }
+
+    checkAbort();
     const start = classifyRisk({ taskText: goal }, riskOptions);
     if (start.level === "danger") {
       const reason = `danger area (${start.categories.join(", ")}): ${start.reasons[0] ?? ""}`;
-      escalate(top, "danger", reason, start.categories);
+      escalate(top, "danger_start", reason, start.categories);
       feedback = [`This task touches a danger area (${start.categories.join(", ")}). Work carefully and keep the change minimal.`];
     }
 
@@ -267,6 +346,8 @@ async function runCascade(input: ModeControllerInput, extras: CascadeExtras): Pr
         checkAbort();
         const message = error instanceof Error ? error.message : String(error);
         if (tier === top) throw error;
+        // Whatever the tier wrote before it died still gets the danger check.
+        if (await jumpOnDanger()) continue;
         escalate(tier + 1, "tier_failed", `tier ${tier + 1} (${current.team}) failed: ${message}`);
         feedback = [`The previous tier failed before finishing: ${message}. Check the current state of the files first.`];
         continue;
@@ -275,18 +356,14 @@ async function runCascade(input: ModeControllerInput, extras: CascadeExtras): Pr
 
       if (result.outcome === "budget") return { status: "budget_exceeded", reason: result.summary };
       if (result.outcome === "pass") {
-        if (tier < top) {
-          const after = await assessChanges();
-          const base = new Set(baseline.categories);
-          const added = after.categories.filter((c) => c === RISK_UNSCANNED || !base.has(c));
-          if (after.level === "danger" && added.length > 0) {
-            const reason = `the changes touch a danger area (${added.join(", ")}): ${after.reasons[0] ?? ""}`;
-            escalate(top, "danger", reason, added);
-            feedback = [`The previous tier's changes touch a danger area (${added.join(", ")}). Review them with extra care and fix anything unsafe.`];
-            continue;
-          }
+        if (await jumpOnDanger()) continue;
+        const record = { tier, team: current.team, reviewTeam: current.reviewTeam, escalations };
+        emit({ type: "cascade.tier_succeeded", sessionId, data: { tier, team: current.team, escalations, triggers: [...triggers] } });
+        try {
+          extras.onTierSucceeded?.(record);
+        } catch {
+          // A scoreboard hook must not fail a finished session.
         }
-        extras.onTierSucceeded?.({ tier, team: current.team, reviewTeam: current.reviewTeam, escalations });
         return { status: "completed", reason: `accepted at tier ${tier + 1} of ${tiers.length} (${current.team})${escalations > 0 ? ` after ${escalations} escalation(s)` : ""}` };
       }
 
@@ -295,6 +372,7 @@ async function runCascade(input: ModeControllerInput, extras: CascadeExtras): Pr
       if (tier === top) {
         return { status: "blocked", reason: `the top tier (${current.team}) ended ${trigger}: ${result.summary}` };
       }
+      if (await jumpOnDanger()) continue;
       escalate(tier + 1, trigger, `tier ${tier + 1} (${current.team}) ended ${trigger}: ${result.summary}`);
       feedback = result.feedback?.length ? [...result.feedback] : [`The previous tier ended ${trigger}: ${result.summary}`];
     }

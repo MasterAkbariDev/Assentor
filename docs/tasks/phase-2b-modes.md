@@ -157,7 +157,7 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 ### T02B-06 · Cascade mode
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** T02B-01, T02B-07, T01-03
 
-**Deliverables** — Mode `cascade`: tiers config (`tiers: [[seatSpec…], …]`), escalation triggers (N NEEDS_WORK rounds, gate failure, low confidence, `blocked` report, reviewer flags danger), never-self-review rule (reviewer tier ≥ implementer tier, different seat), danger tasks start at the top tier with approval, `cascade.escalated` events, records the successful tier for the scoreboard. Mock end-to-end tests for each trigger.
+**Deliverables** — Mode `cascade`: tiers config (`modes.cascade.tiers: [{ team, reviewTeam?, maxRounds? }, …]`, cheapest first; each tier references teams in `teams`, not inline seat specs), escalation triggers (N NEEDS_WORK rounds, gate failure, low confidence, `blocked` report, reviewer flags danger), never-self-review rule (reviewer tier ≥ implementer tier, different seat), danger tasks start at the top tier with approval, `cascade.escalated` events, records the successful tier for the scoreboard (`cascade.tier_succeeded` event plus an `onTierSucceeded` hook). A danger start emits `cascade.escalated` with trigger `danger_start` and no `fromTier`. Danger is checked after every tier below the top (untracked files included). Mock end-to-end tests for each trigger.
 
 ---
 
