@@ -133,7 +133,7 @@ function dynamicMode(createController: ModeDefinition["createController"]): Mode
 }
 
 describe("mode contract", () => {
-  it("each mode's builder matches its kind; solo, review and negotiate build sessions; only solo is CLI-available", () => {
+  it("each mode's builder matches its kind; solo, review, negotiate and tdd build sessions; only solo is CLI-available", () => {
     for (const mode of listModes()) {
       if (mode.kind === "static") expect(mode.createController).toBeUndefined();
       else expect(mode.buildSession).toBeUndefined();
@@ -142,6 +142,7 @@ describe("mode contract", () => {
       "solo",
       "review",
       "negotiate",
+      "tdd",
     ]);
     expect(listModes().filter((m) => m.available).map((m) => m.id)).toEqual(["solo"]);
   });

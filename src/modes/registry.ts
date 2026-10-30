@@ -7,6 +7,7 @@ import type { StageRunnerDeps } from "../orchestrator/session-stages.js";
 import type { StageRunners } from "../orchestrator/session-runner.js";
 import type { EngineEventDraft } from "../protocol/events.js";
 import type { WorktreeManager } from "../worktrees/manager.js";
+import { tddRuntime } from "./tdd/mode.js";
 
 /**
  * Mode registry and mode contract (T02B-01b metadata, T02B-01 contract). A mode
@@ -214,7 +215,8 @@ const MODES: readonly ModeDefinition[] = [
   mode("pair", "Pair", "A driver codes while a navigator watches the stream and interjects.", "static", true),
   mode("race", "Race", "Several seats implement in parallel worktrees; a judge picks one.", "static", true),
   mode("redteam", "Red team", "An attacker writes failing tests or exploits; a builder fixes; repeat.", "static", true),
-  mode("tdd", "TDD", "Failing tests first, then code that passes them without touching the tests.", "static", true),
+  // Runs through prepareModeSession once the host returns createTddExecutor for strategy "tdd"; no CLI route yet.
+  mode("tdd", "TDD", "Failing tests first, then code that passes them without touching the tests.", "static", true, false, tddRuntime),
   mode("swarm", "Swarm", "Many small independent items split across cheap seats, then merged.", "static", true),
   mode("debug", "Debug", "Seats test competing hypotheses in their own worktrees; evidence picks the fix.", "static", true),
   mode("explore", "Explore", "Read-only seats investigate a question; a synthesizer answers with citations.", "static", false),
