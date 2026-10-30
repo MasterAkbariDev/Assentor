@@ -495,7 +495,8 @@ describe("autonomy floor for dynamic modes (T02B-02)", () => {
     const applied: unknown[] = [];
     const fake = {
       create: async () => ({}),
-      diff: async () => ({}),
+      diff: async () => ({ files: ["a.txt"] }),
+      list: async () => [],
       applyTo: async (target: unknown) => (applied.push(target), { ok: true, strategy: "squash", changed: true }),
     } as unknown as WorktreeManager;
     const seat = { sessionId: createId(), seatId: "agent-1.w1" };
@@ -542,7 +543,38 @@ describe("autonomy floor for dynamic modes (T02B-02)", () => {
     abort.abort();
     expect(await done).toMatchObject({ status: "cancelled" });
     expect(answer).toBeUndefined();
+    // No waiting → running after the terminal state.
+    const states = s.events.filter((e) => e.type === "session.state").map((e) => (e.data as { to: string }).to);
+    expect(states.at(-1)).toBe("cancelled");
     expect(s.session.answer(id, "a")).toBe(false);
+  });
+});
+
+describe("free-text answers (T02B-02)", () => {
+  it("refuse empty and over-2000-character answers; accept a trimmed one", async () => {
+    let session: ReturnType<typeof prepareModeSession> | undefined;
+    let id = "";
+    let got: string | undefined;
+    const { value, events } = await input({
+      mode: dynamicMode((ci) => ({
+        run: async () => {
+          got = await ci.ask({ question: "Why?" });
+          return { status: "completed" };
+        },
+      })),
+    });
+    value.emit = (e) => {
+      events.push(e);
+      if (e.type === "user.question") id = (e.data as unknown as { questionId: string }).questionId;
+    };
+    session = prepareModeSession(value);
+    const done = session.run();
+    await until(() => id !== "");
+    expect(session.answer(id, "   ")).toBe(false);
+    expect(session.answer(id, "x".repeat(2001))).toBe(false);
+    expect(session.answer(id, ` ${"y".repeat(1999)} `)).toBe(true);
+    expect(await done).toMatchObject({ status: "completed" });
+    expect(got).toBe("y".repeat(1999));
   });
 });
 

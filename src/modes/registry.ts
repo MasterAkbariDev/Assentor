@@ -97,7 +97,7 @@ export interface ModeHostServices {
 }
 
 /** What a controller may do with worktrees. `applyTo("main")` passes the session's approval floor. */
-export type ControllerWorktrees = Pick<WorktreeManager, "create" | "diff" | "applyTo">;
+export type ControllerWorktrees = Pick<WorktreeManager, "create" | "diff" | "list" | "applyTo">;
 
 /** A request for the user's yes/no before work starts or lands. */
 export interface ApprovalRequest {

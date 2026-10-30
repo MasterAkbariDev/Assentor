@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
@@ -128,6 +129,9 @@ const MAX_REPORTS = 20;
 const MAX_RESULTS = 25;
 const DIFF_LIMIT = 100_000;
 const REPEAT_LIMIT = 3;
+/** A lead reply larger than this is refused unparsed. */
+const MAX_REPLY_BYTES = 256 * 1024;
+const MAX_ACTIONS = 20;
 
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 const clipEnd = (text: string, max: number) => (text.length > max ? `…${text.slice(text.length - max + 1)}` : text);
@@ -504,6 +508,9 @@ class LeadController implements ModeController {
 
       case "retire": {
         const seat = this.seat(action.seatId);
+        const busy = [...this.running.entries()].find(([, r]) => r.seatId === seat.id);
+        // A running seat still holds a slot; retiring it would let maxSeats be exceeded.
+        if (busy) throw new Refused(`${seat.id} is running ${this.task(busy[0]).id}; wait for its report`);
         seat.retired = true;
         return { accepted: true, reason: `${seat.id} retired` };
       }
@@ -539,6 +546,7 @@ class LeadController implements ModeController {
       throw new Refused(`task ${task.id} owns no paths, so it is read-only; hire a read-only seat`);
     }
     this.checkDependencies(task);
+    this.checkOverlaps(task);
     this.checkRoster(seat);
     let next = this.state.board;
     for (const op of [...ops, ...(ops.some((o) => o.op === "status") ? [] : [{ op: "status", taskId: task.id, status: "in_progress" } as const])]) {
@@ -548,17 +556,22 @@ class LeadController implements ModeController {
     }
 
     const record = this.record(task.id);
-    const stageId = `task-${key(task.id).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "x"}-r${record.runs + 1}`;
+    // The hash keeps ids apart that sanitise alike (T.1, T-1, T_1).
+    const hash = createHash("sha256").update(key(task.id)).digest("hex").slice(0, 6);
+    const stageId = `task-${key(task.id).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "x"}-${hash}-r${record.runs + 1}`;
     const display = this.toSeat(seat).displayName;
     if (this.input.autonomy === "manual") {
-      const question = `Start task ${task.id} "${clip(task.title, 80)}" on ${display} (${seat.provider}/${seat.model}, ${seat.permissions})?`;
+      const gates = this.gatesEnabled() ? "; its verification gates then run in its worktree" : "";
+      const question = `Start task ${task.id} "${clip(task.title, 80)}" on ${display} (${seat.provider}/${seat.model}, ${seat.permissions})${gates}?`;
       if (!(await this.input.requestApproval({ question, stageId }))) throw new Refused("the user did not approve this run");
     }
     let worktree = record.worktrees[seat.id];
     if (!worktree) {
       const wtKey = `${seat.id}.w${this.state.nextWorktree}`;
-      const info = await this.input.worktrees!.create({ sessionId: this.input.sessionId, seatId: wtKey });
+      // Intent first: a crash after create never reuses the key.
       this.state.nextWorktree += 1;
+      await this.save();
+      const info = await this.input.worktrees!.create({ sessionId: this.input.sessionId, seatId: wtKey });
       worktree = { key: wtKey, path: info.path };
       record.worktrees[seat.id] = worktree;
     }
@@ -632,16 +645,27 @@ class LeadController implements ModeController {
       if (!parsed.ok) return fail(`no valid report: ${parsed.error}`);
 
       // Claims are checked, not trusted: the diff and the gates are the evidence.
-      const diff = await this.input.worktrees!.diff({ sessionId: this.input.sessionId, seatId: worktree.key });
-      const gates = await this.gates(worktree.path);
+      const seatKey = { sessionId: this.input.sessionId, seatId: worktree.key };
+      let diff = await this.input.worktrees!.diff(seatKey);
+      let outside = this.outsideOwned(task, diff.files);
+      let gates: Awaited<ReturnType<LeadController["gates"]>>;
+      const gateProblems: string[] = [];
+      if (outside.length > 0 && this.gatesEnabled()) {
+        // Do not run commands from a worktree that changed files it does not own.
+        gateProblems.push("gates not run: the run changed files outside the task's owned paths");
+      } else {
+        // Gate processes take no signal; stop waiting on cancel, like review().
+        const ran = await Promise.race([this.gates(worktree.path), this.stopped.then(() => "stopped" as const)]);
+        if (ran === "stopped" || this.stop.signal.aborted) return fail("cancelled");
+        gates = ran;
+        // Gates can write files (formatters, generated code): the evidence is the diff after them.
+        diff = await this.input.worktrees!.diff(seatKey);
+        outside = this.outsideOwned(task, diff.files);
+      }
       const checks = verifyReportClaims(parsed.report, { diffFiles: diff.files, ...(gates ? { gateRuns: gates.runs } : {}) }, { ignoreCase: process.platform !== "linux" });
       const problems = checks.filter((c) => c.kind !== "test_claim_unverified").map((c) => c.detail);
       const warnings = checks.filter((c) => c.kind === "test_claim_unverified").map((c) => c.detail);
-      const owned = task.ownedPaths.map((p) => p.toLowerCase());
-      for (const file of diff.files) {
-        const f = file.toLowerCase();
-        if (!owned.some((p) => f === p || f.startsWith(`${p}/`))) problems.push(`changes ${file}, outside the task's owned paths`);
-      }
+      problems.push(...outside.map((file) => `changes ${file}, outside the task's owned paths`), ...gateProblems);
       for (const run of gates?.runs ?? []) if (!run.passed) problems.push(`gate "${run.command}" failed`);
       this.seatEvent(seat, "seat.done", { ok: true, summary: clip(parsed.report.summary, 500) });
       return { ...base, report: parsed.report, problems, warnings, diffFiles: diff.files };
@@ -650,11 +674,21 @@ class LeadController implements ModeController {
     }
   }
 
+  /** Changed files outside the task's owned paths; case-sensitive, like the manager's `allowedPaths`. */
+  private outsideOwned(task: LeadTask, files: readonly string[]): string[] {
+    return files.filter((file) => !task.ownedPaths.some((p) => file === p || file.startsWith(`${p}/`)));
+  }
+
+  private gatesEnabled(): boolean {
+    const sup = this.input.deps.supervisor;
+    return !sup?.skipGates && !!sup?.verification && sup.verification.enabled !== false;
+  }
+
   /** The Supervisor's verification gates in a worktree; undefined when gates are off. */
   private async gates(worktree: string): Promise<{ runs: Array<{ command: string; passed: boolean }> } | undefined> {
     const sup = this.input.deps.supervisor;
     const verification = sup?.verification;
-    if (sup?.skipGates || !verification || verification.enabled === false) return undefined;
+    if (!this.gatesEnabled() || !sup || !verification) return undefined;
     const commands = await resolveVerificationCommands(worktree, verification.commands);
     const result = await runVerificationGates({
       projectPath: worktree,
@@ -721,38 +755,46 @@ class LeadController implements ModeController {
       if (!(await this.input.requestApproval({ question }))) throw new Refused("the user did not approve the integration");
     }
     const landed: string[] = [];
+    const warnings: string[] = [];
     for (const task of tasks) {
       const worktree = this.record(task.id).worktrees[task.assignee!]!;
       const prefix = landed.length > 0 ? `integrated ${landed.join(", ")}; ` : "";
-      let applied;
+      let failure: string | undefined;
+      let applied: Awaited<ReturnType<NonNullable<ModeControllerInput["worktrees"]>["applyTo"]>> | undefined;
       try {
         applied = await this.input.worktrees!.applyTo(
           "main",
           { sessionId: this.input.sessionId, seatId: worktree.key },
           { strategy: "squash", message: clip(`assentor lead: ${task.id} ${task.title}`, 200), allowedPaths: task.ownedPaths },
         );
+        if (!applied.ok) failure = `conflicts with your branch in ${applied.conflicts.join(", ") || "unknown files"}`;
       } catch (error) {
-        throw new Refused(`${prefix}${task.id} was not applied: ${message(error)}`);
+        if (this.stop.signal.aborted) throw new Refused("cancelled");
+        // Ownership, a dirty branch, a hook, a denial: the manager left the branch as it was.
+        failure = `was not applied: ${clip(message(error), 500)}`;
       }
-      if (!applied.ok) {
-        // Conflicts go to the user (modes.md §4.2): stop to resolve them, or leave this work out.
-        const files = applied.conflicts.join(", ") || "unknown files";
-        const conflict = `${prefix}${task.id} conflicts with your branch in ${files}; your branch is unchanged for ${task.id} and its work is kept in worktree ${worktree.key}`;
+      if (failure !== undefined || !applied?.ok) {
+        // Every failed landing goes to the user (modes.md §4.2): stop to fix it, or leave this work out.
+        const detail = `${prefix}${task.id} ${failure}; your branch is unchanged for ${task.id} and its work is kept in worktree ${worktree.key}`;
         const answer = await this.input.ask({
-          question: `${conflict}. Stop the session to resolve it (then resume), or keep going without ${task.id}'s work?`,
+          question: `${detail}. Stop the session to resolve it (then resume), or keep going without ${task.id}'s work?`,
           options: ["stop", "keep going"],
         });
         if (answer !== "keep going") {
-          return { accepted: false, reason: conflict, stop: { status: "blocked", reason: `integration conflict: ${conflict}; resume when it is resolved` } };
+          return { accepted: false, reason: detail, stop: { status: "blocked", reason: `integration failed: ${detail}; resume when it is resolved` } };
         }
         this.record(task.id).abandoned = true;
-        throw new Refused(`${conflict}. The user chose to keep going without it`);
+        throw new Refused(`${detail}. The user chose to keep going without it`);
       }
       this.record(task.id).integrated = true;
       landed.push(task.id);
+      if (applied.warning) {
+        warnings.push(`${task.id}: ${applied.warning}`);
+        this.emit({ type: "session.warning", data: { kind: "lead-integrate", message: `${task.id}: ${applied.warning}` } });
+      }
       this.emit({ type: "task.status", data: { taskId: task.id, status: "integrated", ...(applied.commit ? { commit: applied.commit } : {}) } });
     }
-    return { accepted: true, reason: `integrated ${landed.join(", ")}` };
+    return { accepted: true, reason: `integrated ${landed.join(", ")}${warnings.length ? `; warning: ${warnings.join("; ")}` : ""}` };
   }
 
   // -------------------------------------------------------------------------
@@ -813,6 +855,25 @@ class LeadController implements ModeController {
       const record = this.record(d.id);
       if (record.diffFiles.length > 0 && !record.integrated) {
         throw new Refused(`integrate ${d.id} first: ${task.id} starts from the main checkout, which does not have ${d.id}'s work yet`);
+      }
+    }
+  }
+
+  /**
+   * An accepted task that changed files it shares with this one must land first:
+   * this run starts from the main checkout and would conflict with that work.
+   */
+  private checkOverlaps(task: LeadTask): void {
+    const overlaps = (a: string, b: string) => {
+      const [x, y] = [a.toLowerCase(), b.toLowerCase()];
+      return x === y || x.startsWith(`${y}/`) || y.startsWith(`${x}/`);
+    };
+    for (const other of this.state.board.tasks) {
+      if (key(other.id) === key(task.id) || other.status !== "accepted") continue;
+      const record = this.record(other.id);
+      if (record.integrated || record.abandoned || record.diffFiles.length === 0) continue;
+      if (other.ownedPaths.some((p) => task.ownedPaths.some((q) => overlaps(p, q)))) {
+        throw new Refused(`integrate ${other.id} first: it changed paths ${task.id} owns, and ${task.id} starts from the main checkout`);
       }
     }
   }
@@ -1026,6 +1087,16 @@ class LeadController implements ModeController {
     }
     if (raw === undefined) throw new Error("nothing to resume: this session has no lead state");
     const state = LeadStateSchema.parse(JSON.parse(raw));
+    // Worktree paths come from the manager, never from the file: a path that disagrees refuses the resume.
+    const known = new Map((await this.input.worktrees!.list(this.input.sessionId)).map((w) => [w.seatId, path.resolve(w.path)]));
+    for (const record of Object.values(state.tasks)) {
+      for (const [seatId, worktree] of Object.entries(record.worktrees)) {
+        const actual = known.get(worktree.key);
+        // Gone (cleaned up): forget it; a new run creates a fresh one.
+        if (actual === undefined) delete record.worktrees[seatId];
+        else if (actual !== path.resolve(worktree.path)) throw new Error(`cannot resume: lead state names ${worktree.path} for worktree ${worktree.key}, the manager has ${actual}`);
+      }
+    }
     // Runs that were going when the session stopped have no result: reject them so the lead decides again.
     for (const task of state.board.tasks) {
       if (task.status !== "assigned" && task.status !== "in_progress") continue;
@@ -1050,8 +1121,14 @@ function reportText(result: ExecutorResult): string {
   return [result.rawOutput ?? "", result.summary].join("\n");
 }
 
-/** The lead's reply: `{ note?, actions: [...] }`. Actions are validated one by one, so one bad action does not void the turn. */
+/**
+ * The lead's reply: `{ note?, actions: [...] }` with 1 to 20 actions. A reply over
+ * 256 KB or with more than 20 actions is refused whole (nothing runs), so a
+ * runaway turn never half-applies. Actions are validated one by one, so one bad
+ * action does not void the turn.
+ */
 function parseTurn(text: string): { actions: unknown[]; note?: string; error?: string } {
+  if (Buffer.byteLength(text, "utf8") > MAX_REPLY_BYTES) return { actions: [], error: `the reply is over ${MAX_REPLY_BYTES / 1024} KB` };
   const json = extractJsonCandidate(text);
   if (!json.ok) return { actions: [], error: "no JSON object found" };
   const value = json.data as { actions?: unknown; note?: unknown };
@@ -1059,8 +1136,8 @@ function parseTurn(text: string): { actions: unknown[]; note?: string; error?: s
     return { actions: [], error: 'expected {"actions": [ ... ]} with at least one action' };
   }
   const note = typeof value.note === "string" ? value.note : undefined;
-  if (value.actions.length > 20) {
-    return { actions: value.actions.slice(0, 20), error: `${value.actions.length} actions; only the first 20 were run`, ...(note ? { note } : {}) };
+  if (value.actions.length > MAX_ACTIONS) {
+    return { actions: [], error: `${value.actions.length} actions; send at most ${MAX_ACTIONS} (none were run)`, ...(note ? { note } : {}) };
   }
   return { actions: value.actions, ...(note ? { note } : {}) };
 }

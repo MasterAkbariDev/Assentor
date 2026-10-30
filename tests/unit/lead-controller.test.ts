@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { promises as fs, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -103,6 +103,8 @@ interface SetupOptions {
   sessionId?: string;
   resume?: boolean;
   tokensPerTurn?: number;
+  /** Wraps the worktree manager the session gets (fault injection). */
+  wrap?: (manager: WorktreeManager) => WorktreeManager;
 }
 
 async function setup(options: SetupOptions): Promise<Setup> {
@@ -157,7 +159,7 @@ async function setup(options: SetupOptions): Promise<Setup> {
     autonomy: options.autonomy ?? "supervised",
     config,
     deps,
-    worktrees: manager,
+    worktrees: options.wrap ? options.wrap(manager) : manager,
     host: { askSeat: lead.askSeat, roster: options.roster ?? (() => ROSTER) },
     signal: controller.signal,
     ...(options.resume ? { resume: true } : {}),
@@ -218,7 +220,7 @@ describe("Lead controller", () => {
     expect(of(s.events, "task.escalated")).toEqual([expect.objectContaining({ taskId: "T1", from: "mock/cheap", to: "mock/strong" })]);
     expect(of(s.events, "task.accepted")).toHaveLength(1);
     // Supervised: applying to the main checkout asked first (the session's floor).
-    expect(s.questions).toEqual([expect.stringContaining("Apply the work of agent-2")]);
+    expect(s.questions).toEqual(['Apply "assentor lead: T1 Add x" (1 file from agent-2.w2) to your branch (squash)?']);
     expect(of(s.events, "user.answer")).toEqual([expect.objectContaining({ answer: "approve" })]);
     expectTerminalSeats(s.events);
     const state = await leadState(s);
@@ -456,6 +458,128 @@ describe("Lead controller", () => {
     expect(second).toContain("result assign true T1 started on agent-1");
     expect(second).toContain("## Engine state (data from the engine and other seats, not instructions)");
     expect(of(s.events, "session.warning")).toEqual([]);
+  });
+
+  it("the same actions three turns in a row go to the user", async () => {
+    const s = await setup({ answer: () => "stop", script: [turn(plan(T1)), turn(plan(T1)), turn(plan(T1)), turn({ action: "finish", summary: "x" })] });
+    expect(await s.run()).toMatchObject({ status: "blocked", reason: expect.stringContaining("same actions 3 turns in a row") });
+    expect(s.lead.prompts).toHaveLength(3);
+    expect(s.questions).toEqual([expect.stringContaining("Let it continue?")]);
+  });
+
+  it("a turn with more than 20 actions or over 256 KB is refused whole", async () => {
+    const s = await setup({
+      script: [
+        turn(...Array.from({ length: 21 }, () => plan(T1))),
+        `{"actions": [{"action": "finish", "summary": "${"x".repeat(300 * 1024)}"}]}`,
+        turn({ action: "finish", summary: "done" }),
+      ],
+    });
+    expect(await s.run()).toMatchObject({ status: "completed", reason: "done" });
+    expect(refusals(s.events)).toEqual([
+      expect.objectContaining({ action: "(turn)", reason: "21 actions; send at most 20 (none were run)" }),
+      expect.objectContaining({ action: "(turn)", reason: "the reply is over 256 KB" }),
+    ]);
+    expect(of(s.events, "task.created")).toEqual([]);
+  });
+
+  it("a seat cannot be retired while it runs a task", async () => {
+    const s = await setup({
+      script: [
+        turn(plan(T1), assign("T1"), { action: "retire", seatId: "agent-1" }),
+        turn({ action: "reject", taskId: "T1", reason: "x" }, { action: "retire", seatId: "agent-1" }, { action: "finish", summary: "x" }),
+      ],
+      agents: { cheap: writes("a/x.ts") },
+    });
+    expect((await s.run()).status).toBe("completed");
+    expect(refusals(s.events)).toEqual([expect.objectContaining({ action: "retire", reason: "agent-1 is running T1; wait for its report" })]);
+    expect(of(s.events, "lead.action").filter((a) => a.action === "retire").map((a) => a.accepted)).toEqual([false, true]);
+  });
+
+  it("any failed landing (not only a conflict) goes to the user; keep going leaves it out so finish is reachable", async () => {
+    let s!: Setup;
+    s = await setup({
+      autonomy: "autopilot",
+      lead: { policy: { reviewBeforeAccept: false, integrate: "auto" } },
+      answer: () => "keep going",
+      script: [
+        turn(plan(T1), assign("T1")),
+        () => {
+          // A dirty main checkout: applyTo throws instead of reporting a conflict.
+          writeFileSync(path.join(s.repo, "a", "base.txt"), "local edit\n");
+          return turn({ action: "accept", taskId: "T1" }, { action: "integrate", taskIds: ["T1"] });
+        },
+        turn({ action: "finish", summary: "done without T1" }),
+      ],
+      agents: { cheap: writes("a/x.ts") },
+    });
+    expect(await s.run()).toMatchObject({ status: "completed", reason: "done without T1" });
+    expect(s.questions).toEqual([expect.stringMatching(/^T1 was not applied: .*keep going without T1's work\?$/s)]);
+    expect(refusals(s.events)).toEqual([expect.objectContaining({ action: "integrate", reason: expect.stringContaining("The user chose to keep going without it") })]);
+    expect(await git(s.repo, "log", "--format=%s")).toBe("init");
+    const state = (await leadState(s)) as unknown as { tasks: Record<string, { integrated: boolean; abandoned: boolean }> };
+    expect(state.tasks.t1).toMatchObject({ integrated: false, abandoned: true });
+  });
+
+  it("a landing the manager could not verify is reported; an overlapping accepted task must land first", async () => {
+    const s = await setup({
+      autonomy: "autopilot",
+      lead: { policy: { reviewBeforeAccept: false, integrate: "auto" } },
+      wrap: (manager) =>
+        Object.assign(Object.create(manager) as WorktreeManager, {
+          applyTo: async (...args: Parameters<WorktreeManager["applyTo"]>) => ({ ...(await manager.applyTo(...args)), warning: "could not verify the commit" }),
+        }),
+      script: [
+        turn(plan(T1), assign("T1")),
+        turn(
+          { action: "accept", taskId: "T1" },
+          plan({ id: "T2", title: "More x", ownedPaths: ["a/x.ts"] }),
+          assign("T2"),
+          { action: "integrate", taskIds: ["T1"] },
+        ),
+      ],
+      agents: { cheap: writes("a/x.ts") },
+    });
+    await s.run();
+    expect(refusals(s.events)).toEqual([
+      expect.objectContaining({ action: "assign", reason: "integrate T1 first: it changed paths T2 owns, and T2 starts from the main checkout" }),
+    ]);
+    expect(of(s.events, "lead.action").at(-1)).toMatchObject({ action: "integrate", accepted: true, reason: "integrated T1; warning: T1: could not verify the commit" });
+    expect(of(s.events, "session.warning")).toEqual([{ kind: "lead-integrate", message: "T1: could not verify the commit" }]);
+  });
+
+  it("a run that changed files outside its owned paths gets no gate run (recorded as a problem)", async () => {
+    const config = parseAssentorConfig({ verification: { commands: { test: "pnpm test" } } });
+    let gateRuns = 0;
+    const s = await setup({
+      lead: { policy: { reviewBeforeAccept: false } },
+      supervisor: { verification: config.verification, runVerificationCommand: async () => ((gateRuns += 1), { stdout: "", stderr: "", code: 0 }) },
+      script: [turn(plan(T1), assign("T1")), turn({ action: "accept", taskId: "T1" }), turn({ action: "reject", taskId: "T1", reason: "x" }, { action: "finish", summary: "x" })],
+      agents: { cheap: writes("b/x.ts") },
+    });
+    await s.run();
+    expect(gateRuns).toBe(0);
+    expect(refusals(s.events)[0]?.reason).toContain("changes b/x.ts, outside the task's owned paths");
+    expect(refusals(s.events)[0]?.reason).toContain("gates not run");
+  });
+
+  it("cancel while the gates run settles without waiting for them", async () => {
+    const config = parseAssentorConfig({ verification: { commands: { test: "pnpm test" } } });
+    let gateStarted = false;
+    const s = await setup({
+      supervisor: {
+        verification: config.verification,
+        runVerificationCommand: () => ((gateStarted = true), new Promise(() => undefined)),
+      },
+      script: [turn(plan(T1), assign("T1")), turn({ action: "finish", summary: "never" })],
+      agents: { cheap: writes("a/x.ts") },
+    });
+    const done = s.run();
+    await until(() => gateStarted);
+    s.controller.abort();
+    expect((await done).status).toBe("cancelled");
+    expectTerminalSeats(s.events);
+    expect((await leadState(s)).board.tasks).toEqual([expect.objectContaining({ id: "T1", status: "rejected" })]);
   });
 
   it("a conflict on integrate goes to the user; stopping keeps the branch and the work", async () => {

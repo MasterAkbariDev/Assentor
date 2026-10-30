@@ -207,6 +207,8 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
       selected();
       const { sessionId } = input;
       const finish = (status: SessionRunResult["status"], reason?: string): ModeRunResult => {
+        // Open questions settle first, so no waiting → running follows the terminal state.
+        questions.closeAll();
         emit({ type: "session.state", sessionId, data: { to: status, ...(reason ? { reason } : {}) } });
         const data = { status, ...(reason ? { reason } : {}) };
         emit(
@@ -269,9 +271,10 @@ const MAX_ANSWER_LENGTH = 2000;
  */
 function createQuestions(sessionId: string, signal: AbortSignal, emit: (draft: EngineEventDraft) => void) {
   const pending = new Map<string, { options?: readonly string[]; approval: boolean; settle(answer?: string): void }>();
+  let closed = false;
   return {
     ask(question: string, options: readonly string[] | undefined, approval: boolean): Promise<string | undefined> {
-      if (signal.aborted) return Promise.resolve(undefined);
+      if (signal.aborted || closed) return Promise.resolve(undefined);
       // Unique across resumes of the same session, so a replayed log never pairs an old question with a new answer.
       const questionId = createId();
       return new Promise((resolve) => {
@@ -279,7 +282,7 @@ function createQuestions(sessionId: string, signal: AbortSignal, emit: (draft: E
           if (!pending.delete(questionId)) return;
           signal.removeEventListener("abort", onAbort);
           if (answer !== undefined) emit({ type: "user.answer", sessionId, data: { questionId, answer } });
-          if (pending.size === 0 && !signal.aborted) emit({ type: "session.state", sessionId, data: { from: "waiting", to: "running" } });
+          if (pending.size === 0 && !signal.aborted && !closed) emit({ type: "session.state", sessionId, data: { from: "waiting", to: "running" } });
           resolve(answer);
         };
         const onAbort = () => settle();
@@ -305,6 +308,7 @@ function createQuestions(sessionId: string, signal: AbortSignal, emit: (draft: E
       return true;
     },
     closeAll(): void {
+      closed = true;
       for (const entry of [...pending.values()]) entry.settle();
     },
   };
@@ -367,9 +371,12 @@ function gateWorktrees(
   return {
     create: (seat, baseRef) => worktrees.create(seat, baseRef),
     diff: (seat) => worktrees.diff(seat),
+    list: (sessionId) => worktrees.list(sessionId),
     applyTo: async (target, seat, options) => {
       if (target === "main" && autonomy !== "autopilot") {
-        const question = `Apply the work of ${seat.seatId} to your branch (${options.strategy})?`;
+        const { files } = await worktrees.diff(seat);
+        const what = options.message ? `"${options.message.slice(0, 200)}" ` : "";
+        const question = `Apply ${what}(${files.length} file${files.length === 1 ? "" : "s"} from ${seat.seatId}) to your branch (${options.strategy})?`;
         if (!(await approve({ question }))) {
           throw new WorktreeError(`the user did not approve applying ${seat.seatId} to the main checkout`);
         }
