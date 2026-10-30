@@ -78,8 +78,14 @@ function executor(work: (task: ExecutorTask) => Promise<ExecutorResult> | Execut
 }
 
 /** The scripted "bug": repro fails while bug.txt says bad; prints instr.txt (the experiments' instrumentation). */
-const runCommand: NonNullable<DebugExtras["runCommand"]> = async (command, cwd) => {
+const signalsSeen: boolean[] = [];
+const runCommand: NonNullable<DebugExtras["runCommand"]> = async (command, cwd, options) => {
+  signalsSeen.push(options?.signal instanceof AbortSignal);
   const read = (file: string) => fs.readFile(path.join(cwd, file), "utf8").catch(() => "");
+  if (command === "gate-dirty") {
+    await fs.writeFile(path.join(cwd, "gate-artifact.txt"), "left by a gate\n");
+    return { stdout: "", stderr: "", code: 0 };
+  }
   if (command === "gate-fail") return { stdout: "", stderr: "gate broke", code: 1 };
   const bug = (await read("bug.txt")).includes("bad");
   return { stdout: `${bug ? "FAIL: bug" : "ok"}\n${await read("instr.txt")}`, stderr: "", code: bug ? 1 : 0 };
@@ -101,6 +107,7 @@ async function setup(opts: {
   hypothesis: HypothesisScript;
   fix: (task: ExecutorTask, attempt: number) => Promise<ExecutorResult> | ExecutorResult;
   review?: MockReviewerStep[];
+  reviewer?: MockReviewer;
 }): Promise<Setup> {
   const repo = await makeRepo();
   const manager = new WorktreeManager({ repoPath: repo });
@@ -127,7 +134,7 @@ async function setup(opts: {
     runStep: async () => ({}),
     seatsFor,
     createExecutor,
-    createReviewer: () => new MockReviewer({ steps: opts.review ?? [{ type: "pass" }] }),
+    createReviewer: () => opts.reviewer ?? new MockReviewer({ steps: opts.review ?? [{ type: "pass" }] }),
   } as ModeControllerInput["deps"];
   const input: ModeControllerInput = {
     goal: "average() returns the wrong value",
@@ -149,6 +156,14 @@ async function setup(opts: {
     manager,
     run: (over = {}, extras = {}) => createDebugController({ ...input, ...over }, { runCommand, ...extras }).run(),
   };
+}
+
+/** A blocked fix stays on disk, marked failed, and the result says where. */
+async function expectKeptFailed(s: Setup, reason?: string) {
+  const kept = await s.manager.list(SESSION);
+  expect(kept).toHaveLength(1);
+  expect(kept[0]!.outcome).toBe("failed");
+  if (reason !== undefined) expect(reason).toContain(kept[0]!.path);
 }
 
 const writeInstr = (cwd: string, text: string) => fs.writeFile(path.join(cwd, "instr.txt"), `${text} ASSENTOR-DEBUG\n`);
@@ -219,6 +234,7 @@ describe("debug mode", () => {
     const result = await s.run();
     expect(result.status).toBe("blocked");
     expect(result.reason).toContain("could not reproduce");
+    expect((await s.manager.list(SESSION)).length).toBe(0);
     expect(s.hypothesisExecutors).toHaveLength(0);
   });
 
@@ -239,7 +255,7 @@ describe("debug mode", () => {
   it("accepts a second fix attempt after a failed repro", async () => {
     const s = await setup({
       hypothesis: winnerAt(0),
-      fix: (task, attempt) => (attempt === 1 ? done("no-op") : fixesBug(task)),
+      fix: (task, attempt) => (attempt === 1 ? fs.writeFile(path.join(task.projectPath, "noop.txt"), "x\n").then(() => done("no-op")) : fixesBug(task)),
     });
     expect((await s.run()).status).toBe("completed");
     expect(s.fixExecutor.prompts[1]).toContain("The reproduction still fails");
@@ -256,6 +272,7 @@ describe("debug mode", () => {
     expect(result.status).toBe("blocked");
     expect(result.reason).toContain("failed after 1 attempt");
     expect(result.reason).toContain("gate broke");
+    await expectKeptFailed(s);
     expect(await fs.readFile(path.join(s.repo, "bug.txt"), "utf8")).toBe("bad\n");
   });
 
@@ -268,26 +285,33 @@ describe("debug mode", () => {
     const result = await s.run();
     expect(result.status).toBe("blocked");
     expect(result.reason).toContain("wrong place");
+    await expectKeptFailed(s);
     expect(await fs.readFile(path.join(s.repo, "bug.txt"), "utf8")).toBe("bad\n");
   });
 
-  it("supervised: needs approval; applies on yes, keeps the fix on no or without a channel", async () => {
-    const without = await setup({ hypothesis: winnerAt(0), fix: fixesBug });
-    const blocked = await without.run({ autonomy: "supervised" });
-    expect(blocked.status).toBe("blocked");
-    expect(blocked.reason).toContain("approval needed");
-    expect(await fs.readFile(path.join(without.repo, "bug.txt"), "utf8")).toBe("bad\n");
-
-    for (const [answer, status] of [[false, "blocked"], [true, "completed"]] as const) {
+  it("supervised and manual fail fast without an approval channel, before any work", async () => {
+    for (const autonomy of ["supervised", "manual"] as const) {
       const s = await setup({ hypothesis: winnerAt(0), fix: fixesBug });
-      const approve = vi.fn(async () => answer);
-      const result = await s.run({ autonomy: "supervised" }, { approve });
-      expect(result.status).toBe(status);
-      expect(approve).toHaveBeenCalledTimes(1);
+      const result = await s.run({ autonomy });
+      expect(result.status).toBe("blocked");
+      expect(result.reason).toContain("approval channel");
+      expect(s.hypothesisExecutors).toHaveLength(0);
+      expect((await s.manager.list(SESSION)).length).toBe(0);
     }
   });
 
-  it("a danger-area fix needs approval even under autopilot", async () => {
+  it("with an approval channel: applies on yes, keeps the fix (marked failed) on no", async () => {
+    for (const [answer, status] of [[false, "blocked"], [true, "completed"]] as const) {
+      const s = await setup({ hypothesis: winnerAt(0), fix: fixesBug });
+      const approve = vi.fn(async (_summary: string) => answer);
+      const result = await s.run({ autonomy: "supervised" }, { approve });
+      expect(result.status).toBe(status);
+      expect(approve).toHaveBeenCalledTimes(1);
+      if (!answer) await expectKeptFailed(s, result.reason);
+    }
+  });
+
+  it("a danger-area fix needs approval even under autopilot; the blocked fix is kept", async () => {
     const dangerous = async (task: ExecutorTask) => {
       await fs.mkdir(path.join(task.projectPath, ".github/workflows"), { recursive: true });
       await fs.writeFile(path.join(task.projectPath, ".github/workflows/ci.yml"), "on: push\n");
@@ -297,10 +321,172 @@ describe("debug mode", () => {
     const result = await s.run();
     expect(result.status).toBe("blocked");
     expect(result.reason).toContain("danger area");
+    await expectKeptFailed(s, result.reason);
     const approve = vi.fn(async (_summary: string) => true);
     const s2 = await setup({ hypothesis: winnerAt(0), fix: dangerous });
     expect((await s2.run({}, { approve })).status).toBe("completed");
     expect(approve.mock.calls[0]![0]).toContain("[danger area");
+  });
+
+  it("uses the project's extra danger areas (modes.cascade.dangerAreas)", async () => {
+    const s = await setup({
+      config: baseConfig({}, { modes: { debug: { hypothesisTeam: "hyp", fixTeam: "fixers", reproCommand: "repro", maxRounds: 1 }, cascade: { dangerAreas: [{ name: "ledger", paths: ["ledger"] }] } } }),
+      hypothesis: winnerAt(0),
+      fix: async (task) => {
+        await fs.mkdir(path.join(task.projectPath, "ledger"), { recursive: true });
+        await fs.writeFile(path.join(task.projectPath, "ledger/x.txt"), "1\n");
+        return fixesBug(task);
+      },
+    });
+    const result = await s.run();
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("ledger");
+  });
+
+  it("surfaces the apply warning in the result", async () => {
+    const s = await setup({ hypothesis: winnerAt(0), fix: fixesBug });
+    const real = s.manager.applyTo.bind(s.manager);
+    vi.spyOn(s.manager, "applyTo").mockImplementation(async (...args) => {
+      const r = await real(...args);
+      return r.ok ? { ...r, warning: "post-commit hook failed" } : r;
+    });
+    const result = await s.run();
+    expect(result.status).toBe("completed");
+    expect(result.reason).toContain("warning: post-commit hook failed");
+  });
+
+  it("applyTo refusing (dirty main) is a blocked result with the fix kept, not a throw", async () => {
+    const s = await setup({
+      hypothesis: winnerAt(0),
+      fix: async (task) => {
+        await fs.writeFile(path.join(s.repo, "bug.txt"), "dirty in main\n"); // uncommitted change in main while the seat works
+        return fixesBug(task);
+      },
+    });
+    const result = await s.run();
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("refused");
+    await expectKeptFailed(s, result.reason);
+    expect(await fs.readFile(path.join(s.repo, "bug.txt"), "utf8")).toBe("dirty in main\n");
+  });
+
+  it("blocks when the fix worktree changes after the review", async () => {
+    const reviewer = new MockReviewer();
+    const review = reviewer.review.bind(reviewer);
+    reviewer.review = async (input) => {
+      await fs.writeFile(path.join(input.projectPath, "sneaky.txt"), "after review\n");
+      return review(input);
+    };
+    const withReviewer = await setup({ hypothesis: winnerAt(0), fix: fixesBug, reviewer });
+    const result = await withReviewer.run();
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("changed after the review");
+    await expectKeptFailed(withReviewer, result.reason);
+  });
+
+  it("blocks when the repro or a gate leaves files in the fix worktree", async () => {
+    const s = await setup({
+      config: baseConfig({}, { verification: { commands: { test: "gate-dirty" } } }),
+      hypothesis: winnerAt(0),
+      fix: fixesBug,
+    });
+    const result = await s.run();
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("gate-artifact.txt");
+    await expectKeptFailed(s, result.reason);
+  });
+
+  it("sends back a fix with a binary file or a `++n` instrumentation line", async () => {
+    const s = await setup({
+      config: baseConfig({ fixAttempts: 2 }),
+      hypothesis: winnerAt(0),
+      fix: async (task, attempt) => {
+        if (attempt === 1) await fs.writeFile(path.join(task.projectPath, "blob.bin"), Buffer.from([0, 1, 2, 0, 255]));
+        else await fs.writeFile(path.join(task.projectPath, "x.js"), "let n = 0;\n++n; // ASSENTOR-DEBUG\n");
+        return fixesBug(task);
+      },
+    });
+    const result = await s.run();
+    expect(result.status).toBe("blocked");
+    expect(s.fixExecutor.prompts[1]).toContain("Binary files cannot be reviewed");
+    expect(result.reason).toContain("ASSENTOR-DEBUG");
+  });
+
+  it("cancel kills a running command instead of abandoning it", async () => {
+    const pidFile = path.join(os.tmpdir(), `assentor-debug-pid-${process.pid}-${Date.now()}`);
+    const s = await setup({
+      config: baseConfig({ reproCommand: `echo $$ > ${pidFile}; exec sleep 60` }),
+      hypothesis: winnerAt(0),
+      fix: fixesBug,
+    });
+    const abort = new AbortController();
+    const started = Date.now();
+    setTimeout(() => abort.abort(), 1500);
+    const result = await s.run({ signal: abort.signal }, { runCommand: undefined });
+    expect(result).toEqual({ status: "blocked", reason: "cancelled" });
+    expect(Date.now() - started).toBeLessThan(20_000);
+    const pid = Number(await fs.readFile(pidFile, "utf8"));
+    await fs.rm(pidFile, { force: true });
+    expect(pid).toBeGreaterThan(1);
+    let alive = true;
+    for (let i = 0; i < 40 && alive; i += 1) {
+      try {
+        process.kill(pid, 0);
+        await new Promise((r) => setTimeout(r, 100));
+      } catch {
+        alive = false;
+      }
+    }
+    expect(alive).toBe(false);
+    expect((await s.manager.list(SESSION)).length).toBe(0);
+  });
+
+  it("passes the session signal to every command, gates included", async () => {
+    signalsSeen.length = 0;
+    const s = await setup({ config: baseConfig({}, { verification: { commands: { test: "gate-fail" } } }), hypothesis: winnerAt(0), fix: fixesBug });
+    await s.run();
+    expect(signalsSeen.length).toBeGreaterThan(3);
+    expect(signalsSeen.every(Boolean)).toBe(true);
+  });
+
+  it("a seat cannot win by printing its own worktree name or session id", async () => {
+    for (const pick of [(cwd: string) => cwd, (cwd: string) => path.basename(cwd), () => SESSION.slice(0, 13)]) {
+      const s = await setup({
+        hypothesis: async (_i, _r, cwd) => {
+          await fs.writeFile(path.join(cwd, "instr.txt"), `${cwd} ${path.basename(cwd)} ${SESSION}\n`);
+          return done("x", reply({ hypothesis: "self named", signal: pick(cwd) }));
+        },
+        fix: fixesBug,
+      });
+      const result = await s.run();
+      expect(result.status).toBe("blocked");
+      expect(result.reason).toContain("no hypothesis was confirmed");
+    }
+  });
+
+  it("a hypothesis whose instrumented run no longer fails is not confirmed", async () => {
+    const s = await setup({
+      hypothesis: async (_i, _r, cwd) => {
+        await writeInstr(cwd, "SIG-FIXED");
+        await fs.writeFile(path.join(cwd, "bug.txt"), "good\n"); // the "experiment" removes the bug
+        return done("x", reply({ signal: "SIG-FIXED" }));
+      },
+      fix: fixesBug,
+    });
+    expect((await s.run()).status).toBe("blocked");
+    expect(s.fixExecutor.prompts).toHaveLength(0);
+  });
+
+  it("collapses control characters and newlines in the hypothesis before the commit message", async () => {
+    const s = await setup({
+      hypothesis: async (_i, _r, cwd) => {
+        await writeInstr(cwd, "SIG-N");
+        return done("x", reply({ hypothesis: "off by one\n\nSigned-off-by: x\u0007", signal: "SIG-N" }));
+      },
+      fix: fixesBug,
+    });
+    expect((await s.run()).status).toBe("completed");
+    expect(await git(s.repo, "log", "--format=%s", "-n", "1")).toBe("debug: fixed off by one Signed-off-by: x in 1 file(s)");
   });
 
   it("manual autonomy without an approval channel does not start", async () => {
@@ -370,7 +556,7 @@ describe("debug helpers", () => {
     expect(rankFindings([f(false, 0.9, "a"), f(true, 0.2, "b"), f(true, 0.2, "c"), f(true, 0.7, "d")]).map((x) => x.id)).toEqual(["d", "b", "c", "a"]);
   });
   it("finds added instrumentation lines in a diff only", () => {
-    const diff = ["--- a/x", "+++ b/x", "+console.log(1) // assentor-debug", "-old // ASSENTOR-DEBUG", " ctx", "+clean"].join("\n");
-    expect(instrumentationLines(diff)).toEqual(["console.log(1) // assentor-debug"]);
+    const diff = ["diff --git a/x b/x", "--- a/x", "+++ b/x // ASSENTOR-DEBUG", "@@ -1,2 +1,4 @@", "+console.log(1) // assentor-debug", "-old // ASSENTOR-DEBUG", " ctx", "+clean", "+++n; // ASSENTOR-DEBUG"].join("\n");
+    expect(instrumentationLines(diff)).toEqual(["console.log(1) // assentor-debug", "++n; // ASSENTOR-DEBUG"]);
   });
 });

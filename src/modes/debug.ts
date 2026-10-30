@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import { z } from "zod";
 import { resolveVerificationCommands } from "../config/detect-commands.js";
 import type { AssentorConfig } from "../config/schema.js";
@@ -10,7 +11,7 @@ import type { Executor, ExecutorResult } from "../providers/executors/types.js";
 import { runVerificationGates, type RunVerificationCommand } from "../review/verification-gates.js";
 import { runShellCommand } from "../process/run-shell.js";
 import { redactSecrets } from "../security/redact.js";
-import type { SeatKey } from "../worktrees/manager.js";
+import { WorktreeError, type SeatKey, type WorktreeDiff } from "../worktrees/manager.js";
 import { classifyRisk } from "./danger.js";
 import type { ModeController, ModeControllerInput, ModeControllerResult } from "./registry.js";
 
@@ -54,6 +55,7 @@ export const DEBUG_MARKER = "ASSENTOR-DEBUG";
 const MAX_HYPOTHESIS_SEATS = 8;
 const EVIDENCE_PART_CHARS = 3_000;
 const EVIDENCE_TOTAL_CHARS = 8_000;
+const DIFF_LIMIT = 40_000;
 
 export const DebugConfigSchema = z
   .object({
@@ -72,8 +74,8 @@ export const DebugConfigSchema = z
     /** Fix tries on the winning hypothesis before the session stops `blocked`. */
     fixAttempts: z.number().int().min(1).max(3).default(2),
     commandTimeoutMs: z.number().positive().optional(),
-    hypothesisTimeoutMs: z.number().positive().optional(),
-    fixTimeoutMs: z.number().positive().optional(),
+    hypothesisTimeoutMs: z.number().positive().default(10 * 60_000),
+    fixTimeoutMs: z.number().positive().default(20 * 60_000),
   })
   .strict();
 export type DebugConfig = z.infer<typeof DebugConfigSchema>;
@@ -212,13 +214,34 @@ function fixPrompt(goal: string, evidence: string, winner: Finding, failure?: st
     .join("\n\n");
 }
 
+/** Added lines (inside hunks, so a `++n;` line is not mistaken for a `+++ b/x` header). */
+function addedLines(diff: string): string[] {
+  const added: string[] = [];
+  let inHunk = false;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("diff --git ")) inHunk = false;
+    else if (line.startsWith("@@")) inHunk = true;
+    else if (inHunk && line.startsWith("+")) added.push(line.slice(1));
+  }
+  return added;
+}
+
 /** Added lines of a unified diff that carry the instrumentation tag. */
 export function instrumentationLines(diff: string): string[] {
-  return diff
-    .split("\n")
-    .filter((l) => l.startsWith("+") && !l.startsWith("+++") && l.toUpperCase().includes(DEBUG_MARKER))
-    .map((l) => l.slice(1).trim().slice(0, 120));
+  return addedLines(diff)
+    .filter((l) => l.toUpperCase().includes(DEBUG_MARKER))
+    .map((l) => l.trim().slice(0, 120));
 }
+
+/** Binary files in a diff: their content cannot be checked for instrumentation or read by a reviewer. */
+export function binaryFiles(diff: string): string[] {
+  return diff.split("\n").flatMap((l) => {
+    const m = /^Binary files (.+) and (.+) differ$/.exec(l);
+    return m ? [m[2]!.replace(/^b\//, "")] : [];
+  });
+}
+
+const oneLine = (text: string) => text.replace(/[\p{C}\s]+/gu, " ").trim();
 
 // ---------------------------------------------------------------------------
 // Controller
@@ -229,9 +252,9 @@ export interface DebugExtras {
   runCommand?: RunVerificationCommand;
   /**
    * Asks the user before the passed fix is applied to main. Without it only
-   * `autopilot` applies (and not a danger-area fix); supervised ends `blocked`
-   * with the branch kept, and manual does not start (the controller contract has
-   * no approval channel yet, T02B-02).
+   * `autopilot` runs (supervised and manual end `blocked` before any work: the
+   * controller contract has no approval channel yet, T02B-02), and a danger-area
+   * fix ends `blocked` with the worktree kept.
    */
   approve?: (summary: string) => Promise<boolean>;
 }
@@ -252,8 +275,9 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
   if (problems.length > 0) throw new Error(problems.join("; "));
   const settings = (parseConfig(input.config) as { ok: true; value: DebugConfig }).value;
   if (!manager) throw new Error("debug mode needs a worktree manager from the host");
-  if (input.autonomy === "manual" && !extras.approve) {
-    return { status: "blocked", reason: "manual autonomy needs an approval channel for debug mode; use supervised or autopilot" };
+  // Fail before any work: applying needs an approval the host cannot give yet (T02B-02).
+  if (input.autonomy !== "autopilot" && !extras.approve) {
+    return { status: "blocked", reason: `${input.autonomy} autonomy needs an approval channel for debug mode, and none is wired yet; use autopilot` };
   }
 
   const emit = (draft: EngineEventDraft) => {
@@ -270,12 +294,13 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
   const fixer = deps.seatsFor(fixStage)[0];
   if (hypothesisSeats.length === 0 || !fixer) throw new Error("debug mode: the hypothesis and fix teams need seats");
   const contract = deps.contract ?? createEmptyContract(goal);
-  const runCommand: RunVerificationCommand = (command, cwd, options) => (extras.runCommand ?? runShellCommand)(command, cwd, options);
+  // Every command gets the session signal, so cancel kills the process tree instead of abandoning it.
+  const runCommand: RunVerificationCommand = (command, cwd, options) => (extras.runCommand ?? runShellCommand)(command, cwd, { ...options, signal });
 
   const checkAbort = () => {
     if (signal.aborted) throw new Stop({ status: "blocked", reason: "cancelled" });
   };
-  /** Resolves to the work or rejects `Stop` when the session is cancelled (a command cannot be killed, see the module doc). */
+  /** Resolves to the work or rejects `Stop` when the session is cancelled (a runner that ignores the signal is abandoned). */
   const guard = async <T>(work: Promise<T>): Promise<T> => {
     let onAbort!: () => void;
     const aborted = new Promise<never>((_, reject) => {
@@ -340,8 +365,14 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
     let baselineOutput = "";
     let reproCommand = "";
     const commandOptions = settings.commandTimeoutMs ? { timeoutMs: settings.commandTimeoutMs } : undefined;
-    /** Runs the repro in `cwd`: whether the bug showed in any run, and the combined output. */
-    const repro = async (cwd: string) => {
+    /** Output with the worktree path and seat id replaced, so a seat cannot "signal" by printing its own name. */
+    const scrub = async (text: string, cwd: string, key: SeatKey) => {
+      let out = text;
+      for (const root of new Set([cwd, await fs.realpath(cwd).catch(() => cwd)])) out = out.split(root).join("<root>");
+      return out.split(key.seatId).join("<seat>");
+    };
+    /** Runs the repro in `cwd`: whether the bug showed in any run, and the scrubbed combined output. */
+    const repro = async (cwd: string, key: SeatKey) => {
       let failed = false;
       let output = "";
       for (let i = 0; i < settings.reproRuns; i += 1) {
@@ -349,14 +380,14 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
         failed ||= r.code !== 0;
         output += `${[r.stdout, r.stderr].filter(Boolean).join("\n")}\n`;
       }
-      return { failed, output };
+      return { failed, output: await scrub(output, cwd, key) };
     };
     try {
       checkAbort();
       const commands = await resolveVerificationCommands(base, input.config.verification.commands);
       reproCommand = settings.reproCommand ?? commands.test;
       if (!reproCommand) throw new Stop({ status: "blocked", reason: "no reproduction command: set modes.debug.reproCommand or a test command" });
-      const first = await repro(base);
+      const first = await repro(base, baseKey);
       if (!first.failed) {
         throw new Stop({ status: "blocked", reason: `could not reproduce: \`${reproCommand}\` passed ${settings.reproRuns} time(s); nothing was changed` });
       }
@@ -364,7 +395,7 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
       const parts = [`$ ${reproCommand}\n${first.output.slice(0, EVIDENCE_PART_CHARS)}`];
       for (const command of settings.evidenceCommands) {
         const r = await guard(runCommand(command, base, commandOptions));
-        parts.push(`$ ${command} (exit ${r.code})\n${[r.stdout, r.stderr].filter(Boolean).join("\n").slice(0, EVIDENCE_PART_CHARS)}`);
+        parts.push(`$ ${command} (exit ${r.code})\n${(await scrub([r.stdout, r.stderr].filter(Boolean).join("\n"), base, baseKey)).slice(0, EVIDENCE_PART_CHARS)}`);
       }
       evidence = redactSecrets(parts.join("\n\n").slice(0, EVIDENCE_TOTAL_CHARS)).text;
     } finally {
@@ -400,11 +431,15 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
             const parsed = parseHypothesisReply(reply);
             if (typeof parsed === "string") return failedFinding(`unusable reply: ${parsed}`);
             let confirmed = false;
-            if (parsed.verdict === "supported" && parsed.signal && !baselineOutput.includes(parsed.signal)) {
-              // The controller's own run of the instrumented worktree decides, not the seat's word.
-              confirmed = (await repro(roots[i]!)).output.includes(parsed.signal);
+            // A signal that is (part of) the worktree path, seat id or session id would appear just because the seat prints where it runs.
+            const names = [roots[i]!, await fs.realpath(roots[i]!).catch(() => roots[i]!), keys[i]!.seatId, sessionId];
+            const selfNamed = (parsed.signal ?? "").length > 0 && names.some((n) => n.includes(parsed.signal!) || parsed.signal!.includes(n));
+            if (parsed.verdict === "supported" && parsed.signal && !selfNamed && !baselineOutput.includes(parsed.signal)) {
+              // The controller's own run of the instrumented worktree decides, not the seat's word. The bug must still show: the experiment may not fix it.
+              const run = await repro(roots[i]!, keys[i]!);
+              confirmed = run.failed && run.output.includes(parsed.signal);
             }
-            return { round, seatId: seat.id, hypothesis: parsed.hypothesis, experiment: parsed.experiment, verdict: parsed.verdict, confidence: parsed.confidence, evidence: parsed.evidence, confirmed };
+            return { round, seatId: seat.id, hypothesis: oneLine(parsed.hypothesis), experiment: parsed.experiment, verdict: parsed.verdict, confidence: parsed.confidence, evidence: parsed.evidence, confirmed };
           }),
         );
         for (const s of settled) {
@@ -442,39 +477,55 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
       return { passed: failed.length === 0, text: failed.map((r) => `${r.slot}: FAILED (exit ${r.exitCode ?? "?"})\n${(r.output ?? "").slice(0, 1500)}`).join("\n") };
     };
     let failure: string | undefined;
-    let fixed = false;
-    for (let attempt = 1; attempt <= settings.fixAttempts && !fixed; attempt += 1) {
+    let reviewed: WorktreeDiff | undefined;
+    for (let attempt = 1; attempt <= settings.fixAttempts && !reviewed; attempt += 1) {
       checkAbort();
       await runSeat(fixer, fixExecutor, `${sessionId}.fix-${attempt}`, "debug fix", fixPrompt(goal, evidence, winner, failure), root, settings.fixTimeoutMs);
-      const left = instrumentationLines((await manager.diff(fixKey)).diff);
+      // The diff is taken now, before the repro and the gates run: what they leave behind is not part of the reviewed fix.
+      const snapshot = await manager.diff(fixKey);
+      const left = instrumentationLines(snapshot.diff);
+      const binary = binaryFiles(snapshot.diff);
+      if (snapshot.files.length === 0) {
+        failure = "Your change is empty; fix the production code.";
+        continue;
+      }
       if (left.length > 0) {
         failure = `Temporary instrumentation (${DEBUG_MARKER}) is still in your change; remove it:\n${left.join("\n")}`;
         continue;
       }
-      const after = await repro(root);
+      if (binary.length > 0) {
+        failure = `Binary files cannot be reviewed; remove them from your change: ${binary.join(", ")}`;
+        continue;
+      }
+      const after = await repro(root, fixKey);
       if (after.failed) {
-        failure = `The reproduction still fails:\n${after.output.slice(0, 1500)}`;
+        failure = `The reproduction still fails:\n${redactSecrets(after.output.slice(0, 1500)).text}`;
         continue;
       }
       const gates = await fixGates();
-      fixed = gates.passed;
-      if (!fixed) failure = gates.text;
+      if (!gates.passed) {
+        failure = gates.text;
+        continue;
+      }
+      const settled = await manager.diff(fixKey);
+      if (settled.diff !== snapshot.diff) {
+        const added = settled.files.filter((f) => !snapshot.files.includes(f));
+        throw new Stop({ status: "blocked", reason: `the reproduction or the gates changed files in the fix worktree after the fix (${(added.length ? added : settled.files).slice(0, 10).join(", ")}); not reviewed, nothing applied (kept in ${root})` });
+      }
+      reviewed = snapshot;
     }
-    if (!fixed) {
+    if (!reviewed) {
       throw new Stop({ status: "blocked", reason: `the fix for "${winner.hypothesis}" failed after ${settings.fixAttempts} attempt(s)\n${failure ?? ""}` });
     }
 
     // 4. Review before anything goes near main.
-    const diff = await manager.diff(fixKey);
-    if (diff.files.length === 0) throw new Stop({ status: "blocked", reason: "the fix seat changed nothing" });
-    const left = instrumentationLines(diff.diff);
-    if (left.length > 0) throw new Stop({ status: "blocked", reason: `temporary instrumentation appeared in the fix: ${left.join("; ")}` });
     const reviewStage = StageSpecSchema.parse({
       id: "review",
       kind: "review",
       strategy: "panel",
       ...(input.config.modes.review ? { team: input.config.modes.review.team } : {}),
     });
+    const reviewDiff = redactSecrets(reviewed.diff).text;
     const turn = await guard(
       deps.createReviewer(reviewStage, {}).review({
         taskId: `${sessionId}.debug-review`,
@@ -482,7 +533,12 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
         contract,
         round: 1,
         artifacts: [
-          { id: "debug-diff", type: "diff", description: "The fix, changed since the base", content: redactSecrets(diff.diff).text },
+          {
+            id: "debug-diff",
+            type: "diff",
+            description: "The fix, changed since the base",
+            content: reviewDiff.length > DIFF_LIMIT ? `${reviewDiff.slice(0, DIFF_LIMIT)}\n[diff truncated: ${reviewDiff.length - DIFF_LIMIT} more characters]` : reviewDiff,
+          },
           {
             id: "debug-report",
             type: "debug-report",
@@ -502,18 +558,32 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
     }
 
     // 5. Apply only the reviewed fix paths, with the autonomy level's permission.
-    const risk = classifyRisk({ taskText: goal, paths: diff.files, diff: diff.diff }, { projectRoot: root });
-    const summary = `debug: fixed ${winner.hypothesis.slice(0, 120)} in ${diff.files.length} file(s)${risk.level === "danger" ? ` [danger area: ${risk.categories.join(", ")}]` : ""}`;
+    const kept = ` (fix kept in ${root})`;
+    const risk = classifyRisk(
+      { taskText: goal, paths: reviewed.files, diff: reviewed.diff },
+      { projectRoot: root, extraRules: input.config.modes.cascade?.dangerAreas },
+    );
+    const summary = `debug: fixed ${winner.hypothesis.slice(0, 120)} in ${reviewed.files.length} file(s)${risk.level === "danger" ? ` [danger area: ${risk.categories.join(", ")}]` : ""}`;
     if (input.autonomy !== "autopilot" || risk.level === "danger") {
-      if (!extras.approve) throw new Stop({ status: "blocked", reason: `review passed; approval needed to apply the fix${risk.level === "danger" ? ` (danger area: ${risk.categories.join(", ")})` : ""} (kept in ${root})` });
-      if (!(await extras.approve(summary))) throw new Stop({ status: "blocked", reason: "apply was not approved; the fix is kept" });
+      if (!extras.approve) throw new Stop({ status: "blocked", reason: `review passed; approval needed to apply the fix${risk.level === "danger" ? ` (danger area: ${risk.categories.join(", ")})` : ""}${kept}` });
+      if (!(await extras.approve(summary))) throw new Stop({ status: "blocked", reason: `apply was not approved${kept}` });
     }
     checkAbort();
-    const result = await manager.applyTo("main", fixKey, { strategy: "squash", message: summary.slice(0, 200), allowedPaths: diff.files });
-    if (!result.ok) throw new Stop({ status: "blocked", reason: `could not apply to main: ${result.message}` });
+    // What gets applied must be exactly what was reviewed (the reviewer or anything since may have touched the worktree).
+    if ((await manager.diff(fixKey)).diff !== reviewed.diff) {
+      throw new Stop({ status: "blocked", reason: `the fix worktree changed after the review; nothing applied${kept}` });
+    }
+    let result;
+    try {
+      result = await manager.applyTo("main", fixKey, { strategy: "squash", message: summary.slice(0, 200), allowedPaths: reviewed.files });
+    } catch (error) {
+      if (error instanceof WorktreeError) throw new Stop({ status: "blocked", reason: `applying the fix was refused: ${error.message}${kept}` });
+      throw error;
+    }
+    if (!result.ok) throw new Stop({ status: "blocked", reason: `could not apply to main: ${result.message}${kept}` });
     applied = true;
-    await manager.cleanup(sessionId);
-    return { status: "completed", reason: summary };
+    await manager.cleanup(sessionId).catch(() => undefined);
+    return { status: "completed", reason: `${summary}${result.warning ? `\nwarning: ${result.warning}` : ""}` };
   } catch (error) {
     if (!applied && fixCreated) await manager.markFailed(fixKey).catch(() => undefined); // kept for inspection
     if (error instanceof Stop) return error.result;
