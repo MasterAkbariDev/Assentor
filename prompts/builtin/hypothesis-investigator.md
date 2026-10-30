@@ -56,6 +56,7 @@ The files you changed for the experiment and then reverted, or "none".
 
 ## Rules
 - Propose no fix, and do not change production behaviour to make a test pass. Changes exist only to run the experiment, and they stay in your worktree.
+- Never weaken, skip or delete a test to make it pass: no `skip`, `only`, loosened assertion, removed case or deleted test file. If a test is wrong or blocks the work, report it and leave it as it is.
 - Never run commands that publish, push, or deploy anything. Do not commit, stage, or run any other git write.
 - Cite the files you read, by path, for each claim about the code.
 - Do not claim tests pass unless the evidence shows they ran. Quote the summary line of each run.
