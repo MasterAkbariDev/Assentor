@@ -7,6 +7,7 @@ import type { StageRunnerDeps } from "../orchestrator/session-stages.js";
 import type { StageRunners } from "../orchestrator/session-runner.js";
 import type { EngineEventDraft } from "../protocol/events.js";
 import type { WorktreeManager } from "../worktrees/manager.js";
+import { cascadeProblems, createCascadeController } from "./cascade.js";
 
 /**
  * Mode registry and mode contract (T02B-01b metadata, T02B-01 contract). A mode
@@ -209,7 +210,10 @@ const MODES: readonly ModeDefinition[] = [
   mode("review", "Review", "Several reviewers judge existing work; a policy merges their verdicts.", "static", false, false, review),
   mode("negotiate", "Negotiate", "Several peers reach consensus with a strategy (vote, debate, synthesize).", "static", true, false, negotiate),
   mode("lead", "Lead (Supervisor)", "A lead seat plans tasks, picks agents and accepts or rejects their reports.", "dynamic", true),
-  mode("cascade", "Cascade", "Start with a cheap model; escalate on failure or risk.", "dynamic", true),
+  mode("cascade", "Cascade", "Start with a cheap model; escalate on failure or risk.", "dynamic", true, false, {
+    validate: cascadeProblems,
+    createController: createCascadeController,
+  }),
   mode("pipeline", "Pipeline", "Requirements, architect, coder, tester, reviewer and docs stages in order.", "static", true),
   mode("pair", "Pair", "A driver codes while a navigator watches the stream and interjects.", "static", true),
   mode("race", "Race", "Several seats implement in parallel worktrees; a judge picks one.", "static", true),

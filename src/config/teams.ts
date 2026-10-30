@@ -40,6 +40,22 @@ export const ReviewModeSchema = z.object({
 });
 export type ReviewMode = z.infer<typeof ReviewModeSchema>;
 
+/**
+ * One `modes.cascade.tiers` entry (T02B-06). Tiers are listed cheapest first. No defaults here:
+ * a config save must not write values the user never set (the mode applies its own).
+ */
+export const CascadeTierSchema = z
+  .object({
+    /** Team (a key in `teams`) whose edit seat implements at this tier. */
+    team: z.string().min(1),
+    /** Read-only team that reviews this tier's work. Default: `modes.review.team`. */
+    reviewTeam: z.string().min(1).optional(),
+    /** Review rounds at this tier before escalating, 1-10. Default 2. */
+    maxRounds: z.number().int().min(1).max(10).optional(),
+  })
+  .strict();
+export type CascadeTier = z.infer<typeof CascadeTierSchema>;
+
 /** Result of `resolveTeams`: the team that executes and the team that reviews. */
 export interface ResolvedTeams {
   executor: Team;

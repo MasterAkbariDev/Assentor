@@ -130,8 +130,8 @@ describe("saveAssentorConfig", () => {
   });
 
   it("keeps untyped modes.cascade keys and adds no dangerAreas default", () => {
-    const config = parseAssentorConfig({ modes: { cascade: { tiers: [{ id: "fast" }] } } });
-    expect(config.modes.cascade).toEqual({ tiers: [{ id: "fast" }] });
+    const config = parseAssentorConfig({ modes: { cascade: { tiers: [{ team: "fast" }], future: 1 } } });
+    expect(config.modes.cascade).toEqual({ tiers: [{ team: "fast" }], future: 1 });
   });
 
   it("keeps run.autonomy and writes run.mode to match it for older readers", async () => {
