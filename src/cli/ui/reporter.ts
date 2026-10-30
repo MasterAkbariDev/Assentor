@@ -11,6 +11,14 @@ import {
   isExecutorStreamBlob,
   summarizeExecutorStreamOutput,
 } from "../../providers/executors/cursor/stream-status.js";
+import {
+  emptyLeadBoardView,
+  LEAD_COLUMN_LABELS,
+  LEAD_COLUMNS,
+  leadColumns,
+  reduceLeadEvents,
+  type LeadBoardView,
+} from "../../ui-shared/lead.js";
 
 const ESC = "\x1b[";
 const c = {
@@ -63,6 +71,9 @@ export class RunReporter {
   private lastToolDetail = "";
   /** Reviewer seats folded from seat events (`reviewer-*` only). */
   private reviewerSeats: Record<string, SeatState> = {};
+  /** Team board folded from lead events. Printed on each lead turn in lead mode. */
+  private leadView: LeadBoardView = emptyLeadBoardView();
+  private leadMode = false;
 
   constructor(
     private readonly options: {
@@ -129,6 +140,27 @@ export class RunReporter {
       (event.data as { legacyType?: string }).legacyType === "review.completed"
     ) {
       this.printReviewSeats();
+    }
+    if (event.type === "mode.selected") {
+      this.leadMode = event.data.mode === "lead";
+    }
+    this.leadView = reduceLeadEvents(this.leadView, event);
+    if (event.type === "lead.turn" && this.leadMode) {
+      this.printLeadBoard();
+    }
+  }
+
+  /**
+   * "Team board" section for lead mode: the task columns and the last lead
+   * actions, as the lead sees them at the start of a turn. Written with `writeln`
+   * for the same reason as `printReviewSeats`.
+   */
+  printLeadBoard(): void {
+    const width = process.stdout.columns ?? 80;
+    const ascii = useAsciiIcons(this.isTty);
+    this.writeln(`\n${c.bold}${c.cyan}▸ Team board${c.reset}${c.dim}  turn ${this.leadView.turn}${c.reset}`);
+    for (const line of leadBoardLines(this.leadView, width, ascii)) {
+      this.writeln(line);
     }
   }
 
@@ -861,9 +893,16 @@ function displayWidth(text: string): number {
   return width;
 }
 
+// East Asian wide and fullwidth ranges, so model text in CJK is measured like the terminal draws it.
+const WIDE_RANGES: ReadonlyArray<readonly [number, number]> = [
+  [0x1100, 0x115f], [0x2e80, 0xa4cf], [0xac00, 0xd7a3], [0xf900, 0xfaff],
+  [0xfe30, 0xfe6f], [0xff00, 0xff60], [0xffe0, 0xffe6], [0x20000, 0x3fffd],
+];
+
 function charColumns(ch: string): number {
   const cp = ch.codePointAt(0)!;
-  return cp >= 0x1f000 || (cp >= 0x23e9 && cp <= 0x23fa) ? 2 : 1;
+  if (cp >= 0x1f000 || (cp >= 0x23e9 && cp <= 0x23fa)) return 2;
+  return WIDE_RANGES.some(([lo, hi]) => cp >= lo && cp <= hi) ? 2 : 1;
 }
 
 /** `text` cut to `columns`, ending in "…" when it does not fit. */
@@ -904,6 +943,39 @@ function fitSeatLine(line: SeatLineModel, width: number, indent: number): string
       ? `  ${cutToWidth(line.detail, detailRoom)}`
       : "";
   return `${" ".repeat(indent)}${head}${detail}${tail}`;
+}
+
+/** Team board body: one block per non-empty column, then the last lead actions. Fitted to `width`. */
+function leadBoardLines(view: LeadBoardView, width: number, ascii: boolean): string[] {
+  const lines: string[] = [];
+  const columns = leadColumns(view);
+  for (const column of LEAD_COLUMNS) {
+    const tasks = columns[column];
+    if (tasks.length === 0) {
+      continue;
+    }
+    lines.push(`  ${c.bold}${LEAD_COLUMN_LABELS[column]} (${tasks.length})${c.reset}`);
+    for (const task of tasks) {
+      const rejected = task.state === "rejected" ? `${c.red}${ascii ? "x" : "✗"}${c.reset} ` : "";
+      const owner = task.owner ? `  ${task.owner}` : "";
+      const markWidth = task.state === "rejected" ? 2 : 0;
+      lines.push(`    ${rejected}${cutToWidth(`${task.id} ${task.title}${owner}`, width - 6 - markWidth)}`);
+    }
+  }
+  if (lines.length === 0) {
+    lines.push("  (no tasks yet)");
+  }
+  if (view.log.length > 0) {
+    lines.push(`  ${c.bold}Lead log${c.reset}`);
+    for (const entry of view.log) {
+      const mark = entry.accepted
+        ? `${c.green}${ascii ? "OK" : "✓"}${c.reset}`
+        : `${c.red}${ascii ? "X" : "✗"}${c.reset}`;
+      const text = `${entry.action}${entry.reason ? `: ${entry.reason}` : ""}`;
+      lines.push(`    ${mark} ${cutToWidth(text, width - 8 - displayWidth(ascii ? "OK" : "✓"))}`);
+    }
+  }
+  return lines;
 }
 
 function labelEvent(type: string): string {

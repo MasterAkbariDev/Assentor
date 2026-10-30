@@ -344,6 +344,8 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 ### T02B-18 · TUI: Lead team board + lead log
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T02B-02, T01-06
 
+**Merged 2026-10-30 (planner, under the owner's standing merge direction):** Sonnet review NEEDS_WORK (bidi/format characters not stripped; CJK overflowed the reporter width) → fixed in `426369a`. The Ink `LeadBoard` is not mounted in a TUI screen yet (screens are outside the card's files); the CLI reporter prints the board on each lead turn. Open nits: terminal task states can regress on a late `task.status`; columns are cramped below ~60 columns.
+
 **Context to read** — `src/tui/components/seat-board.tsx` (T01-06), `src/modes/lead/board.ts` (`boardColumns`), `src/ui-shared/status.ts`, event types `lead.action`, `task.*`.
 
 **Allowed files** — create: `src/tui/components/lead-board.tsx`, `src/ui-shared/lead.ts` (pure reducer from events to board + log view model), tests; modify: `src/tui/components/index.ts`, `src/cli/ui/reporter.ts` (render when mode is `lead`).
