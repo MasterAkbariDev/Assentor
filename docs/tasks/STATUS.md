@@ -54,7 +54,7 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**48 of 80 cards done** (2026-10-30; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 26/41 · 🟡 Sonnet-tier 11/17 · 🔴 Opus-tier 11/22. Tests: 2287 passing. Core (Phases 0–3 + 2b) left: 4 cards — T02B-13 pair, T02B-15 swarm, T02B-18 TUI Lead board, T02B-19 retro.
+**49 of 80 cards done** (2026-10-30; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 27/41 · 🟡 Sonnet-tier 11/17 · 🔴 Opus-tier 11/22. Tests: 2312 passing. Core (Phases 0–3 + 2b) left: 3 cards — T02B-13 pair, T02B-15 swarm, T02B-19 retro.
 
 | Phase | Done | Open |
 |---|---|---|
@@ -149,7 +149,11 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
   - ✅ T02-08 divide & conquer merged (`e9e7331`): Opus PASS after 3 rounds; user signed off. Phase 2 complete.
 - ✅ T02B-07 danger classifier merged (`9716d2a`): O2 PASS after 3 rounds; user signed off. Merge fix: `modes.cascade` passthrough, `dangerAreas` optional. Follow-up: project `.assentor/config.yaml` with this repo's danger files.
 - **Owner direction (2026-10-30): merge without asking for sign-off.** Cards still need an independent O2 review that ends PASS (or only nits) and a green staged-tree gate; the planner then merges and records it here instead of asking the owner.
-- **Last four core cards started 2026-10-30** from integration `248f8e0` (worktrees `card-t02b-13|15|18|19`): T02B-13 pair (Sonnet), T02B-15 swarm (Sonnet), T02B-18 TUI Lead board (Haiku), T02B-19 retro (Haiku). Each gets a review before merge (O2 for 13 and 15, which apply to the user's tree).
+- **Paused by the user on 2026-10-30 after merging T02B-18** (`b94c4a9`, Lead team board + lead log; Sonnet review fixes `426369a`). All agents stopped. Paused cards, all on branches `claude/card-<id>` from `248f8e0`, **uncommitted and untested** — review the diff first, then finish:
+  - T02B-13 pair (Sonnet): `src/modes/pair.ts`, `tests/unit/mode-pair.test.ts`, registry/index/test edits, and an edit to its card text (revert unless the card asks for it). It was rerunning its gate when stopped.
+  - T02B-15 swarm (Sonnet): `src/modes/swarm.ts`, `tests/unit/swarm-mode.test.ts`, registry/test edits, and a change to `src/negotiation/strategies/divide.ts` (shared code — needs O2 review). It was fixing a type cast when stopped.
+  - T02B-19 retro (Haiku): `src/modes/retro.ts`, `tests/unit/retro.test.ts`. Its last full gate had four timeouts in three unrelated files under load ~450; recheck at normal load.
+  - Load note: four builders gating at once pushed the load average to ~450 and left two orphaned vitest runs (killed). Next time run at most two builders' gates at once, `--maxWorkers=2`.
 - **2026-10-30: all seven paused cards merged** (each after O2 review → fixes → PASS with nits; merge notes with open nits are on each card in phase-2b-modes.md):
   - T02B-09 playbook modes `93a2bdf` (owner signed off) · T02B-10 mode prompts `1cee6c9` · T02B-16 debug `7508edf` · T02B-02 Lead `6a6ada2` · T02B-11 TDD `ccb189e` · T02B-06 Cascade `edd296c` · T02B-14 red-team `8787d1f`.
   - Contract now: `ModeControllerInput` has `host`, `requestApproval`, `ask`, `resume`; `ControllerWorktrees` = create/diff/list/applyTo (applyTo("main") asks unless autopilot) + discard/markFailed/cleanup/readAtBase pass-throughs. Debug, Cascade and red-team route their own `approve` through `requestApproval`. `runShellCommand`/`RunVerificationCommand` take `signal` and `env`.
