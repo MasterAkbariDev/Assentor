@@ -489,6 +489,26 @@ describe("danger after every tier, not only after a pass", () => {
   });
 });
 
+describe("incomparable unscanned reasons", () => {
+  const sameBothTimes = (unscanned: string[]) => ({ extras: { readChanges: async () => ({ files: [], diff: "", unscanned }) } });
+
+  it("a cut-off list of unscanned files counts as new danger even if it reads the same as at the start", async () => {
+    const many = Array.from({ length: 25 }, (_, i) => `untracked file "f${i}" (1 bytes, mtime 1) could not be read: x`);
+    const { escalated } = await run({}, sameBothTimes(many));
+    expect(escalated.map((e) => e.trigger)).toEqual(["danger"]);
+  });
+
+  it("the 'were not scanned' count reason (files past the path cap) counts as new danger", async () => {
+    const { escalated } = await run({}, sameBothTimes(["7 untracked files past the first 5000 were not scanned"]));
+    expect(escalated.map((e) => e.trigger)).toEqual(["danger"]);
+  });
+
+  it("a short per-file unscanned reason that reads the same as at the start is not blamed on the tier", async () => {
+    const { escalated } = await run({}, sameBothTimes(['untracked file "big" (2000000 bytes, mtime 1) is over the 1000000 byte scan limit']));
+    expect(escalated).toEqual([]);
+  });
+});
+
 describe("tier outcome record and warnings", () => {
   it("emits cascade.tier_succeeded with the triggers; a throwing callback does not fail the session", async () => {
     const { result, events } = await run(
@@ -615,6 +635,20 @@ describe("the default git reader (registry controller)", () => {
     );
     expect(escalated).toEqual([expect.objectContaining({ trigger: "danger", toTier: 2 })]);
     expect(prompts.map((p) => p.team)).toEqual(["cheap", "top"]);
+  }, 60_000);
+
+  it("an untracked file that did not fit the budget is unscanned again when a tier edits it", async () => {
+    const dir = await repo();
+    for (const name of ["a.txt", "b.txt", "c.txt"]) await fs.writeFile(path.join(dir, name), "x\n".repeat(450_000)); // c.txt overflows the budget
+    const untouched = await run({}, { projectPath: dir });
+    expect(untouched.escalated).toEqual([]); // the same unscanned file as at the start is not blamed on the tier
+
+    const edit = async (): Promise<ExecutorResult> => {
+      await fs.appendFile(path.join(dir, "c.txt"), 'spawn("sh");\n');
+      return { status: "completed", summary: "done" };
+    };
+    const edited = await run({ exec: { cheap: edit } }, { projectPath: dir });
+    expect(edited.escalated).toEqual([expect.objectContaining({ trigger: "danger", toTier: 2, categories: ["unscanned"] })]);
   }, 60_000);
 
   it("a directory that is not a git repo is unscanned danger", async () => {

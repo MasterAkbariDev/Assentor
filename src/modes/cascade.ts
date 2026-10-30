@@ -187,10 +187,13 @@ function gitChanges(cwd: string, signal: AbortSignal): () => Promise<Changes> {
         unscanned.push(`${untracked.length - MAX_RISK_PATHS} untracked files past the first ${MAX_RISK_PATHS} were not scanned`);
         break;
       }
+      // Size and mtime go into every per-file reason, so editing the file makes the reason new (not "known from the start").
+      let what = `untracked file ${JSON.stringify(file)}`;
       try {
-        const { size } = await lstat(path.join(cwd, file));
+        const { size, mtimeMs } = await lstat(path.join(cwd, file));
+        what += ` (${size} bytes, mtime ${mtimeMs})`;
         if (size > MAX_UNTRACKED_BYTES) {
-          unscanned.push(`untracked file ${JSON.stringify(file)} is ${size} bytes, over the ${MAX_UNTRACKED_BYTES} byte scan limit`);
+          unscanned.push(`${what} is over the ${MAX_UNTRACKED_BYTES} byte scan limit`);
           continue;
         }
         const { stdout, stderr, code } = await run(["diff", "--no-index", "--no-color", "--no-ext-diff", "--", "/dev/null", file]);
@@ -198,12 +201,12 @@ function gitChanges(cwd: string, signal: AbortSignal): () => Promise<Changes> {
         if (stderr || !(stdout.startsWith("diff --git") || (code === 0 && !stdout))) throw new Error(stderr.trim() || "git printed no diff");
         const part = `${diff && !diff.endsWith("\n") ? "\n" : ""}${stdout}`;
         if (diff.length + part.length > MAX_RISK_DIFF_CHARS) {
-          unscanned.push(`untracked file ${JSON.stringify(file)} did not fit the ${MAX_RISK_DIFF_CHARS} char diff budget`);
+          unscanned.push(`${what} did not fit the ${MAX_RISK_DIFF_CHARS} char diff budget`);
           continue;
         }
         diff += part;
       } catch (error) {
-        unscanned.push(`untracked file ${JSON.stringify(file)} could not be read: ${error instanceof Error ? error.message : String(error)}`.slice(0, 400));
+        unscanned.push(`${what} could not be read: ${error instanceof Error ? error.message : String(error)}`.slice(0, 400));
       }
     }
     return {
@@ -284,7 +287,11 @@ async function runCascade(input: ModeControllerInput, extras: CascadeExtras): Pr
       return {
         level: "danger",
         categories: risk.categories.includes(RISK_UNSCANNED) ? risk.categories : [...risk.categories, RISK_UNSCANNED],
-        reasons: [...risk.reasons, ...unscanned.slice(0, 20).map((u) => `${RISK_UNSCANNED}: ${u}`)],
+        reasons: [
+          ...risk.reasons,
+          ...unscanned.slice(0, 20).map((u) => `${RISK_UNSCANNED}: ${u}`),
+          ...(unscanned.length > 20 ? [`… and ${unscanned.length - 20} more unscanned`] : []), // cut-off: always new danger
+        ],
       };
     } catch (error) {
       if (error instanceof Stop) throw error;
@@ -336,7 +343,7 @@ async function runCascade(input: ModeControllerInput, extras: CascadeExtras): Pr
     // which can read the same at the start) and unreadable changes cannot be compared, so they are always new.
     const newDanger = (after: RiskAssessment & { unreadable?: true }): string[] => {
       if (after.level !== "danger") return [];
-      const incomparable = (r: string) => r.startsWith("… and ") || /over the \d+ limit/.test(r);
+      const incomparable = (r: string) => r.startsWith("… and ") || /over the \d+ limit|were not scanned$/.test(r);
       return after.unreadable || after.reasons.some(incomparable) ? after.reasons : after.reasons.filter((r) => !known.has(r));
     };
     /** After a tier below the top: new danger in its changes jumps to the top tier. True when it did. */
