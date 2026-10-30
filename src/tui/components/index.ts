@@ -10,3 +10,5 @@ export type { ScrollListItem } from "./scroll-list.js";
 export { CycleSelector } from "./cycle-selector.js";
 export { SeatBoard } from "./seat-board.js";
 export type { SeatBoardProps } from "./seat-board.js";
+export { LeadBoard } from "./lead-board.js";
+export type { LeadBoardProps } from "./lead-board.js";
