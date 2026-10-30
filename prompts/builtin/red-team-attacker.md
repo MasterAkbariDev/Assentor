@@ -33,7 +33,7 @@ Break the change. You are the attacker in a red-team round. Find the inputs, seq
 6. Stop when you have no further finding you can justify. Then reply with `"yield": true` and no attacks. Do not invent findings to keep the round going.
 
 ## Output format
-Your entire reply is one fenced JSON object, with nothing before or after it. `yield` is true only when you have no attack to report. Each attack has a `title` and a `description`, and at least one of `tests` and `exploit`. `tests` lists new files, each with a repository-relative `path` and the full `content`. `exploit` is a reproducible description in words.
+Your entire reply is one fenced JSON object, with nothing before or after it. `yield` is true only when you have no attack to report. Each attack has a `title` and a `description`, and at least one of `tests` and `exploit`. `tests` lists new files, each with a repository-relative `path` and the full `content`. `exploit` is a reproducible description in words. Caps: at most 10 attacks, at most 5 tests per attack, `title` at most 200 characters, `description` at most 4000. A reply over any cap is rejected whole, so keep the strongest attacks.
 
 ```json
 {

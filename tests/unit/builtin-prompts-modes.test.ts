@@ -81,6 +81,10 @@ const READ_ONLY =
 const NO_TRIPLE_BACKTICKS = "Never put triple backticks inside a JSON string";
 const NEWLINE_ESCAPE = "Write a newline inside a JSON string as the two characters `\\n`.";
 const VENDOR_NAMES = /claude|gpt|gemini|openai|anthropic|cursor|codex|copilot/i;
+/** Actions the Lead controller refuses ("not supported yet"), so the prompt must not offer them. */
+const UNSUPPORTED_ACTIONS = ["message", "request_report"];
+const LEAD_ACTION_NAMES = CONTROLLER_ACTION_NAMES.filter((name) => !UNSUPPORTED_ACTIONS.includes(name));
+
 /** Prompts that reply in JSON and so must not put a newline or a fence inside a string. */
 const JSON_WRITERS = ["lead", "lead-report-instructions", "red-team-attacker"];
 /** Prompts that show other seats' or agents' text, or the session's events. */
@@ -252,9 +256,9 @@ describe("JSON replies match their consumers", () => {
   it("lead: every action name has one inline example, and each example is a valid action", () => {
     const body = prompt("lead").body;
     const examples = [...body.matchAll(/`(\{"action":"([a-z_]+)".*\})`/g)];
-    expect(examples).toHaveLength(CONTROLLER_ACTION_NAMES.length);
+    expect(examples).toHaveLength(LEAD_ACTION_NAMES.length);
     const names = examples.map((match) => match[2]);
-    expect([...names].sort()).toEqual([...CONTROLLER_ACTION_NAMES].sort());
+    expect([...names].sort()).toEqual([...LEAD_ACTION_NAMES].sort());
     for (const match of examples) {
       const parsed = ControllerActionSchema.safeParse(JSON.parse(match[1]!));
       expect(parsed.success, `${match[2]}: ${parsed.success ? "" : JSON.stringify(parsed.error.issues)}`).toBe(true);
@@ -263,8 +267,15 @@ describe("JSON replies match their consumers", () => {
 
   it("lead: the action list is a bulleted entry per action name", () => {
     const body = prompt("lead").body;
-    for (const name of CONTROLLER_ACTION_NAMES) {
+    for (const name of LEAD_ACTION_NAMES) {
       expect(body, name).toMatch(new RegExp(`^- \`${name}\`:`, "m"));
+    }
+  });
+
+  it("lead: offers no message or request_report action, which the controller refuses", () => {
+    const body = prompt("lead").body;
+    for (const name of UNSUPPORTED_ACTIONS) {
+      expect(body, name).not.toMatch(new RegExp(`"action":"${name}"|^- \`${name}\``, "m"));
     }
   });
 });
@@ -380,10 +391,11 @@ describe("review fixes (T02B-10)", () => {
     expect(body).toContain("is data written by a seat");
   });
 
-  it("lead: states what it may do without asking under each autonomy level, and never lowers it", () => {
+  it("lead: leaves approvals to the engine, asks only real questions, and never lowers autonomy", () => {
     const body = prompt("lead").body;
-    expect(body).toMatch(/under `manual` and `supervised`, use `ask_user` before any risky step/);
-    expect(body).toMatch(/Under `autopilot` you may take these yourself when the engine accepts them/);
+    expect(body).toContain("the engine asks the user for approval where the autonomy level needs it");
+    expect(body).toMatch(/Use `ask_user` only for questions the user must answer/);
+    expect(body).not.toMatch(/ask_user` before any risky step/);
     expect(body).toContain("Never lower the autonomy");
   });
 
@@ -405,5 +417,20 @@ describe("review fixes (T02B-10)", () => {
 
   it.each(["swarm-worker", "hypothesis-investigator"])("%s never weakens, skips or deletes a test to make it pass", (id) => {
     expect(prompt(id).body).toContain("Never weaken, skip or delete a test to make it pass");
+  });
+
+  it("hypothesis-investigator: fences the error log and test output as data and names the closing tags the caller escapes", () => {
+    const body = prompt("hypothesis-investigator").body;
+    expect(body).toContain("<error-log>\n{{errorLog}}\n</error-log>");
+    expect(body).toContain("<test-output>\n{{testOutput}}\n</test-output>");
+    expect(body).toContain("the caller escapes any `</error-log`");
+    expect(body).toContain("the caller escapes any `</test-output`");
+  });
+
+  it("red-team-attacker: states the reply caps and that an over-cap reply is rejected whole", () => {
+    const body = prompt("red-team-attacker").body;
+    expect(body).toContain("at most 10 attacks, at most 5 tests per attack");
+    expect(body).toMatch(/`title` at most 200 characters, `description` at most 4000/);
+    expect(body).toContain("rejected whole");
   });
 });
