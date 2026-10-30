@@ -14,9 +14,10 @@ import type { EngineEventData } from "../protocol/events.js";
  * Rules every strategy follows:
  * - Proposals are shown to other seats only through `anonymizeProposals`, as
  *   "Proposal A", "Proposal B", … — never with seat names, ids or models.
- * - Implementation steps (best-of-n in worktrees, T02-06; divide-and-conquer
- *   subtasks and integration, T02-08) are not in this contract yet: those
- *   cards extend `NEGOTIATION_STEPS` and the reply schemas under Opus review.
+ * - Implementation steps (best-of-n in worktrees, T02-06) are not in this
+ *   contract yet: those cards extend `NEGOTIATION_STEPS` and the reply schemas
+ *   under Opus review. Divide-and-conquer (T02-08) adds only `divide-plan`; its
+ *   parts run as executors in worktrees (strategies/divide.ts), not as asks.
  * - Replies are validated with the step's schema (`STEP_REPLY_SCHEMAS`); an
  *   invalid reply is recorded as dissent, not thrown.
  * - Cancellation: check `ctx.signal` between rounds; `ctx.askSeat` rejects with
@@ -39,6 +40,7 @@ export const NEGOTIATION_STEPS = [
   "negotiate-synthesize",
   "judge",
   "moderator",
+  "divide-plan",
 ] as const;
 export type NegotiationStep = (typeof NEGOTIATION_STEPS)[number];
 
@@ -95,6 +97,15 @@ export const ModeratorReplySchema = z.object({
   reasons: z.array(z.string()).default([]),
 });
 
+/**
+ * Divide-and-conquer split plan. Only the envelope is checked here; the
+ * strategy validates each subtask with `SplitPlanSchema` (strategies/divide.ts)
+ * so a bad plan is reported with the reason, not just a field path.
+ */
+export const DividePlanReplySchema = z.object({
+  subtasks: z.array(z.unknown()),
+});
+
 export const STEP_REPLY_SCHEMAS = {
   "negotiate-propose": ProposalReplySchema,
   "negotiate-critique": CritiqueReplySchema,
@@ -104,6 +115,7 @@ export const STEP_REPLY_SCHEMAS = {
   "negotiate-synthesize": SynthesizeReplySchema,
   judge: JudgeReplySchema,
   moderator: ModeratorReplySchema,
+  "divide-plan": DividePlanReplySchema,
 } as const satisfies Record<NegotiationStep, z.ZodTypeAny>;
 
 export type StepReply<S extends NegotiationStep> = z.infer<(typeof STEP_REPLY_SCHEMAS)[S]>;

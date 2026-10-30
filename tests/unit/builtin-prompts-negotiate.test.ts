@@ -11,6 +11,7 @@ import {
 } from "../../src/negotiation/strategy.js";
 import { createMockNegotiationContext, type MockAsk } from "../../src/negotiation/testing/mock-context.js";
 import { debateStrategy } from "../../src/negotiation/strategies/debate.js";
+import { createPlanStrategy } from "../../src/negotiation/strategies/divide.js";
 import { synthesizeStrategy } from "../../src/negotiation/strategies/synthesize.js";
 import { voteStrategy } from "../../src/negotiation/strategies/vote.js";
 import {
@@ -277,6 +278,8 @@ describe("variables the engine really passes", () => {
         return { consensus: false, preferred: first, reasons: ["safer"] };
       case "judge":
         return { winner: last, reasons: ["clearer"] };
+      case "divide-plan":
+        return { subtasks: [] }; // an empty plan is rejected; only the ask matters here
       default:
         return { fail: `no script for ${ask.step}` };
     }
@@ -292,6 +295,7 @@ describe("variables the engine really passes", () => {
       { strategy: debateStrategy, options: { maxRounds: 2 } },
       { strategy: debateStrategy, options: { maxRounds: 1, moderator: "sol-1" } },
       { strategy: synthesizeStrategy, options: { aggregator: "sol-1" } },
+      { strategy: createPlanStrategy(seats[2]!, { maxParts: 8 }, {}), options: {} },
     ];
 
     const seen = new Map<string, Array<Readonly<Record<string, unknown>>>>();

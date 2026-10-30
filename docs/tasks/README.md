@@ -122,7 +122,7 @@ Legend: 🟢 H · 🟡 S · 🔴 O · Size S/M/L (≈ <150 / 150–500 / >500 ch
 | T02-05 | Strategy: Debate ✅ | 🟡 S | O | M | T02-03 |
 | T02-06 | Strategy: Best-of-N ✅ | 🟡 S | O | M | T02-01, T02-03 |
 | T02-07 | Strategy: Synthesize ✅ | 🟢 H | S | S | T02-03 |
-| T02-08 | Strategy: Divide & conquer | 🟡 S | O | L | T02-01, T02-03 |
+| T02-08 | Strategy: Divide & conquer ✅ | 🟡 S | O | L | T02-01, T02-03 |
 | T02-09 | Stage-graph runner (plan → execute → review, tiebreak) ✅ | 🔴 O | O2 + human | L | T02-03, T01-03 |
 | T02-10 | Pre-run cost estimator ✅ | 🟢 H | S | S | T00-02 |
 
@@ -136,7 +136,7 @@ Design: [modes.md](../plans/modes.md)
 | T02B-04 | Roster builder ✅ | 🟢 H | S | M | T02B-01, T01-01 |
 | T02B-05 | Task board model ✅ | 🟢 H | S | M | T02B-01 |
 | T02B-06 | Cascade mode | 🟡 S | O | M | T02B-01, T02B-07, T01-03 |
-| T02B-07 | Danger-area classifier | 🔴 O | O2 | S | T02B-01 |
+| T02B-07 | Danger-area classifier ✅ | 🔴 O | O2 | S | T02B-01 |
 | T02B-08 | Auto mode router ✅ | 🟢 H | S | S | T02B-01 |
 | T02B-09 | Playbooks: Pipeline, Explore, Plan | 🟢 H | S | S | T02B-01, T03-01, T03-04 |
 | T02B-10 | Mode prompts (lead, navigator, attacker, …) | 🟢 H | O (quality) | M | T03-01, T02B-01 |
