@@ -2,11 +2,14 @@ import { z } from "zod";
 import type { AssentorConfig } from "../config/schema.js";
 import { resolveTeams } from "../config/teams.js";
 import type { Autonomy } from "../core/run-mode.js";
-import type { SessionSpecSchema } from "../core/seats.js";
+import type { Seat, SessionSpecSchema } from "../core/seats.js";
 import type { StageRunnerDeps } from "../orchestrator/session-stages.js";
 import type { StageRunners } from "../orchestrator/session-runner.js";
 import type { EngineEventDraft } from "../protocol/events.js";
+import type { Usage } from "../seats/scheduler.js";
 import type { WorktreeManager } from "../worktrees/manager.js";
+import { leadConfigProblems } from "./lead/config.js";
+import type { RosterEntry } from "./roster.js";
 
 /**
  * Mode registry and mode contract (T02B-01b metadata, T02B-01 contract). A mode
@@ -71,14 +74,79 @@ export interface ModeBuildInput {
   config: AssentorConfig;
 }
 
+/**
+ * Host services a dynamic controller needs beyond the stage runners (T02B-02).
+ * Optional on the session; a controller that needs one it did not get throws
+ * when it starts (the session then fails with that reason).
+ */
+export interface ModeHostServices {
+  /**
+   * One read-only prompt on a seat (Lead turns, summaries): render nothing, call
+   * the seat's model, return its reply text. Must stop when `signal` aborts.
+   * Runs inside a scheduler job; report usage through `reportUsage`.
+   */
+  askSeat?(request: {
+    seat: Seat;
+    prompt: string;
+    signal: AbortSignal;
+    reportUsage: (delta: Partial<Usage>) => void;
+  }): Promise<string>;
+  /** Who may be hired right now (`buildRoster`, T02B-04): installed, authenticated, allowed by policy. */
+  roster?(): readonly RosterEntry[] | Promise<readonly RosterEntry[]>;
+}
+
+/** What a controller may do with worktrees. `applyTo("main")` passes the session's approval floor. */
+export type ControllerWorktrees = Pick<WorktreeManager, "create" | "diff" | "applyTo">;
+
+/** A request for the user's yes/no before work starts or lands. */
+export interface ApprovalRequest {
+  /** One line shown to the user, e.g. "Apply task T3 to your branch?". */
+  question: string;
+  /**
+   * Under `manual`: approving this also approves the first run of executors the
+   * controller creates for this stage id, so it can ask before scheduling work
+   * (with its own wording) instead of the executor asking inside its job.
+   */
+  stageId?: string;
+}
+
 export interface ModeControllerInput extends ModeBuildInput {
   sessionId: string;
-  /** Built-in stage runners (negotiate, execute ⇄ review) to call as tools; autonomy already applied. */
+  /**
+   * Built-in stage runners (negotiate, execute ⇄ review) to call as tools. Under
+   * `manual` autonomy the session gates them: each call waits for the user's
+   * approval and a denied call returns `blocked` without running anything.
+   */
   stages: StageRunners;
-  /** Scheduler, seats and model calls behind the stage runners (project path included). */
+  /**
+   * Scheduler, seats and model calls behind the stage runners (project path
+   * included). Under `manual`, every executor from `createExecutor` asks the
+   * user before its first run (one approval per executor).
+   */
   deps: StageRunnerDeps;
-  /** When the host provides one: worktrees for edit seats. Integrate only through it (T02B-02). */
-  worktrees?: WorktreeManager;
+  /**
+   * When the host provides one: worktrees for agent seats. Applying to `"main"`
+   * asks the user first unless autonomy is `autopilot`; a denial throws.
+   */
+  worktrees?: ControllerWorktrees;
+  /** Host services (model calls, roster). */
+  host: ModeHostServices;
+  /**
+   * Asks the user a yes/no question (`user.question`, answered with the
+   * session's `answer()`). Resolves false when denied or when the session is
+   * cancelled. For approvals a mode adds on top of the floor.
+   */
+  requestApproval(request: ApprovalRequest): Promise<boolean>;
+  /**
+   * Asks the user a question. With `options`, the answer is one of them. Resolves
+   * undefined when the session is cancelled before an answer.
+   */
+  ask(question: { question: string; options?: readonly string[] }): Promise<string | undefined>;
+  /**
+   * Continue a session this mode persisted earlier (same `sessionId`). Autonomy is
+   * the one given now, never a saved one: the floor is re-applied on every resume.
+   */
+  resume: boolean;
   /** Session cancel. Stop all work when it aborts. */
   signal: AbortSignal;
   /** Session event sink; never throws. */
@@ -86,9 +154,11 @@ export interface ModeControllerInput extends ModeBuildInput {
 }
 
 /**
- * A running dynamic mode. Autonomy is the controller's to honour (T02B-02): under
- * `manual` ask before every action that starts work, under `supervised` before
- * `integrate`; auto-integrate only under `autopilot` with a policy that allows it.
+ * A running dynamic mode. The session enforces the autonomy floor around it
+ * (`manual`: approval before any executor runs or stage starts; `manual` and
+ * `supervised`: approval before applying to the main checkout). A controller may
+ * ask more (`requestApproval`), never less: auto-integrate only under `autopilot`
+ * with a policy that allows it.
  */
 export interface ModeController {
   /**
@@ -201,6 +271,14 @@ const negotiate: ModeRuntime = {
   },
 };
 
+// The controller is Node-only (worktrees, gates, state file), so it loads on run and the registry stays browser-safe.
+const lead: ModeRuntime = {
+  validate: leadConfigProblems,
+  createController: (input) => ({
+    run: async () => (await import("./lead/controller.js")).createLeadController(input).run(),
+  }),
+};
+
 const MODES: readonly ModeDefinition[] = [
   // Today's `assentor run`: one executor in a review loop (one reviewer or a `--team` panel).
   mode("solo", "Solo", "One executor with a review loop; today's assentor run.", "static", true, true, solo),
@@ -208,7 +286,8 @@ const MODES: readonly ModeDefinition[] = [
   // SeatStepRunner for negotiation steps, and `run` still drives the Supervisor directly).
   mode("review", "Review", "Several reviewers judge existing work; a policy merges their verdicts.", "static", false, false, review),
   mode("negotiate", "Negotiate", "Several peers reach consensus with a strategy (vote, debate, synthesize).", "static", true, false, negotiate),
-  mode("lead", "Lead (Supervisor)", "A lead seat plans tasks, picks agents and accepts or rejects their reports.", "dynamic", true),
+  // Runs through prepareModeSession with host services (T02B-02); the CLI does not route it yet.
+  mode("lead", "Lead (Supervisor)", "A lead seat plans tasks, picks agents and accepts or rejects their reports.", "dynamic", true, false, lead),
   mode("cascade", "Cascade", "Start with a cheap model; escalate on failure or risk.", "dynamic", true),
   mode("pipeline", "Pipeline", "Requirements, architect, coder, tester, reviewer and docs stages in order.", "static", true),
   mode("pair", "Pair", "A driver codes while a navigator watches the stream and interjects.", "static", true),

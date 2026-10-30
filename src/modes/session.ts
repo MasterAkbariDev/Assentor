@@ -1,21 +1,25 @@
 import { promises as fs } from "node:fs";
 import type { AssentorConfig } from "../config/schema.js";
-import { isId } from "../core/ids.js";
+import { createId, isId } from "../core/ids.js";
 import { AutonomySchema, type Autonomy } from "../core/run-mode.js";
 import { SessionSpecSchema, type SessionSpec } from "../core/seats.js";
 import {
   SessionRunner,
   validateSessionGraph,
   type SessionRunResult,
+  type StageRunners,
 } from "../orchestrator/session-runner.js";
 import { createStageRunners, type StageRunnerDeps } from "../orchestrator/session-stages.js";
 import type { EngineEventDraft } from "../protocol/events.js";
-import type { Executor } from "../providers/executors/types.js";
-import type { WorktreeManager } from "../worktrees/manager.js";
+import type { Executor, ExecutorResult } from "../providers/executors/types.js";
+import { WorktreeError, type WorktreeManager } from "../worktrees/manager.js";
 import {
   EXISTING_WORK_STRATEGY,
   getMode,
+  type ControllerWorktrees,
+  type ModeControllerInput,
   type ModeDefinition,
+  type ModeHostServices,
   type ModeId,
   type SessionSpecInput,
 } from "./registry.js";
@@ -32,6 +36,16 @@ import {
  * Autonomy never exceeds the configured level: `manual` puts an approval gate on
  * every non-review stage, and the Supervisor steers itself only under
  * `autopilot`, whatever the host's `deps.supervisor.autopilot` says.
+ *
+ * Dynamic modes get the same floor around the controller, enforced here and not
+ * trusted to it (T02B-02): under `manual` every `stages` call and the first run of
+ * every executor from `deps.createExecutor` wait for the user's approval; under
+ * `manual` and `supervised` every `worktrees.applyTo("main")` does. Read-only
+ * work (model asks, reviews, diffs) is not gated. Questions go out as
+ * `user.question` events with a `questionId`; the host answers with `answer()`
+ * (or `approve()` for a yes). A dynamic `resume` goes through here too, so the
+ * floor is re-applied from the autonomy given now, never from saved state. Any
+ * future resume path must do the same.
  *
  * Host duties are those of `SessionRunner`: a per-session lock, a grace timeout
  * for work that ignores abort, and a UUID `sessionId` (the graph is persisted
@@ -56,6 +70,10 @@ export interface ModeSessionInput {
   emit?: (draft: EngineEventDraft) => void;
   /** See `SessionRunnerOptions.maxStageVisits`. */
   maxStageVisits?: number;
+  /** Dynamic modes: model calls and roster for the controller (Lead). */
+  host?: ModeHostServices;
+  /** Dynamic modes: continue the state the mode persisted for this `sessionId`. */
+  resume?: boolean;
 }
 
 export interface ModeRunResult extends SessionRunResult {
@@ -70,8 +88,18 @@ export interface PreparedModeSession {
   readonly spec?: SessionSpec;
   /** Starts the session. Call once. */
   run(): Promise<ModeRunResult>;
-  /** Releases a static session waiting on `stageId`'s approval gate; false otherwise. */
+  /**
+   * Static: releases a session waiting on `stageId`'s approval gate. Dynamic:
+   * approves the pending approval question with this id. False otherwise.
+   */
   approve(stageId: string): boolean;
+  /**
+   * Dynamic: answers the pending question `questionId` (from its `user.question`
+   * event). An approval takes "approve" or "deny"; a question with options takes
+   * one of them (any case); other questions any text up to 2000 characters. False
+   * (nothing changes) for an unknown id or an answer that does not fit.
+   */
+  answer(questionId: string, answer: string): boolean;
 }
 
 /** Every reason a mode cannot start; nothing was started. */
@@ -92,6 +120,7 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
   if (!input.goal?.trim()) problems.push("the goal is empty");
   // Session ids become paths (graph, event log); check before a controller or emit sees one.
   if (!isId(input.sessionId)) problems.push(`invalid session id ${JSON.stringify(input.sessionId)}`);
+  if (input.resume && mode?.kind === "static") problems.push("a static session resumes through SessionRunner.resume, not resume");
   if (!mode || !level.success || problems.length > 0) throw new ModeValidationError(problems);
   const autonomy = level.data;
 
@@ -144,6 +173,7 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
       autonomy,
       spec,
       approve: (stageId) => runner.approve(stageId),
+      answer: () => false,
       run: async () => {
         claim();
         // SessionRunner.run refuses an existing graph too, but only after we would have emitted.
@@ -157,15 +187,25 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
     };
   }
 
+  const signal = input.signal ?? new AbortController().signal;
+  const questions = createQuestions(input.sessionId, signal, emit);
+  /** Stage ids the user approved through `requestApproval({ stageId })`; their executors start without asking again. */
+  const approvedStages = new Set<string>();
+  const requestApproval: ModeControllerInput["requestApproval"] = async ({ question, stageId }) => {
+    const approved = (await questions.ask(question, APPROVAL_OPTIONS, true)) === "approve";
+    if (approved && stageId !== undefined) approvedStages.add(stageId);
+    return approved;
+  };
+
   return {
     mode,
     autonomy,
-    approve: () => false,
+    approve: (questionId) => questions.answer(questionId, "approve", true),
+    answer: (questionId, answer) => questions.answer(questionId, answer, false),
     run: async () => {
       claim();
       selected();
       const { sessionId } = input;
-      const signal = input.signal ?? new AbortController().signal;
       const finish = (status: SessionRunResult["status"], reason?: string): ModeRunResult => {
         emit({ type: "session.state", sessionId, data: { to: status, ...(reason ? { reason } : {}) } });
         const data = { status, ...(reason ? { reason } : {}) };
@@ -182,14 +222,25 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
       emit({ type: "session.created", sessionId, data: { title } });
       if (signal.aborted) return finish("cancelled", "cancelled");
       try {
+        const manual = autonomy === "manual";
         const controller = mode.createController!({
           ...buildInput,
           sessionId,
-          stages,
-          deps,
+          stages: manual ? gateStages(stages, requestApproval) : stages,
+          deps: manual
+            ? {
+                ...deps,
+                createExecutor: (stage) =>
+                  gateExecutor(deps.createExecutor(stage), stage.id, () => approvedStages.has(stage.id), requestApproval),
+              }
+            : deps,
+          host: input.host ?? {},
+          requestApproval,
+          ask: ({ question, options }) => questions.ask(question, options, false),
+          resume: input.resume ?? false,
           signal,
           emit,
-          ...(input.worktrees ? { worktrees: input.worktrees } : {}),
+          ...(input.worktrees ? { worktrees: gateWorktrees(input.worktrees, autonomy, requestApproval) } : {}),
         });
         const result = await controller.run();
         // Like a stage: a result that arrives while cancelling is not trusted.
@@ -201,7 +252,129 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
       } catch (error) {
         if (signal.aborted) return finish("cancelled", "cancelled");
         return finish("failed", `controller failed: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        questions.closeAll();
       }
+    },
+  };
+}
+
+const APPROVAL_OPTIONS = ["approve", "deny"] as const;
+const MAX_ANSWER_LENGTH = 2000;
+
+/**
+ * Pending user questions of one dynamic session. Each goes out as `user.question`
+ * with a `questionId`; the session shows `waiting` while any is open. A cancel
+ * (or the controller ending) resolves the open ones with undefined.
+ */
+function createQuestions(sessionId: string, signal: AbortSignal, emit: (draft: EngineEventDraft) => void) {
+  const pending = new Map<string, { options?: readonly string[]; approval: boolean; settle(answer?: string): void }>();
+  return {
+    ask(question: string, options: readonly string[] | undefined, approval: boolean): Promise<string | undefined> {
+      if (signal.aborted) return Promise.resolve(undefined);
+      // Unique across resumes of the same session, so a replayed log never pairs an old question with a new answer.
+      const questionId = createId();
+      return new Promise((resolve) => {
+        const settle = (answer?: string) => {
+          if (!pending.delete(questionId)) return;
+          signal.removeEventListener("abort", onAbort);
+          if (answer !== undefined) emit({ type: "user.answer", sessionId, data: { questionId, answer } });
+          if (pending.size === 0 && !signal.aborted) emit({ type: "session.state", sessionId, data: { from: "waiting", to: "running" } });
+          resolve(answer);
+        };
+        const onAbort = () => settle();
+        pending.set(questionId, { ...(options ? { options } : {}), approval, settle });
+        signal.addEventListener("abort", onAbort, { once: true });
+        if (pending.size === 1) emit({ type: "session.state", sessionId, data: { from: "running", to: "waiting", reason: question.slice(0, 200) } });
+        emit({
+          type: "user.question",
+          sessionId,
+          data: { questionId, question, ...(options ? { options: [...options] } : {}), kind: approval ? "approval" : "question" },
+        });
+      });
+    },
+    /** `approvalOnly`: `approve()` may answer approval questions only. */
+    answer(questionId: string, raw: string, approvalOnly: boolean): boolean {
+      const entry = pending.get(questionId);
+      if (!entry || (approvalOnly && !entry.approval) || typeof raw !== "string") return false;
+      const text = raw.trim();
+      if (!text || text.length > MAX_ANSWER_LENGTH) return false;
+      const answer = entry.options ? entry.options.find((o) => o.toLowerCase() === text.toLowerCase()) : text;
+      if (answer === undefined) return false;
+      entry.settle(answer);
+      return true;
+    },
+    closeAll(): void {
+      for (const entry of [...pending.values()]) entry.settle();
+    },
+  };
+}
+
+/** `manual`: every stage call waits for approval; a denial ends the stage `blocked` without running it. */
+function gateStages(stages: StageRunners, approve: ModeControllerInput["requestApproval"]): StageRunners {
+  const denied = { outcome: "blocked" as const, summary: "the user did not approve this stage" };
+  return {
+    ...stages,
+    negotiate: async (input) =>
+      (await approve({ question: `Start stage "${input.stage.id}" (${input.stage.kind})?` })) ? stages.negotiate(input) : denied,
+    execute: async (input) =>
+      (await approve({ question: `Start stage "${input.stage.id}" (execute)?` })) ? stages.execute(input) : denied,
+  };
+}
+
+/**
+ * `manual`: the executor's first run (or continue) waits for approval, unless the
+ * user already approved its stage id; a denial fails it without running. A turn
+ * cancelled while it waits never starts.
+ */
+function gateExecutor(
+  executor: Executor,
+  stageId: string,
+  preapproved: () => boolean,
+  approve: ModeControllerInput["requestApproval"],
+): Executor {
+  let approval: Promise<boolean> | undefined;
+  const allowed = () =>
+    (approval ??= preapproved() ? Promise.resolve(true) : approve({ question: `Start work "${stageId}" (${executor.name})?`, stageId }));
+  const cancelled = new Set<string>();
+  const denied = { status: "failed" as const, summary: "the user did not approve starting this work", error: "not approved" };
+  const gate = async (taskId: string, start: () => Promise<ExecutorResult>): Promise<ExecutorResult> => {
+    if (!(await allowed())) return denied;
+    if (cancelled.has(taskId)) return { status: "cancelled", summary: "cancelled before it started" };
+    return start();
+  };
+  const gated: Executor = {
+    name: executor.name,
+    capabilities: () => executor.capabilities(),
+    run: (task) => gate(task.taskId, () => executor.run(task)),
+    continue: (task) => gate(task.taskId, () => executor.continue(task)),
+    cancel: async (taskId) => {
+      cancelled.add(taskId);
+      await executor.cancel(taskId);
+    },
+  };
+  if (executor.setModel) gated.setModel = (model) => executor.setModel!(model);
+  if (executor.interrupt) gated.interrupt = () => executor.interrupt!();
+  return gated;
+}
+
+/** Applying to the main checkout asks first unless `autopilot`; a denial throws and changes nothing. */
+function gateWorktrees(
+  worktrees: WorktreeManager,
+  autonomy: Autonomy,
+  approve: ModeControllerInput["requestApproval"],
+): ControllerWorktrees {
+  return {
+    create: (seat, baseRef) => worktrees.create(seat, baseRef),
+    diff: (seat) => worktrees.diff(seat),
+    applyTo: async (target, seat, options) => {
+      if (target === "main" && autonomy !== "autopilot") {
+        const question = `Apply the work of ${seat.seatId} to your branch (${options.strategy})?`;
+        if (!(await approve({ question }))) {
+          throw new WorktreeError(`the user did not approve applying ${seat.seatId} to the main checkout`);
+        }
+      }
+      return worktrees.applyTo(target, seat, options);
     },
   };
 }

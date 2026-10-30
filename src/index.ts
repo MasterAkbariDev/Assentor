@@ -184,6 +184,7 @@ export {
   type ModeRunResult,
   type PreparedModeSession,
 } from "./modes/session.js";
+export { createLeadController } from "./modes/lead/controller.js";
 export {
   createStageRunners,
   createDebateTiebreak,
