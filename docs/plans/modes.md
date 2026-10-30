@@ -203,7 +203,7 @@ task ─▶ classify risk ─┬─ danger area? ──────────�
                                           └──────────── retry with findings ───┘
 ```
 
-- **Tiers** are configurable lists of seat specs, e.g. `[haiku] → [sonnet] → [opus]`.
+- **Tiers** are `modes.cascade.tiers`, cheapest first; each names a `team` (edit seat implements), an optional `reviewTeam` (default `modes.review.team`) and `maxRounds`, e.g. `cheap → mid → top`. Teams are defined once under `teams`.
 - **Risk classifier** (deterministic first, LLM optional): task text keywords + **paths touched** matched against a configurable danger list (defaults mirror `docs/tasks/README.md` §1: process spawning/killing, git mutations, permission flags, secrets/vault, network servers, file deletion, release/signing, config migration).
 - **Escalation triggers**: N failed review rounds, gate failures, low confidence, reviewer flags danger area mid-task, agent reports `blocked`.
 - **Never self-review**: reviewer tier ≥ implementer tier and a different seat.
@@ -247,7 +247,7 @@ task ─▶ classify risk ─┬─ danger area? ──────────�
 
 ## 8. New events (additive to the T00-01 catalog)
 
-`mode.selected` · `lead.turn` · `lead.action` (with `accepted | refused` + reason) · `task.created` · `task.assigned` · `task.status` · `task.report` · `task.escalated` · `task.accepted` · `task.rejected` · `cascade.escalated` · `pair.interjection` · `redteam.attack` · `tdd.gate` · `swarm.item` · `user.question` · `user.answer`.
+`mode.selected` · `lead.turn` · `lead.action` (with `accepted | refused` + reason) · `task.created` · `task.assigned` · `task.status` · `task.report` · `task.escalated` · `task.accepted` · `task.rejected` · `cascade.escalated` · `cascade.tier_succeeded` · `pair.interjection` · `redteam.attack` · `tdd.gate` · `swarm.item` · `user.question` · `user.answer`.
 
 ---
 

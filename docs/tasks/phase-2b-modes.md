@@ -161,7 +161,9 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 ### T02B-06 · Cascade mode
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** T02B-01, T02B-07, T01-03
 
-**Deliverables** — Mode `cascade`: tiers config (`tiers: [[seatSpec…], …]`), escalation triggers (N NEEDS_WORK rounds, gate failure, low confidence, `blocked` report, reviewer flags danger), never-self-review rule (reviewer tier ≥ implementer tier, different seat), danger tasks start at the top tier with approval, `cascade.escalated` events, records the successful tier for the scoreboard. Mock end-to-end tests for each trigger.
+**Merged 2026-10-30 (planner, under the owner's standing merge direction):** O2 review NEEDS_WORK three times → fixed in `150f583`, `23dda28`, `833c4b2` → PASS with nits. At merge, cascade's approval goes through `requestApproval`, and the test helper approves the session's own per-stage questions under manual. Follow-up: under manual both the session (per stage) and cascade (per tier) ask, so the user is asked twice. Open nits: the "could not be read" reason is cut at 400 chars and can lose its size/mtime with very long names; unscanned reasons skip bidi-mark cleaning; the large-file tests are slow (~13 s each) — use long lines instead of 450k short ones.
+
+**Deliverables** — Mode `cascade`: tiers config (`modes.cascade.tiers: [{ team, reviewTeam?, maxRounds? }, …]`, cheapest first; each tier references teams in `teams`, not inline seat specs), escalation triggers (N NEEDS_WORK rounds, gate failure, low confidence, `blocked` report, reviewer flags danger), never-self-review rule (reviewer tier ≥ implementer tier, different seat), danger tasks start at the top tier with approval, `cascade.escalated` events, records the successful tier for the scoreboard (`cascade.tier_succeeded` event plus an `onTierSucceeded` hook). A danger start emits `cascade.escalated` with trigger `danger_start` and no `fromTier`. Danger is checked after every tier below the top (untracked files included). Mock end-to-end tests for each trigger.
 
 ---
 

@@ -146,6 +146,7 @@ describe("mode contract", () => {
       "review",
       "negotiate",
       "lead",
+      "cascade",
       "pipeline",
       "tdd",
       "debug",
@@ -292,8 +293,8 @@ describe("failure paths", () => {
 
   it("a mode that cannot run, an unknown mode or autonomy, and an empty goal are refused", async () => {
     const { value, events } = await input();
-    expect(problems(() => prepareModeSession({ ...value, mode: "cascade" }))).toEqual([
-      'mode "cascade" cannot run yet (no createController)',
+    expect(problems(() => prepareModeSession({ ...value, mode: "interactive" }))).toEqual([
+      'mode "interactive" cannot run yet (no createController)',
     ]);
     expect(problems(() => prepareModeSession({ ...value, mode: "lead" }))).toEqual([
       "lead mode needs modes.lead with at least lead: { provider, model } in the config",

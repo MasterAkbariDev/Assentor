@@ -14,6 +14,7 @@ import type { RosterEntry } from "./roster.js";
 import { builtinPlaybookSession, builtinPlaybookTeamProblems } from "./playbook-modes.js";
 import { createDebugController, debugProblems } from "./debug.js";
 import { tddRuntime } from "./tdd/mode.js";
+import { cascadeProblems, createCascadeController } from "./cascade.js";
 
 /**
  * Mode registry and mode contract (T02B-01b metadata, T02B-01 contract). A mode
@@ -316,7 +317,10 @@ const MODES: readonly ModeDefinition[] = [
   mode("negotiate", "Negotiate", "Several peers reach consensus with a strategy (vote, debate, synthesize).", "static", true, false, negotiate),
   // Runs through prepareModeSession with host services (T02B-02); the CLI does not route it yet.
   mode("lead", "Lead (Supervisor)", "A lead seat plans tasks, picks agents and accepts or rejects their reports.", "dynamic", true, false, lead),
-  mode("cascade", "Cascade", "Start with a cheap model; escalate on failure or risk.", "dynamic", true),
+  mode("cascade", "Cascade", "Start with a cheap model; escalate on failure or risk.", "dynamic", true, false, {
+    validate: cascadeProblems,
+    createController: (input) => createCascadeController(input, { approve: (question) => input.requestApproval({ question }) }),
+  }),
   mode("pipeline", "Pipeline", "Requirements, architect, coder, tester, reviewer and docs stages in order.", "static", true, false, pipeline),
   mode("pair", "Pair", "A driver codes while a navigator watches the stream and interjects.", "static", true),
   mode("race", "Race", "Several seats implement in parallel worktrees; a judge picks one.", "static", true),

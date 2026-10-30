@@ -144,7 +144,16 @@ const TaskStatus = TaskEvent.extend({ status: z.string() });
 const TaskEscalated = TaskEvent.extend({ to: z.string(), from: z.string().optional(), reason: z.string().optional() });
 const TaskRejected = TaskEvent.extend({ reason: z.string() });
 const CascadeEscalated = z
-  .object({ fromTier: z.number().int().nonnegative(), toTier: z.number().int().nonnegative(), reason: z.string() })
+  // `fromTier` is absent for a danger start: no lower tier ran.
+  .object({ fromTier: z.number().int().nonnegative().optional(), toTier: z.number().int().nonnegative(), reason: z.string() })
+  .passthrough();
+const CascadeTierSucceeded = z
+  .object({
+    tier: z.number().int().nonnegative(),
+    team: z.string(),
+    escalations: z.number().int().nonnegative(),
+    triggers: z.array(z.string()),
+  })
   .passthrough();
 const PairInterjection = z.object({ text: z.string() }).passthrough();
 const RedteamAttack = z.object({ round: z.number().int().positive() }).passthrough();
@@ -213,6 +222,7 @@ export const EngineEventDataSchemas = {
   "task.accepted": TaskEvent,
   "task.rejected": TaskRejected,
   "cascade.escalated": CascadeEscalated,
+  "cascade.tier_succeeded": CascadeTierSucceeded,
   "pair.interjection": PairInterjection,
   "redteam.attack": RedteamAttack,
   "tdd.gate": TddGate,

@@ -13,7 +13,7 @@ import {
   EXECUTOR_PROVIDER_IDS,
   normalizeExecutorProvider,
 } from "../executors/providers.js";
-import { NegotiateModeSchema, ReviewModeSchema } from "./teams.js";
+import { CascadeTierSchema, NegotiateModeSchema, ReviewModeSchema } from "./teams.js";
 import { SEAT_PROVIDERS, TeamSchema } from "../core/seats.js";
 import { MODE_ALIASES, MODE_IDS } from "../modes/registry.js";
 import { DangerAreaRuleSchema } from "../modes/danger.js";
@@ -113,10 +113,16 @@ export const AssentorConfigSchema = z.object({
     .object({
       negotiate: NegotiateModeSchema.optional(),
       review: ReviewModeSchema.optional(),
-      /** Cascade mode (T02B-06 adds tiers). `dangerAreas` add to the built-in danger rules, never remove them. */
+      /**
+       * Cascade mode (T02B-06). `tiers` run cheapest first; `dangerAreas` add to the built-in
+       * danger rules, never remove them. Every field is optional (no defaults are written on save).
+       */
       cascade: z
-        .object({ dangerAreas: z.array(DangerAreaRuleSchema).max(50).optional() })
-        // Keep untyped cascade keys (e.g. T02B-06 tiers) so a config save never drops them.
+        .object({
+          tiers: z.array(CascadeTierSchema).min(1).max(6).optional(),
+          dangerAreas: z.array(DangerAreaRuleSchema).max(50).optional(),
+        })
+        // Keep untyped cascade keys so a config save never drops them.
         .passthrough()
         .optional(),
     })
