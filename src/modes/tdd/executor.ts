@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { promises as fs, realpath } from "node:fs";
 import path from "node:path";
@@ -5,9 +6,12 @@ import { promisify } from "node:util";
 import { resolveVerificationCommands } from "../../config/detect-commands.js";
 import type { AssentorConfig } from "../../config/schema.js";
 import type { Seat } from "../../core/seats.js";
+import { buildAutonomousContinuationPrompt, buildSupervisedContinuationPrompt } from "../../orchestrator/phase-steering.js";
 import { createEmptyContract } from "../../core/task-contract.js";
 import { ReviewStatus } from "../../core/types.js";
 import type { EngineEventDraft } from "../../protocol/events.js";
+import type { ProtocolMessage } from "../../protocol/messages.js";
+import type { RunMode } from "../../core/run-mode.js";
 import { runShellCommand } from "../../process/run-shell.js";
 import type {
   Executor,
@@ -30,7 +34,9 @@ import { detectTamper, isTestFile, lockTests, normalizePath } from "./tamper.js"
  * (run → verification → review → continue). A host that ignores the strategy runs the stage as plain
  * solo, without any gate.
  *
- * One `run` (a fresh round from the target's tip, in one worktree):
+ * One `run` (a fresh round from the target's tip, in one worktree). Before the writer starts, the test
+ * command is resolved once (so the coder cannot change what it resolves to) and, unless it uses `{files}`,
+ * run once on the untouched base: a base that is already red ends the round.
  * 1. the test-writer writes tests. It may only add or change test files (`isTestFile`); touching
  *    anything else, deleting a test, or making no change ends the round. The changed test files are
  *    locked (`lockTests`) and their bytes are remembered;
@@ -39,8 +45,11 @@ import { detectTamper, isTestFile, lockTests, normalizePath } from "./tamper.js"
  *    (timeout, not runnable, not found) are not "red";
  * 3. the coder implements. Gate B: the test command must pass; while it does not, the coder runs
  *    again (up to `maxCoderAttempts`) with the failing output;
- * 4. tamper check, after each coder run: a locked test whose bytes changed, or that is gone, is
- *    tampered (`detectTamper`). Tampering ends the round: nothing is applied, even when Gate B is
+ * 4. tamper check, after each coder run, over every **protected** file: the locked tests, every test file
+ *    that existed when the coder started, and the test runner's config (package.json, vitest/jest
+ *    config, pytest.ini, pyproject.toml, setup.cfg, tox.ini, conftest.py at any depth; a new conftest.py
+ *    or config file counts). A protected file whose bytes changed, that is gone, or that became a symlink
+ *    is tampered (`detectTamper`); new test files are allowed. Tampering ends the round: nothing is applied, even when Gate B is
  *    green. The one way out is an explicit **test change request**: the coder leaves the test alone
  *    and ends its message with `TEST-CHANGE-REQUEST: <path> | <reason>` for each file. If it changed
  *    a locked test anyway, every changed file must have such a line, and `decideTestChange` (a
@@ -50,9 +59,9 @@ import { detectTamper, isTestFile, lockTests, normalizePath } from "./tamper.js"
  *    own gates and the review panel run on the result.
  *
  * `continue` (the review asked for changes) skips steps 1-2: a coder-only round on the target's
- * tip, against the tests locked by the first round. Locks live in this executor instance; a new
- * instance (resume) starts over with the writer, and Gate A then finds the already-applied tests
- * green.
+ * tip, against the tests locked by the first round, with the review feedback in the coder's prompt.
+ * Locks live in this executor instance; a new instance (resume) has none, and `continue` then fails
+ * with "locks lost" instead of guessing.
  *
  * A blocked round returns `failed` with a "TDD blocked: ..." summary and the raw gate output in
  * `rawOutput`; the summary carries no output of the tests (the Supervisor retries a failure whose text
@@ -70,8 +79,9 @@ import { detectTamper, isTestFile, lockTests, normalizePath } from "./tamper.js"
  * the gates are reported as a warning), and the Supervisor's `projectPath` must be the repository top
  * level.
  *
- * Known limit: only files the test-writer changed are locked. A coder can still weaken tests through
- * shared helpers or fixtures it did not lock, or through the test runner's config.
+ * Known limits: a coder can still weaken tests through helpers or fixtures that are not test files by
+ * the patterns; and a process the coder left running could change a test between the tamper check and
+ * `applyTo` (not detected: the lock is re-read from the target afterwards).
  */
 
 const nativeRealpath = promisify(realpath.native);
@@ -84,6 +94,9 @@ const OUTPUT_LIMIT = 4_000;
 /** Timeout, command not executable, command not found: the test command did not say "tests fail". */
 const NOT_A_TEST_RESULT = new Set([124, 126, 127]);
 const DEFAULT_GATE_TIMEOUT_MS = 5 * 60_000;
+/** Files that decide what the test command runs; the coder may not change or add them without a test change request. */
+const RUNNER_CONFIG =
+  /(?:^|\/)(?:[^/]*(?:vitest|jest)\.(?:config|workspace)\.[^/]*|package\.json|pytest\.ini|pyproject\.toml|setup\.cfg|tox\.ini|conftest\.py)$/i;
 
 export interface TddSeat {
   seat: Seat;
@@ -166,12 +179,10 @@ export function reviewerTestChangeDecision(
   let calls = 0;
   return async (request) => {
     calls += 1;
+    // JSON-escaped: the coder's text cannot close a fence or pose as the reviewer's instructions.
     const content = request.files
-      .map(
-        (f) =>
-          `File: ${f.path}\nCoder's reason: ${f.reason}\n--- locked version ---\n${f.before}\n--- coder's version ---\n${f.after ?? "(deleted)"}`,
-      )
-      .join("\n\n=====\n\n");
+      .map((f) => JSON.stringify({ file: f.path, coderReason: f.reason, lockedVersion: f.before, coderVersion: f.after }, null, 2))
+      .join("\n\n");
     const turn = await reviewer.review({
       taskId: `tdd-test-change-${calls}`,
       projectPath,
@@ -209,7 +220,7 @@ export function createTddExecutor(deps: TddDeps): Executor {
   const active = new Map<string, { controller: AbortController; done: Promise<unknown> }>();
   /** Locked tests (path → bytes at lock time) of the last round that landed. */
   let locked = new Map<string, Snapshot>();
-  let round = 0;
+  let rounds = 0;
 
   const emit = (draft: EngineEventDraft) => {
     try {
@@ -275,7 +286,8 @@ export function createTddExecutor(deps: TddDeps): Executor {
     return outcome.value;
   }
 
-  async function testCommand(worktree: string, files: readonly string[]): Promise<string> {
+  /** The test command with `{files}` still in it. Resolved once per round, before the coder runs. */
+  async function resolveTemplate(worktree: string): Promise<string> {
     const base =
       options.testCommand ?? (await resolveVerificationCommands(worktree, deps.verification?.commands)).test;
     if (!base) {
@@ -283,18 +295,22 @@ export function createTddExecutor(deps: TddDeps): Executor {
         "no test command: set modes.tdd.testCommand or verification.commands.test (none was detected)",
       );
     }
-    return base.includes("{files}") ? base.replaceAll("{files}", files.map(quoteArg).join(" ")) : base;
+    return base;
   }
+
+  const fill = (template: string, files: readonly string[]): string =>
+    template.includes("{files}") ? template.replaceAll("{files}", files.map(quoteArg).join(" ")) : template;
 
   /** Runs the test command in the worktree. Files the command leaves behind are added to `warnings`. */
   async function gate(
     key: SeatKey,
     worktree: string,
+    template: string,
     files: readonly string[],
     signal: AbortSignal,
     warnings: string[],
   ): Promise<{ code: number; output: string }> {
-    const command = await testCommand(worktree, files);
+    const command = fill(template, files);
     const before = (await deps.manager.diff(key)).files;
     const result = await runCommand(command, worktree, {
       timeoutMs: options.gateTimeoutMs ?? DEFAULT_GATE_TIMEOUT_MS,
@@ -309,20 +325,51 @@ export function createTddExecutor(deps: TddDeps): Executor {
     return { code: result.code, output: redactSecrets(text.slice(-OUTPUT_LIMIT)).text };
   }
 
-  async function read(worktree: string, file: string): Promise<(Snapshot & { text: string }) | undefined> {
+  /** A file's bytes (hash) and text. A symlink hashes as its target, so turning a file into a link shows. */
+  async function read(worktree: string, file: string): Promise<Snapshot | undefined> {
     try {
-      const bytes = await fs.readFile(path.join(worktree, file));
+      const full = path.join(worktree, file);
+      const stat = await fs.lstat(full);
+      if (stat.isSymbolicLink()) return { hash: `symlink:${await fs.readlink(full)}`, text: "" };
+      if (!stat.isFile()) return undefined;
+      const bytes = await fs.readFile(full);
       return { hash: createHash("sha256").update(bytes).digest("hex"), text: bytes.toString("utf8").slice(0, TEXT_LIMIT) };
     } catch {
       return undefined;
     }
   }
 
-  /** Locked files whose bytes differ from the lock, or that are gone. */
-  async function changedLocks(worktree: string, locks: ReadonlyMap<string, Snapshot>): Promise<string[]> {
+  const isProtected = (file: string) => isTestFile(file, options.testPatterns) || RUNNER_CONFIG.test(normalizePath(file));
+
+  /** Every tracked or untracked (not ignored) file of the worktree. */
+  const listFiles = (cwd: string): Promise<string[]> =>
+    new Promise((resolve, reject) =>
+      execFile(
+        "git",
+        ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        { cwd, maxBuffer: 256 * 1024 * 1024 },
+        (error, stdout) => (error ? reject(error) : resolve(stdout.split("\0").filter(Boolean))),
+      ),
+    );
+
+  /** The protected files now: all test files and test runner config. */
+  async function snapshotProtected(worktree: string): Promise<Map<string, Snapshot>> {
+    const guard = new Map<string, Snapshot>();
+    for (const file of await listFiles(worktree)) {
+      const snapshot = isProtected(file) ? await read(worktree, file) : undefined;
+      if (snapshot) guard.set(file, snapshot);
+    }
+    return guard;
+  }
+
+  /** Protected files whose bytes changed or that are gone, plus test runner config files that are new. */
+  async function changedProtected(worktree: string, guard: ReadonlyMap<string, Snapshot>): Promise<string[]> {
     const changed: string[] = [];
-    for (const [file, snapshot] of locks) {
+    for (const [file, snapshot] of guard) {
       if ((await read(worktree, file))?.hash !== snapshot.hash) changed.push(file);
+    }
+    for (const file of await listFiles(worktree)) {
+      if (!guard.has(file) && RUNNER_CONFIG.test(normalizePath(file)) && (await read(worktree, file))) changed.push(file);
     }
     return changed;
   }
@@ -332,44 +379,78 @@ export function createTddExecutor(deps: TddDeps): Executor {
       "TDD, step 2 of 2: make the failing tests pass.",
       `Task:\n${goal}`,
       `The tests are already written and locked. Do not modify, rename, delete or skip any of them:\n${files.map((f) => `- ${f}`).join("\n")}`,
+      "Do not change any other existing test file or the test runner's configuration either (package.json, vitest/jest config, pytest.ini, pyproject.toml, setup.cfg, tox.ini, conftest.py). You may add new test files.",
       "Change only what the implementation needs; do not commit.",
-      `If a locked test is wrong, leave it as it is and end your final message with one line per file: ${TEST_CHANGE_REQUEST_TAG}: <path> | <reason>. A reviewer decides; a test you change without that is rejected.`,
+      `If a locked test is wrong, leave it as it is and end your final message with one line per file: ${TEST_CHANGE_REQUEST_TAG}: <path> | <reason>. A reviewer decides; a protected file you change without that is rejected.`,
     ].join("\n\n");
   }
 
-  async function execute(
+  /** One round. Registers itself in `active` synchronously, so `cancel` works from the first instant. */
+  function execute(
     taskId: string,
     task: Pick<ExecutorTask, "contract" | "prompt" | "messages">,
     projectPath: string,
     continuing: boolean,
+    followUp = "",
   ): Promise<ExecutorResult> {
-    const top = await nativeRealpath(await deps.manager.topLevel());
-    const given = await nativeRealpath(projectPath).catch(() => path.resolve(projectPath));
-    const same = process.platform === "win32" ? given.toLowerCase() === top.toLowerCase() : given === top;
-    if (!same) {
-      return {
-        status: "failed",
-        summary: `tdd: the project path ${given} is not the repository top level ${top} (a monorepo subpackage?); worktrees are created per repository`,
-      };
-    }
-    if (!continuing || locked.size === 0) locked = new Map();
-    const writing = locked.size === 0;
-    round += 1;
-    const key: SeatKey = {
-      sessionId: deps.sessionId,
-      seatId: `tdd-r${round}${randomBytes(4).toString("hex")}`,
-    };
     const controller = new AbortController();
+    const done = round(controller, taskId, task, projectPath, continuing, followUp);
+    active.set(taskId, { controller, done });
+    return done.finally(() => {
+      if (active.get(taskId)?.done === done) active.delete(taskId);
+    });
+  }
+
+  async function round(
+    controller: AbortController,
+    taskId: string,
+    task: Pick<ExecutorTask, "contract" | "prompt" | "messages">,
+    projectPath: string,
+    continuing: boolean,
+    followUp: string,
+  ): Promise<ExecutorResult> {
     const warnings: string[] = [];
     const notes: string[] = [];
-    let created = false;
+    let key: SeatKey | undefined;
 
     const body = async (): Promise<ExecutorResult> => {
-      const worktree = (await deps.manager.create(key, "HEAD")).path;
-      created = true;
+      const top = await nativeRealpath(await deps.manager.topLevel());
+      const given = await nativeRealpath(projectPath).catch(() => path.resolve(projectPath));
+      const same = process.platform === "win32" ? given.toLowerCase() === top.toLowerCase() : given === top;
+      if (!same) {
+        return {
+          status: "failed",
+          summary: `tdd: the project path ${given} is not the repository top level ${top} (a monorepo subpackage?); worktrees are created per repository`,
+        };
+      }
+      if (controller.signal.aborted) throw new Error("cancelled");
+      if (continuing && locked.size === 0) {
+        return {
+          status: "failed",
+          summary: "tdd: locks lost: no round landed in this process (a resume starts a new executor), so there are no locked tests to continue against; start the session again",
+        };
+      }
+      const writing = !continuing;
+      if (writing) locked = new Map();
+      rounds += 1;
+      const seatKey: SeatKey = { sessionId: deps.sessionId, seatId: `tdd-r${rounds}${randomBytes(4).toString("hex")}` };
+      const worktree = (await deps.manager.create(seatKey, "HEAD")).path;
+      key = seatKey;
       const locks = new Map(locked);
+      const template = await resolveTemplate(worktree);
+      let guard: Map<string, Snapshot>;
 
       if (writing) {
+        // A base that is red already would make Gate A meaningless. With {files} Gate A is exact instead.
+        if (!template.includes("{files}")) {
+          const base = await gate(seatKey, worktree, template, [], controller.signal, warnings);
+          if (base.code !== 0) {
+            throw new TddBlocked(
+              `base is red: the test command already fails on the base commit (exit ${base.code}); fix it or put {files} in modes.tdd.testCommand`,
+              base.output,
+            );
+          }
+        }
         const files = await withSeat(testWriter.seat, "tdd: test-writer", controller.signal, async () => {
           await runSeat(
             testWriter,
@@ -385,37 +466,40 @@ export function createTddExecutor(deps: TddDeps): Executor {
             },
             controller,
           );
-          const diff = await deps.manager.diff(key);
+          const diff = await deps.manager.diff(seatKey);
           if (diff.files.length === 0) throw new TddBlocked("the test-writer made no changes");
           const other = diff.files.filter((f) => !isTestFile(f, options.testPatterns));
           if (other.length > 0) {
             throw new TddBlocked(`the test-writer changed files that are not tests: ${other.slice(0, 10).join(", ")}`);
           }
-          const files = lockTests(diff.files, options.testPatterns);
-          for (const file of files) {
+          const tests = lockTests(diff.files, options.testPatterns);
+          for (const file of tests) {
             const snapshot = await read(worktree, file);
             if (!snapshot) throw new TddBlocked(`the test-writer deleted or moved the test ${file}`);
+            if (snapshot.hash.startsWith("symlink:")) throw new TddBlocked(`the test-writer made ${file} a symlink`);
             locks.set(file, snapshot);
           }
-
-          // Gate A: the worktree is the base commit plus only the new tests, so the tests must fail here.
-          const a = await gate(key, worktree, files, controller.signal, warnings);
-          const red = a.code !== 0 && !NOT_A_TEST_RESULT.has(a.code);
-          event("tdd.gate", { gate: "A", passed: red, exitCode: a.code, files });
-          if (!red) {
-            throw new TddBlocked(
-              a.code === 0
-                ? "Gate A: the new tests already pass on the base commit (no red), so they test nothing new"
-                : `Gate A: the test command could not give a result (exit ${a.code})`,
-              a.output,
-            );
-          }
-          notes.push(`Gate A red (exit ${a.code}) for ${files.length} locked test file(s): ${files.join(", ")}`);
-          return files;
+          return tests;
         });
+
+        // Gate A: the worktree is the base commit plus only the new tests, so the tests must fail here.
+        guard = await snapshotProtected(worktree);
+        const a = await gate(seatKey, worktree, template, files, controller.signal, warnings);
+        const red = a.code !== 0 && !NOT_A_TEST_RESULT.has(a.code);
+        event("tdd.gate", { gate: "A", passed: red, exitCode: a.code, files });
+        if (!red) {
+          throw new TddBlocked(
+            a.code === 0
+              ? "Gate A: the new tests already pass on the base commit (no red), so they test nothing new"
+              : `Gate A: the test command could not give a result (exit ${a.code})`,
+            a.output,
+          );
+        }
+        notes.push(`Gate A red (exit ${a.code}) for ${files.length} locked test file(s): ${files.join(", ")}`);
       } else {
+        guard = await snapshotProtected(worktree);
         for (const [file, snapshot] of locks) {
-          if ((await read(worktree, file))?.hash !== snapshot.hash) {
+          if (guard.get(file)?.hash !== snapshot.hash) {
             throw new TddBlocked(`the locked test ${file} differs from its lock in the checkout this round started from`);
           }
         }
@@ -431,22 +515,22 @@ export function createTddExecutor(deps: TddDeps): Executor {
               taskId: `${taskId}.${coder.seat.id}.a${attempt}`,
               projectPath: worktree,
               contract: task.contract,
-              prompt: coderPrompt(task.prompt, [...locks.keys()]) + feedback,
+              prompt: coderPrompt(task.prompt, [...locks.keys()]) + followUp + feedback,
               ...(task.messages ? { messages: task.messages } : {}),
             },
             controller,
           );
-          const b = await gate(key, worktree, [...locks.keys()], controller.signal, warnings);
+          const b = await gate(seatKey, worktree, template, [...locks.keys()], controller.signal, warnings);
           event("tdd.gate", { gate: "B", passed: b.code === 0, exitCode: b.code, attempt });
 
-          const changed = await changedLocks(worktree, locks);
-          const tamper = detectTamper({ lockedTests: [...locks.keys()], coderChangedFiles: changed });
+          const changed = await changedProtected(worktree, guard);
+          const tamper = detectTamper({ lockedTests: [...guard.keys(), ...changed], coderChangedFiles: changed });
           event("gate.result", { gate: "tamper", passed: tamper.ok, tampered: tamper.tampered });
           if (!tamper.ok) {
-            // Approved for this check only: relocked at the new content, so a later change needs a new approval.
-            const approvedChanges = await settleTamper(result, tamper.tampered, worktree, locks, task.prompt, controller.signal, b.output);
+            // Approved for this check only: re-snapshotted at the new content, so a later change needs a new approval.
+            const approvedChanges = await settleTamper(result, tamper.tampered, worktree, guard, locks, task.prompt, controller.signal, b.output);
             if (!detectTamper({ lockedTests: tamper.tampered, coderChangedFiles: tamper.tampered, approvedChanges }).ok) {
-              throw new TddBlocked("tamper check: a changed locked test was not approved", b.output);
+              throw new TddBlocked("tamper check: a changed protected file was not approved", b.output);
             }
             notes.push(`approved test change(s): ${approvedChanges.join(", ")}`);
           }
@@ -466,12 +550,21 @@ export function createTddExecutor(deps: TddDeps): Executor {
       });
 
       if (controller.signal.aborted) throw new Error("cancelled");
-      const applied = await deps.manager.applyTo("main", key, {
+      const applied = await deps.manager.applyTo("main", seatKey, {
         strategy: options.apply,
         message: `assentor: tdd (${options.apply})`,
       });
       if (!applied.ok) {
-        throw new TddBlocked(`applying the result conflicts in ${applied.conflicts.join(", ") || "the target"}: ${applied.message}`);
+        throw new TddBlocked(
+          `applying the result conflicts in ${applied.conflicts.join(", ") || "the target"}`,
+          applied.message,
+        );
+      }
+      // Hooks may reformat what landed: later rounds lock the bytes that are in the target now. A file
+      // missing there keeps its old lock, so the next round refuses to start.
+      for (const file of [...locks.keys()]) {
+        const landed = await read(top, file);
+        if (landed) locks.set(file, landed);
       }
       locked = locks;
       if (applied.warning) warnings.push(applied.warning);
@@ -485,14 +578,15 @@ export function createTddExecutor(deps: TddDeps): Executor {
     };
 
     /**
-     * Locked tests changed by the coder. Each needs a TEST-CHANGE-REQUEST line in the coder's message
+     * Protected files changed by the coder. Each needs a TEST-CHANGE-REQUEST line in the coder's message
      * and the reviewer's approval of the actual change; otherwise the round is blocked. An approved
-     * file is then locked at its new content.
+     * file is then protected at its new content. Reasons and errors go to `detail`, not the summary.
      */
     async function settleTamper(
       result: ExecutorResult,
       tampered: string[],
       worktree: string,
+      guard: Map<string, Snapshot>,
       locks: Map<string, Snapshot>,
       goal: string,
       signal: AbortSignal,
@@ -501,21 +595,22 @@ export function createTddExecutor(deps: TddDeps): Executor {
       const list = tampered.join(", ");
       const requests = parseTestChangeRequests(`${result.summary}\n${result.rawOutput ?? ""}`);
       const unrequested = tampered.filter((f) => !requests.has(f.toLowerCase()));
-      const lockOf = (file: string) => [...locks].find(([p]) => p.toLowerCase() === file.toLowerCase())!;
       if (unrequested.length > 0) {
-        throw new TddBlocked(`tamper check: the coder changed locked tests without a test change request: ${unrequested.join(", ")}`, gateOutput);
+        throw new TddBlocked(
+          `tamper check: the coder changed protected files (tests or test runner config) without a test change request: ${unrequested.join(", ")}`,
+          gateOutput,
+        );
       }
       if (!deps.decideTestChange) {
-        throw new TddBlocked(`tamper check: the coder asked to change locked tests (${list}) but nobody can approve it`, gateOutput);
+        throw new TddBlocked(`tamper check: the coder asked to change protected files (${list}) but nobody can approve it`, gateOutput);
       }
       const files: TestChangeFile[] = [];
       for (const file of tampered) {
-        const [lockedPath, snapshot] = lockOf(file);
         files.push({
-          path: lockedPath,
+          path: file,
           reason: requests.get(file.toLowerCase())!,
-          before: snapshot.text,
-          after: (await read(worktree, lockedPath))?.text ?? null,
+          before: guard.get(file)?.text ?? "",
+          after: (await read(worktree, file))?.text ?? null,
         });
       }
       let decision: TestChangeDecision;
@@ -523,46 +618,48 @@ export function createTddExecutor(deps: TddDeps): Executor {
         decision = await deps.decideTestChange({ goal, files }, signal);
       } catch (error) {
         if (signal.aborted) throw error;
-        throw new TddBlocked(`tamper check: the test change request could not be decided (${error instanceof Error ? error.message : String(error)})`, gateOutput);
+        throw new TddBlocked(
+          "tamper check: the test change request could not be decided",
+          `${error instanceof Error ? error.message : String(error)}\n${gateOutput}`.trim(),
+        );
       }
       if (signal.aborted) throw new Error("cancelled");
       if (!decision.approved) {
-        throw new TddBlocked(`tamper check: the test change request for ${list} was refused${decision.reason ? `: ${decision.reason}` : ""}`, gateOutput);
+        throw new TddBlocked(
+          `tamper check: the test change request for ${list} was refused`,
+          `${decision.reason ?? ""}\n${gateOutput}`.trim(),
+        );
       }
       for (const f of files) {
         const now = await read(worktree, f.path);
-        if (now) locks.set(f.path, now);
-        else locks.delete(f.path);
+        if (now) {
+          guard.set(f.path, now);
+          if (locks.has(f.path)) locks.set(f.path, now);
+        } else {
+          guard.delete(f.path);
+          locks.delete(f.path);
+        }
       }
       event("session.warning", { kind: "tdd.test_change_approved", message: `test change approved: ${list}` });
       return files.map((f) => f.path);
     }
 
-    const done = (async (): Promise<ExecutorResult> => {
-      try {
-        return await body();
-      } catch (error) {
-        // The work stays in its worktree (marked failed) so nothing is lost and nothing is force-deleted.
-        if (created) await deps.manager.markFailed(key).catch(() => undefined);
-        if (controller.signal.aborted) return { status: "cancelled", summary: "tdd cancelled" };
-        const message = error instanceof Error ? error.message : String(error);
-        if (error instanceof TddBlocked) {
-          return {
-            status: "failed",
-            summary: `TDD blocked: ${message}`,
-            error: `TDD blocked: ${message}`, // the Supervisor reports `error` as the failure reason
-            ...(error.detail ? { rawOutput: error.detail } : {}),
-          };
-        }
-        return { status: "failed", summary: `tdd: ${message}`, error: `tdd: ${message}` };
-      }
-    })();
-
-    active.set(taskId, { controller, done });
     try {
-      return await done;
-    } finally {
-      active.delete(taskId);
+      return await body();
+    } catch (error) {
+      // The work stays in its worktree (marked failed) so nothing is lost and nothing is force-deleted.
+      if (key) await deps.manager.markFailed(key).catch(() => undefined);
+      if (controller.signal.aborted) return { status: "cancelled", summary: "tdd cancelled" };
+      const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof TddBlocked) {
+        return {
+          status: "failed",
+          summary: `TDD blocked: ${message}`,
+          error: `TDD blocked: ${message}`, // the Supervisor reports `error` as the failure reason
+          ...(error.detail ? { rawOutput: error.detail } : {}),
+        };
+      }
+      return { status: "failed", summary: `tdd: ${message}`, error: `tdd: ${message}` };
     }
   }
 
@@ -576,12 +673,14 @@ export function createTddExecutor(deps: TddDeps): Executor {
     }),
     run: (task) =>
       execute(task.taskId, { contract: task.contract, prompt: task.prompt, ...(task.messages ? { messages: task.messages } : {}) }, task.projectPath, false),
+    // The review's findings live in `messages`; the coder only sees them if they are in its prompt.
     continue: (input) =>
       execute(
         input.taskId,
-        { contract: input.contract, prompt: input.nextPhaseDirective ?? input.contract.goal, messages: input.messages },
+        { contract: input.contract, prompt: input.contract.goal, messages: input.messages },
         input.projectPath,
         true,
+        continuationText(input.messages, input.mode, input.nextPhaseDirective),
       ),
     async cancel(taskId) {
       const run = active.get(taskId);
@@ -591,6 +690,13 @@ export function createTddExecutor(deps: TddDeps): Executor {
       }
     },
   };
+}
+
+/** Review feedback for a continued round, as the CLI executors phrase it. */
+function continuationText(messages: ProtocolMessage[], mode: RunMode | undefined, directive: string | undefined): string {
+  if (mode === "autopilot") return `\n\n${buildAutonomousContinuationPrompt(messages, directive)}`;
+  const steering = directive ? `\n\nNext-phase directive:\n${directive}` : "";
+  return `${steering}\n\n${buildSupervisedContinuationPrompt(messages)}`;
 }
 
 function quoteArg(arg: string): string {
