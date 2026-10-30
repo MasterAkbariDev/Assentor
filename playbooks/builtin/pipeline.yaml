@@ -1,0 +1,54 @@
+id: pipeline
+title: Pipeline
+description: Requirements, then design, then a build after approval, then a review panel with a security veto. The build is one executor today.
+readOnly: false
+teams:
+  analysis:
+    description: Debates the requirements; a devil's advocate challenges them.
+    seats:
+      - { provider: AUTO, role: requirements-analyst }
+      - { provider: AUTO, role: devils-advocate }
+  design:
+    description: Debates the design the build will follow.
+    seats:
+      - { provider: AUTO, role: architect }
+      - { provider: AUTO, role: planner }
+  builders:
+    # The runner runs ONE executor for the build stage and does not read these seats.
+    # engineer, test-writer and docs-writer are metadata until it runs seats in sequence.
+    description: "Intended order: engineer, then test-writer, then docs-writer. Today the build stage is one executor and the seats are metadata. Waits for approval."
+    seats:
+      - { provider: AUTO, role: engineer, permissions: edit }
+      - { provider: AUTO, role: test-writer, permissions: edit }
+      - { provider: AUTO, role: docs-writer, permissions: edit }
+  reviewers:
+    description: Reviews the build; a security finding can veto it.
+    seats:
+      - { provider: AUTO, role: code-reviewer }
+      - { provider: AUTO, role: security-reviewer }
+      - { provider: AUTO, role: test-reviewer }
+stages:
+  - id: requirements
+    kind: plan
+    team: analysis
+    strategy: debate
+    options: { artifact: requirements.md }
+    next: design
+  - id: design
+    kind: plan
+    team: design
+    strategy: debate
+    options: { artifact: design.md }
+    next: build
+  - id: build
+    kind: execute
+    team: builders
+    requireApproval: true
+    options: { artifact: test-report.md }
+    next: review
+  - id: review
+    kind: review
+    team: reviewers
+    strategy: panel
+    options: { policy: security-veto, maxRounds: 3 }
+    onNeedsWork: build

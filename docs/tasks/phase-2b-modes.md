@@ -204,6 +204,8 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 ### T02B-09 · Playbooks: Pipeline, Explore, Plan
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T02B-01, T03-01, T03-04
 
+**Signed off by the owner (2026-10-30):** merged with both deviations approved — the mode wiring beyond the card's file list (`src/modes/playbook-modes.ts`, registry entries) and docs-writer inside the build stage instead of after review. Review NEEDS_WORK → fixed in `044d5dc`.
+
 **Allowed files** — create: `playbooks/builtin/{pipeline,explore,plan}.yaml`, `tests/unit/playbooks-modes.test.ts`.
 
 **Spec**
@@ -213,6 +215,15 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 - Same validation rules as T03-04 (prompt ids exist; read-only playbooks have no edit seats).
 
 **Tests** — parse, prompt ids exist, read-only rules.
+
+**Status: implemented, awaiting Sonnet review** (branch `claude/card-t02b-09`). `pipeline`, `explore` and `plan` build their `SessionSpec` from the built-in playbooks (`playbooks/builtin/{pipeline,explore,plan}.yaml`) through `buildSession`, and `validate` refuses bad config. `available` stays false: `assentor run` routing through `prepareModeSession` is a separate Danger follow-up. Decisions:
+- Files: the three playbooks; `src/modes/playbook-modes.ts` (new: a synchronous built-in loader and the config team checks, because `buildSession` and `validate` are sync); three entries in `src/modes/registry.ts`; `tests/unit/playbooks-modes.test.ts`. Pinned lists updated for the new playbooks and modes: `builtin-playbooks.test.ts` and `playbook-library.test.ts` (9 → 12 built-ins, explore and plan read-only), and `mode-session.test.ts` (the mode list; its "cannot run" and skip-executor checks now use `swarm`, which still has no builder).
+- A playbook's stage `team` is a config team name, bound by the host's `seatsFor`. `validate` refuses a missing team, an edit seat in explore or plan, and an execute stage whose team has no edit seat. Team seat counts are checked by the strategy at prepare time.
+- Graph shape (the runner's rules, not the card's wording): an edit stage must be followed by its review, so `docs-writer` sits inside `build` rather than after `review` (card order was review, then docs-writer; a deviation awaiting the owner's sign-off); negotiation strategies need at least two debating seats, so each card role pair is a debate (`requirements-analyst` + `devils-advocate`, then `architect` + `planner`); explore is one three-seat debate, then a summarizer debate with a devil's advocate.
+- The `build` stage is ONE executor: `session-stages.ts` `execute()` calls `createExecutor(stage)` once and never reads the team's seats. engineer, test-writer and docs-writer are metadata until the runner runs seats in sequence; nothing runs them one after another today.
+- Not wired, metadata only: `options.angle` (seat order; per-seat angles need the host to put them in each prompt), `options.citations`, `options.artifact` and `options.output`. No strategy or runner reads them yet. `synthesize` is not used: its aggregator must be a config seat id, which a playbook cannot name.
+- `plan` keeps `editsCode: true` because it writes task cards under `docs/`; that write is host-side, since the graph has no edit stage.
+- Tests: each mode builds a spec that passes `validateSessionGraph`; each runs through `prepareModeSession` on mock seats (explore and plan never call an executor; pipeline's build waits for approval, then the review runs); explore and plan have no execute stage or edit seat; invalid config is refused with no events and no `.assentor` directory.
 
 ---
 
