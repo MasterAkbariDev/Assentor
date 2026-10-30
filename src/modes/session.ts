@@ -12,8 +12,9 @@ import {
 import { createStageRunners, type StageRunnerDeps } from "../orchestrator/session-stages.js";
 import type { EngineEventDraft } from "../protocol/events.js";
 import type { Executor, ExecutorResult } from "../providers/executors/types.js";
-import { WorktreeError, type WorktreeManager } from "../worktrees/manager.js";
+import type { WorktreeManager } from "../worktrees/manager.js";
 import {
+  ApprovalDeniedError,
   EXISTING_WORK_STRATEGY,
   getMode,
   type ControllerWorktrees,
@@ -375,10 +376,13 @@ function gateWorktrees(
     applyTo: async (target, seat, options) => {
       if (target === "main" && autonomy !== "autopilot") {
         const { files } = await worktrees.diff(seat);
-        const what = options.message ? `"${options.message.slice(0, 200)}" ` : "";
-        const question = `Apply ${what}(${files.length} file${files.length === 1 ? "" : "s"} from ${seat.seatId}) to your branch (${options.strategy})?`;
+        // One line for the user: control characters and newlines in the message collapse to spaces.
+        const oneLine = (text: string) => text.replace(/[\s\p{Cc}]+/gu, " ").trim().slice(0, 200);
+        const what = options.message ? `"${oneLine(options.message)}" ` : "";
+        const within = options.allowedPaths?.length ? `, only in ${oneLine(options.allowedPaths.join(", "))}` : "";
+        const question = `Apply ${what}(${files.length} file${files.length === 1 ? "" : "s"} from ${seat.seatId}${within}) to your branch (${options.strategy})?`;
         if (!(await approve({ question }))) {
-          throw new WorktreeError(`the user did not approve applying ${seat.seatId} to the main checkout`);
+          throw new ApprovalDeniedError(`the user did not approve applying ${seat.seatId} to the main checkout`);
         }
       }
       return worktrees.applyTo(target, seat, options);

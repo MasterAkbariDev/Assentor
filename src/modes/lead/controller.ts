@@ -21,7 +21,7 @@ import type { ExecutorResult } from "../../providers/executors/types.js";
 import { runVerificationGates } from "../../review/verification-gates.js";
 import type { JobOutcome } from "../../seats/scheduler.js";
 import { ControllerActionSchema, type ControllerAction } from "../controller.js";
-import type { ModeController, ModeControllerInput, ModeControllerResult } from "../registry.js";
+import { ApprovalDeniedError, type ModeController, type ModeControllerInput, type ModeControllerResult } from "../registry.js";
 import { costRank, type RosterEntry } from "../roster.js";
 import { LEAD_AGENT_STRATEGY, LeadConfigSchema, type LeadConfig } from "./config.js";
 import { applyBoardOp } from "./board.js";
@@ -92,6 +92,8 @@ const TaskRecordSchema = z.object({
   integrated: z.boolean(),
   /** The user chose to leave this accepted work out after an integration conflict; its worktree is kept. */
   abandoned: z.boolean().default(false),
+  /** A worktree with earlier work on this task was gone on resume; the next run is told. */
+  lostWork: z.boolean().default(false),
 });
 type TaskRecord = z.infer<typeof TaskRecordSchema>;
 
@@ -206,7 +208,7 @@ class LeadController implements ModeController {
     if (!host.roster) throw new Error("lead mode needs host.roster (who it may hire)");
     if (!worktrees) throw new Error("lead mode needs a worktree manager (agents work in their own worktrees)");
     this.state = await this.load();
-    this.library = await PromptLibrary.load({ projectPath: this.input.deps.projectPath }).catch(() => undefined);
+    this.library = host.prompts ?? (await PromptLibrary.load({ projectPath: this.input.deps.projectPath }).catch(() => undefined));
 
     const onAbort = () => this.stop.abort();
     if (signal.aborted) onAbort();
@@ -585,8 +587,12 @@ class LeadController implements ModeController {
     this.emit({ type: "task.assigned", data: { taskId: task.id, seatId: seat.id } });
     this.emit({ type: "task.status", data: { taskId: task.id, status: "in_progress" } });
 
-    const feedback = task.status === "rejected" ? task.rejectionReason : undefined;
-    const done = this.runAgent(task, this.toSeat(seat), stageId, worktree, feedback).then((outcome) => {
+    const feedback = [
+      task.status === "rejected" && task.rejectionReason ? `The lead rejected the previous attempt: ${task.rejectionReason}` : "",
+      record.lostWork ? "Earlier work on this task is gone (its worktree was removed); start again from this working copy." : "",
+    ].filter(Boolean).join("\n");
+    record.lostWork = false;
+    const done = this.runAgent(task, this.toSeat(seat), stageId, worktree, feedback || undefined).then((outcome) => {
       this.finished.push(outcome);
     });
     this.running.set(key(task.id), { seatId: seat.id, done });
@@ -649,23 +655,33 @@ class LeadController implements ModeController {
       let diff = await this.input.worktrees!.diff(seatKey);
       let outside = this.outsideOwned(task, diff.files);
       let gates: Awaited<ReturnType<LeadController["gates"]>>;
+      let gateFiles: string[] = [];
       const gateProblems: string[] = [];
       if (outside.length > 0 && this.gatesEnabled()) {
         // Do not run commands from a worktree that changed files it does not own.
         gateProblems.push("gates not run: the run changed files outside the task's owned paths");
       } else {
-        // Gate processes take no signal; stop waiting on cancel, like review().
+        // Gate processes take no signal; stop waiting on cancel, like review(). An abandoned gate runs to its own timeout.
         const ran = await Promise.race([this.gates(worktree.path), this.stopped.then(() => "stopped" as const)]);
         if (ran === "stopped" || this.stop.signal.aborted) return fail("cancelled");
         gates = ran;
-        // Gates can write files (formatters, generated code): the evidence is the diff after them.
+        // Gates can write files (formatters, generated code): what lands is the diff after them.
+        const agentFiles = new Set(diff.files);
         diff = await this.input.worktrees!.diff(seatKey);
+        gateFiles = diff.files.filter((file) => !agentFiles.has(file));
         outside = this.outsideOwned(task, diff.files);
       }
-      const checks = verifyReportClaims(parsed.report, { diffFiles: diff.files, ...(gates ? { gateRuns: gates.runs } : {}) }, { ignoreCase: process.platform !== "linux" });
+      // Files the gates created are not the agent's claims to check; they are named as the gates' own.
+      const byGate = new Set(gateFiles);
+      const agentDiff = diff.files.filter((file) => !byGate.has(file));
+      const checks = verifyReportClaims(parsed.report, { diffFiles: agentDiff, ...(gates ? { gateRuns: gates.runs } : {}) }, { ignoreCase: process.platform !== "linux" });
       const problems = checks.filter((c) => c.kind !== "test_claim_unverified").map((c) => c.detail);
       const warnings = checks.filter((c) => c.kind === "test_claim_unverified").map((c) => c.detail);
-      problems.push(...outside.map((file) => `changes ${file}, outside the task's owned paths`), ...gateProblems);
+      warnings.push(...gateFiles.filter((file) => !outside.includes(file)).map((file) => `${file} was created by the gate run`));
+      problems.push(
+        ...outside.map((file) => (byGate.has(file) ? `${file} was created by the gate run, outside the task's owned paths` : `changes ${file}, outside the task's owned paths`)),
+        ...gateProblems,
+      );
       for (const run of gates?.runs ?? []) if (!run.passed) problems.push(`gate "${run.command}" failed`);
       this.seatEvent(seat, "seat.done", { ok: true, summary: clip(parsed.report.summary, 500) });
       return { ...base, report: parsed.report, problems, warnings, diffFiles: diff.files };
@@ -770,6 +786,8 @@ class LeadController implements ModeController {
         if (!applied.ok) failure = `conflicts with your branch in ${applied.conflicts.join(", ") || "unknown files"}`;
       } catch (error) {
         if (this.stop.signal.aborted) throw new Refused("cancelled");
+        // A denial is not a failure: the task stays accepted for a later integrate.
+        if (error instanceof ApprovalDeniedError) throw new Refused(`${prefix}the user declined integrating ${task.id} for now; it stays accepted`);
         // Ownership, a dirty branch, a hook, a denial: the manager left the branch as it was.
         failure = `was not applied: ${clip(message(error), 500)}`;
       }
@@ -823,6 +841,7 @@ class LeadController implements ModeController {
       diffFiles: [],
       integrated: false,
       abandoned: false,
+      lostWork: false,
     });
   }
 
@@ -1037,6 +1056,24 @@ class LeadController implements ModeController {
     );
   }
 
+  /** The library's `lead-report-instructions` prompt (T02B-10), else the inline text. */
+  private reportInstructions(task: LeadTask): string {
+    if (this.library?.has("lead-report-instructions")) {
+      try {
+        return this.library.render("lead-report-instructions", { taskId: task.id });
+      } catch (error) {
+        this.emit({ type: "session.warning", data: { kind: "lead-prompt", message: `the report instructions did not render, using the built-in ones: ${message(error)}` } });
+      }
+    }
+    return [
+      "End your reply with a fenced json report:",
+      "```json",
+      `{"taskId": "${task.id}", "status": "done | in_progress | blocked | needs_input | failed", "summary": "…", "filesChanged": ["…"], "testsRun": [{"command": "…", "passed": true}], "confidence": 0.8, "blockers": [], "questions": [], "suggestedNext": "…"}`,
+      "```",
+      "Report only what you did: the lead checks it against your diff and the test gates.",
+    ].join("\n");
+  }
+
   private agentPrompt(task: LeadTask, feedback: string | undefined): string {
     return [
       `You are a ${task.role ?? "engineer"} on a team run by a lead. Do only this task, in this working copy.`,
@@ -1046,15 +1083,9 @@ class LeadController implements ModeController {
       task.ownedPaths.length
         ? `You may change only: ${task.ownedPaths.join(", ")}. Changes elsewhere are refused.`
         : "This task is read-only: change no files.",
-      feedback ? `The lead rejected the previous attempt: ${feedback}` : "",
+      feedback ?? "",
       `Overall goal, for context:\n${clip(this.input.goal, 2000)}`,
-      [
-        "End your reply with a fenced json report:",
-        "```json",
-        `{"taskId": "${task.id}", "status": "done | in_progress | blocked | needs_input | failed", "summary": "…", "filesChanged": ["…"], "testsRun": [{"command": "…", "passed": true}], "confidence": 0.8, "blockers": [], "questions": [], "suggestedNext": "…"}`,
-        "```",
-        "Report only what you did: the lead checks it against your diff and the test gates.",
-      ].join("\n"),
+      this.reportInstructions(task),
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -1089,12 +1120,30 @@ class LeadController implements ModeController {
     const state = LeadStateSchema.parse(JSON.parse(raw));
     // Worktree paths come from the manager, never from the file: a path that disagrees refuses the resume.
     const known = new Map((await this.input.worktrees!.list(this.input.sessionId)).map((w) => [w.seatId, path.resolve(w.path)]));
-    for (const record of Object.values(state.tasks)) {
+    /** Tasks whose assignee's worktree is gone. */
+    const gone = new Set<string>();
+    for (const [taskKey, record] of Object.entries(state.tasks)) {
       for (const [seatId, worktree] of Object.entries(record.worktrees)) {
         const actual = known.get(worktree.key);
-        // Gone (cleaned up): forget it; a new run creates a fresh one.
-        if (actual === undefined) delete record.worktrees[seatId];
-        else if (actual !== path.resolve(worktree.path)) throw new Error(`cannot resume: lead state names ${worktree.path} for worktree ${worktree.key}, the manager has ${actual}`);
+        if (actual === undefined) {
+          // Gone (cleaned up): forget it, say so, and let the next run know; a new run creates a fresh one.
+          delete record.worktrees[seatId];
+          record.lostWork = true;
+          if (state.board.tasks.find((t) => key(t.id) === taskKey)?.assignee === seatId) gone.add(taskKey);
+          this.emit({ type: "session.warning", data: { kind: "lead-worktree", message: `worktree ${worktree.key} (${worktree.path}) is gone; its work is lost` } });
+        } else if (actual !== path.resolve(worktree.path)) throw new Error(`cannot resume: lead state names ${worktree.path} for worktree ${worktree.key}, the manager has ${actual}`);
+      }
+    }
+    for (const task of state.board.tasks) {
+      const record = state.tasks[key(task.id)];
+      if (!record || !gone.has(key(task.id))) continue;
+      if (task.status === "accepted" && !record.integrated && record.diffFiles.length > 0) {
+        record.abandoned = true;
+        state.log.push(`resume: ${task.id} was accepted but its worktree is gone, so its work is left out`);
+      } else if (task.status === "in_review") {
+        const rejected = applyBoardOp(state.board, { op: "reject", taskId: task.id, reason: "worktree gone: the work to review was removed" });
+        if (rejected.error) throw new Error(`cannot resume: ${rejected.error}`);
+        state.board = rejected.board;
       }
     }
     // Runs that were going when the session stopped have no result: reject them so the lead decides again.

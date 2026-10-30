@@ -6,6 +6,7 @@ import type { Seat, SessionSpecSchema } from "../core/seats.js";
 import type { StageRunnerDeps } from "../orchestrator/session-stages.js";
 import type { StageRunners } from "../orchestrator/session-runner.js";
 import type { EngineEventDraft } from "../protocol/events.js";
+import type { PromptLibrary } from "../prompts/library.js";
 import type { Usage } from "../seats/scheduler.js";
 import type { WorktreeManager } from "../worktrees/manager.js";
 import { leadConfigProblems } from "./lead/config.js";
@@ -94,6 +95,13 @@ export interface ModeHostServices {
   }): Promise<string>;
   /** Who may be hired right now (`buildRoster`, T02B-04): installed, authenticated, allowed by policy. */
   roster?(): readonly RosterEntry[] | Promise<readonly RosterEntry[]>;
+  /** The prompt library the host loaded (layers it chose). Without it a controller loads the default layers. */
+  prompts?: PromptLibrary;
+}
+
+/** Thrown by a gated action the user did not approve (e.g. `worktrees.applyTo("main")`); nothing changed. */
+export class ApprovalDeniedError extends Error {
+  override name = "ApprovalDeniedError";
 }
 
 /** What a controller may do with worktrees. `applyTo("main")` passes the session's approval floor. */
@@ -127,7 +135,8 @@ export interface ModeControllerInput extends ModeBuildInput {
   deps: StageRunnerDeps;
   /**
    * When the host provides one: worktrees for agent seats. Applying to `"main"`
-   * asks the user first unless autonomy is `autopilot`; a denial throws.
+   * asks the user first unless autonomy is `autopilot`; a denial throws
+   * `ApprovalDeniedError`.
    */
   worktrees?: ControllerWorktrees;
   /** Host services (model calls, roster). */

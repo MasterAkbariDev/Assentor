@@ -23,6 +23,7 @@ import {
   type Seat,
   type StageRunnerDeps,
 } from "../../src/index.js";
+import { builtinPromptDir, PromptLibrary } from "../../src/prompts/index.js";
 import { SeatScheduler, type SchedulerOptions } from "../../src/seats/index.js";
 
 const exec = promisify(execFile);
@@ -105,6 +106,8 @@ interface SetupOptions {
   tokensPerTurn?: number;
   /** Wraps the worktree manager the session gets (fault injection). */
   wrap?: (manager: WorktreeManager) => WorktreeManager;
+  /** Built-in prompt layer; default the shipped one. The user layer is always empty (hermetic). */
+  builtinDir?: string;
 }
 
 async function setup(options: SetupOptions): Promise<Setup> {
@@ -160,7 +163,12 @@ async function setup(options: SetupOptions): Promise<Setup> {
     config,
     deps,
     worktrees: options.wrap ? options.wrap(manager) : manager,
-    host: { askSeat: lead.askSeat, roster: options.roster ?? (() => ROSTER) },
+    host: {
+      askSeat: lead.askSeat,
+      roster: options.roster ?? (() => ROSTER),
+      // Pinned layers: never the machine's ~/.assentor/prompts.
+      prompts: await PromptLibrary.load({ builtinDir: options.builtinDir ?? builtinPromptDir(), userDir: path.join(repo, ".no-user-prompts"), projectPath: repo }),
+    },
     signal: controller.signal,
     ...(options.resume ? { resume: true } : {}),
     emit: (e) => {
@@ -220,7 +228,12 @@ describe("Lead controller", () => {
     expect(of(s.events, "task.escalated")).toEqual([expect.objectContaining({ taskId: "T1", from: "mock/cheap", to: "mock/strong" })]);
     expect(of(s.events, "task.accepted")).toHaveLength(1);
     // Supervised: applying to the main checkout asked first (the session's floor).
-    expect(s.questions).toEqual(['Apply "assentor lead: T1 Add x" (1 file from agent-2.w2) to your branch (squash)?']);
+    expect(s.questions).toEqual(['Apply "assentor lead: T1 Add x" (1 file from agent-2.w2, only in a) to your branch (squash)?']);
+    // The agent prompt carries the library's report instructions (T02B-10).
+    expect(s.runs[0]!.task.prompt).toContain("This addendum follows your task prompt");
+    // The lead prompt is the shipped lead.md.
+    expect(s.lead.prompts[0]).toContain("Add x to module a");
+    expect(s.lead.prompts[0]).not.toContain("You are the lead of a team of coding agents. You never edit code yourself");
     expect(of(s.events, "user.answer")).toEqual([expect.objectContaining({ answer: "approve" })]);
     expectTerminalSeats(s.events);
     const state = await leadState(s);
@@ -254,7 +267,7 @@ describe("Lead controller", () => {
     expect(refused?.reason).toContain("reported file a/y.ts is not in the diff");
     expect(refused?.reason).toContain('"pnpm test" is reported passed, but a gate run failed');
     expect(s.lead.prompts[1]).toContain("reported file a/y.ts is not in the diff");
-    expect(s.lead.prompts[2]).toContain("accepted false: the report for T1 does not check out");
+    expect(s.lead.prompts[2]).toContain("the report for T1 does not check out");
     expect(await git(s.repo, "log", "--format=%s")).toBe("init");
   });
 
@@ -291,11 +304,14 @@ describe("Lead controller", () => {
   it("the turn limit ends the session budget_exceeded with the board saved", async () => {
     const s = await setup({
       lead: { limits: { maxLeadTurns: 2 } },
+      // No built-in lead.md: the controller's fallback template renders the same variables.
+      builtinDir: path.join(os.tmpdir(), "assentor-no-builtin-prompts"),
       script: [turn(plan(T1)), turn(plan({ ...T1, title: "Add x again" })), turn({ action: "finish", summary: "never" })],
     });
     const result = await s.run();
     expect(result).toMatchObject({ status: "budget_exceeded", reason: expect.stringContaining("all 2 turns") });
     expect(s.lead.prompts).toHaveLength(2);
+    expect(s.lead.prompts[0]!.startsWith("You are the lead of a team of coding agents.")).toBe(true);
     expect((await leadState(s)).board.tasks).toEqual([expect.objectContaining({ id: "T1", status: "backlog" })]);
   });
 
@@ -563,6 +579,26 @@ describe("Lead controller", () => {
     expect(refusals(s.events)[0]?.reason).toContain("gates not run");
   });
 
+  it("files the gate run created are named as the gate's, not blamed on the agent", async () => {
+    const config = parseAssentorConfig({ verification: { commands: { test: "pnpm test" } } });
+    const s = await setup({
+      lead: { policy: { reviewBeforeAccept: false } },
+      supervisor: {
+        verification: config.verification,
+        runVerificationCommand: async (_command, cwd) => {
+          await fs.writeFile(path.join(cwd, "coverage.txt"), "100%\n");
+          return { stdout: "", stderr: "", code: 0 };
+        },
+      },
+      script: [turn(plan(T1), assign("T1")), turn({ action: "accept", taskId: "T1" }), turn({ action: "reject", taskId: "T1", reason: "x" }, { action: "finish", summary: "x" })],
+      agents: { cheap: writes("a/x.ts") },
+    });
+    await s.run();
+    const reason = String(refusals(s.events)[0]?.reason);
+    expect(reason).toContain("coverage.txt was created by the gate run, outside the task's owned paths");
+    expect(reason).not.toContain("not reported");
+  });
+
   it("cancel while the gates run settles without waiting for them", async () => {
     const config = parseAssentorConfig({ verification: { commands: { test: "pnpm test" } } });
     let gateStarted = false;
@@ -580,6 +616,60 @@ describe("Lead controller", () => {
     expect((await done).status).toBe("cancelled");
     expectTerminalSeats(s.events);
     expect((await leadState(s)).board.tasks).toEqual([expect.objectContaining({ id: "T1", status: "rejected" })]);
+  });
+
+  it("a user denying the landing is a plain refusal: the task stays accepted and lands later", async () => {
+    let applies = 0;
+    const s = await setup({
+      lead: { policy: { reviewBeforeAccept: false } },
+      answer: (question) => (question.startsWith("Apply") && (applies += 1) === 1 ? "deny" : "approve"),
+      script: [
+        turn(plan(T1), assign("T1")),
+        turn({ action: "accept", taskId: "T1" }, { action: "integrate", taskIds: ["T1"] }),
+        turn({ action: "integrate", taskIds: ["T1"] }, { action: "finish", summary: "landed" }),
+      ],
+      agents: { cheap: writes("a/x.ts") },
+    });
+    expect(await s.run()).toMatchObject({ status: "completed", reason: "landed" });
+    expect(refusals(s.events)).toEqual([
+      expect.objectContaining({ action: "integrate", reason: "the user declined integrating T1 for now; it stays accepted" }),
+    ]);
+    expect(s.questions.filter((q) => q.includes("keep going"))).toEqual([]);
+    expect(await git(s.repo, "log", "-1", "--format=%s")).toBe("assentor lead: T1 Add x");
+  });
+
+  it("resume with a worktree gone: warns, leaves accepted work out, rejects the review and tells the next agent", async () => {
+    const T2 = { id: "T2", title: "Add y", ownedPaths: ["b"] };
+    const writesY: Agent = async (task) => {
+      await fs.mkdir(path.join(task.projectPath, "b"), { recursive: true });
+      await fs.writeFile(path.join(task.projectPath, "b", "y.ts"), "y\n");
+      return { status: "completed", summary: report("T2", { filesChanged: ["b/y.ts"] }) };
+    };
+    const first = await setup({
+      lead: { policy: { reviewBeforeAccept: false } },
+      script: [turn(plan(T1, T2), assign("T1")), turn({ action: "accept", taskId: "T1" }, assign("T2", "strong"))],
+      agents: { cheap: writes("a/x.ts"), strong: writesY },
+    });
+    expect((await first.run()).status).toBe("blocked"); // the script ran out with T2 in review
+    for (const seatId of ["agent-1.w1", "agent-2.w2"]) await first.manager.discard({ sessionId: first.sessionId, seatId }, { force: true });
+
+    const resumed = await setup({
+      repo: first.repo,
+      sessionId: first.sessionId,
+      resume: true,
+      lead: { policy: { reviewBeforeAccept: false } },
+      script: [
+        turn({ action: "reassign", taskId: "T2", seatId: "agent-2" }),
+        turn({ action: "reject", taskId: "T2", reason: "enough" }, { action: "finish", summary: "T1 lost" }),
+      ],
+      agents: { strong: writesY },
+    });
+    expect(await resumed.run()).toMatchObject({ status: "completed", reason: "T1 lost" });
+    expect(of(resumed.events, "session.warning").map((w) => w.kind)).toEqual(["lead-worktree", "lead-worktree"]);
+    expect(resumed.runs[0]!.task.prompt).toContain("worktree gone");
+    expect(resumed.runs[0]!.task.prompt).toContain("Earlier work on this task is gone");
+    const state = (await leadState(resumed)) as unknown as { tasks: Record<string, { abandoned: boolean; integrated: boolean }> };
+    expect(state.tasks.t1).toMatchObject({ abandoned: true, integrated: false });
   });
 
   it("a conflict on integrate goes to the user; stopping keeps the branch and the work", async () => {

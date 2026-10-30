@@ -69,6 +69,7 @@ export {
   type ModeHostServices,
   type ControllerWorktrees,
   type ApprovalRequest,
+  ApprovalDeniedError,
   type SessionSpecInput,
 } from "./registry.js";
 export { LeadConfigSchema, leadConfigProblems, LEAD_AGENT_STRATEGY, type LeadConfig } from "./lead/config.js";
