@@ -20,6 +20,7 @@ import {
   type StageSpec,
 } from "../../src/index.js";
 import { validateSessionGraph } from "../../src/orchestrator/session-runner.js";
+import { builtinPlaybook } from "../../src/modes/playbook-modes.js";
 import { SeatScheduler } from "../../src/seats/index.js";
 
 // Playbook-backed modes: pipeline, explore, plan (T02B-09).
@@ -165,13 +166,20 @@ describe("playbook modes build valid session graphs", () => {
 });
 
 describe("explore and plan are read-only", () => {
-  it.each(["explore", "plan"] as const)("%s: no execute stage and only read-only seats", (id) => {
+  it.each(["explore", "plan"] as const)("%s: no execute stage and only read-only seats in its playbook", (id) => {
     const spec = getMode(id)!.buildSession!({ goal: GOAL, title: "T", autonomy: "supervised", config });
     expect(spec.stages.some((s) => s.kind === "execute")).toBe(false);
-    for (const stage of spec.stages) {
-      const team = config.teams[stage.team!]!;
-      expect(team.seats.filter((s) => s.permissions === "edit")).toEqual([]);
-    }
+    const playbook = builtinPlaybook(id);
+    expect(playbook.readOnly).toBe(true);
+    const seats = Object.values(playbook.teams).flatMap((t) => t.seats);
+    expect(seats.length).toBeGreaterThan(0);
+    expect(seats.every((s) => s.permissions === "read-only")).toBe(true);
+  });
+
+  it("a missing built-in playbook is a ModeValidationError, not a raw ENOENT", () => {
+    expect(problems(() => builtinPlaybook("no-such-playbook"))).toEqual([
+      expect.stringContaining('built-in playbook "no-such-playbook": cannot read'),
+    ]);
   });
 
   it("explore and plan are not CLI-available; pipeline is not available either; editsCode matches", () => {
@@ -219,6 +227,35 @@ describe("each mode runs through prepareModeSession on mock seats", () => {
       "review",
     ]);
     expect(events.at(-1)).toMatchObject({ type: "session.completed" });
+  });
+});
+
+describe("manual autonomy", () => {
+  it.each(IDS)("%s: every non-review stage requires approval", async (id) => {
+    const { value } = await setup(id);
+    const spec = prepareModeSession({ ...value, autonomy: "manual" }).spec!;
+    for (const stage of spec.stages) expect(stage.requireApproval ?? false).toBe(stage.kind !== "review");
+  });
+});
+
+describe("cancel", () => {
+  it("explore: aborting the signal during a debate cancels the session and calls no executor", async () => {
+    const abort = new AbortController();
+    const { value, events, executors } = await setup("explore");
+    let started = false;
+    value.deps = {
+      ...value.deps,
+      runStep: ({ signal }) => {
+        started = true;
+        return new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+      },
+    };
+    const running = prepareModeSession({ ...value, signal: abort.signal }).run();
+    await until(() => started);
+    abort.abort();
+    expect(await running).toMatchObject({ status: "cancelled", mode: "explore" });
+    expect(executors()).toBe(0);
+    expect(events.at(-1)).toMatchObject({ type: "session.failed", data: { status: "cancelled" } });
   });
 });
 

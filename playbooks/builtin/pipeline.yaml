@@ -1,6 +1,6 @@
 id: pipeline
 title: Pipeline
-description: Requirements, then design, then a build after approval (docs included), then a review panel with a security veto.
+description: Requirements, then design, then a build after approval, then a review panel with a security veto. The build is one executor today.
 readOnly: false
 teams:
   analysis:
@@ -14,7 +14,9 @@ teams:
       - { provider: AUTO, role: architect }
       - { provider: AUTO, role: planner }
   builders:
-    description: Builds the change, its tests and its docs in their own worktrees. Waits for approval.
+    # The runner runs ONE executor for the build stage and does not read these seats.
+    # engineer, test-writer and docs-writer are metadata until it runs seats in sequence.
+    description: "Intended order: engineer, then test-writer, then docs-writer. Today the build stage is one executor and the seats are metadata. Waits for approval."
     seats:
       - { provider: AUTO, role: engineer, permissions: edit }
       - { provider: AUTO, role: test-writer, permissions: edit }
