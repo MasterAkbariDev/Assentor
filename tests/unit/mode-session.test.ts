@@ -22,6 +22,7 @@ import {
   type SeatStepRunner,
   type StageRunnerDeps,
   type StageSpec,
+  type WorktreeManager,
 } from "../../src/index.js";
 import { SeatScheduler } from "../../src/seats/index.js";
 
@@ -129,11 +130,13 @@ function problems(run: () => unknown): string[] {
 
 /** A test definition for a dynamic mode. */
 function dynamicMode(createController: ModeDefinition["createController"]): ModeDefinition {
-  return { ...getMode("lead")!, createController };
+  // Lead's own validate needs modes.lead; these tests run their own controller.
+  const { validate: _leadValidate, ...lead } = getMode("lead")!;
+  return { ...lead, createController };
 }
 
 describe("mode contract", () => {
-  it("each mode's builder matches its kind; solo, review and negotiate build sessions; only solo is CLI-available", () => {
+  it("each mode's builder matches its kind; solo, review, negotiate and lead can run; only solo is CLI-available", () => {
     for (const mode of listModes()) {
       if (mode.kind === "static") expect(mode.createController).toBeUndefined();
       else expect(mode.buildSession).toBeUndefined();
@@ -142,6 +145,7 @@ describe("mode contract", () => {
       "solo",
       "review",
       "negotiate",
+      "lead",
       "pipeline",
       "debug",
       "explore",
@@ -287,8 +291,14 @@ describe("failure paths", () => {
 
   it("a mode that cannot run, an unknown mode or autonomy, and an empty goal are refused", async () => {
     const { value, events } = await input();
+    expect(problems(() => prepareModeSession({ ...value, mode: "cascade" }))).toEqual([
+      'mode "cascade" cannot run yet (no createController)',
+    ]);
     expect(problems(() => prepareModeSession({ ...value, mode: "lead" }))).toEqual([
-      'mode "lead" cannot run yet (no createController)',
+      "lead mode needs modes.lead with at least lead: { provider, model } in the config",
+    ]);
+    expect(problems(() => prepareModeSession({ ...value, resume: true }))).toEqual([
+      "a static session resumes through SessionRunner.resume, not resume",
     ]);
     expect(problems(() => prepareModeSession({ ...value, mode: "swarm" }))).toEqual([
       'mode "swarm" cannot run yet (no buildSession)',
@@ -395,6 +405,177 @@ describe("failure paths", () => {
 
     const already = await input({ signal: AbortSignal.abort(), mode: dynamicMode(() => ({ run: async () => ({ status: "completed" }) })) });
     expect(await prepareModeSession(already.value).run()).toMatchObject({ status: "cancelled" });
+  });
+});
+
+describe("autonomy floor for dynamic modes (T02B-02)", () => {
+  /** A dynamic session whose controller runs `body`; user questions are answered by `reply` (undefined = leave open). */
+  async function dynamic(
+    autonomy: ModeSessionInput["autonomy"],
+    body: (input: ModeControllerInput) => Promise<unknown>,
+    reply: (question: { questionId: string; question: string; kind: string }) => string | undefined,
+    over: Partial<ModeSessionInput> = {},
+  ) {
+    const asked: Array<{ questionId: string; question: string; kind: string }> = [];
+    let session: ReturnType<typeof prepareModeSession> | undefined;
+    const { value, events } = await input({
+      autonomy,
+      mode: dynamicMode((controllerInput) => ({
+        run: async () => {
+          await body(controllerInput);
+          return { status: "completed" };
+        },
+      })),
+      ...over,
+    });
+    value.emit = (e) => {
+      events.push(e);
+      if (e.type !== "user.question") return;
+      const q = e.data as { questionId: string; question: string; kind: string };
+      asked.push(q);
+      const answer = reply(q);
+      if (answer !== undefined) queueMicrotask(() => session!.answer(q.questionId, answer));
+    };
+    session = prepareModeSession(value);
+    return { session, asked, events, result: () => session!.run() };
+  }
+
+  const stageInput = (controllerInput: ModeControllerInput) => ({
+    sessionId: controllerInput.sessionId,
+    stage: { id: "execute", kind: "execute" as const, options: {}, requireApproval: false },
+    review: { id: "review", kind: "review" as const, options: {}, requireApproval: false },
+    goal: GOAL,
+    attempt: 1,
+    signal: controllerInput.signal,
+    emit: controllerInput.emit,
+  });
+
+  it("manual: stages.execute waits for approval; a denial blocks it without running the executor", async () => {
+    const exec = executor();
+    const outcomes: unknown[] = [];
+    let n = 0;
+    const s = await dynamic(
+      "manual",
+      async (ci) => {
+        outcomes.push(await ci.stages.execute(stageInput(ci)));
+        outcomes.push(await ci.stages.execute(stageInput(ci)));
+      },
+      () => ((n += 1) === 1 ? "deny" : "approve"),
+      { deps: deps(await tempProject(), { createExecutor: () => exec }) },
+    );
+    expect(await s.result()).toMatchObject({ status: "completed" });
+    expect(outcomes[0]).toEqual({ outcome: "blocked", summary: "the user did not approve this stage" });
+    expect(outcomes[1]).toMatchObject({ outcome: "pass" });
+    expect(exec.prompts).toHaveLength(1);
+    expect(s.asked.map((q) => q.kind)).toEqual(["approval", "approval"]);
+    expect(s.events.filter((e) => e.type === "user.answer").map((e) => (e.data as { answer: string }).answer)).toEqual(["deny", "approve"]);
+  });
+
+  it("manual: an executor from deps asks before its first run; a stage approved up front does not ask again", async () => {
+    const results: string[] = [];
+    let n = 0;
+    const s = await dynamic(
+      "manual",
+      async (ci) => {
+        const stage = { id: "work", kind: "execute" as const, options: {}, requireApproval: false };
+        const task = { taskId: "t", projectPath: ci.deps.projectPath, contract: { goal: GOAL } as never, prompt: "go" };
+        results.push((await ci.deps.createExecutor(stage).run(task)).status); // asks, denied
+        const pre = { ...stage, id: "pre" };
+        expect(await ci.requestApproval({ question: "Start pre?", stageId: pre.id })).toBe(true);
+        const ex = ci.deps.createExecutor(pre);
+        results.push((await ex.run(task)).status, (await ex.continue({ ...task, messages: [] })).status);
+      },
+      () => ((n += 1) === 1 ? "deny" : "approve"),
+    );
+    await s.result();
+    expect(results).toEqual(["failed", "completed", "completed"]);
+    expect(s.asked.map((q) => q.question)).toEqual(['Start work "work" (mock-executor)?', "Start pre?"]);
+  });
+
+  it("supervised: stages run without asking; applying to main asks and a denial throws before anything lands", async () => {
+    const applied: unknown[] = [];
+    const fake = {
+      create: async () => ({}),
+      diff: async () => ({ files: ["a.txt"] }),
+      list: async () => [],
+      applyTo: async (target: unknown) => (applied.push(target), { ok: true, strategy: "squash", changed: true }),
+    } as unknown as WorktreeManager;
+    const seat = { sessionId: createId(), seatId: "agent-1.w1" };
+    const errors: string[] = [];
+    const s = await dynamic(
+      "supervised",
+      async (ci) => {
+        expect(await ci.stages.execute(stageInput(ci))).toMatchObject({ outcome: "pass" });
+        await ci.worktrees!.applyTo("main", seat, { strategy: "squash" }).catch((e: Error) => errors.push(e.message));
+        await ci.worktrees!.applyTo("main", seat, { strategy: "squash" });
+        await ci.worktrees!.applyTo({ ...seat, seatId: "other" }, seat, { strategy: "squash" });
+      },
+      (q) => (q.question.includes("Apply") && errors.length === 0 ? "deny" : "approve"),
+      { worktrees: fake },
+    );
+    await s.result();
+    expect(errors).toEqual(["the user did not approve applying agent-1.w1 to the main checkout"]);
+    expect(applied).toEqual(["main", { ...seat, seatId: "other" }]);
+    expect(s.asked).toHaveLength(2);
+
+    const auto = await dynamic("autopilot", (ci) => ci.worktrees!.applyTo("main", seat, { strategy: "squash" }), () => "deny", { worktrees: fake });
+    await auto.result();
+    expect(auto.asked).toEqual([]);
+  });
+
+  it("answer() checks ids and options; cancel resolves open questions", async () => {
+    const abort = new AbortController();
+    let answer: string | undefined = "pending";
+    const s = await dynamic(
+      "supervised",
+      async (ci) => {
+        answer = await ci.ask({ question: "Pick", options: ["a", "b"] });
+      },
+      () => undefined,
+      { signal: abort.signal },
+    );
+    const done = s.result();
+    await until(() => s.asked.length === 1);
+    const id = s.asked[0]!.questionId;
+    expect(s.session.answer("nope", "a")).toBe(false);
+    expect(s.session.answer(id, "c")).toBe(false);
+    expect(s.session.approve(id)).toBe(false); // not an approval question
+    expect(s.events.filter((e) => e.type === "session.state").at(-1)?.data).toMatchObject({ to: "waiting" });
+    abort.abort();
+    expect(await done).toMatchObject({ status: "cancelled" });
+    expect(answer).toBeUndefined();
+    // No waiting → running after the terminal state.
+    const states = s.events.filter((e) => e.type === "session.state").map((e) => (e.data as { to: string }).to);
+    expect(states.at(-1)).toBe("cancelled");
+    expect(s.session.answer(id, "a")).toBe(false);
+  });
+});
+
+describe("free-text answers (T02B-02)", () => {
+  it("refuse empty and over-2000-character answers; accept a trimmed one", async () => {
+    let session: ReturnType<typeof prepareModeSession> | undefined;
+    let id = "";
+    let got: string | undefined;
+    const { value, events } = await input({
+      mode: dynamicMode((ci) => ({
+        run: async () => {
+          got = await ci.ask({ question: "Why?" });
+          return { status: "completed" };
+        },
+      })),
+    });
+    value.emit = (e) => {
+      events.push(e);
+      if (e.type === "user.question") id = (e.data as unknown as { questionId: string }).questionId;
+    };
+    session = prepareModeSession(value);
+    const done = session.run();
+    await until(() => id !== "");
+    expect(session.answer(id, "   ")).toBe(false);
+    expect(session.answer(id, "x".repeat(2001))).toBe(false);
+    expect(session.answer(id, ` ${"y".repeat(1999)} `)).toBe(true);
+    expect(await done).toMatchObject({ status: "completed" });
+    expect(got).toBe("y".repeat(1999));
   });
 });
 

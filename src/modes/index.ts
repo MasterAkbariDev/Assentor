@@ -66,8 +66,14 @@ export {
   type ModeController,
   type ModeControllerInput,
   type ModeControllerResult,
+  type ModeHostServices,
+  type ControllerWorktrees,
+  type ApprovalRequest,
+  ApprovalDeniedError,
   type SessionSpecInput,
 } from "./registry.js";
+export { LeadConfigSchema, leadConfigProblems, LEAD_AGENT_STRATEGY, type LeadConfig } from "./lead/config.js";
+export { createMockLead, type MockLead, type MockLeadStep } from "./lead/mock.js";
 export {
   parseAgentReport,
   repairPrompt,

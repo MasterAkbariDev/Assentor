@@ -145,6 +145,10 @@ async function setup(opts: {
     stages: {} as ModeControllerInput["stages"],
     deps,
     worktrees: manager,
+    host: {},
+    requestApproval: async () => false,
+    ask: async () => undefined,
+    resume: false,
     signal: new AbortController().signal,
     emit: (e) => void events.push(e),
   };
