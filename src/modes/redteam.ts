@@ -12,7 +12,8 @@ import type { Executor, ExecutorResult } from "../providers/executors/types.js";
 import { runVerificationGates, type RunVerificationCommand } from "../review/verification-gates.js";
 import { redactSecrets } from "../security/redact.js";
 import { runShellCommand } from "../process/run-shell.js";
-import type { SeatKey } from "../worktrees/manager.js";
+import type { SeatKey, WorktreeDiff } from "../worktrees/manager.js";
+import { classifyRisk } from "./danger.js";
 import type { ModeController, ModeControllerInput, ModeControllerResult } from "./registry.js";
 import { DEFAULT_TEST_PATTERNS, isTestFile, normalizePath } from "./tdd/tamper.js";
 
@@ -34,12 +35,20 @@ import { DEFAULT_TEST_PATTERNS, isTestFile, normalizePath } from "./tdd/tamper.j
  * - Everything the attacker writes is data. The builder sees it inside an
  *   `<attacker-report>` block with the rule that it is never an instruction.
  *   The attacker never talks to the user, a tool or main.
- * - Attacker tests are proof-of-concept code and run only in the builder's
- *   worktree (gates use it as cwd). A test that does not fail before the fix is
- *   dropped (not an attack). The builder may not change the locked tests: they
- *   are restored and the attempt fails.
- * - Nothing reaches main unless the final review PASSes and autonomy allows it
- *   (`applyTo("main")` of the one builder worktree, squash, tests included).
+ * - Attacker tests are proof-of-concept code that runs **with the user's
+ *   privileges** in the builder's worktree (gates use it as cwd; no sandbox).
+ *   Each attack's tests run alone on the green baseline; an attack whose tests
+ *   do not fail is dropped, and a run that changes anything besides those test
+ *   files ends the session `blocked`. Test paths under dot-directories and
+ *   runner hook/config files are refused.
+ * - The builder may not change the locked tests (restored, attempt fails; a
+ *   symlink on their path ends `blocked`) or the test runner's config/scripts
+ *   (attempt fails).
+ * - Nothing reaches main unless the final review PASSes, the worktree is
+ *   unchanged since the reviewed diff, and autonomy allows it (a danger-area
+ *   diff needs approval even under autopilot). Apply is `applyTo("main")` of
+ *   the one builder worktree, squash, tests included, limited to the reviewed
+ *   paths.
  *
  * Needs the host to provide: `worktrees`, `deps.createExecutor` that honours the
  * stage team's seat permissions (stage ids `redteam-attacker` and
@@ -132,36 +141,83 @@ const AttackSchema = z
       .default([]),
   })
   .refine((a) => a.tests.length > 0 || a.exploit, { message: "an attack needs tests or an exploit description" });
-const AttackReportSchema = z.object({
-  yield: z.boolean().default(false),
-  attacks: z.array(AttackSchema).max(10).default([]),
-});
+/**
+ * The attacker's reply. T02B-10's `red-team-attacker` prompt emits this shape;
+ * keep `yield`, `attacks` and the attack fields stable. Strict: an unknown
+ * top-level key (a wrong-shaped reply) is refused, never read as a yield.
+ */
+export const AttackReportSchema = z
+  .object({
+    yield: z.boolean().default(false),
+    attacks: z.array(AttackSchema).max(10).default([]),
+  })
+  .strict()
+  .refine((r) => r.yield || r.attacks.length > 0, { message: 'needs "yield": true or at least one attack' });
 type Attack = z.infer<typeof AttackSchema>;
+/** Longest attacker reply that is parsed at all (10 attacks × 5 tests × 100 KB fit with room to spare). */
+const MAX_REPLY_CHARS = 6_000_000;
 
 function parseAttackReport(result: ExecutorResult): z.infer<typeof AttackReportSchema> | string {
-  for (const raw of [result.rawOutput, result.summary]) {
+  const problems: string[] = [];
+  for (const raw of [result.summary, result.rawOutput]) {
     if (!raw) continue;
+    if (raw.length > MAX_REPLY_CHARS) {
+      problems.push(`reply longer than ${MAX_REPLY_CHARS} characters`);
+      continue;
+    }
     const json = extractJsonCandidate(raw);
-    if (!json.ok) continue;
+    if (!json.ok) {
+      problems.push("no JSON object");
+      continue;
+    }
     const parsed = AttackReportSchema.safeParse(json.data);
-    return parsed.success ? parsed.data : parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
+    if (parsed.success) return parsed.data;
+    problems.push(parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; "));
   }
-  return "no JSON object in the attacker's reply";
+  return problems.length > 0 ? problems.join(" | ") : "empty reply";
 }
+
+/**
+ * Files that change how the test runner behaves (hooks, setup, config). An
+ * attacker may not add them, and a builder change to them is tampering.
+ */
+const RUNNER_FILE =
+  /^(?:conftest\.py|pytest\.ini|tox\.ini|setup\.cfg|setuptests\..+|global-?setup\..+|.+\.setup\.[^.]+|(?:vitest|vite|jest|playwright|karma|mocha|ava|cypress|babel)\.(?:config|workspace|setup)(?:\..+)?|\.mocharc(?:\..+)?|\.babelrc(?:\..+)?)$/i;
+const isRunnerFile = (file: string) => RUNNER_FILE.test(path.posix.basename(normalizePath(file)));
 
 /** Why a proposed test path is refused, or undefined. Pure string checks; the file system is checked on write. */
 export function testPathProblem(raw: string, patterns: readonly string[] = DEFAULT_TEST_PATTERNS): string | undefined {
   if (raw.includes("\0") || raw.includes("\\") || raw.startsWith("/") || /^[A-Za-z]:/.test(raw)) return `unsafe path ${JSON.stringify(raw)}`;
   const segments = normalizePath(raw).split("/");
   if (segments.some((s) => s === "" || s === "." || s === "..")) return `unsafe path ${JSON.stringify(raw)}`;
-  if (segments.some((s) => FORBIDDEN_SEGMENTS.has(s.toLowerCase()))) return `${JSON.stringify(raw)} is in a protected directory`;
+  // Dot-directories (.git, .github, .husky, .vscode, …) hold hooks, CI and editor config.
+  if (segments.some((s) => s.startsWith(".") || FORBIDDEN_SEGMENTS.has(s.toLowerCase()))) return `${JSON.stringify(raw)} is in a protected directory`;
+  if (isRunnerFile(raw)) return `${JSON.stringify(raw)} is a test-runner hook or config file`;
   if (!isTestFile(raw, patterns)) return `${JSON.stringify(raw)} is not a test file (patterns: ${patterns.join(", ")})`;
   return undefined;
 }
 
-/** Writes a new file inside `root`; refuses existing files and paths that leave `root` through a symlink. */
+/** Whether any existing component of `root/rel` (the leaf included) is a symlink. */
+async function hasSymlink(root: string, rel: string): Promise<boolean> {
+  let current = root;
+  for (const segment of normalizePath(rel).split("/")) {
+    current = path.join(current, segment);
+    const stat = await fs.lstat(current).catch(() => undefined);
+    if (!stat) return false;
+    if (stat.isSymbolicLink()) return true;
+  }
+  return false;
+}
+
+/** Reads a file without following a symlink at the leaf (callers check the parents with `hasSymlink`). */
+function readNoFollow(abs: string): Promise<string> {
+  return fs.readFile(abs, { encoding: "utf8", flag: fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) });
+}
+
+/** Writes a new file inside `root`; refuses existing files, symlinked components and paths that leave `root`. */
 async function writeNewFile(root: string, rel: string, content: string): Promise<void> {
   const abs = path.resolve(root, normalizePath(rel));
+  if (await hasSymlink(root, rel)) throw new Error(`${rel} goes through a symlink`);
   const realRoot = await fs.realpath(root);
   let ancestor = path.dirname(abs);
   while (!(await fs.lstat(ancestor).catch(() => undefined))) ancestor = path.dirname(ancestor);
@@ -171,12 +227,44 @@ async function writeNewFile(root: string, rel: string, content: string): Promise
   await fs.writeFile(abs, content, { flag: "wx" }); // wx: never overwrite or follow an existing file
 }
 
+/** Removes a file this controller wrote; refuses to go through a symlink. */
+async function removeOwnFile(root: string, rel: string): Promise<void> {
+  if (await hasSymlink(root, rel)) throw new Error(`${rel} goes through a symlink`);
+  await fs.rm(path.join(root, normalizePath(rel)), { force: true });
+}
+
+/**
+ * What the test runner sees besides the code: runner hook/config files among
+ * `changed`, and the `scripts` of the root package.json and of any changed
+ * package.json. Compared with the start of the session to catch a builder that
+ * edits the runner instead of the code (a changed nested package.json always
+ * differs, which is deliberately strict).
+ */
+async function runnerState(root: string, changed: readonly string[]): Promise<string> {
+  const out: string[] = [];
+  for (const file of [...new Set(["package.json", ...changed.map(normalizePath)])].sort()) {
+    const isPackage = path.posix.basename(file) === "package.json";
+    if (!isPackage && !isRunnerFile(file)) continue;
+    let value = (await hasSymlink(root, file)) ? "<symlink>" : await readNoFollow(path.join(root, file)).catch(() => "<missing>");
+    if (isPackage) {
+      try {
+        value = JSON.stringify((JSON.parse(value) as { scripts?: unknown }).scripts ?? null);
+      } catch {
+        // Not JSON: compare the text itself.
+      }
+    }
+    out.push(`${file}\0${value}`);
+  }
+  return out.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Prompts: attacker output is data, wrapped so it cannot close its own block
 // ---------------------------------------------------------------------------
 
 function dataBlock(tag: string, text: string): string {
-  const safe = text.replaceAll(`</${tag}`, `<\\/${tag}`);
+  // Tags are fixed identifiers ([a-z-]), so they are safe inside the pattern.
+  const safe = text.replace(new RegExp(`</(${tag})`, "gi"), "<\\/$1");
   return `<${tag}>\n${safe}\n</${tag}>`;
 }
 
@@ -230,8 +318,9 @@ export interface RedteamExtras {
   runCommand?: RunVerificationCommand;
   /**
    * Asks the user before the passed work is applied to main. Without it only
-   * `autopilot` applies; supervised ends `blocked` with the branch kept, and
-   * manual does not start (the controller contract has no approval channel yet).
+   * `autopilot` applies, and only a change the danger classifier rates normal;
+   * otherwise the session ends `blocked` with the branch kept. `manual` does not
+   * start at all (the controller contract has no approval channel yet, T02B-02).
    */
   approve?: (summary: string) => Promise<boolean>;
 }
@@ -253,7 +342,7 @@ async function runRedteam(input: ModeControllerInput, extras: RedteamExtras): Pr
   const cfg = parseConfig(input.config) as { ok: true; value: RedteamConfig };
   const settings = cfg.value;
   if (!manager) throw new Error("red-team mode needs a worktree manager from the host");
-  if (input.autonomy === "manual" && !extras.approve) {
+  if (input.autonomy === "manual") {
     return { status: "blocked", reason: "manual autonomy needs an approval channel for red-team mode; use supervised or autopilot" };
   }
 
@@ -359,16 +448,18 @@ async function runRedteam(input: ModeControllerInput, extras: RedteamExtras): Pr
         .join("\n");
       return { passed: result.passed && !testFailed, testRan: result.runs.some((r) => r.slot === "test" && r.status !== "NOT_RUN"), testFailed, text };
     };
-    const fingerprint = async () => {
-      const d = await manager.diff(key);
-      return `${d.head}\n${d.files.join("\n")}\n${d.diff}`;
-    };
+    // Read-only fingerprint (git diff since the base, untracked included). Its limit:
+    // git-ignored paths and the main checkout are not seen, so a seat or test run that
+    // writes only there is not caught here; apply is still limited to the reviewed paths.
+    const fingerprintOf = (d: WorktreeDiff) => `${d.head}\n${d.files.join("\n")}\n${d.diff}`;
+    const fingerprint = async () => fingerprintOf(await manager.diff(key));
 
     const baseline = await gates(false);
     if (!baseline.testRan) throw new Stop({ status: "blocked", reason: "no test command found; red-team mode needs one to confirm attacks" });
     if (!baseline.passed) {
       throw new Stop({ status: "blocked", reason: `the checks already fail before any attack:\n${baseline.text}` });
     }
+    const runnerBaseline = await runnerState(root, []);
 
     const attackerExecutor = deps.createExecutor(attackerStage);
     const builderExecutor = deps.createExecutor(builderStage);
@@ -384,57 +475,75 @@ async function runRedteam(input: ModeControllerInput, extras: RedteamExtras): Pr
       }
       const report = parseAttackReport(reply);
       if (typeof report === "string") throw new Stop({ status: "blocked", reason: `attacker reply is not usable: ${report}` });
-      if (report.yield || report.attacks.length === 0) {
+      if (report.yield) {
         yielded = true;
         emit({ type: "redteam.attack", sessionId, seatId: attacker.id, data: { round, phase: "attack", attacks: 0, yielded: true } });
         break;
       }
 
-      // 2. write the attacker's tests (data → files, by us), dropping unsafe or duplicate ones.
-      const kept: Attack[] = [];
-      const written: string[] = [];
+      // 2. confirm each attack on its own: write only its tests (data → files, by us),
+      // run the tests, then remove them. Attacker test code runs here with the user's privileges.
+      const live: Attack[] = [];
       const rejected: string[] = [];
+      const claimed = new Set<string>();
       for (const attack of report.attacks.slice(0, settings.maxAttacksPerRound)) {
+        const files = attack.tests.map((t) => normalizePath(t.path));
         const bad = attack.tests.map((t) => testPathProblem(t.path, patterns)).find(Boolean);
-        const dup = attack.tests.find((t) => lockedContent.has(normalizePath(t.path)) || written.includes(normalizePath(t.path)));
+        const dup = files.find((f, i) => lockedContent.has(f) || claimed.has(f) || files.indexOf(f) !== i);
         if (bad || dup) {
-          rejected.push(`${attack.title}: ${bad ?? `${dup!.path} already exists`}`);
+          rejected.push(`${attack.title}: ${bad ?? `${dup} already exists`}`);
           continue;
         }
+        if (files.length === 0) {
+          live.push(attack); // exploit description only: text for the builder, never run
+          continue;
+        }
+        checkAbort();
+        const untouched = await fingerprint();
+        const written: string[] = [];
+        let reproduced = false;
         try {
           for (const t of attack.tests) {
             await writeNewFile(root, t.path, t.content);
             written.push(normalizePath(t.path));
-            lockedContent.set(normalizePath(t.path), t.content);
           }
-          kept.push(attack);
+          reproduced = (await gates(true)).testFailed;
         } catch (error) {
+          if (error instanceof Stop) throw error;
           rejected.push(`${attack.title}: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      }
-
-      // 3. an attack with tests counts only if the tests fail before the fix.
-      let reproduced = false;
-      if (written.length > 0) {
-        const pre = await gates(true);
-        reproduced = pre.testFailed;
-        if (!reproduced) {
+        } finally {
           for (const file of written) {
-            await fs.rm(path.join(root, file), { force: true });
-            lockedContent.delete(file);
+            await removeOwnFile(root, file).catch((error: unknown) => {
+              throw new Stop({ status: "blocked", reason: `could not remove attack test ${file}: ${error instanceof Error ? error.message : String(error)}` });
+            });
           }
         }
+        // Only our own files may have come and gone; anything else the test run did is a violation.
+        if ((await fingerprint()) !== untouched) {
+          throw new Stop({ status: "blocked", reason: `running the tests of attack "${attack.title}" changed the worktree beyond its own test files` });
+        }
+        if (!reproduced || written.length !== files.length) continue;
+        files.forEach((f) => claimed.add(f));
+        live.push(attack);
       }
-      const live = reproduced ? kept : kept.filter((a) => a.tests.length === 0);
+      // Lock the reproduced attacks' tests together, now that each was confirmed alone.
+      const locked: string[] = [];
+      for (const attack of live) {
+        for (const t of attack.tests) {
+          await writeNewFile(root, t.path, t.content);
+          lockedContent.set(normalizePath(t.path), t.content);
+          locked.push(normalizePath(t.path));
+        }
+      }
       emit({
         type: "redteam.attack",
         sessionId,
         seatId: attacker.id,
-        data: { round, phase: "attack", attacks: live.length, titles: live.map((a) => a.title), tests: reproduced ? written : [], reproduced, rejected },
+        data: { round, phase: "attack", attacks: live.length, titles: live.map((a) => a.title), tests: locked, reproduced: locked.length > 0, rejected },
       });
       if (live.length === 0) continue; // nothing real to fix this round; the next round (or maxRounds) decides
 
-      // 4. builder fixes; tests locked; the checks decide.
+      // 4. builder fixes; tests and the test runner locked; the checks decide.
       let failure: string | undefined;
       let fixed = false;
       for (let attempt = 1; attempt <= settings.fixAttempts && !fixed; attempt += 1) {
@@ -442,15 +551,25 @@ async function runRedteam(input: ModeControllerInput, extras: RedteamExtras): Pr
         await runSeat(builder, builderExecutor, `${sessionId}.fix-${round}-${attempt}`, builderPrompt(goal, round, live, [...lockedContent.keys()], failure), root, settings.builderTimeoutMs);
         const tampered: string[] = [];
         for (const [file, content] of lockedContent) {
-          const now = await fs.readFile(path.join(root, file), "utf8").catch(() => undefined);
-          if (now !== content) {
-            tampered.push(file);
-            await fs.mkdir(path.dirname(path.join(root, file)), { recursive: true });
-            await fs.writeFile(path.join(root, file), content);
+          if (await hasSymlink(root, file)) {
+            throw new Stop({ status: "blocked", reason: `the builder replaced part of the path to locked test ${file} with a symlink` });
+          }
+          const abs = path.join(root, file);
+          if ((await readNoFollow(abs).catch(() => undefined)) === content) continue;
+          tampered.push(file);
+          try {
+            await fs.rm(abs, { force: true });
+            await writeNewFile(root, file, content);
+          } catch (error) {
+            throw new Stop({ status: "blocked", reason: `could not restore locked test ${file}: ${error instanceof Error ? error.message : String(error)}` });
           }
         }
         if (tampered.length > 0) {
           failure = `You changed locked attacker tests (restored): ${tampered.join(", ")}`;
+          continue;
+        }
+        if ((await runnerState(root, (await manager.diff(key)).files)) !== runnerBaseline) {
+          failure = "You changed test-runner configuration (runner config/setup files or package.json scripts). Revert it and fix the production code instead.";
           continue;
         }
         const post = await gates(false);
@@ -462,13 +581,22 @@ async function runRedteam(input: ModeControllerInput, extras: RedteamExtras): Pr
       attackTitles.push(...live.map((a) => a.title));
     }
 
-    // 5. nothing landed → nothing to apply.
+    // 5. nothing landed → nothing to apply, unless an attack was "fixed" without a change.
     const diff = await manager.diff(key);
     if (diff.files.length === 0) {
+      if (attackTitles.length > 0) {
+        throw new Stop({ status: "blocked", reason: `the builder changed nothing, yet these attacks count as fixed: ${attackTitles.join("; ")}` });
+      }
       await manager.discard(key, { force: true });
       worktree = undefined;
       return { status: "completed", reason: yielded ? "the attacker found nothing" : "no attack could be reproduced" };
     }
+    const reviewed = fingerprintOf(diff);
+    const unchangedSinceReview = async (when: string) => {
+      if ((await fingerprint()) !== reviewed) {
+        throw new Stop({ status: "blocked", reason: `the worktree changed ${when}; nothing was applied (kept in ${root})` });
+      }
+    };
 
     // 6. review before anything goes near main.
     const reviewStage = StageSpecSchema.parse({
@@ -503,19 +631,37 @@ async function runRedteam(input: ModeControllerInput, extras: RedteamExtras): Pr
         reason: `review ${turn.result.status}: ${turn.result.summary}${(turn.result.requiredChanges ?? []).map((c) => `\n- ${c}`).join("")}`,
       });
     }
+    await unchangedSinceReview("during the review");
 
-    // 7. apply, tests and fix together.
+    // 7. apply exactly what was reviewed, tests and fix together. A danger-area change
+    // needs the user's approval even under autopilot.
+    const risk = classifyRisk(
+      { diff: diff.diff, paths: diff.files },
+      { projectRoot: root, ...(input.config.modes.cascade?.dangerAreas ? { extraRules: input.config.modes.cascade.dangerAreas } : {}) },
+    );
+    const danger = risk.level === "danger" ? ` [danger area: ${risk.categories.join(", ")}]` : "";
     const summary = `red-team: ${attackTitles.length} attack(s) fixed in ${diff.files.length} file(s): ${attackTitles.join("; ")}`;
-    if (input.autonomy !== "autopilot") {
-      if (!extras.approve) throw new Stop({ status: "blocked", reason: `review passed; approval needed to apply the builder's work (kept in ${root})` });
-      if (!(await extras.approve(summary))) throw new Stop({ status: "blocked", reason: "apply was not approved; the builder's work is kept" });
+    if (input.autonomy !== "autopilot" || danger) {
+      if (!extras.approve) throw new Stop({ status: "blocked", reason: `review passed${danger}; approval needed to apply the builder's work (kept in ${root})` });
+      if (!(await guard(extras.approve(`${summary}${danger}`)))) throw new Stop({ status: "blocked", reason: "apply was not approved; the builder's work is kept" });
+      await unchangedSinceReview("while waiting for approval");
     }
     checkAbort();
-    const result = await manager.applyTo("main", key, { strategy: "squash", message: summary.slice(0, 200) });
+    let result: Awaited<ReturnType<typeof manager.applyTo>>;
+    try {
+      result = await manager.applyTo("main", key, { strategy: "squash", message: summary.slice(0, 200), allowedPaths: diff.files });
+    } catch (error) {
+      throw new Stop({ status: "blocked", reason: `could not apply to main: ${error instanceof Error ? error.message : String(error)}` });
+    }
     if (!result.ok) throw new Stop({ status: "blocked", reason: `could not apply to main: ${result.message}` });
     applied = true;
-    await manager.cleanup(sessionId);
-    return { status: "completed", reason: summary };
+    const warnings = result.warning ? [result.warning] : [];
+    try {
+      await manager.cleanup(sessionId);
+    } catch (error) {
+      warnings.push(`applied, but the worktree cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return { status: "completed", reason: [summary, ...warnings.map((w) => `warning: ${w}`)].join("\n") };
   } catch (error) {
     if (!applied && worktree) await manager.markFailed(key).catch(() => undefined); // kept for inspection
     if (error instanceof Stop) return error.result;
