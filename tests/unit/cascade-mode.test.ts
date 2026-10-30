@@ -479,6 +479,7 @@ describe("danger after every tier, not only after a pass", () => {
     );
     expect(escalated.map((e) => e.trigger)).toEqual(["danger"]);
     expect(prompts.map((p) => p.team)).toEqual(["cheap", "top"]);
+    expect(escalated[0]?.categories).not.toContain("unscanned");
   });
 
   it("a cut-off reasons list cannot be compared with the start, so it counts as danger", async () => {
@@ -567,6 +568,54 @@ describe("the default git reader (registry controller)", () => {
     expect(escalated).toEqual([]);
     expect(prompts.map((p) => p.team)).toEqual(["cheap"]);
   });
+
+  const writer = (dir: string, name: string, body: string) => async (): Promise<ExecutorResult> => {
+    await fs.mkdir(path.dirname(path.join(dir, name)), { recursive: true });
+    await fs.writeFile(path.join(dir, name), body);
+    return { status: "completed", summary: "done" };
+  };
+
+  it("an empty untracked file is nothing to scan and does not escalate", async () => {
+    const dir = await repo();
+    const { escalated } = await run({ exec: { cheap: writer(dir, "empty.txt", "") } }, { projectPath: dir });
+    expect(escalated).toEqual([]);
+  });
+
+  it("a directory symlink added by a tier cannot be diffed and escalates as unscanned", async () => {
+    const dir = await repo();
+    await fs.mkdir(path.join(dir, "real"));
+    const link = async (): Promise<ExecutorResult> => (await fs.symlink(path.join(dir, "real"), path.join(dir, "data")), { status: "completed", summary: "done" });
+    const { escalated, prompts } = await run({ exec: { cheap: link } }, { projectPath: dir });
+    expect(escalated).toEqual([expect.objectContaining({ fromTier: 0, toTier: 2, trigger: "danger" })]);
+    expect(String(escalated[0]?.reason)).toContain("could not be read");
+    expect(prompts.map((p) => p.team)).toEqual(["cheap", "top"]);
+  });
+
+  it("one oversized untracked file is unscanned for itself only: the cascade stays usable", async () => {
+    const dir = await repo();
+    await fs.writeFile(path.join(dir, "big.bin.txt"), "x".repeat(1_200_000)); // at the start
+    const calm = await run({}, { projectPath: dir });
+    expect(calm.escalated).toEqual([]);
+    expect(calm.prompts.map((p) => p.team)).toEqual(["cheap"]);
+
+    const evil = await run(
+      { exec: { cheap: writer(dir, "src/z_evil.ts", 'import { spawn } from "node:child_process";\nspawn("sh");\n') } },
+      { projectPath: dir },
+    );
+    expect(evil.escalated).toEqual([expect.objectContaining({ trigger: "danger", toTier: 2 })]);
+    expect(evil.escalated[0]?.categories).not.toContain("unscanned"); // only the new danger is named
+  }, 60_000);
+
+  it("a dangerous file sorted after the diff budget is spent is never treated as clean", async () => {
+    const dir = await repo();
+    for (const name of ["a.txt", "b.txt", "c.txt"]) await fs.writeFile(path.join(dir, name), "x\n".repeat(450_000)); // ~900 KB each, 2.7 MB in all
+    const { escalated, prompts } = await run(
+      { exec: { cheap: writer(dir, "src/z_evil.ts", 'import { spawn } from "node:child_process";\nspawn("sh");\n') } },
+      { projectPath: dir },
+    );
+    expect(escalated).toEqual([expect.objectContaining({ trigger: "danger", toTier: 2 })]);
+    expect(prompts.map((p) => p.team)).toEqual(["cheap", "top"]);
+  }, 60_000);
 
   it("a directory that is not a git repo is unscanned danger", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "cascade-nogit-"));
