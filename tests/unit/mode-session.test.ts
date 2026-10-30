@@ -143,6 +143,7 @@ describe("mode contract", () => {
       "review",
       "negotiate",
       "pipeline",
+      "debug",
       "explore",
       "plan",
     ]);

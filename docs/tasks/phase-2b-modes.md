@@ -297,6 +297,8 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 ### T02B-16 · Debug mode
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** T02B-01, T02-01
 
+**Merged 2026-10-30 (planner, under the owner's standing merge direction):** O2 review NEEDS_WORK → fixed in `18b540a`/`b988bbf` → re-review PASS with nits. `run-shell.ts` and `verification-gates.ts` carry TDD's abort-signal change verbatim. Open nits: a hook rejection from applyTo ends `failed` instead of `blocked` (fix is kept); signals that are substrings of the project path are rejected without telling the seat; reject `<root>`/`<seat>` signals.
+
 **Deliverables** — evidence collection stage (logs, failing test output) → K hypothesis seats → experiments in separate worktrees (instrumentation never merged) → evidence ranking → fix stage on the top hypothesis → review. Tests with scripted hypotheses.
 
 ---

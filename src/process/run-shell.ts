@@ -7,9 +7,10 @@ const DEFAULT_MAX_BUFFER = 10 * 1024 * 1024; // 10MB
 export async function runShellCommand(
   command: string,
   cwd: string,
-  options: { timeoutMs?: number; maxBufferBytes?: number } = {},
+  options: { timeoutMs?: number; maxBufferBytes?: number; signal?: AbortSignal } = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   const maxBuffer = options.maxBufferBytes ?? DEFAULT_MAX_BUFFER;
+  if (options.signal?.aborted) return { stdout: "", stderr: "(cancelled)", code: 130 };
   return new Promise((resolve) => {
     const child = trackChildProcess(
       spawn(command, {
@@ -31,6 +32,7 @@ export async function runShellCommand(
       }
       settled = true;
       clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
       untrackChildProcess(child);
       resolve(result);
     };
@@ -44,6 +46,13 @@ export async function runShellCommand(
       });
     }, options.timeoutMs ?? 5 * 60_000);
     timer.unref?.();
+
+    // Abort kills the process tree and settles at once (code 130), like the timeout does.
+    const onAbort = () => {
+      killProcessTree(child);
+      finish({ stdout, stderr: `${stderr}\n(cancelled)`.trim(), code: 130 });
+    };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
 
     child.stdout?.on("data", (chunk: Buffer | string) => {
       const str = chunk.toString();
