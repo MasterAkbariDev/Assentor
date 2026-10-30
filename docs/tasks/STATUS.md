@@ -54,7 +54,7 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**41 of 80 cards done** (2026-10-29; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 24/41 · 🟡 Sonnet-tier 7/17 · 🔴 Opus-tier 10/22. Tests: 1965 passing. Core (Phases 0–3 + 2b) left: 11 cards.
+**48 of 80 cards done** (2026-10-30; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 26/41 · 🟡 Sonnet-tier 11/17 · 🔴 Opus-tier 11/22. Tests: 2287 passing. Core (Phases 0–3 + 2b) left: 4 cards — T02B-13 pair, T02B-15 swarm, T02B-18 TUI Lead board, T02B-19 retro.
 
 | Phase | Done | Open |
 |---|---|---|
@@ -149,23 +149,16 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
   - ✅ T02-08 divide & conquer merged (`e9e7331`): Opus PASS after 3 rounds; user signed off. Phase 2 complete.
 - ✅ T02B-07 danger classifier merged (`9716d2a`): O2 PASS after 3 rounds; user signed off. Merge fix: `modes.cascade` passthrough, `dangerAreas` optional. Follow-up: project `.assentor/config.yaml` with this repo's danger files.
 - **Owner direction (2026-10-30): merge without asking for sign-off.** Cards still need an independent O2 review that ends PASS (or only nits) and a green staged-tree gate; the planner then merges and records it here instead of asking the owner.
-- **Resumed 2026-10-30.** State now:
-  - T02B-09 playbook modes: **merged `93a2bdf`** (owner signed off with both deviations). Notes for later: explore seat roles stand in for the three angles; generic team names (builders, reviewers…) share `config.teams` with other modes — namespace them in the routing card.
-  - T02B-14 red-team: fixed `40e1e3c` (on integration merge `8e2aaf2`); re-review NEEDS_WORK (must-fix: quadratic `{…}` regex in shared `src/protocol/parse.ts` can freeze the process on a hostile reply; should-fix: refuse yield+attacks, allowlist attack test paths, more runner files, false blocks from `__pycache__`/snapshots) → fixer running.
-  - T02B-11 TDD: fixed `e35ca6d` (feedback reaches the coder, protected test/runner files, cancel race, baseline run); re-review running.
-  - T02B-06 Cascade: fixed `150f583`; re-review NEEDS_WORK (must-fix: `git diff --no-index` exit 1 on errors hides dir symlinks; cap reason masks later untracked files) → builder fixing.
-  - T02B-02 Lead: built `0631fa6`; O2 NEEDS_WORK (must-fix: retire of a running seat bypasses maxSeats; a non-conflict integration failure strands an accepted task) → builder fixing, after merging integration `93a2bdf`. Its ModeControllerInput contract change (host/requestApproval/ask/resume, narrowed worktrees) means Cascade, debug, TDD and red-team adapt when they rebase after the Lead merges.
-  - T02B-10 prompts: **merged `1cee6c9`** (🟢; planner merge after two Opus quality reviews). `lead.md` omits `message`/`request_report` until the Lead controller supports them.
-  - T02B-16 debug: built `dba5cbb`; O2 NEEDS_WORK (must-fix: apply warning dropped; should-fix: kill commands on cancel — copies TDD's run-shell signal verbatim to avoid conflicts; signal check gameable via worktree path; diff after gates; user dangerAreas ignored) → builder fixing.
-  - Follow-up after TDD and red-team merge: the two cards keep separate runner-config file lists (`RUNNER_CONFIG` in tdd/executor.ts, `RUNNER_FILE`/`runnerState` in redteam.ts) — unify into one shared list.
-  - Flake seen: `lead-report.test.ts` "brace-only input … fails fast" 283 ms vs 200 ms limit, once, on the T02B-09 branch.
-  - T02B-02 Lead (Opus): in progress, **uncommitted** work in the worktree (9 files). Resume by reviewing the diff, then finishing. Must-do from T02B-01: approval/answer channel, `stages` gated under manual, resume re-applies the floor. lead.md caller vars: goal, autonomy, tasks (with assignee), roster, reports (taskId, status, summary, blockers, questions, filesChanged, claimIssues; testsRun as a string), results; escape `</report`.
-  - T02B-11 TDD (Sonnet): in progress, **uncommitted** (10 files).
-  - T02B-06 Cascade (Sonnet): in progress, **uncommitted** (5 files).
-  - T02B-16 debug (Sonnet): in progress, **uncommitted** (4 files).
-  - T02B-10 mode prompts: committed `ddb08cf`; Opus prompt review NEEDS_WORK (8 items: red-team-attacker must be read-only + JSON reply matching redteam.ts; lead.md inputs, report fencing, autonomy rule, retry wording; navigator fencing; report-instructions data rule; no-test-weakening rule in swarm-worker and hypothesis-investigator). Fixes not started.
-  - T02B-09 Pipeline/Explore/Plan: committed `234e62b`; Sonnet review was stopped before reporting — rerun it.
-  - T02B-14 red-team: committed `46a2006`; Opus review was stopped before reporting — rerun it.
+- **2026-10-30: all seven paused cards merged** (each after O2 review → fixes → PASS with nits; merge notes with open nits are on each card in phase-2b-modes.md):
+  - T02B-09 playbook modes `93a2bdf` (owner signed off) · T02B-10 mode prompts `1cee6c9` · T02B-16 debug `7508edf` · T02B-02 Lead `6a6ada2` · T02B-11 TDD `ccb189e` · T02B-06 Cascade `edd296c` · T02B-14 red-team `8787d1f`.
+  - Contract now: `ModeControllerInput` has `host`, `requestApproval`, `ask`, `resume`; `ControllerWorktrees` = create/diff/list/applyTo (applyTo("main") asks unless autopilot) + discard/markFailed/cleanup/readAtBase pass-throughs. Debug, Cascade and red-team route their own `approve` through `requestApproval`. `runShellCommand`/`RunVerificationCommand` take `signal` and `env`.
+  - Follow-ups (not scheduled):
+    - Double approval prompts: under manual both the session (per stage) and Cascade (per tier) ask; under supervised both the session and Debug/red-team ask before apply. Pick one owner of each question (routing card).
+    - TDD (`RUNNER_CONFIG` in `src/modes/tdd/tamper.ts`) and red-team (`RUNNER_FILE`/`RUNNER_PACKAGE_KEYS` in `redteam.ts`) keep separate runner-file lists — unify.
+    - Lead/Cascade/debug/TDD/red-team are not CLI-available; `assentor run` routing through `prepareModeSession` is its own Danger card. Namespace the playbook team names there.
+    - Supervisor appends "Resume with: assentor resume" even to TDD's "locks lost" failure.
+    - Cascade large-file tests are slow (~13 s each): build files from long lines instead of 450k short ones.
+  - Flakes seen: `lead-report.test.ts` "brace-only input … fails fast" (283 ms vs 200 ms, once); `rpc-core` "catches up quickly…" (once). Cascade real-git tests timed out at load ~79 → describe timeout raised to 60 s in `8787d1f`.
 
 **Direction (user, 2026-10-27): core engine first.** After the Haiku agents finish their current cards, UI and app work (rest of Phase 4, Phase 5) pauses. Finish the core (Phases 0–3, 2b) first, then build the UI and apps on top of it.
 
