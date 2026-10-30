@@ -139,6 +139,24 @@ describe("reduceLeadEvents details", () => {
     expect(view.log[0]!.reason).toBe("bad thing");
   });
 
+  it("plainText drops bidi overrides and other invisible format characters", () => {
+    expect(plainText("a\u202eevil\u202c b\u2066x\u2069 \u200bz \u061c \u200f")).toBe("aevil bx z");
+  });
+
+  it("plainText never splits a surrogate pair when it cuts", () => {
+    const out = plainText("😀".repeat(600));
+    expect(out.endsWith("…")).toBe(true);
+    expect(/[\ud800-\udbff](?![\udc00-\udfff])/.test(out)).toBe(false);
+  });
+
+  it("skips a task with an empty id, and an unknown seat id never resolves to an Object property", () => {
+    let view = reduceLeadEvents(emptyLeadBoardView(), ev("task.created", { taskId: "", title: "x" }));
+    expect(view.tasks).toEqual([]);
+    view = reduceLeadEvents(view, ev("task.created", { taskId: "T1", title: "x" }));
+    view = reduceLeadEvents(view, ev("task.assigned", { taskId: "T1", seatId: "constructor" }));
+    expect(view.tasks[0]?.owner).toBe("constructor");
+  });
+
   it("plainText cuts long text to a limit", () => {
     const out = plainText("x".repeat(2000));
     expect(out.length).toBe(500);
@@ -199,6 +217,18 @@ describe("RunReporter team board", () => {
     for (const line of printed) {
       expect(line.replace(/\x1b\[[0-9;]*m/g, "").length).toBeLessThanOrEqual(40);
     }
+  });
+
+  it("cuts CJK text to the terminal width", () => {
+    const reporter = new RunReporter({ executorName: "executor", reviewerName: "reviewer" });
+    for (const event of run()) reporter.onEngineEvent(event);
+    reporter.onEngineEvent(ev("task.created", { taskId: "T3", title: "登录表单".repeat(7) }));
+    reporter.onEngineEvent(ev("lead.action", { action: "reject", accepted: false, reason: "缺少测试".repeat(8) }));
+    const before = logs.length;
+    reporter.onEngineEvent(ev("lead.turn", { turn: 4 }));
+    const columns = (line: string) =>
+      Array.from(line.replace(/\x1b\[[0-9;]*m/g, "")).reduce((n, ch) => n + (/[\u2e80-\ua4cf\uff00-\uff60]/.test(ch) ? 2 : 1), 0);
+    for (const line of logs.slice(before)) expect(columns(line)).toBeLessThanOrEqual(40);
   });
 
   it("prints nothing outside lead mode", () => {

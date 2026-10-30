@@ -893,9 +893,16 @@ function displayWidth(text: string): number {
   return width;
 }
 
+// East Asian wide and fullwidth ranges, so model text in CJK is measured like the terminal draws it.
+const WIDE_RANGES: ReadonlyArray<readonly [number, number]> = [
+  [0x1100, 0x115f], [0x2e80, 0xa4cf], [0xac00, 0xd7a3], [0xf900, 0xfaff],
+  [0xfe30, 0xfe6f], [0xff00, 0xff60], [0xffe0, 0xffe6], [0x20000, 0x3fffd],
+];
+
 function charColumns(ch: string): number {
   const cp = ch.codePointAt(0)!;
-  return cp >= 0x1f000 || (cp >= 0x23e9 && cp <= 0x23fa) ? 2 : 1;
+  if (cp >= 0x1f000 || (cp >= 0x23e9 && cp <= 0x23fa)) return 2;
+  return WIDE_RANGES.some(([lo, hi]) => cp >= lo && cp <= hi) ? 2 : 1;
 }
 
 /** `text` cut to `columns`, ending in "…" when it does not fit. */

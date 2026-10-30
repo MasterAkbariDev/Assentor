@@ -95,12 +95,15 @@ export function leadColumns(view: LeadBoardView): Record<LeadColumn, LeadTaskVie
 // Terminal escape sequences (OSC, CSI, two-byte) and C0/C1 control characters.
 const TERMINAL_SEQUENCES = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[@-_]/g;
 const CONTROL_CHARS = /[\x00-\x1f\x7f-\x9f]/g;
+// Invisible format characters, including bidi overrides that could visually reorder a line.
+const FORMAT_CHARS = /\p{Cf}/gu;
 
 /** `value` as one line of plain text: escape codes and control characters removed, whitespace collapsed, cut to a limit. */
 export function plainText(value: unknown): string {
   const text = typeof value === "string" ? value : "";
-  const cleaned = text.replace(TERMINAL_SEQUENCES, "").replace(CONTROL_CHARS, " ").replace(/\s+/g, " ").trim();
-  return cleaned.length > TEXT_LIMIT ? `${cleaned.slice(0, TEXT_LIMIT - 1)}…` : cleaned;
+  const cleaned = text.replace(TERMINAL_SEQUENCES, "").replace(CONTROL_CHARS, " ").replace(FORMAT_CHARS, "").replace(/\s+/g, " ").trim();
+  const chars = Array.from(cleaned); // code points, so a cut never splits a surrogate pair
+  return chars.length > TEXT_LIMIT ? `${chars.slice(0, TEXT_LIMIT - 1).join("")}…` : cleaned;
 }
 
 /** Folds one engine event into the view. Returns the same object when the event changes nothing. */
@@ -125,6 +128,7 @@ export function reduceLeadEvents(view: LeadBoardView, event: EngineEvent): LeadB
     case "task.created": {
       const data = event.data as { taskId: string; title?: unknown; parentId?: unknown };
       const id = plainText(data.taskId);
+      if (!id) return view;
       const title = plainText(data.title);
       const withParent = typeof data.parentId === "string" ? updateTask(view, data.parentId, { state: "split" }) : view;
       if (findTask(withParent, id)) return updateTask(withParent, id, { title });
@@ -134,7 +138,7 @@ export function reduceLeadEvents(view: LeadBoardView, event: EngineEvent): LeadB
     case "task.assigned":
       return updateTask(view, event.data.taskId, {
         state: "assigned",
-        owner: view.seatNames[event.data.seatId] ?? plainText(event.data.seatId),
+        owner: (Object.hasOwn(view.seatNames, event.data.seatId) && view.seatNames[event.data.seatId]) || plainText(event.data.seatId),
       });
 
     case "task.status": {
