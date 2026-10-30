@@ -513,7 +513,7 @@ export class WorktreeManager {
   async readAtBase(seat: SeatKey, file: string): Promise<string | undefined> {
     return this.locked(async (ctx) => {
       const record = await this.requireReady(ctx, seat);
-      const res = await this.git(this.pathFor(ctx, record), ["show", `${record.baseSha}:${file}`]);
+      const res = await this.git(this.pathFor(ctx, record), ["cat-file", "blob", `${record.baseSha}:${file}`]);
       return res.code === 0 ? res.stdout : undefined;
     });
   }

@@ -383,12 +383,13 @@ describe("red-team mode", () => {
     expect(s.builder.prompts).toEqual([]);
   });
 
-  it("attack runs get CI=1 and PYTHONDONTWRITEBYTECODE=1; snapshot/bytecode files next to the attack's tests are not a violation", async () => {
+  it("every gate run gets CI=1 and PYTHONDONTWRITEBYTECODE=1; snapshot/bytecode files next to the attack's tests are not a violation", async () => {
     const s = await setup((_t, i) => (i === 0 ? reply([attack(1)]) : reply([], true)));
     const envs: Array<Record<string, string> | undefined> = [];
     const writesArtifacts: RedteamExtras["runCommand"] = async (command, cwd, options) => {
       envs.push(options?.env ? { ...options.env } : undefined);
-      if (options?.env?.CI === "1") {
+      const confirming = !(await fs.stat(path.join(cwd, "src", "fix-1.txt")).catch(() => undefined));
+      if (confirming && (await fs.stat(path.join(cwd, "tests", "attack-1.test.ts")).catch(() => undefined))) {
         // A runner that ignores CI and writes next to the test anyway.
         await fs.mkdir(path.join(cwd, "tests", "__snapshots__"), { recursive: true });
         await fs.writeFile(path.join(cwd, "tests", "__snapshots__", "attack-1.test.ts.snap"), "snap");
@@ -398,10 +399,27 @@ describe("red-team mode", () => {
       return runCommand(command, cwd, options);
     };
     expect(await s.run({ extras: { runCommand: writesArtifacts } })).toMatchObject({ status: "completed" });
-    expect(envs).toContainEqual({ CI: "1", PYTHONDONTWRITEBYTECODE: "1" });
-    expect(envs[0]).toBeUndefined(); // the baseline and final checks run with the user's environment
+    expect(envs.length).toBeGreaterThanOrEqual(3); // baseline, confirmation, after the fix
+    expect(envs.every((e) => e?.CI === "1" && e.PYTHONDONTWRITEBYTECODE === "1")).toBe(true);
     expect(await fs.stat(path.join(s.repo, "tests", "__snapshots__")).catch(() => undefined)).toBeUndefined();
     expect(await fs.readFile(path.join(s.repo, "tests", "attack-1.test.ts"), "utf8")).toBe("needs:fix-1\n");
+  });
+
+  it("an attack that fails only because of the gate env cannot pass without a fix: all gates share the env", async () => {
+    // The attack test "asserts process.env.CI is unset": it fails whenever CI is set.
+    const s = await setup(
+      () => reply([attack(1, { tests: [{ path: "tests/attack-1.test.ts", content: "ci-unset\n" }] })]),
+      scripted("builder", () => ({ status: "completed", summary: "nothing to fix" })),
+    );
+    const envSensitive: RedteamExtras["runCommand"] = async (command, cwd, options) => {
+      const test = await fs.readFile(path.join(cwd, "tests", "attack-1.test.ts"), "utf8").catch(() => "");
+      if (test.includes("ci-unset") && options?.env?.CI) return { stdout: "FAIL tests/attack-1.test.ts", stderr: "", code: 1 };
+      return runCommand(command, cwd, options);
+    };
+    const result = await s.run({ extras: { runCommand: envSensitive }, config: withRedteam({ fixAttempts: 1 }) });
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("could not fix Attack 1");
+    expect(await fs.stat(path.join(s.repo, "tests")).catch(() => undefined)).toBeUndefined();
   });
 
   it("refuses an attack test path through a symlinked directory; nothing is written outside", async () => {

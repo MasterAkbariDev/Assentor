@@ -40,7 +40,7 @@ import { DEFAULT_TEST_PATTERNS, isTestFile, normalizePath } from "./tdd/tamper.j
  *   Each attack's tests run alone on the green baseline; an attack whose tests
  *   do not fail is dropped, and a run that changes anything besides those test
  *   files (new snapshot/bytecode files next to them excepted) ends the session
- *   `blocked`; those runs get CI=1 and PYTHONDONTWRITEBYTECODE=1. Only test-file
+ *   `blocked`. Every gate run gets CI=1 and PYTHONDONTWRITEBYTECODE=1. Only test-file
  *   names (x.test.ts, test_x.py, x_test.go, …) outside dot-directories are
  *   accepted; runner hook/config files and manifests are refused.
  * - The builder may not change the locked tests (restored, attempt fails; a
@@ -159,7 +159,7 @@ export const AttackReportSchema = z
 type Attack = z.infer<typeof AttackSchema>;
 /** Longest attacker reply that is parsed at all (10 attacks × 5 tests × 100 KB fit with room to spare). */
 const MAX_REPLY_CHARS = 6_000_000;
-const ATTACK_RUN_ENV = { CI: "1", PYTHONDONTWRITEBYTECODE: "1" } as const;
+const GATE_ENV = { CI: "1", PYTHONDONTWRITEBYTECODE: "1" } as const;
 
 function parseAttackReport(result: ExecutorResult): z.infer<typeof AttackReportSchema> | string {
   const problems: string[] = [];
@@ -439,10 +439,10 @@ async function runRedteam(input: ModeControllerInput, extras: RedteamExtras): Pr
     checkAbort();
     const root = worktree;
 
+    // Every gate (baseline, attack confirmation, after the fix) runs with the same env, which asks
+    // runners not to write bytecode or new snapshots; a different env could fake a reproduction.
     const run: RunVerificationCommand = (command, cwd, options) =>
-      (extras.runCommand ?? runShellCommand)(command, cwd, options);
-    // Attack confirmation runs ask runners not to write bytecode or new snapshots into the tree.
-    const attackRun: RunVerificationCommand = (command, cwd, options) => run(command, cwd, { ...options, env: ATTACK_RUN_ENV });
+      (extras.runCommand ?? runShellCommand)(command, cwd, { ...options, env: GATE_ENV });
     const gates = async (testOnly: boolean) => {
       const commands = await resolveVerificationCommands(root, input.config.verification.commands);
       const result = await guard(
@@ -450,7 +450,7 @@ async function runRedteam(input: ModeControllerInput, extras: RedteamExtras): Pr
           projectPath: root,
           commands: testOnly ? { typecheck: "", build: "", lint: "", test: commands.test } : commands,
           skipReviewOnFailure: input.config.verification.skipReviewOnFailure,
-          runCommand: testOnly ? attackRun : run,
+          runCommand: run,
         }),
       );
       const testFailed = result.runs.some((r) => r.slot === "test" && r.status === "FAILED");
