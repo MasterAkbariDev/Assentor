@@ -148,6 +148,7 @@ describe("mode contract", () => {
       "lead",
       "cascade",
       "pipeline",
+      "redteam",
       "tdd",
       "debug",
       "explore",

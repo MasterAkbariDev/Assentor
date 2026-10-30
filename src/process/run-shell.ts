@@ -7,7 +7,7 @@ const DEFAULT_MAX_BUFFER = 10 * 1024 * 1024; // 10MB
 export async function runShellCommand(
   command: string,
   cwd: string,
-  options: { timeoutMs?: number; maxBufferBytes?: number; signal?: AbortSignal } = {},
+  options: { timeoutMs?: number; maxBufferBytes?: number; signal?: AbortSignal; env?: Readonly<Record<string, string>> } = {},
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   const maxBuffer = options.maxBufferBytes ?? DEFAULT_MAX_BUFFER;
   if (options.signal?.aborted) return { stdout: "", stderr: "(cancelled)", code: 130 };
@@ -16,7 +16,7 @@ export async function runShellCommand(
       spawn(command, {
         cwd,
         shell: true,
-        env: process.env,
+        env: options.env ? { ...process.env, ...options.env } : process.env,
         windowsHide: true,
       }),
     );

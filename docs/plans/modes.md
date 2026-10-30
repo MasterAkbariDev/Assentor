@@ -62,7 +62,7 @@ Both share everything underneath: seats, scheduler, worktrees, gates, events, pr
 | 6 | **Pipeline** (assembly line) | Requirements → Architect → Coder → Tester → Reviewer → Docs | Static | ✓ | Well-understood feature work | 2b |
 | 7 | **Pair** (driver / navigator) | One codes, one watches the live stream and interjects | Static + live inject | ✓ | Tricky code where early correction saves rework | 2b |
 | 8 | **Race** (tournament) | N implement in parallel worktrees; judge picks | Static | ✓ | When approach is unclear | 2 (best-of-N) |
-| 9 | **Red team** (adversarial) | Builder vs attacker: attacker writes failing tests/exploits; builder fixes; repeat | Static loop | ✓ | Security, robustness, parsers | 2b |
+| 9 | **Red team** (adversarial) | Builder vs attacker: attacker writes failing tests/exploits; builder fixes; repeat | Controller loop (code, no LLM decides) | ✓ | Security, robustness, parsers | 2b |
 | 10 | **TDD** | Test-writer writes failing tests (gate: must fail) → coder makes them pass (gate: tests untouched) | Static + gates | ✓ | Behavior with clear specs | 2b |
 | 11 | **Swarm** (map-reduce) | Split many small independent items across cheap seats; reduce/merge | Static | ✓ | Lint fixes, migrations, renames across 100s of files | 2b |
 | 12 | **Debug** (hypothesis) | Seats propose hypotheses; each tests one in its own worktree with instrumentation; evidence ranks them | Static | Worktrees only | Flaky tests, prod incidents | 2b |

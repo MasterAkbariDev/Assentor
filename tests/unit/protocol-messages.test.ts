@@ -101,6 +101,16 @@ ${JSON.stringify({
     }
   });
 
+  it("extracts the first-{ to last-} span, and fails fast on a long run of { with no }", () => {
+    expect(extractJsonCandidate('prose {"a": {"b": 1}} more } tail')).toMatchObject({ ok: false }); // span to the last }
+    expect(extractJsonCandidate('prose {"a": {"b": 1}} tail')).toEqual({ ok: true, data: { a: { b: 1 } } });
+    expect(extractJsonCandidate("} before {")).toMatchObject({ ok: false });
+    const started = performance.now();
+    expect(extractJsonCandidate("{".repeat(1_000_000)).ok).toBe(false);
+    expect(extractJsonCandidate(`x${"{".repeat(1_000_000)}}`).ok).toBe(false);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
   it("handles completely malformed output safely", () => {
     expect(parseProtocolMessage("not json at all").ok).toBe(false);
     expect(parseProtocolMessage("").ok).toBe(false);

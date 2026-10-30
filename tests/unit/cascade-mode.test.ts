@@ -557,7 +557,8 @@ describe("tier outcome record and warnings", () => {
   });
 });
 
-describe("the default git reader (registry controller)", () => {
+// Real git processes: slow under load, like the other real-git suites.
+describe("the default git reader (registry controller)", { timeout: 60_000 }, () => {
   const git = (cwd: string, ...args: string[]) =>
     execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd, encoding: "utf8" });
 

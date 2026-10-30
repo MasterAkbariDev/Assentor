@@ -509,6 +509,15 @@ export class WorktreeManager {
     });
   }
 
+  /** A file's content at the seat's base commit (repo-relative path), or undefined when it did not exist there. */
+  async readAtBase(seat: SeatKey, file: string): Promise<string | undefined> {
+    return this.locked(async (ctx) => {
+      const record = await this.requireReady(ctx, seat);
+      const res = await this.git(this.pathFor(ctx, record), ["cat-file", "blob", `${record.baseSha}:${file}`]);
+      return res.code === 0 ? res.stdout : undefined;
+    });
+  }
+
   /** Mark a seat's work as failed so `cleanup({ keepFailed })` keeps it for inspection. */
   async markFailed(seat: SeatKey): Promise<void> {
     await this.locked(async (ctx) => {

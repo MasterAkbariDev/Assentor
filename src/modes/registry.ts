@@ -15,6 +15,7 @@ import { builtinPlaybookSession, builtinPlaybookTeamProblems } from "./playbook-
 import { createDebugController, debugProblems } from "./debug.js";
 import { tddRuntime } from "./tdd/mode.js";
 import { cascadeProblems, createCascadeController } from "./cascade.js";
+import { createRedteamController, redteamProblems } from "./redteam.js";
 
 /**
  * Mode registry and mode contract (T02B-01b metadata, T02B-01 contract). A mode
@@ -108,7 +109,7 @@ export class ApprovalDeniedError extends Error {
 }
 
 /** What a controller may do with worktrees. `applyTo("main")` passes the session's approval floor. */
-export type ControllerWorktrees = Pick<WorktreeManager, "create" | "diff" | "list" | "applyTo" | "discard" | "markFailed" | "cleanup">;
+export type ControllerWorktrees = Pick<WorktreeManager, "create" | "diff" | "list" | "applyTo" | "discard" | "markFailed" | "cleanup" | "readAtBase">;
 
 /** A request for the user's yes/no before work starts or lands. */
 export interface ApprovalRequest {
@@ -324,7 +325,11 @@ const MODES: readonly ModeDefinition[] = [
   mode("pipeline", "Pipeline", "Requirements, architect, coder, tester, reviewer and docs stages in order.", "static", true, false, pipeline),
   mode("pair", "Pair", "A driver codes while a navigator watches the stream and interjects.", "static", true),
   mode("race", "Race", "Several seats implement in parallel worktrees; a judge picks one.", "static", true),
-  mode("redteam", "Red team", "An attacker writes failing tests or exploits; a builder fixes; repeat.", "static", true),
+  // A controller loop (attacker round, builder fix, gates), not a stage graph: the number of rounds depends on the attacker.
+  mode("redteam", "Red team", "An attacker writes failing tests or exploits; a builder fixes; repeat.", "dynamic", true, false, {
+    validate: (config) => [...teamProblems(config), ...redteamProblems(config)],
+    createController: (input) => createRedteamController(input, { approve: (question) => input.requestApproval({ question }) }),
+  }),
   // Runs through prepareModeSession once the host returns createTddExecutor for strategy "tdd"; no CLI route yet.
   mode("tdd", "TDD", "Failing tests first, then code that passes them without touching the tests.", "static", true, false, tddRuntime),
   mode("swarm", "Swarm", "Many small independent items split across cheap seats, then merged.", "static", true),

@@ -45,6 +45,7 @@ describe("mode registry", () => {
     expect(listModes().filter((m) => m.kind === "dynamic").map((m) => m.id)).toEqual([
       "lead",
       "cascade",
+      "redteam",
       "debug",
       "interactive",
       "auto",

@@ -376,6 +376,7 @@ function gateWorktrees(
     discard: (...args) => worktrees.discard(...args),
     markFailed: (...args) => worktrees.markFailed(...args),
     cleanup: (...args) => worktrees.cleanup(...args),
+    readAtBase: (...args) => worktrees.readAtBase(...args),
     applyTo: async (target, seat, options) => {
       if (target === "main" && autonomy !== "autopilot") {
         const { files } = await worktrees.diff(seat);

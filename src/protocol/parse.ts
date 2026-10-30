@@ -53,9 +53,11 @@ export function extractJsonCandidate(raw: unknown): ParseResult<unknown> {
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const candidate = fenced?.[1]?.trim() ?? trimmed;
 
-  // Prefer the first {...} object if surrounding prose exists.
-  const objectMatch = candidate.match(/\{[\s\S]*\}/);
-  const jsonText = objectMatch?.[0] ?? candidate;
+  // Prefer the span from the first "{" to the last "}" if surrounding prose exists.
+  // Same result as the greedy /\{[\s\S]*\}/, in linear time (the regex is quadratic on "{{{…").
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  const jsonText = start >= 0 && end > start ? candidate.slice(start, end + 1) : candidate;
 
   try {
     return { ok: true, data: JSON.parse(jsonText) as unknown };
