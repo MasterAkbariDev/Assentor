@@ -136,7 +136,7 @@ export async function startServe(options: ServeOptions): Promise<ServeHandle> {
   const sendTimeoutMs = options.sendTimeoutMs ?? SEND_TIMEOUT_MS;
   const rpc =
     options.rpcServer ??
-    createEngineRpcServer({ projectPath: options.projectPath, subscriptions: options.subscriptions });
+    createEngineRpcServer({ projectPath: options.projectPath, subscriptions: options.subscriptions, maxAutonomy: "supervised" });
 
   const writeLimit = options.writeRateLimit ?? { max: 30, windowMs: 10_000 };
   const writeWindow = { start: 0, count: 0 };

@@ -7,6 +7,9 @@ import { getLocalVersionSync } from "../self/version.js";
 import { registerHandlerMethods } from "./handlers/index.js";
 import { registerLibraryMethods } from "./library.js";
 import { RpcError, RpcServer } from "./server.js";
+import { registerSessionControlMethods, type SessionHost } from "./session-control.js";
+import type { Autonomy } from "../core/run-mode.js";
+import type { WorktreeManager } from "../worktrees/manager.js";
 import {
   listSessions,
   subscribeToSession,
@@ -23,6 +26,14 @@ export interface EngineRpcOptions {
   engineVersion?: string;
   /** How long one `sessions.list` result is reused. Default 1 s; 0 disables. */
   listCacheMs?: number;
+  /** Builds the deps for `session.create`; without it that method answers NotSupported. */
+  sessionHost?: SessionHost;
+  /** Default: a manager for `projectPath`. */
+  worktrees?: WorktreeManager;
+  /** Highest autonomy `session.create` may start (`serve` sets "supervised": no autopilot from a browser). */
+  maxAutonomy?: Autonomy;
+  /** A created session not started within this time is dropped. Default 10 min (tests use less). */
+  createdTtlMs?: number;
 }
 
 /**
@@ -30,7 +41,8 @@ export interface EngineRpcOptions {
  * handshake, `sessions.list`, `events.subscribe` / `events.unsubscribe`, `usage.get`, and
  * the prompt, team and model-catalog reads from `library.ts`, and the
  * prompt / team / playbook / settings / env methods from `handlers/` (the
- * writes among them need a connection with write access).
+ * writes among them need a connection with write access), and the session / seat / worktree methods
+ * from `session-control.ts`.
  */
 export function createEngineRpcServer(options: EngineRpcOptions): RpcServer {
   const projectPath = path.resolve(options.projectPath);
@@ -77,5 +89,13 @@ export function createEngineRpcServer(options: EngineRpcOptions): RpcServer {
 
   registerLibraryMethods(server, { projectPath });
   registerHandlerMethods(server, { projectPath });
+  registerSessionControlMethods(server, {
+    projectPath,
+    list: cachedList,
+    ...(options.sessionHost ? { host: options.sessionHost } : {}),
+    ...(options.worktrees ? { worktrees: options.worktrees } : {}),
+    ...(options.maxAutonomy ? { maxAutonomy: options.maxAutonomy } : {}),
+    ...(options.createdTtlMs ? { createdTtlMs: options.createdTtlMs } : {}),
+  });
   return server;
 }

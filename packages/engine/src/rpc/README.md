@@ -1,6 +1,6 @@
 # Engine RPC (`packages/engine/src/rpc/`)
 
-JSON-RPC 2.0 between the engine and its clients (CLI/TUI in process, the Tauri sidecar over stdio, the web UI over `assentor serve`). Reads, plus the `write` methods listed under **Handlers** (see **Write access**).
+JSON-RPC 2.0 between the engine and its clients (CLI/TUI in process, the Tauri sidecar over stdio, the web UI over `assentor serve`). Reads, plus the `write` methods listed under **Handlers** and the `session.*` / `seat.*` / `worktree.*` mutations (T04-05) (see **Write access**).
 
 | File | What it is |
 |---|---|
@@ -10,6 +10,7 @@ JSON-RPC 2.0 between the engine and its clients (CLI/TUI in process, the Tauri s
 | `engine.ts` | `createEngineRpcServer({ projectPath })` — registers every engine method (the core ones with `registerAll`: the example to copy). |
 | `handlers/` | `registerHandlerMethods` (T04-04): `prompts.ts`, `teams.ts`, `playbooks.ts`, `settings.ts`, `env.ts`. |
 | `library.ts` | `registerLibraryMethods` — read-only `prompt.list`, `prompt.get`, `team.list`, `models.catalog`. |
+| `session-control.ts` | `registerSessionControlMethods` — `session.*`, `seat.*`, `worktree.*` (see **Session control**). |
 | `sessions.ts` | `sessions.list`, `events.subscribe` / `events.unsubscribe` (read-only; never locks or repairs the log). |
 | `engine.ts` → `usage.get` | `{ sessionId }` → the session's usage ledger (`UsageReportSchema`, TE-01): totals by seat / stage / model, retries, budget warnings. Reads the log with `readSessionEvents`; a missing log is an all-zero report. |
 | `transports.ts` | `createInProcessTransport(server)`, `serveStdio(server, { input, output })` (NDJSON). |
@@ -69,6 +70,24 @@ The library methods' results never contain absolute paths, key ids or vault data
 | `settings.get` | read | executor, run autonomy, routing, limits, git, artifacts; `keys` are `{ id, provider, name, healthy }` only |
 | `settings.save` | write | patch of those fields into the user config; returns the merged settings. `executor.provider` is a selectable executor, `executor.model` a model id (never flag-like). Not settable: reviewers, `binaries`, `verification.commands`, `security`, teams, modes |
 | `env.doctor`, `env.detectClis`, `models.discover` | write | call providers / start CLIs; absolute paths replaced by `<path>`, key-like tokens redacted |
+
+## Session control (`session-control.ts`)
+
+`session.create` needs a `SessionHost` (`createEngineRpcServer({ sessionHost })`) that returns the `prepareModeSession` deps for a request; without one it answers `-32004 NotSupported`. Sessions run through `prepareModeSession` (no second launcher); `create` validates and starts nothing, `start` opens the event log and runs.
+
+| Method | Access | Delegates to |
+|---|---|---|
+| `session.create` / `start` | write | `prepareModeSession` / `PreparedModeSession.run` + `EventLog` |
+| `session.cancel` | write | aborts the session signal (settles open questions and approval gates) |
+| `session.approve` `{ id, decision }` | write | `approve(id)` / `answer(id, "deny")`; static gates cannot be denied |
+| `session.list` / `get` / `export` | read | the `sessions.list` scan, live state, a chunked read of the log (stops at 5,000 events or ~1 MiB, then `truncated: true`) |
+| `worktree.diff` | read | `WorktreeManager.diff` (diff text cut at 512 KiB). It takes the manager's repo lock (a `mkdir` under `.assentor/`), so it is not free of side effects on disk |
+| `worktree.apply` / `discard` | write | `applyTo("main")` / `discard`; both need `confirm: true` and are refused while the session is live here (including `cancelling`) or its event-log writer lock is held by another live process |
+| `session.pause` / `resume`, `seat.setModel` / `inject` / `stop` / `restart` | write | **not supported yet** (`-32004`): no engine pause, no static resume via `prepareModeSession`, no registry from a session id to a live Supervisor or executor |
+
+Autonomy: a session starts with the lowest of the host's `launch.autonomy`, the client's `autonomy` and `maxAutonomy` (`serve` sets `supervised`, so a browser never starts `autopilot`). Created sessions that are not started within 10 minutes are dropped; at most 32 are live. A host that returns no `worktrees` gets the RPC server's manager, so `worktree.*` and the session see the same manifest. Free-text questions (`ask`) cannot be answered over RPC yet: only approvals can (`session.approve`); cancel the session to release one.
+
+Worktrees are addressed by `(sessionId, seatId)` and looked up in the manager's manifest; a client never sends a path. `-32005 Rejected` means the engine understood and refused (wrong state, git refusal).
 
 ## Rules
 

@@ -211,6 +211,16 @@ const WRITER_LOCK = "writer.lock";
 /** A lock file younger than this with no readable owner may still be being written. */
 const FRESH_LOCK_MS = 5_000;
 
+/**
+ * True when a live writer (this process or another on this host, or any process
+ * on another host) holds the session's writer lock. Read-only: never takes over
+ * a stale lock.
+ */
+export async function isSessionLogLocked(projectPath: string, sessionId: string): Promise<boolean> {
+  const file = path.join(sessionPaths(projectPath, sessionId).root, WRITER_LOCK);
+  return !(await isStaleLock(file, await readOwner(file)));
+}
+
 export class EventLogLockedError extends Error {
   constructor(
     readonly sessionId: string,

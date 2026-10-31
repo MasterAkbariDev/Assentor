@@ -9,6 +9,8 @@ import { createInProcessTransport } from "#assentor/engine/rpc/transports.js";
 import type { RpcClientTransport } from "#assentor/protocol/rpc-client.js";
 import { createEngineStore } from "../store/engineStore.js";
 import { AuthRejectedError } from "../transport/websocket.js";
+import { mockTransport } from "../transport/mock.js";
+import { WebSocketTransport } from "../transport/websocketTransport.js";
 import { EngineController } from "./controller.js";
 
 // Drives the controller against the real engine RPC over the in-process transport.
@@ -34,15 +36,18 @@ async function setup() {
   const server = createEngineRpcServer({ projectPath, engineVersion: "1.0.0-test", subscriptions: { pollMs: 5 } });
   const transports: RpcClientTransport[] = [];
   const store = createEngineStore();
-  const controller = new EngineController({
-    store,
+  const transport = new WebSocketTransport({
     connect: async () => {
       const { client } = createInProcessTransport(server);
       transports.push(client);
       return client;
     },
-    listIntervalMs: 20,
     backoffMs: [10],
+  });
+  const controller = new EngineController({
+    store,
+    transport,
+    listIntervalMs: 20,
     schedule: (flush) => setTimeout(flush, 0),
   });
   stops.push(() => controller.stop());
@@ -57,8 +62,8 @@ describe("EngineController", () => {
     stops.push(() => void log.close());
     await log.append({ type: "session.created", sessionId, data: { title: "Live run" } });
 
-    await controller.start();
-    expect(store.getState().connection).toBe("connected");
+    controller.start();
+    await until(() => store.getState().connection === "connected");
     expect(store.getState().engineVersion).toBe("1.0.0-test");
     await until(() => store.getState().sessions.length === 1);
     expect(store.getState().sessions[0]).toMatchObject({ id: sessionId, title: "Live run" });
@@ -75,7 +80,7 @@ describe("EngineController", () => {
     const log = await EventLog.open(projectPath, sessionId);
     stops.push(() => void log.close());
     await log.append({ type: "session.created", sessionId, data: { title: "t" } });
-    await controller.start();
+    controller.start();
     store.getState().select(sessionId);
     await until(() => store.getState().session?.lastSeq === 1);
 
@@ -94,14 +99,16 @@ describe("EngineController", () => {
     let attempts = 0;
     const controller = new EngineController({
       store,
-      connect: async () => {
-        attempts += 1;
-        throw new AuthRejectedError();
-      },
-      backoffMs: [5],
+      transport: new WebSocketTransport({
+        connect: async () => {
+          attempts += 1;
+          throw new AuthRejectedError();
+        },
+        backoffMs: [5],
+      }),
     });
     stops.push(() => controller.stop());
-    await controller.start();
+    controller.start();
     await new Promise((r) => setTimeout(r, 40));
     expect(store.getState().connection).toBe("unauthorized");
     expect(attempts).toBe(1);
@@ -113,8 +120,8 @@ describe("EngineController", () => {
     const server = createEngineRpcServer({ projectPath, engineVersion: "1.0.0-test", subscriptions: { pollMs: 5 } });
     const calls = { subscribe: 0, unsubscribe: 0 };
     const store = createEngineStore();
-    const controller = new EngineController({
-      store,
+    const transport = new WebSocketTransport({
+      backoffMs: [10],
       connect: async () => {
         const { client } = createInProcessTransport(server);
         // Count subscribe/unsubscribe requests on the wire.
@@ -130,10 +137,8 @@ describe("EngineController", () => {
           close: () => client.close(),
         };
       },
-      listIntervalMs: 1000,
-      backoffMs: [10],
-      schedule: (flush) => setTimeout(flush, 0),
     });
+    const controller = new EngineController({ store, transport, listIntervalMs: 1000, schedule: (flush) => setTimeout(flush, 0) });
     stops.push(() => controller.stop());
 
     const a = createId();
@@ -143,7 +148,7 @@ describe("EngineController", () => {
       stops.push(() => void log.close());
       await log.append({ type: "session.created", sessionId: id, data: { title: id } });
     }
-    await controller.start();
+    controller.start();
 
     store.getState().select(a);
     store.getState().select(b);
@@ -152,5 +157,28 @@ describe("EngineController", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(calls.subscribe - calls.unsubscribe).toBe(1);
+  });
+});
+
+describe("EngineController: hello failure", () => {
+  it("retries engine.hello on an open link until it works", async () => {
+    let hellos = 0;
+    const transport = mockTransport({
+      engineVersion: "2.0.0",
+      handlers: {
+        "engine.hello": () => {
+          hellos += 1;
+          if (hellos === 1) throw new Error("engine busy");
+          return { engineVersion: "2.0.0", protocolVersion: 1, capabilities: [] };
+        },
+      },
+    });
+    const store = createEngineStore();
+    const controller = new EngineController({ store, transport, helloRetryMs: [10] });
+    stops.push(() => controller.stop());
+    controller.start();
+    await until(() => store.getState().connection === "connected");
+    expect(hellos).toBe(2);
+    expect(store.getState().engineVersion).toBe("2.0.0");
   });
 });

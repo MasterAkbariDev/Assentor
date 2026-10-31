@@ -10,6 +10,7 @@ export {
   type RpcHandler,
   type RpcHandlers,
 } from "./server.js";
+export { registerSessionControlMethods, type SessionHost, type SessionLaunch } from "./session-control.js";
 export {
   listSessions,
   subscribeToSession,
