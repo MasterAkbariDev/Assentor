@@ -187,7 +187,7 @@ describe("NegotiationView: threshold and decision from the stream", () => {
       store.getState().select("dec");
       store.getState().applyEvents("dec", events(false));
     });
-    expect(getByText(/threshold 70%/)).toBeTruthy();
+    expect(getByText(/threshold ≥ 70%/)).toBeTruthy();
     const card = getByRole("region", { name: "Decision" });
     expect(within(card).getByText("No consensus · preferred Proposal B")).toBeTruthy();
     expect(within(card).getByText("no consensus; the judge chose Proposal B <b>x</b>")).toBeTruthy();

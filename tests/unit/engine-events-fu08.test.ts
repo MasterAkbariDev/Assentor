@@ -47,9 +47,13 @@ describe("FU-08 event schemas: old shapes still parse, new fields are optional",
     ).toMatchObject({ policy: "majority", panelMember: true });
   });
 
-  it("review.finding: reviewerIds is optional", () => {
+  it("review.finding: reviewerIds, category and evidence are optional, and the new strings are capped", () => {
     const base = { key: "k", description: "d", severity: "major" };
     expect(parse("review.finding", base).data).not.toHaveProperty("reviewerIds");
+    expect(parse("review.finding", { ...base, category: "security", evidence: ["a.ts:1"] }).data).toMatchObject({ category: "security" });
+    expect(() => parse("review.finding", { ...base, evidence: Array(21).fill("x") })).toThrow();
+    expect(() => parse("negotiation.decided", { rationale: "x".repeat(4001) })).toThrow();
+    expect(() => parse("review.verdict", { status: "PASS", policy: "x".repeat(65) })).toThrow();
     expect(parse("review.finding", { ...base, reviewerIds: ["a", "b"], agreement: { count: 2, total: 3 } }).data).toMatchObject({
       reviewerIds: ["a", "b"],
     });
@@ -80,7 +84,7 @@ function reviewer(name: string, status: ReviewStatus, confidence: number, withIs
               category: IssueCategory.Correctness,
               description: "Token compared with ==",
               affectedFiles: ["src/auth.ts"],
-              evidence: [],
+              evidence: ["src/auth.ts:12"],
             },
           ]
         : [],
@@ -101,7 +105,7 @@ async function run(members: Reviewer[]): Promise<EngineEvent[]> {
     projectPath: process.cwd(),
     contract: createEmptyContract("Implement average()"),
     executor: executor(),
-    reviewer: single ? tracked[0]! : new PanelReviewer({ name: "panel", reviewers: tracked, policy: "majority" }),
+    reviewer: single ? tracked[0]! : new PanelReviewer({ name: "panel", reviewers: tracked, policy: "majority", memberSeatIds: tracked.map((_, i) => `reviewer-${i + 1}`) }),
     budgets: createBudgets({ maxRounds: 1, maxMessages: 20 }),
     taskId: sink.sessionId,
     skipGates: true,
@@ -144,7 +148,18 @@ describe("FU-08 review events from a panel", () => {
       affectedFiles: ["src/auth.ts"],
       agreement: { count: 2, total: 3 },
     });
-    expect([...findings[0]!.data.reviewerIds!].sort()).toEqual(["Claude", "Codex"]);
+    // Seat ids, not names, and the issue's category and evidence come along.
+    expect([...findings[0]!.data.reviewerIds!].sort()).toEqual(["reviewer-1", "reviewer-3"]);
+    expect(findings[0]!.data).toMatchObject({ category: "correctness", evidence: ["src/auth.ts:12"] });
+  });
+
+  it("names two members with the same name by their own seat ids", async () => {
+    const events = await run([
+      reviewer("claude", ReviewStatus.Pass, 0.9, false),
+      reviewer("claude", ReviewStatus.NeedsWork, 0.7, true),
+    ]);
+    const finding = events.find((e) => e.type === "review.finding");
+    expect(finding?.data).toMatchObject({ reviewerIds: ["reviewer-2"], agreement: { count: 1, total: 2 } });
   });
 
   it("a single reviewer keeps one verdict, no policy and no findings", async () => {

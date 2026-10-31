@@ -75,6 +75,12 @@ export function ReviewView() {
       setOnlyDisagreements(false);
     }
   }, [agreementKnown, onlyDisagreements]);
+  // Finding events name reviewers by seat id. Two seats with the same name keep their ids apart.
+  const reviewerName = (id: string) => {
+    const name = seats?.[id]?.displayName;
+    const clash = name !== undefined && reviewers.some((seat) => seat.seatId !== id && seat.displayName === name);
+    return name === undefined ? id : clash ? `${name} (${id})` : name;
+  };
   const visible = filterFindings(findings, { severity, onlyDisagreements: onlyDisagreements && agreementKnown });
 
   return (
@@ -121,7 +127,7 @@ export function ReviewView() {
         </ul>
       )}
       <p className="review-note">
-        Each row shows the seat's run status{Object.keys(memberVerdicts).length > 0 ? " and its own verdict" : ". Logs from before per-reviewer verdicts do not carry them"}.
+        Each row shows the seat's run status{Object.keys(memberVerdicts).length > 0 ? " and its own verdict" : ". Single-reviewer runs and older logs show only the decision"}.
       </p>
 
       <h3 className="review-subheading">Findings</h3>
@@ -180,7 +186,7 @@ export function ReviewView() {
             <h4 className="review-file-name">{group.file || "No file named"}</h4>
             <ul className="review-findings">
               {group.findings.map((finding, index) => (
-                <FindingItem key={`${finding.key}:${index}`} finding={finding} />
+                <FindingItem key={`${finding.key}:${index}`} finding={finding} reviewerName={reviewerName} />
               ))}
             </ul>
           </section>
@@ -209,19 +215,20 @@ function DecisionBanner({ decision, singleReviewer }: { decision: ReviewDecision
   );
 }
 
-function FindingItem({ finding }: { finding: FindingView }) {
+function FindingItem({ finding, reviewerName }: { finding: FindingView; reviewerName: (id: string) => string }) {
   const others = finding.affectedFiles.slice(1);
   return (
     <li className={`review-finding tone-${toneOf(finding.severity)}`}>
       <div className="review-finding-head">
         <span className="review-severity">{finding.severity}</span>
+        {finding.category !== "other" ? <span className="review-category">{finding.category}</span> : null}
         <span className="review-agreement" title="Reviewers who flagged this finding">
           {agreementText(finding)}
         </span>
       </div>
       <p className="review-finding-text">{finding.description}</p>
       {others.length > 0 ? <p className="review-finding-files">Also in: {others.join(", ")}</p> : null}
-      {finding.agentIds.length > 0 ? <p className="review-finding-reviewers">Flagged by: {finding.agentIds.join(", ")}</p> : null}
+      {finding.agentIds.length > 0 ? <p className="review-finding-reviewers">Flagged by: {finding.agentIds.map(reviewerName).join(", ")}</p> : null}
       {finding.evidence.length > 0 ? (
         <ul className="review-evidence">
           {finding.evidence.map((item, index) => (

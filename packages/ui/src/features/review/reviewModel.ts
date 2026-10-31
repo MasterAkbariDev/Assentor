@@ -1,5 +1,5 @@
 import type { EngineEventOf } from "#assentor/protocol/events.js";
-import { ReviewIssueSchema, Severity } from "#assentor/protocol/review-result.js";
+import { IssueCategory, ReviewIssueSchema, Severity } from "#assentor/protocol/review-result.js";
 import {
   rankCorrelatedFindings,
   REVIEW_POLICIES,
@@ -23,6 +23,8 @@ export type FindingView = Omit<CorrelatedFinding, "severity"> & { severity: stri
 
 /** Severities the schema knows. Any other string in the stream is shown as given and matches the "other" filter. */
 const KNOWN_SEVERITIES: ReadonlySet<string> = new Set<string>(Object.values(Severity));
+
+const KNOWN_CATEGORIES: ReadonlySet<string> = new Set<string>(Object.values(IssueCategory));
 
 export interface ReviewDecision {
   status: string;
@@ -84,16 +86,16 @@ export function findingsOf(
 }
 
 function fromFindingEvent(event: FindingEvent): FindingView {
-  const { key, description, severity, affectedFiles, agreement, reviewerIds } = event.data;
+  const { key, description, severity, affectedFiles, agreement, reviewerIds, category, evidence } = event.data;
   return {
     key,
     description,
     severity,
-    category: "other",
+    category: KNOWN_CATEGORIES.has(category ?? "") ? (category as FindingView["category"]) : "other",
     agentIds: reviewerIds ?? [],
     issueIds: [],
     affectedFiles,
-    evidence: [],
+    evidence: evidence ?? [],
     agreement: agreement
       ? { count: agreement.count, total: agreement.total, ratio: agreement.total > 0 ? agreement.count / agreement.total : 0 }
       : { count: 0, total: 0, ratio: 0 },

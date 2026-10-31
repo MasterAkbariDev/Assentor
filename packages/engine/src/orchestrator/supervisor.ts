@@ -1623,6 +1623,9 @@ export class Supervisor {
           affectedFiles: finding.affectedFiles,
           agreement: { count: finding.agreement.count, total: finding.agreement.total },
           reviewerIds: finding.agentIds,
+          category: finding.category,
+          // Capped like the event schema; the sink redacts secrets.
+          evidence: finding.evidence.slice(0, 20).map((item) => item.slice(0, 2000)),
         },
       });
     }

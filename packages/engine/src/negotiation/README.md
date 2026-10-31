@@ -23,7 +23,9 @@ export const firstProposal: NegotiationStrategy = {
     );
     const proposals = replies.flatMap((r) => (r.ok ? [{ seatId: r.seatId, text: r.data.proposal }] : []));
     const { anonymized } = anonymizeProposals(proposals);
-    anonymized.forEach((p) => ctx.emit({ type: "negotiation.proposal", data: { round: 1, label: p.label, text: p.text } }));
+    anonymized.forEach((p, i) =>
+      ctx.emit({ type: "negotiation.proposal", seatId: proposals[i]!.seatId, data: { round: 1, label: p.label, text: p.text } }),
+    );
     const first = anonymized[0];
     return {
       strategy: "first-proposal",
@@ -39,6 +41,14 @@ export const firstProposal: NegotiationStrategy = {
 ```
 
 Test it with `createMockNegotiationContext({ seats: expandSeatSpecs([...]), script: (ask) => ({ proposal: "…" }) })` and assert on the result (validate it with `NegotiationResultSchema.parse`), `asks` (which seat got which step and vars) and `events`.
+
+## Events
+
+Strategies emit through `ctx.emit` (all fields beyond the first release are optional, so old logs still parse):
+
+- `negotiation.proposal`: set the event's `seatId` to the proposing seat. The label stays anonymous in `data`; the event log is for UIs, never for other seats.
+- `negotiation.consensus`: send `threshold` (debate: reached when `score >= threshold`; vote and synthesize: reached when `score > 0.5`).
+- `negotiation.decided` `{ rationale, winner? }`: once, when the strategy decides, with the winning label (none for a synthesized answer). Debate's moderator or judge ruling happens after its last consensus event, so the decision gets its own event.
 
 ## Rules
 

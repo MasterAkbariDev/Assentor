@@ -44,15 +44,15 @@ function panelStream(): EngineEvent[] {
     spawn("reviewer-2", "Opus#2", "claude-opus", "security-reviewer"),
     { type: "seat.done", seatId: "reviewer-1", data: { ok: true, summary: "Looks correct" } },
     { type: "seat.error", seatId: "reviewer-2", data: { message: "timed out" } },
-    finding("f-readme", "Docs out of date", "minor", ["README.md"], { count: 1, total: 4 }),
-    finding("f-auth", "Token compared with ==", "major", ["src/auth.ts"], { count: 3, total: 4 }),
-    finding("f-crash", "Null dereference", "blocker", ["src/auth.ts", "src/session.ts"], { count: 4, total: 4 }),
-    finding("f-general", "General concern", "info", [], { count: 2, total: 4 }),
     {
       type: "review.verdict",
       seatId: "panel",
       data: { status: "NEEDS_WORK", summary: "Panel [unanimous] Opus#1 PASS, Opus#2 NEEDS_WORK. Changes required", confidence: 0.8 },
     },
+    finding("f-readme", "Docs out of date", "minor", ["README.md"], { count: 1, total: 4 }),
+    finding("f-auth", "Token compared with ==", "major", ["src/auth.ts"], { count: 3, total: 4 }),
+    finding("f-crash", "Null dereference", "blocker", ["src/auth.ts", "src/session.ts"], { count: 4, total: 4 }),
+    finding("f-general", "General concern", "info", [], { count: 2, total: 4 }),
   ]);
 }
 
@@ -101,7 +101,7 @@ describe("ReviewView grouping and ordering", () => {
     expect(rows[1]).toContain("Looks correct");
     expect(rows[2]).toContain("failed");
     expect(getByText("timed out")).toBeTruthy();
-    expect(getByText(/Logs from before per-reviewer verdicts do not carry them/)).toBeTruthy();
+    expect(getByText(/Single-reviewer runs and older logs show only the decision/)).toBeTruthy();
   });
 });
 
@@ -113,11 +113,11 @@ describe("ReviewView per-reviewer verdicts and panel data", () => {
       spawn("reviewer-2", "Opus#2", "claude-opus", "security-reviewer"),
       { type: "review.verdict", seatId: "reviewer-1", data: { status: "PASS", confidence: 0.9, panelMember: true } },
       { type: "review.verdict", seatId: "reviewer-2", data: { status: "NEEDS_WORK", confidence: 0.6, summary: "member", panelMember: true } },
+      { type: "review.verdict", seatId: "panel", data: { status: "NEEDS_WORK", summary: "Merged", policy: "security-veto" } },
       {
         type: "review.finding",
-        data: { key: "f1", description: "Token compared with ==", severity: "major", affectedFiles: ["a.ts"], agreement: { count: 1, total: 2 }, reviewerIds: ["Opus#2"] },
+        data: { key: "f1", description: "Token compared with ==", severity: "major", affectedFiles: ["a.ts"], agreement: { count: 1, total: 2 }, reviewerIds: ["reviewer-2"], category: "security", evidence: ["src/a.ts:12"] },
       },
-      { type: "review.verdict", seatId: "panel", data: { status: "NEEDS_WORK", summary: "Merged", policy: "security-veto" } },
     ]);
 
   it("shows each member's own verdict and confidence on its row", () => {
@@ -143,9 +143,44 @@ describe("ReviewView per-reviewer verdicts and panel data", () => {
     expect(getByRole("status").textContent).toContain("Policy: security-veto");
   });
 
-  it("lists the reviewers who flagged a finding", () => {
-    const { getByText } = renderReview(panelEvents());
+  it("lists the reviewers who flagged a finding by display name, with its evidence and category", () => {
+    const { getByText, container } = renderReview(panelEvents());
     expect(getByText("Flagged by: Opus#2")).toBeTruthy();
+    expect(getByText("src/a.ts:12")).toBeTruthy();
+    expect(container.querySelector(".review-category")?.textContent).toBe("security");
+  });
+
+  it("tells two reviewers with the same name apart by seat id", () => {
+    const { getByText } = renderReview(
+      stream([
+        spawn("reviewer-1", "claude", "claude-opus", "code-reviewer"),
+        spawn("reviewer-2", "claude", "claude-opus", "security-reviewer"),
+        { type: "review.verdict", seatId: "panel", data: { status: "NEEDS_WORK" } },
+        { type: "review.finding", data: { key: "k", description: "d", severity: "major", affectedFiles: [], reviewerIds: ["reviewer-2"] } },
+      ]),
+    );
+    expect(getByText("Flagged by: claude (reviewer-2)")).toBeTruthy();
+  });
+
+  it("lists only the latest decision's findings: a later verdict clears the earlier ones, a repeat shows once", () => {
+    const f1 = { type: "review.finding", data: { key: "f1", description: "Token compared with ==", severity: "major", affectedFiles: ["a.ts"] } };
+    const { store, container } = renderWithStore(<ReviewView />);
+    const listed = () => Array.from(container.querySelectorAll(".review-finding-text")).map((el) => el.textContent);
+    act(() => {
+      store.getState().select(SESSION);
+      store.getState().applyEvents(SESSION, stream([{ type: "review.verdict", seatId: "panel", data: { status: "NEEDS_WORK" } }, f1]));
+    });
+    expect(listed()).toEqual(["Token compared with =="]);
+    act(() => {
+      const next = stream([{ type: "review.verdict", seatId: "panel", data: { status: "PASS" } }]).map((e) => ({ ...e, seq: 10 }));
+      store.getState().applyEvents(SESSION, next);
+    });
+    expect(listed()).toEqual([]);
+    act(() => {
+      const again = stream([{ type: "review.verdict", seatId: "panel", data: { status: "NEEDS_WORK" } }, f1]).map((e, i) => ({ ...e, seq: 20 + i }));
+      store.getState().applyEvents(SESSION, again);
+    });
+    expect(listed()).toEqual(["Token compared with =="]);
   });
 });
 

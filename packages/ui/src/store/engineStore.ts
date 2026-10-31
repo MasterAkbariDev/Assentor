@@ -164,6 +164,8 @@ export function createEngineStore(): EngineStore {
               memberVerdicts = { ...memberVerdicts, [event.seatId]: event };
             } else {
               reviewVerdict = event;
+              // Findings follow their verdict: a new decision starts a new list.
+              reviewFindings = [];
             }
           }
           if (event.type === "review.finding") {
