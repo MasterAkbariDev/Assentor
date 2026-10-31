@@ -1,6 +1,6 @@
 # Engine RPC (`packages/engine/src/rpc/`)
 
-JSON-RPC 2.0 between the engine and its clients (CLI/TUI in process, the Tauri sidecar over stdio, the web UI over `assentor serve`). Every method is `read` today; the plumbing for `write` methods exists (see **Write access**).
+JSON-RPC 2.0 between the engine and its clients (CLI/TUI in process, the Tauri sidecar over stdio, the web UI over `assentor serve`). The `session.*` / `seat.*` / `worktree.*` methods (T04-05) include `write` ones (see **Write access**).
 
 | File | What it is |
 |---|---|
@@ -9,6 +9,7 @@ JSON-RPC 2.0 between the engine and its clients (CLI/TUI in process, the Tauri s
 | `server.ts` | `RpcServer` (method registry, `register` / `registerAll`) and `RpcConnection` (one per client: write gate, validation, error mapping, serialized writer). |
 | `engine.ts` | `createEngineRpcServer({ projectPath })` — registers every engine method (the core ones with `registerAll`: the example to copy). |
 | `library.ts` | `registerLibraryMethods` — read-only `prompt.list`, `prompt.get`, `team.list`, `models.catalog`. |
+| `session-control.ts` | `registerSessionControlMethods` — `session.*`, `seat.*`, `worktree.*` (see **Session control**). |
 | `sessions.ts` | `sessions.list`, `events.subscribe` / `events.unsubscribe` (read-only; never locks or repairs the log). |
 | `transports.ts` | `createInProcessTransport(server)`, `serveStdio(server, { input, output })` (NDJSON). |
 | `browser.ts` | Old browser entry, kept as a re-export of the two protocol files. Never import `index.ts` from a browser (it pulls in `node:fs`). |
@@ -52,9 +53,25 @@ Default-deny. A connection runs a method whose `access` is not exactly `"read"` 
 
 Results never contain absolute paths, key ids or vault data.
 
+## Session control (`session-control.ts`)
+
+`session.create` needs a `SessionHost` (`createEngineRpcServer({ sessionHost })`) that returns the `prepareModeSession` deps for a request; without one it answers `-32003 NotSupported`. Sessions run through `prepareModeSession` (no second launcher); `create` validates and starts nothing, `start` opens the event log and runs.
+
+| Method | Access | Delegates to |
+|---|---|---|
+| `session.create` / `start` | write | `prepareModeSession` / `PreparedModeSession.run` + `EventLog` |
+| `session.cancel` | write | aborts the session signal (settles open questions and approval gates) |
+| `session.approve` `{ id, decision }` | write | `approve(id)` / `answer(id, "deny")`; static gates cannot be denied |
+| `session.list` / `get` / `export` | read | the `sessions.list` scan, live state, `readSessionEvents` (5,000 events max) |
+| `worktree.diff` | read | `WorktreeManager.diff` (diff text cut at 512 KiB) |
+| `worktree.apply` / `discard` | write | `applyTo("main")` / `discard`; both need `confirm: true`; discard refuses a live session's worktree |
+| `session.pause` / `resume`, `seat.setModel` / `inject` / `stop` / `restart` | write | **not supported yet** (`-32003`): no engine pause, no static resume via `prepareModeSession`, no registry from a session id to a live Supervisor or executor |
+
+Worktrees are addressed by `(sessionId, seatId)` and looked up in the manager's manifest; a client never sends a path. `-32004 Rejected` means the engine understood and refused (wrong state, git refusal).
+
 ## Rules
 
-- No `read` method may write, delete or start anything. The first `write` method needs the serve write-auth card (T04-03) or must stay off `serve`, and the user's sign-off.
+- No `read` method may write, delete or start anything. Write methods stay off `serve` until T04-03 adds write auth.
 - Events are delivered in `seq` order. A client that reconnects (`onDisconnect`) resubscribes with `fromSeq` = the last `seq` it applied. On `events.resync_required` it does the same from `lastSeq` for `log_replaced` / `slow_consumer`, and after a backoff for `io_error`; `unreadable_log` (a line over the limit) is terminal (show an error, don't loop).
 - Frames over 1 MiB are rejected (`-32600`). Internal error messages have absolute paths replaced by `<path>`.
 - Memory per subscription is bounded by one read chunk (64 KiB by default): a slow client falls behind on the file instead of growing a queue.

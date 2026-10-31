@@ -3,6 +3,8 @@ import { RPC_PROTOCOL_VERSION, type SessionSummary } from "#assentor/protocol/rp
 import { getLocalVersionSync } from "../self/version.js";
 import { registerLibraryMethods } from "./library.js";
 import { RpcServer } from "./server.js";
+import { registerSessionControlMethods, type SessionHost } from "./session-control.js";
+import type { WorktreeManager } from "../worktrees/manager.js";
 import {
   listSessions,
   subscribeToSession,
@@ -19,12 +21,16 @@ export interface EngineRpcOptions {
   engineVersion?: string;
   /** How long one `sessions.list` result is reused. Default 1 s; 0 disables. */
   listCacheMs?: number;
+  /** Builds the deps for `session.create`; without it that method answers NotSupported. */
+  sessionHost?: SessionHost;
+  /** Default: a manager for `projectPath`. */
+  worktrees?: WorktreeManager;
 }
 
 /**
- * The engine's RPC server with every read-only method registered: the
- * handshake, `sessions.list`, `events.subscribe` / `events.unsubscribe`, and
- * the prompt, team and model-catalog reads from `library.ts`.
+ * The engine's RPC server: the handshake, `sessions.list`, `events.subscribe` /
+ * `events.unsubscribe`, the prompt, team and model-catalog reads from
+ * `library.ts`, and the session / seat / worktree methods from `session-control.ts`.
  */
 export function createEngineRpcServer(options: EngineRpcOptions): RpcServer {
   const projectPath = path.resolve(options.projectPath);
@@ -64,5 +70,11 @@ export function createEngineRpcServer(options: EngineRpcOptions): RpcServer {
   });
 
   registerLibraryMethods(server, { projectPath });
+  registerSessionControlMethods(server, {
+    projectPath,
+    list: cachedList,
+    ...(options.sessionHost ? { host: options.sessionHost } : {}),
+    ...(options.worktrees ? { worktrees: options.worktrees } : {}),
+  });
   return server;
 }

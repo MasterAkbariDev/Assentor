@@ -270,7 +270,7 @@ export class RpcConnection {
 }
 
 /** Hide absolute file paths (they can reach network clients through `serve`). */
-function scrubPaths(message: string): string {
+export function scrubPaths(message: string): string {
   return message
     .replace(/(?:[A-Za-z]:\\|\\\\)[^\s'"]+/g, "<path>")
     .replace(/(^|[\s'"(])\/[^\s'")]+/g, "$1<path>");
