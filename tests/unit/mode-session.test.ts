@@ -148,6 +148,7 @@ describe("mode contract", () => {
       "lead",
       "cascade",
       "pipeline",
+      "pair",
       "redteam",
       "tdd",
       "debug",
@@ -493,6 +494,28 @@ describe("autonomy floor for dynamic modes (T02B-02)", () => {
     await s.result();
     expect(results).toEqual(["failed", "completed", "completed"]);
     expect(s.asked.map((q) => q.question)).toEqual(['Start work "work" (mock-executor)?', "Start pre?"]);
+  });
+
+  it("manual: the host's output watcher receives the inner executor, not the gated wrapper", async () => {
+    const exec = executor();
+    const watched: unknown[] = [];
+    let created: unknown;
+    const s = await dynamic(
+      "manual",
+      async (ci) => {
+        created = ci.deps.createExecutor({ id: "work", kind: "execute", options: {}, requireApproval: false });
+        const stop = ci.host.watchExecutorOutput!(created as never, () => undefined);
+        expect(stop).toBeTypeOf("function");
+      },
+      () => "approve",
+      {
+        deps: deps(await tempProject(), { createExecutor: () => exec }),
+        host: { watchExecutorOutput: (executor) => (watched.push(executor), () => undefined) },
+      },
+    );
+    await s.result();
+    expect(created).not.toBe(exec);
+    expect(watched).toEqual([exec]);
   });
 
   it("supervised: stages run without asking; applying to main asks and a denial throws before anything lands", async () => {

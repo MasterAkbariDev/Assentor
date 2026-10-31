@@ -67,6 +67,7 @@ export {
   type ModeControllerInput,
   type ModeControllerResult,
   type ModeHostServices,
+  type ExecutorOutputChunk,
   type ControllerWorktrees,
   type ApprovalRequest,
   ApprovalDeniedError,

@@ -284,6 +284,8 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 ### T02B-13 · Pair mode
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** T02B-01, T01-05, T00-06
 
+**Merged 2026-10-31 (planner, under the owner's standing merge direction):** O2 review NEEDS_WORK (cancel during drain spun forever; navigator note framed as a supervisor directive; output watching missed gated executors under manual; resume failed raw) → fixed in `9045fee` → PASS with nits. Deviations: no `seat.inject` yet, so an interjection is `interrupt()` + `continue()` with the note as a quoted Warning message; new optional `ModeHostServices.watchExecutorOutput` (nothing implements it yet, so live runs get end-of-turn looks only); pair does not resume. Open nits: `session.ts` spreads `host`, so prototype methods on a class-based host would be lost; gate output is labelled as from the navigator; the budget-stop cancel is untested.
+
 **Deliverables** — driver seat + navigator seat; navigator receives coalesced driver output every `intervalSec` or on tool calls; interjections via `seat.inject` (respect `NO_COMMENT`), navigator budget cap, optional role swap per subtask, `pair.interjection` events; tests with scripted seats.
 
 ---
