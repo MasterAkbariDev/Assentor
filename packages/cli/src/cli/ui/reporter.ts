@@ -74,6 +74,9 @@ export class RunReporter {
   /** Team board folded from lead events. Printed on each lead turn in lead mode. */
   private leadView: LeadBoardView = emptyLeadBoardView();
   private leadMode = false;
+  /** While a question prompt is open: no spinner painting; lines wait in `heldLines`. */
+  private held = false;
+  private heldLines: string[] = [];
 
   constructor(
     private readonly options: {
@@ -462,7 +465,19 @@ export class RunReporter {
     }
   }
 
+  /** Hold (true) or release (false) output while the user answers a question; held lines print on release. */
+  holdOutput(hold: boolean): void {
+    if (hold) {
+      this.endStatus();
+      this.held = true;
+      return;
+    }
+    this.held = false;
+    for (const line of this.heldLines.splice(0)) console.log(line);
+  }
+
   dispose(): void {
+    this.holdOutput(false);
     this.endStatus();
     this.stopHeartbeat();
     if (this.pendingPaint) {
@@ -517,6 +532,10 @@ export class RunReporter {
   }
 
   private writeln(text: string): void {
+    if (this.held) {
+      this.heldLines.push(text);
+      return;
+    }
     if (this.statusActive && this.isTty) {
       this.clearLine();
       process.stdout.write(`${text}\n`);
@@ -600,7 +619,7 @@ export class RunReporter {
   }
 
   private paint(force: boolean): void {
-    if (!this.statusActive || !this.statusLabel) {
+    if (this.held || !this.statusActive || !this.statusLabel) {
       return;
     }
 

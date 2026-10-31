@@ -68,6 +68,8 @@ export interface ModeRunHooks {
 /** Modes whose controller continues saved state (`resume: true`). */
 const RESUMABLE: ReadonlySet<ModeId> = new Set(["lead", "swarm"]);
 const RUN_FILE = "mode-run.json";
+/** Execute strategies the host cannot build (they need their own executor factories). */
+const UNWIRED_STRATEGIES: ReadonlySet<string> = new Set(["best-of-n", "divide"]);
 const RunRecordSchema = z.object({ mode: z.string(), goal: z.string() });
 /** Upper bound for one free-form model call; the scheduler and session signal usually stop it first. */
 const ASK_TIMEOUT_MS = 30 * 60_000;
@@ -128,7 +130,7 @@ export async function runModeTask(input: ModeTaskInput) {
       log,
       redactSecrets: config.security.redactSecrets,
       onEvent: (event) => {
-        events.push(event);
+        if (input.retro) events.push(event);
         reporter.onEngineEvent(event);
         noteEvent(reporter, event);
         onQuestionEvent(event);
@@ -140,9 +142,6 @@ export async function runModeTask(input: ModeTaskInput) {
       },
     });
     const emit = (draft: EngineEventDraft) => void sink!.emit(draft);
-    if (!input.resumeSessionId) {
-      await fs.writeFile(path.join(sessionPaths(projectPath, sessionId).root, RUN_FILE), JSON.stringify({ mode: mode.id, goal }), "utf8");
-    }
 
     reporter.updatePreparing("starting seats…");
     const worktrees = new WorktreeManager({ repoPath: projectPath });
@@ -174,6 +173,14 @@ export async function runModeTask(input: ModeTaskInput) {
       host,
       ...(input.resumeSessionId ? { resume: true } : {}),
     });
+    const unwired = prepared.spec?.stages.find((s) => s.kind === "execute" && UNWIRED_STRATEGIES.has(s.strategy ?? ""));
+    if (unwired) throw new Error(`stage "${unwired.id}": execute strategy "${unwired.strategy}" is not wired into assentor run yet`);
+    if (!input.resumeSessionId) {
+      // Written once the session validated, so a refused run leaves no record to resume.
+      const root = sessionPaths(projectPath, sessionId).root;
+      await fs.mkdir(root, { recursive: true });
+      await fs.writeFile(path.join(root, RUN_FILE), JSON.stringify({ mode: mode.id, goal }), "utf8");
+    }
     const questions = createAnswerLoop({
       io: input.modeHooks?.questions ?? terminalQuestionIO(),
       answer: (id, text) => prepared.answer(id, text),
@@ -182,7 +189,7 @@ export async function runModeTask(input: ModeTaskInput) {
         reporter.note(`cancelling: ${reason}`);
         abort.abort();
       },
-      beforeAsk: () => reporter.ready(),
+      promptOpen: (open) => reporter.holdOutput(open),
       log: (line) => reporter.note(line),
     });
     onQuestionEvent = questions.onEvent;
@@ -197,7 +204,9 @@ export async function runModeTask(input: ModeTaskInput) {
       questions.close();
     }
 
-    if (input.retro) await runRetro({ projectPath, sessionId, goal, config, events, askSeat: host.askSeat!, reporter });
+    if (input.retro && result.status !== "cancelled" && !abort.signal.aborted) {
+      await runRetro({ projectPath, sessionId, goal, config, events, askSeat: host.askSeat!, reporter, signal: abort.signal });
+    }
     if (result.status === "completed") await worktrees.cleanup(sessionId).catch(() => undefined);
     reporter.note(`${mode.title}: ${result.status}${result.reason ? ` — ${result.reason}` : ""}`);
     if (result.status !== "completed" && RESUMABLE.has(mode.id) && result.status !== "failed") {
@@ -299,11 +308,9 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
   const seatExecutor = (seat: Seat, stage: StageSpec): Executor => {
     const listeners = new Set<(chunk: ExecutorOutputChunk) => void>();
     const send = (chunk: ExecutorOutputChunk) => listeners.forEach((listener) => listener(chunk));
-    let executor = hooks.seatExecutor?.(seat, stage);
-    if (!executor && seat.permissions === "read-only") {
-      // A read-only seat never gets an edit-capable CLI: it answers through the read-only reviewer transport.
-      executor = readOnlyExecutor(seat, ask);
-    }
+    // Fail closed: only an "edit" seat gets an edit-capable executor (a hook's included); any other
+    // seat answers through the read-only reviewer transport.
+    let executor = seat.permissions !== "edit" ? readOnlyExecutor(seat, ask) : hooks.seatExecutor?.(seat, stage);
     if (!executor) {
       const provider = normalizeExecutorProvider(seat.provider);
       const plain = executorEmitsPlainText(provider);
@@ -388,7 +395,7 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
           decideTestChange: reviewerTestChangeDecision(reviewerFor(undefined, {}), projectPath),
         });
       }
-      if (stage.strategy === "best-of-n" || stage.strategy === "divide") {
+      if (UNWIRED_STRATEGIES.has(stage.strategy ?? "")) {
         throw new Error(`execute strategy "${stage.strategy}" is not wired into assentor run yet`);
       }
       return seatExecutor(seatOf(stage), stage);
@@ -460,6 +467,7 @@ async function askSeatText(config: AssentorConfig, projectPath: string, cwd: str
     const key = await resolveProviderApiKey(seat.provider, projectPath);
     if (!key?.secret) throw new Error(`seat "${seat.id}": no ${seat.provider} API key`);
     const provider = seat.provider === "gemini" ? new GeminiProvider() : createOpenAIProvider();
+    // shortcut: generate takes no signal, so a cancel stops waiting but the HTTP request runs to its timeout; pass a signal through AIRequest when the providers take one.
     const call = provider.generate({ model: apiModel, prompt, key: { id: `${key.source}-${seat.provider}`, provider: seat.provider, name: key.name, secret: key.secret }, timeoutMs: ASK_TIMEOUT_MS });
     const aborted = new Promise<never>((_, reject) => {
       if (signal.aborted) reject(new Error("cancelled"));
@@ -517,6 +525,8 @@ async function runRetro(input: {
   events: EngineEvent[];
   askSeat: NonNullable<ModeHostServices["askSeat"]>;
   reporter: RunReporter;
+  /** The session's cancel; Ctrl+C during the retro stops it. */
+  signal: AbortSignal;
 }): Promise<void> {
   try {
     const seat = expandSeatSpecs(resolveTeams(input.config).review.seats)[0];
@@ -527,7 +537,8 @@ async function runRetro(input: {
     const reply = await input.askSeat({
       seat: { ...seat, role: "retro" },
       prompt: prompts.render("retro", retroVariables(retro)),
-      signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
+      // The ask itself times out after ASK_TIMEOUT_MS (CLI and API transports).
+      signal: input.signal,
       reportUsage: () => undefined,
     });
     const lessons = reply.split("\n").filter((line) => /^\s*[-*]\s+/.test(line));

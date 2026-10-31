@@ -330,8 +330,10 @@ const plan: ModeRuntime = {
 const MODES: readonly ModeDefinition[] = [
   // Today's `assentor run`: one executor in a review loop (one reviewer or a `--team` panel).
   mode("solo", "Solo", "One executor with a review loop; today's assentor run.", "static", true, true, solo),
-  // Every mode below with a buildSession/createController runs from `assentor run --mode <id>`
-  // through prepareModeSession, with the CLI host in packages/cli/src/cli/mode-run.ts.
+  // Modes below with a buildSession/createController run from `assentor run --mode <id>` through
+  // prepareModeSession (CLI host: packages/cli/src/cli/mode-run.ts), except redteam, tdd, swarm and
+  // debug: their gates run in fresh worktrees and the host does not install dependencies there yet
+  // (follow-up), so on real projects they would block. The routing for them is in place.
   mode("review", "Review", "Several reviewers judge existing work; a policy merges their verdicts.", "static", false, true, review),
   mode("negotiate", "Negotiate", "Several peers reach consensus with a strategy (vote, debate, synthesize).", "static", true, true, negotiate),
   mode("lead", "Lead (Supervisor)", "A lead seat plans tasks, picks agents and accepts or rejects their reports.", "dynamic", true, true, lead),
@@ -347,19 +349,19 @@ const MODES: readonly ModeDefinition[] = [
   }),
   mode("race", "Race", "Several seats implement in parallel worktrees; a judge picks one.", "static", true),
   // A controller loop (attacker round, builder fix, gates), not a stage graph: the number of rounds depends on the attacker.
-  mode("redteam", "Red team", "An attacker writes failing tests or exploits; a builder fixes; repeat.", "dynamic", true, true, {
+  mode("redteam", "Red team", "An attacker writes failing tests or exploits; a builder fixes; repeat. Not runnable yet: new worktrees get no dependency install before its gates.", "dynamic", true, false, {
     validate: (config) => [...teamProblems(config), ...redteamProblems(config)],
     createController: (input) => createRedteamController(input, { approve: (question) => input.requestApproval({ question }) }),
   }),
   // The CLI host returns createTddExecutor for strategy "tdd".
-  mode("tdd", "TDD", "Failing tests first, then code that passes them without touching the tests.", "static", true, true, tddRuntime),
+  mode("tdd", "TDD", "Failing tests first, then code that passes them without touching the tests. Not runnable yet: new worktrees get no dependency install before its gates.", "static", true, false, tddRuntime),
   // A controller loop (split, batches, tier retries, gates, review), not a stage graph: the batches depend on the split and on what fails.
-  mode("swarm", "Swarm", "Many small independent items split across cheap seats, then merged.", "dynamic", true, true, {
+  mode("swarm", "Swarm", "Many small independent items split across cheap seats, then merged. Not runnable yet: new worktrees get no dependency install before its gates.", "dynamic", true, false, {
     validate: (config) => [...teamProblems(config), ...swarmProblems(config)],
     createController: (input) => createSwarmController(input),
   }),
   // A controller loop (hypothesis rounds, then a fix), not a stage graph: how many rounds it takes depends on the evidence.
-  mode("debug", "Debug", "Seats test competing hypotheses in their own worktrees; evidence picks the fix.", "dynamic", true, true, {
+  mode("debug", "Debug", "Seats test competing hypotheses in their own worktrees; evidence picks the fix. Not runnable yet: new worktrees get no dependency install before its gates.", "dynamic", true, false, {
     validate: (config) => [...teamProblems(config), ...debugProblems(config)],
     createController: (input) => createDebugController(input, { approve: (question) => input.requestApproval({ question }) }),
   }),

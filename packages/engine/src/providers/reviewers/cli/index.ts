@@ -6,6 +6,8 @@ import {
 } from "../../../executors/cli-locator.js";
 import { requestedModel } from "../../executors/cli-print/recipes.js";
 import { isCursorAppBinary } from "../../executors/cursor/index.js";
+import { killProcessTree } from "../../../process/kill-tree.js";
+import { trackChildProcess } from "../../../process/tracker.js";
 import {
   asReviewInput,
   buildReviewPrompt,
@@ -27,7 +29,7 @@ export interface CliSpawnRequest {
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
-  /** Kills the process when it aborts (resolves like a timeout, without `timedOut`). */
+  /** Kills the process tree when it aborts (resolves with `code: null`, without `timedOut`); an aborted signal spawns nothing. */
   signal?: AbortSignal;
 }
 
@@ -449,29 +451,32 @@ function buildCliArgs(
 export async function defaultCliSpawn(
   request: CliSpawnRequest,
 ): Promise<CliSpawnResult> {
+  if (request.signal?.aborted) {
+    return { code: null, stdout: "", stderr: "", signal: "SIGTERM" };
+  }
   return new Promise((resolve, reject) => {
-    const child = spawnCliProcess(request.command, request.args, {
-      cwd: request.cwd,
-      env: request.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    // Tracked until it exits, so Ctrl+C (killAllTrackedProcesses) also stops reviewer and seat asks.
+    const child = trackChildProcess(
+      spawnCliProcess(request.command, request.args, {
+        cwd: request.cwd,
+        env: request.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    );
 
     let stdout = "";
     let stderr = "";
     let settled = false;
-    const stop = (timedOut: boolean) => {
+    const timer = setTimeout(() => {
       child.kill("SIGTERM");
       setTimeout(() => child.kill("SIGKILL"), 2000).unref?.();
-      finish({
-        code: null,
-        stdout,
-        stderr,
-        ...(timedOut ? { timedOut: true } : {}),
-        signal: "SIGTERM",
-      });
+      finish({ code: null, stdout, stderr, timedOut: true, signal: "SIGTERM" });
+    }, request.timeoutMs);
+    // A cancel takes the whole tree (a CLI may have started tools of its own).
+    const onAbort = () => {
+      killProcessTree(child);
+      finish({ code: null, stdout, stderr, signal: "SIGKILL" });
     };
-    const timer = setTimeout(() => stop(true), request.timeoutMs);
-    const onAbort = () => stop(false);
 
     const finish = (result: CliSpawnResult) => {
       if (settled) {
@@ -482,11 +487,7 @@ export async function defaultCliSpawn(
       request.signal?.removeEventListener("abort", onAbort);
       resolve(result);
     };
-    if (request.signal?.aborted) {
-      onAbort();
-    } else {
-      request.signal?.addEventListener("abort", onAbort, { once: true });
-    }
+    request.signal?.addEventListener("abort", onAbort, { once: true });
 
     child.stdout?.on("data", (chunk: Buffer | string) => {
       const text = chunk.toString();

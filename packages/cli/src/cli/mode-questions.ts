@@ -36,8 +36,8 @@ export function createAnswerLoop(input: {
   approveStage(stageId: string): boolean;
   /** Cancels the session (a static gate denied, or no terminal for a question). */
   cancel(reason: string): void;
-  /** Called before a prompt is shown (clear spinners). */
-  beforeAsk?(): void;
+  /** True while a prompt waits for a line (hold spinners and notes), false after. */
+  promptOpen?(open: boolean): void;
   log(line: string): void;
 }): { onEvent(event: EngineEvent): void; close(): void } {
   const queue: Pending[] = [];
@@ -83,9 +83,15 @@ export function createAnswerLoop(input: {
     const choices = item.kind === "gate" || item.approval ? "approve/deny" : item.options?.join("/");
     for (;;) {
       if (settled.has(key) || stop.signal.aborted) return;
-      input.beforeAsk?.();
+      input.promptOpen?.(true);
       const raw = await ask(`\n? ${item.question}${choices ? ` [${choices}]` : ""} `);
-      if (raw === undefined || settled.has(key)) return;
+      input.promptOpen?.(false);
+      if (settled.has(key) || stop.signal.aborted) return;
+      if (raw === undefined) {
+        // stdin ended (Ctrl+D) with the question open: nobody can answer it, so fail closed.
+        input.log(`Stopping: stdin closed before "${item.question}" was answered.`);
+        return input.cancel("stdin closed");
+      }
       const text = raw.trim();
       if (item.kind === "gate") {
         if (YES.test(text)) return void input.approveStage(item.stageId);

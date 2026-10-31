@@ -10,7 +10,7 @@ import { createMockLead, type MockLeadStep } from "../../packages/engine/src/mod
 import type { RosterEntry } from "../../packages/engine/src/modes/roster.js";
 import type { Executor, ExecutorTask } from "../../packages/engine/src/providers/executors/types.js";
 import { resumeAssentorTask, runAssentorTask } from "../../packages/cli/src/cli/commands.js";
-import type { ModeRunHooks } from "../../packages/cli/src/cli/mode-run.js";
+import { runModeTask, type ModeRunHooks } from "../../packages/cli/src/cli/mode-run.js";
 import type { QuestionIO } from "../../packages/cli/src/cli/mode-questions.js";
 
 // `assentor run --mode <id>` end to end through the CLI command function, with mock seats.
@@ -72,7 +72,7 @@ async function writeConfig(extra: Record<string, unknown>): Promise<void> {
 }
 
 /** A terminal that answers every prompt with the next scripted line; `asked` keeps the prompts. */
-function terminal(answers: string[]): QuestionIO & { asked: string[] } {
+function terminal(answers: string[], endWhenOut = false): QuestionIO & { asked: string[] } {
   const input = new PassThrough();
   const asked: string[] = [];
   const output = new Writable({
@@ -82,6 +82,7 @@ function terminal(answers: string[]): QuestionIO & { asked: string[] } {
         asked.push(text.trim());
         const next = answers.shift();
         if (next !== undefined) setImmediate(() => input.write(`${next}\n`));
+        else if (endWhenOut) setImmediate(() => input.end());
       }
       done();
     },
@@ -90,9 +91,14 @@ function terminal(answers: string[]): QuestionIO & { asked: string[] } {
 }
 const noTerminal = (): QuestionIO => ({ input: new PassThrough(), output: new PassThrough(), interactive: false });
 
-async function run(modeId: string, hooks: ModeRunHooks = {}, over: Record<string, unknown> = {}) {
+/**
+ * Through `runAssentorTask` (the CLI command function). `direct`: through `runModeTask`, past the
+ * `available` check, for modes whose routing is wired but which stay unavailable (no dependency
+ * install in new worktrees yet).
+ */
+async function run(modeId: string, hooks: ModeRunHooks = {}, over: Record<string, unknown> = {}, direct = false) {
   const events: EngineEvent[] = [];
-  const { result } = await runAssentorTask({
+  const { result } = await (direct ? runModeTask : runAssentorTask)({
     projectPath: repo,
     prompt: GOAL,
     modeId: modeId as never,
@@ -252,7 +258,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     const { result } = await run("redteam", {
       askSeat: async ({ seat, prompt }) => (attacker.push(`${seat.role}:${prompt.slice(0, 20)}`), JSON.stringify({ yield: true, attacks: [] })),
       questions: terminal(["y"]),
-    });
+    }, {}, true);
     expect(attacker).toEqual([expect.stringMatching(/^red-team-attacker:/)]);
     expect(["completed", "blocked"]).toContain(result.status);
   });
@@ -262,7 +268,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
       teams: { tdd: { seats: [ed("test-writer"), ed("engineer")] } },
       modes: { tdd: { team: "tdd", testCommand: "true" } },
     });
-    const { result, of } = await run("tdd");
+    const { result, of } = await run("tdd", {}, {}, true);
     // The mock test-writer changes nothing, so TDD blocks the round: proof its executor ran, not plain solo.
     expect(result.status).not.toBe("completed");
     expect(JSON.stringify(of("seat.status").map((e) => e.data)) + (result.reason ?? "")).toMatch(/test|TDD/i);
@@ -277,7 +283,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
       modes: { swarm: { workerTeam: "cheap", files: ["a/one.txt"] } },
       verification: { commands: { test: "true" } },
     });
-    const { result, of } = await run("swarm", { questions: terminal(["y", "y"]) });
+    const { result, of } = await run("swarm", { questions: terminal(["y", "y"]) }, {}, true);
     expect(of("mode.selected")[0]?.data).toMatchObject({ mode: "swarm" });
     expect(["completed", "blocked"]).toContain(result.status);
   });
@@ -298,7 +304,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
         cancel: async () => undefined,
       }),
       questions: terminal(["y"]),
-    });
+    }, {}, true);
     expect(cwds.length).toBeGreaterThanOrEqual(2);
     for (const cwd of cwds) expect(cwd).not.toBe(repo);
     expect(["completed", "blocked"]).toContain(result.status);
@@ -314,8 +320,45 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     expect(lessons).not.toContain("not a bullet");
   });
 
-  it("an invalid mode config fails before any work", async () => {
+  it("redteam, tdd, swarm and debug are refused by the CLI until worktrees get dependencies", async () => {
+    await writeConfig({});
+    for (const id of ["redteam", "tdd", "swarm", "debug"]) {
+      await expect(run(id)).rejects.toThrow(`Mode ${id} is not available yet.`);
+    }
+  });
+
+  it("stdin closing at a prompt cancels the session instead of leaving it waiting", async () => {
+    await writeConfig({ modes: { lead: { lead: { provider: "mock", model: "lead" } } } });
+    const lead = createMockLead(LEAD_SCRIPT);
+    // stdin ends (Ctrl+D) when the landing question is shown.
+    const io = terminal([], true);
+    const { result, of } = await run("lead", { askSeat: lead.askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts"), questions: io });
+    expect(result.status).toBe("cancelled");
+    expect(of("user.answer")).toEqual([]);
+    await expect(git(repo, "show", "HEAD:a/x.ts")).rejects.toThrow();
+  });
+
+  it("a read-only seat never reaches the seatExecutor hook (fail closed on permissions)", async () => {
+    await writeConfig({
+      teams: { attackers: { seats: [ro("red-team-attacker")] }, builders: { seats: [ed("engineer")] } },
+      modes: { redteam: { attackerTeam: "attackers", builderTeam: "builders", maxRounds: 1 } },
+      verification: { commands: { test: "true" } },
+    });
+    const hooked: string[] = [];
+    const asked: string[] = [];
+    await run("redteam", {
+      askSeat: async ({ seat }) => (asked.push(seat.permissions), JSON.stringify({ yield: true, attacks: [] })),
+      seatExecutor: (seat) => (hooked.push(seat.permissions), writer("a/x.ts")),
+      questions: terminal(["y"]),
+    }, {}, true);
+    expect(asked).toEqual(["read-only"]);
+    expect(hooked).toEqual(["edit"]);
+  });
+
+  it("an invalid mode config fails before any work and leaves no session record to resume", async () => {
     await writeConfig({});
     await expect(run("negotiate")).rejects.toThrow(/modes\.negotiate/);
+    const sessions = await fs.readdir(path.join(repo, ".assentor", "sessions")).catch(() => []);
+    for (const id of sessions) await expect(fs.stat(path.join(repo, ".assentor", "sessions", id, "mode-run.json"))).rejects.toThrow();
   });
 });

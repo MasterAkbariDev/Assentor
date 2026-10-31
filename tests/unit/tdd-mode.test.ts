@@ -899,11 +899,11 @@ describe("the tdd mode", () => {
   const config = (modes: Record<string, unknown> = { tdd: { team: "tdd", testCommand: "node {files}" } }) =>
     parseAssentorConfig({ teams: { tdd: { seats: roster }, bad: { seats: [roster[1]] } }, modes });
 
-  it("is registered as a static, CLI-available mode with a builder", () => {
+  it("is registered as a static mode with a builder, not CLI-available until worktrees get dependencies", () => {
     const mode = getMode("tdd")!;
-    expect(mode).toMatchObject({ kind: "static", editsCode: true, available: true });
+    expect(mode).toMatchObject({ kind: "static", editsCode: true, available: false });
     expect(typeof mode.buildSession).toBe("function");
-    expect(listModes().filter((m) => m.available).map((m) => m.id)).toContain("tdd");
+    expect(listModes().filter((m) => m.available).map((m) => m.id)).not.toContain("tdd");
   });
 
   const problemsOf = (cfg: ReturnType<typeof config>) => {

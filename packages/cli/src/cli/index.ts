@@ -229,6 +229,9 @@ program
 
       const flags = parseModeFlags(options);
       if (flags.notice) console.error(flags.notice);
+      if (options.retro && (!flags.modeId || flags.modeId === "solo")) {
+        console.error("Note: --retro only applies to a non-solo --mode run; ignored.");
+      }
 
       const { result } = await runAssentorTask({
         projectPath: options.project,
