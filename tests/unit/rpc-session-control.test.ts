@@ -24,6 +24,7 @@ import {
   type StageRunnerDeps,
   type StageSpec,
 } from "../../packages/engine/src/index.js";
+import { EventLog } from "../../packages/engine/src/events/log.js";
 import { RpcMethods } from "../../packages/protocol/src/rpc.js";
 import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
 
@@ -98,18 +99,34 @@ interface Setup {
   wm: WorktreeManager;
 }
 
-async function setup(options: { autonomy?: "manual" | "supervised"; mode?: ModeDefinition } = {}): Promise<Setup> {
+async function setup(
+  options: {
+    autonomy?: "manual" | "supervised" | "autopilot";
+    mode?: ModeDefinition;
+    maxAutonomy?: "manual" | "supervised" | "autopilot";
+    createdTtlMs?: number;
+    launchDelayMs?: number;
+  } = {},
+): Promise<Setup> {
   const projectPath = await makeRepo();
   const wm = new WorktreeManager({ repoPath: projectPath });
   const sessionHost: SessionHost = {
-    launch: () => ({
+    launch: async () => {
+      if (options.launchDelayMs) await new Promise((r) => setTimeout(r, options.launchDelayMs));
+      return {
       autonomy: options.autonomy ?? "supervised",
       config,
       deps: deps(projectPath),
       ...(options.mode ? { mode: options.mode } : {}),
-    }),
+      };
+    },
   };
-  const server = createEngineRpcServer({ projectPath, engineVersion: "test", listCacheMs: 0, sessionHost, worktrees: wm });
+  const server = createEngineRpcServer({ projectPath, engineVersion: "test", listCacheMs: 0,
+    sessionHost,
+    worktrees: wm,
+    ...(options.maxAutonomy ? { maxAutonomy: options.maxAutonomy } : {}),
+    ...(options.createdTtlMs ? { createdTtlMs: options.createdTtlMs } : {}),
+  });
   const { client: transport } = createInProcessTransport(server);
   const client = new RpcClient(transport);
   cleanups.push(() => client.close());
@@ -281,6 +298,51 @@ describe("session lifecycle", () => {
   });
 });
 
+describe("autonomy, expiry, cap and export bounds", () => {
+  const mode = () => dynamicMode(async () => undefined);
+
+  it("a session never starts with more autonomy than the host, the client or maxAutonomy allow", async () => {
+    const a = await setup({ mode: mode(), autonomy: "supervised" });
+    expect((await a.client.call("session.create", { mode: "lead", goal: "g", autonomy: "autopilot" })).autonomy).toBe("supervised");
+    expect((await a.client.call("session.create", { mode: "lead", goal: "g", autonomy: "manual" })).autonomy).toBe("manual");
+    expect((await a.client.call("session.create", { mode: "lead", goal: "g" })).autonomy).toBe("supervised");
+
+    const b = await setup({ mode: mode(), autonomy: "autopilot", maxAutonomy: "supervised" });
+    expect((await b.client.call("session.create", { mode: "lead", goal: "g" })).autonomy).toBe("supervised");
+    expect((await b.client.call("session.create", { mode: "lead", goal: "g", autonomy: "autopilot" })).autonomy).toBe("supervised");
+    expect((await b.client.call("session.create", { mode: "lead", goal: "g", autonomy: "manual" })).autonomy).toBe("manual");
+  });
+
+  it("a created session that is not started in time is dropped", async () => {
+    const { client } = await setup({ mode: mode(), createdTtlMs: 50 });
+    const { sessionId } = await client.call("session.create", { mode: "lead", goal: "g" });
+    await until(async () => (await client.call("session.list")).sessions.length === 0);
+    expect((await failure(client.call("session.start", { sessionId }))).code).toBe(RpcErrorCode.InvalidParams);
+  });
+
+  it("at most 32 sessions are live, also when creates overlap while the host works", async () => {
+    const { client } = await setup({ mode: mode(), launchDelayMs: 30 });
+    const results = await Promise.allSettled(Array.from({ length: 34 }, () => client.call("session.create", { mode: "lead", goal: "g" })));
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(32);
+    const rejects = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(rejects.map((r) => (r.reason as RpcRemoteError).code)).toEqual([RpcErrorCode.Rejected, RpcErrorCode.Rejected]);
+  });
+
+  it("export stops at 5,000 events and reports truncated; fromSeq continues", async () => {
+    const { client, projectPath } = await setup({ mode: mode() });
+    const sessionId = "33333333-3333-4333-8333-333333333333";
+    const log = await EventLog.open(projectPath, sessionId);
+    await Promise.all(Array.from({ length: 5_010 }, () => log.append({ type: "user.answer", sessionId, data: { questionId: "q", answer: "a" } })));
+    await log.close();
+    const first = await client.call("session.export", { sessionId });
+    expect(first.events).toHaveLength(5_000);
+    expect(first.truncated).toBe(true);
+    const rest = await client.call("session.export", { sessionId, fromSeq: 5_000 });
+    expect(rest.events).toHaveLength(10);
+    expect(rest.truncated).toBe(false);
+  });
+});
+
 describe("worktrees", () => {
   const S1 = "11111111-1111-4111-8111-111111111111";
   const S2 = "22222222-2222-4222-8222-222222222222";
@@ -378,5 +440,34 @@ describe("worktrees", () => {
     await client.call("session.cancel", { sessionId });
     await until(async () => (await client.call("session.get", { sessionId })).session.live === undefined);
     expect(await client.call("worktree.discard", key)).toEqual({ ok: true });
+  });
+
+  it("apply is refused while the session is live, also while cancelling", async () => {
+    const { client, wm } = await setup({ mode: dynamicMode(async (i) => void (await i.ask({ question: "hold" }))) });
+    const { sessionId } = await client.call("session.create", { mode: "lead", goal: "g" });
+    const info = await wm.create({ sessionId, seatId: "opus-1" });
+    await fs.writeFile(path.join(info.path, "a.txt"), "two\n");
+    await client.call("session.start", { sessionId });
+    const key = { sessionId, seatId: "opus-1", confirm: true as const };
+    expect((await failure(client.call("worktree.apply", key))).code).toBe(RpcErrorCode.Rejected);
+    await client.call("session.cancel", { sessionId });
+    await until(async () => (await client.call("session.get", { sessionId })).session.live === undefined);
+    expect(await client.call("worktree.apply", key)).toMatchObject({ ok: true, changed: true });
+  });
+
+  it("apply and discard are refused while another live process holds the session's writer lock", async () => {
+    const { client, wm, projectPath } = await setup();
+    await seatWithChange(wm);
+    const lock = path.join(projectPath, ".assentor", "sessions", S1, "writer.lock");
+    await fs.mkdir(path.dirname(lock), { recursive: true });
+    // The parent process is alive and is not this one.
+    await fs.writeFile(lock, `${JSON.stringify({ pid: process.ppid, host: os.hostname(), startedAt: new Date().toISOString(), token: "other" })}\n`);
+    const key = { sessionId: S1, seatId: "opus-1", confirm: true as const };
+    expect((await failure(client.call("worktree.apply", key))).code).toBe(RpcErrorCode.Rejected);
+    expect((await failure(client.call("worktree.discard", { ...key, force: true }))).code).toBe(RpcErrorCode.Rejected);
+    expect(await wm.list(S1)).toHaveLength(1);
+    // A dead owner is a stale lock: not live.
+    await fs.writeFile(lock, `${JSON.stringify({ pid: 2 ** 22 - 1, host: os.hostname(), startedAt: new Date().toISOString(), token: "dead" })}\n`);
+    expect(await client.call("worktree.discard", { ...key, force: true })).toEqual({ ok: true });
   });
 });

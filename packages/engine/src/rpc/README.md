@@ -64,10 +64,12 @@ Results never contain absolute paths, key ids or vault data.
 | `session.create` / `start` | write | `prepareModeSession` / `PreparedModeSession.run` + `EventLog` |
 | `session.cancel` | write | aborts the session signal (settles open questions and approval gates) |
 | `session.approve` `{ id, decision }` | write | `approve(id)` / `answer(id, "deny")`; static gates cannot be denied |
-| `session.list` / `get` / `export` | read | the `sessions.list` scan, live state, `readSessionEvents` (5,000 events max) |
-| `worktree.diff` | read | `WorktreeManager.diff` (diff text cut at 512 KiB) |
-| `worktree.apply` / `discard` | write | `applyTo("main")` / `discard`; both need `confirm: true`; discard refuses a live session's worktree |
+| `session.list` / `get` / `export` | read | the `sessions.list` scan, live state, a chunked read of the log (stops at 5,000 events or ~1 MiB, then `truncated: true`) |
+| `worktree.diff` | read | `WorktreeManager.diff` (diff text cut at 512 KiB). It takes the manager's repo lock (a `mkdir` under `.assentor/`), so it is not free of side effects on disk |
+| `worktree.apply` / `discard` | write | `applyTo("main")` / `discard`; both need `confirm: true` and are refused while the session is live here (including `cancelling`) or its event-log writer lock is held by another live process |
 | `session.pause` / `resume`, `seat.setModel` / `inject` / `stop` / `restart` | write | **not supported yet** (`-32004`): no engine pause, no static resume via `prepareModeSession`, no registry from a session id to a live Supervisor or executor |
+
+Autonomy: a session starts with the lowest of the host's `launch.autonomy`, the client's `autonomy` and `maxAutonomy` (`serve` sets `supervised`, so a browser never starts `autopilot`). Created sessions that are not started within 10 minutes are dropped; at most 32 are live. A host that returns no `worktrees` gets the RPC server's manager, so `worktree.*` and the session see the same manifest. Free-text questions (`ask`) cannot be answered over RPC yet: only approvals can (`session.approve`); cancel the session to release one.
 
 Worktrees are addressed by `(sessionId, seatId)` and looked up in the manager's manifest; a client never sends a path. `-32005 Rejected` means the engine understood and refused (wrong state, git refusal).
 

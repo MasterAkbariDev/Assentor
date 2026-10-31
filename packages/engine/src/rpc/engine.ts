@@ -4,6 +4,7 @@ import { getLocalVersionSync } from "../self/version.js";
 import { registerLibraryMethods } from "./library.js";
 import { RpcServer } from "./server.js";
 import { registerSessionControlMethods, type SessionHost } from "./session-control.js";
+import type { Autonomy } from "../core/run-mode.js";
 import type { WorktreeManager } from "../worktrees/manager.js";
 import {
   listSessions,
@@ -25,6 +26,10 @@ export interface EngineRpcOptions {
   sessionHost?: SessionHost;
   /** Default: a manager for `projectPath`. */
   worktrees?: WorktreeManager;
+  /** Highest autonomy `session.create` may start (`serve` sets "supervised": no autopilot from a browser). */
+  maxAutonomy?: Autonomy;
+  /** A created session not started within this time is dropped. Default 10 min (tests use less). */
+  createdTtlMs?: number;
 }
 
 /**
@@ -75,6 +80,8 @@ export function createEngineRpcServer(options: EngineRpcOptions): RpcServer {
     list: cachedList,
     ...(options.sessionHost ? { host: options.sessionHost } : {}),
     ...(options.worktrees ? { worktrees: options.worktrees } : {}),
+    ...(options.maxAutonomy ? { maxAutonomy: options.maxAutonomy } : {}),
+    ...(options.createdTtlMs ? { createdTtlMs: options.createdTtlMs } : {}),
   });
   return server;
 }

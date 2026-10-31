@@ -1,10 +1,12 @@
-import { EventLog, EventLogLockedError, readSessionEvents } from "../events/log.js";
+import { promises as fs } from "node:fs";
+import { EventLog, EventLogLockedError, isSessionLogLocked } from "../events/log.js";
+import { sessionPaths } from "../persistence/paths.js";
 import { createId, isId } from "../core/ids.js";
 import type { ModeDefinition } from "../modes/registry.js";
 import { ModeValidationError, prepareModeSession, type ModeSessionInput, type PreparedModeSession } from "../modes/session.js";
 import { WorktreeError, WorktreeManager } from "../worktrees/manager.js";
 import type { Autonomy } from "../core/run-mode.js";
-import type { EngineEventDraft } from "#assentor/protocol/events.js";
+import { AUTONOMY_LEVELS, safeParseEngineEvent, type EngineEventDraft } from "#assentor/protocol/events.js";
 import { RpcErrorCode, type RpcResult, type SessionSummary } from "#assentor/protocol/rpc.js";
 import { RpcError, scrubPaths, type RpcServer } from "./server.js";
 
@@ -39,6 +41,10 @@ export interface SessionControlOptions {
   worktrees?: WorktreeManager;
   /** Same scan `sessions.list` uses. */
   list: () => Promise<SessionSummary[]>;
+  /** Highest autonomy a session may start with, whatever the host or client asks for. */
+  maxAutonomy?: Autonomy;
+  /** A created session that is not started within this time is dropped. Default 10 min. */
+  createdTtlMs?: number;
 }
 
 type LiveState = "created" | "running" | "cancelling";
@@ -50,11 +56,15 @@ interface Live {
   /** Approval question ids (dynamic) and stage ids (static) the session is waiting on. */
   approvals: Set<string>;
   title: string;
+  /** Drops a never-started session; cleared on start or cancel. */
+  expiry?: NodeJS.Timeout;
 }
 
 const MAX_LIVE_SESSIONS = 32;
 const MAX_EXPORT_EVENTS = 5_000;
+const MAX_EXPORT_CHARS = 1024 * 1024;
 const MAX_DIFF_CHARS = 512 * 1024;
+const CREATED_TTL_MS = 10 * 60_000;
 
 const invalid = (message: string) => new RpcError(RpcErrorCode.InvalidParams, message);
 const rejected = (message: string) => new RpcError(RpcErrorCode.Rejected, scrubPaths(message));
@@ -84,6 +94,12 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
     return { sessionId, seatId };
   };
 
+  /** Worktrees of a session that is running (here or in another process) are not changed from outside. */
+  const assertIdle = async (sessionId: string) => {
+    if (sessions.has(sessionId)) throw rejected("the session is live; cancel it first");
+    if (await isSessionLogLocked(projectPath, sessionId)) throw rejected("another process is running this session");
+  };
+
   const summaryOf = async (sessionId: string): Promise<RpcResult<"session.get">["session"]> => {
     const live = sessions.get(sessionId);
     const found = (await options.list()).find((s) => s.id === sessionId);
@@ -98,21 +114,33 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
     } catch (error) {
       emit({ type: "session.failed", sessionId, data: { status: "failed", reason: error instanceof Error ? error.message : String(error) } });
     }
-    sessions.delete(sessionId);
+    // Close first: while the entry is live, worktree changes stay refused.
     await live.log?.close().catch(() => undefined);
+    sessions.delete(sessionId);
   };
 
   server.registerAll({
     "session.create": async ({ mode, goal, title, autonomy }) => {
       if (!options.host) throw new RpcError(RpcErrorCode.NotSupported, "session.create is not supported yet: this engine has no session host");
-      if (sessions.size >= MAX_LIVE_SESSIONS) throw rejected("too many live sessions; cancel or finish one first");
+      const checkCap = () => {
+        if (sessions.size >= MAX_LIVE_SESSIONS) throw rejected("too many live sessions; cancel or finish one first");
+      };
+      checkCap();
       const launch = await options.host.launch({ mode, goal, ...(autonomy ? { autonomy } : {}) });
+      checkCap(); // other creates may have finished while the host was working
       const sessionId = createId();
       const abort = new AbortController();
       const live = { abort, state: "created", approvals: new Set(), title: title?.trim() || goal.trim().split("\n")[0]!.slice(0, 80) } as Live;
       try {
         live.prepared = prepareModeSession({
+          // The lowest of what the host, the client and this server's cap allow: never more autonomy than any of them.
           ...launch,
+          autonomy: [launch.autonomy, autonomy, options.maxAutonomy].reduce<Autonomy>(
+            (low, a) => (a && AUTONOMY_LEVELS.indexOf(a) < AUTONOMY_LEVELS.indexOf(low) ? a : low),
+            launch.autonomy,
+          ),
+          // Applies from the host's own manager, else the one the worktree methods use.
+          worktrees: launch.worktrees ?? manager,
           mode: launch.mode ?? mode,
           sessionId,
           goal,
@@ -121,21 +149,36 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
           emit: emitFor(live),
         });
       } catch (error) {
-        if (error instanceof ModeValidationError) throw invalid(error.message);
+        if (error instanceof ModeValidationError) throw invalid(scrubPaths(error.message));
         throw asRpcError(error);
       }
       sessions.set(sessionId, live);
+      live.expiry = setTimeout(() => {
+        if (live.state === "created" && sessions.get(sessionId) === live) {
+          sessions.delete(sessionId);
+          live.abort.abort();
+        }
+      }, options.createdTtlMs ?? CREATED_TTL_MS);
+      live.expiry.unref();
       return { sessionId, mode: live.prepared.mode.id, autonomy: live.prepared.autonomy };
     },
 
     "session.start": async ({ sessionId }) => {
       const live = liveOf(sessionId);
       if (live.state !== "created") throw rejected(`session is already ${live.state}`);
+      let log: EventLog;
       try {
-        live.log = await EventLog.open(projectPath, sessionId);
+        log = await EventLog.open(projectPath, sessionId);
       } catch (error) {
         throw error instanceof EventLogLockedError ? rejected("another process owns this session's event log") : asRpcError(error);
       }
+      // A cancel or expiry during the open wins: do not run an aborted session.
+      if (live.state !== "created" || sessions.get(sessionId) !== live || live.abort.signal.aborted) {
+        await log.close().catch(() => undefined);
+        throw rejected("the session was cancelled before it started");
+      }
+      clearTimeout(live.expiry);
+      live.log = log;
       live.state = "running";
       void finish(sessionId, live, live.prepared.run());
       return { sessionId, live: live.state };
@@ -146,6 +189,7 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
 
     "session.cancel": ({ sessionId }) => {
       const live = liveOf(sessionId);
+      clearTimeout(live.expiry);
       if (live.state === "created") {
         sessions.delete(sessionId); // never started: nothing to settle
       }
@@ -182,8 +226,7 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
     "session.export": async ({ sessionId, fromSeq }) => {
       if (!isId(sessionId)) throw invalid("invalid session id");
       await summaryOf(sessionId); // unknown id → InvalidParams
-      const events = await readSessionEvents(projectPath, sessionId, fromSeq);
-      return { events: events.slice(0, MAX_EXPORT_EVENTS) as unknown as Array<Record<string, unknown>>, truncated: events.length > MAX_EXPORT_EVENTS };
+      return readEventsBounded(sessionPaths(projectPath, sessionId).events, fromSeq);
     },
 
     "seat.setModel": unsupported("seat.setModel", "no registry reaches a live Supervisor from a session id (Supervisor.requestModelChange exists)"),
@@ -204,12 +247,14 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
     // The target is always the main checkout; the caller's confirm: true is the approval.
     "worktree.apply": async ({ sessionId, seatId, strategy, message, allowedPaths }) => {
       const key = await seatKey(sessionId, seatId);
+      await assertIdle(sessionId);
       try {
-        return await manager.applyTo("main", key, {
+        const result = await manager.applyTo("main", key, {
           strategy,
           ...(message ? { message } : {}),
           ...(allowedPaths ? { allowedPaths } : {}),
         });
+        return result.ok ? result : { ...result, message: scrubPaths(result.message) };
       } catch (error) {
         throw asRpcError(error);
       }
@@ -217,7 +262,7 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
 
     "worktree.discard": async ({ sessionId, seatId, force }) => {
       const key = await seatKey(sessionId, seatId);
-      if (sessions.has(sessionId)) throw rejected("the session is live; cancel it before discarding its worktrees");
+      await assertIdle(sessionId);
       try {
         await manager.discard(key, { force: force === true });
       } catch (error) {
@@ -246,4 +291,53 @@ function asRpcError(error: unknown): Error {
   if (error instanceof RpcError) return error;
   if (error instanceof WorktreeError) return rejected(error.message);
   return error as Error;
+}
+
+/**
+ * Events with `seq > fromSeq`, read in chunks and stopped at 5,000 events or ~1 MiB of JSON
+ * (`truncated` then says more exist). An unterminated last line is an append in progress.
+ */
+async function readEventsBounded(file: string, fromSeq: number): Promise<RpcResult<"session.export">> {
+  const events: Array<Record<string, unknown>> = [];
+  let chars = 0;
+  let carry = "";
+  let handle: fs.FileHandle;
+  try {
+    handle = await fs.open(file, "r");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { events, truncated: false };
+    throw error;
+  }
+  try {
+    const buffer = Buffer.alloc(64 * 1024);
+    const decoder = new TextDecoder();
+    for (let offset = 0; ; ) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
+      if (bytesRead === 0) return { events, truncated: false };
+      offset += bytesRead;
+      carry += decoder.decode(buffer.subarray(0, bytesRead), { stream: true });
+      const lines = carry.split("\n");
+      carry = lines.pop()!;
+      if (carry.length > MAX_EXPORT_CHARS) throw rejected("the event log has a line that is too long to export");
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const parsed = safeParseEngineEvent(parseJson(line));
+        if (!parsed.success) throw rejected("the event log has an invalid line");
+        if (parsed.data.seq <= fromSeq) continue;
+        chars += line.length;
+        if (events.length >= MAX_EXPORT_EVENTS || chars > MAX_EXPORT_CHARS) return { events, truncated: true };
+        events.push(parsed.data as unknown as Record<string, unknown>);
+      }
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
+function parseJson(line: string): unknown {
+  try {
+    return JSON.parse(line);
+  } catch {
+    return undefined;
+  }
 }
