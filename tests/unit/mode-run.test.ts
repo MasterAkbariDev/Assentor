@@ -93,8 +93,8 @@ const noTerminal = (): QuestionIO => ({ input: new PassThrough(), output: new Pa
 
 /**
  * Through `runAssentorTask` (the CLI command function). `direct`: through `runModeTask`, past the
- * `available` check, for modes whose routing is wired but which stay unavailable (no dependency
- * install in new worktrees yet).
+ * `available` check, for modes whose routing is wired but which stay unavailable (lead, pair,
+ * redteam, tdd, swarm, debug: no dependency install in new worktrees yet).
  */
 async function run(modeId: string, hooks: ModeRunHooks = {}, over: Record<string, unknown> = {}, direct = false) {
   const events: EngineEvent[] = [];
@@ -158,7 +158,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     await writeConfig({ modes: { lead: { lead: { provider: "mock", model: "lead" } } } });
     const lead = createMockLead(LEAD_SCRIPT);
     const io = terminal(["y"]);
-    const { result, of } = await run("lead", { askSeat: lead.askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts"), questions: io });
+    const { result, of } = await run("lead", { askSeat: lead.askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts"), questions: io }, {}, true);
     expect(result).toMatchObject({ status: "completed", reason: "x added" });
     expect(io.asked).toEqual([expect.stringContaining("to your branch")]);
     expect(of("user.answer")).toEqual([expect.objectContaining({ data: expect.objectContaining({ answer: "approve" }) })]);
@@ -168,7 +168,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
   it("lead without a terminal: the landing is denied (fail closed) and nothing reaches the branch", async () => {
     await writeConfig({ modes: { lead: { lead: { provider: "mock", model: "lead" } } } });
     const lead = createMockLead(LEAD_SCRIPT);
-    const { result, of } = await run("lead", { askSeat: lead.askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts") });
+    const { result, of } = await run("lead", { askSeat: lead.askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts") }, {}, true);
     // The refused landing goes back to the lead (whose script then runs out); the work never lands.
     expect(result.status).not.toBe("completed");
     expect(of("user.answer")).toEqual([expect.objectContaining({ data: expect.objectContaining({ answer: "deny" }) })]);
@@ -178,7 +178,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
   it("lead resumes through assentor resume with the saved board; a non-resumable mode says so", async () => {
     await writeConfig({ modes: { lead: { lead: { provider: "mock", model: "lead" } } } });
     // The lead seat fails after planning: the session ends blocked with the board saved.
-    const first = await run("lead", { askSeat: createMockLead([LEAD_SCRIPT[0]!]).askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts") });
+    const first = await run("lead", { askSeat: createMockLead([LEAD_SCRIPT[0]!]).askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts") }, {}, true);
     expect(first.result.status).toBe("blocked");
     const lead = createMockLead(LEAD_SCRIPT.slice(1));
     const resumed = await resumeAssentorTask({
@@ -198,7 +198,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
       teams: { cheap: { seats: [ed("engineer")] }, top: { seats: [ed("engineer")] }, r1: { seats: [ro("code-reviewer")] } },
       modes: { cascade: { tiers: [{ team: "cheap", reviewTeam: "r1" }, { team: "top", reviewTeam: "r1" }] } },
     });
-    const { result, of } = await run("cascade", { questions: terminal(["y", "y", "y"]) });
+    const { result, of } = await run("cascade", { questions: terminal(["y", "y", "y"], true) });
     expect(result.status).toBe("completed");
     expect(of("mode.selected")[0]?.data).toMatchObject({ mode: "cascade" });
   });
@@ -242,8 +242,8 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     const { result } = await run("pair", {
       askSeat: async ({ prompt }) => (navigator.push(prompt), "NO_COMMENT"),
       seatExecutor: () => writer("a/x.ts"),
-      questions: terminal(["y", "y"]),
-    });
+      questions: terminal(["y", "y"], true),
+    }, {}, true);
     expect(result.status).toBe("completed");
     expect(navigator.length).toBeGreaterThan(0);
   });
@@ -283,7 +283,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
       modes: { swarm: { workerTeam: "cheap", files: ["a/one.txt"] } },
       verification: { commands: { test: "true" } },
     });
-    const { result, of } = await run("swarm", { questions: terminal(["y", "y"]) }, {}, true);
+    const { result, of } = await run("swarm", { questions: terminal(["y", "y"], true) }, {}, true);
     expect(of("mode.selected")[0]?.data).toMatchObject({ mode: "swarm" });
     expect(["completed", "blocked"]).toContain(result.status);
   });
@@ -320,9 +320,9 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     expect(lessons).not.toContain("not a bullet");
   });
 
-  it("redteam, tdd, swarm and debug are refused by the CLI until worktrees get dependencies", async () => {
+  it("lead, pair, redteam, tdd, swarm and debug are refused by the CLI until worktrees get dependencies", async () => {
     await writeConfig({});
-    for (const id of ["redteam", "tdd", "swarm", "debug"]) {
+    for (const id of ["lead", "pair", "redteam", "tdd", "swarm", "debug"]) {
       await expect(run(id)).rejects.toThrow(`Mode ${id} is not available yet.`);
     }
   });
@@ -332,7 +332,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     const lead = createMockLead(LEAD_SCRIPT);
     // stdin ends (Ctrl+D) when the landing question is shown.
     const io = terminal([], true);
-    const { result, of } = await run("lead", { askSeat: lead.askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts"), questions: io });
+    const { result, of } = await run("lead", { askSeat: lead.askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts"), questions: io }, {}, true);
     expect(result.status).toBe("cancelled");
     expect(of("user.answer")).toEqual([]);
     await expect(git(repo, "show", "HEAD:a/x.ts")).rejects.toThrow();

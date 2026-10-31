@@ -109,11 +109,20 @@ describe("reporter output while a question is open", () => {
     try {
       const reporter = new RunReporter({ executorName: "e", reviewerName: "r" });
       reporter.holdOutput(true);
+      const write = vi.spyOn(process.stdout, "write");
       reporter.note("first");
+      // A Supervisor state line printed directly is held too.
+      reporter.onEvent({ type: "state.changed", data: { to: "DONE" } } as never);
       reporter.note("second");
       expect(log).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
+      write.mockRestore();
       reporter.holdOutput(false);
-      expect(log.mock.calls.map((c) => String(c[0]))).toEqual([expect.stringContaining("first"), expect.stringContaining("second")]);
+      expect(log.mock.calls.map((c) => String(c[0]))).toEqual([
+        expect.stringContaining("first"),
+        expect.stringContaining("Task passed review"),
+        expect.stringContaining("second"),
+      ]);
       reporter.dispose();
     } finally {
       log.mockRestore();

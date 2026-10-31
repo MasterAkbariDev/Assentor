@@ -22,6 +22,8 @@ type Pending =
   | { kind: "gate"; stageId: string; question: string };
 
 const YES = /^(y|yes|approve|ok)$/i;
+/** `ask` result for Ctrl+C at the prompt: the run's SIGINT handler cancels; the loop just stops asking. */
+const INTERRUPTED = Symbol("interrupted");
 const NO = /^(n|no|deny)$/i;
 
 /**
@@ -45,12 +47,12 @@ export function createAnswerLoop(input: {
   const stop = new AbortController();
   let draining = false;
 
-  const ask = (prompt: string): Promise<string | undefined> =>
+  const ask = (prompt: string): Promise<string | undefined | typeof INTERRUPTED> =>
     new Promise((resolve) => {
       if (stop.signal.aborted) return resolve(undefined);
       const rl = readline.createInterface({ input: input.io.input, output: input.io.output });
       let done = false;
-      const finish = (value: string | undefined) => {
+      const finish = (value: string | undefined | typeof INTERRUPTED) => {
         if (done) return;
         done = true;
         stop.signal.removeEventListener("abort", onAbort);
@@ -62,7 +64,7 @@ export function createAnswerLoop(input: {
       rl.on("close", () => finish(undefined));
       // readline swallows Ctrl+C on a terminal; pass it on so the run's interrupt handler cancels.
       rl.on("SIGINT", () => {
-        finish(undefined);
+        finish(INTERRUPTED);
         process.kill(process.pid, "SIGINT");
       });
       rl.question(prompt, (line) => finish(line));
@@ -86,7 +88,7 @@ export function createAnswerLoop(input: {
       input.promptOpen?.(true);
       const raw = await ask(`\n? ${item.question}${choices ? ` [${choices}]` : ""} `);
       input.promptOpen?.(false);
-      if (settled.has(key) || stop.signal.aborted) return;
+      if (settled.has(key) || stop.signal.aborted || raw === INTERRUPTED) return;
       if (raw === undefined) {
         // stdin ended (Ctrl+D) with the question open: nobody can answer it, so fail closed.
         input.log(`Stopping: stdin closed before "${item.question}" was answered.`);

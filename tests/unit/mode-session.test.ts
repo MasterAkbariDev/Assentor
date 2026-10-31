@@ -136,7 +136,7 @@ function dynamicMode(createController: ModeDefinition["createController"]): Mode
 }
 
 describe("mode contract", () => {
-  it("each mode's builder matches its kind; every mode that can run is CLI-available except redteam, tdd, swarm and debug", () => {
+  it("each mode's builder matches its kind; every mode that can run is CLI-available except lead, pair, redteam, tdd, swarm and debug", () => {
     for (const mode of listModes()) {
       if (mode.kind === "static") expect(mode.createController).toBeUndefined();
       else expect(mode.buildSession).toBeUndefined();
@@ -156,7 +156,7 @@ describe("mode contract", () => {
       "explore",
       "plan",
     ]);
-    const held = ["redteam", "tdd", "swarm", "debug"];
+    const held = ["lead", "pair", "redteam", "tdd", "swarm", "debug"];
     expect(listModes().filter((m) => m.available)).toEqual(listModes().filter((m) => (m.buildSession || m.createController) && !held.includes(m.id)));
   });
 

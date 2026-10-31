@@ -331,19 +331,19 @@ const MODES: readonly ModeDefinition[] = [
   // Today's `assentor run`: one executor in a review loop (one reviewer or a `--team` panel).
   mode("solo", "Solo", "One executor with a review loop; today's assentor run.", "static", true, true, solo),
   // Modes below with a buildSession/createController run from `assentor run --mode <id>` through
-  // prepareModeSession (CLI host: packages/cli/src/cli/mode-run.ts), except redteam, tdd, swarm and
-  // debug: their gates run in fresh worktrees and the host does not install dependencies there yet
+  // prepareModeSession (CLI host: packages/cli/src/cli/mode-run.ts), except lead, pair, redteam, tdd,
+  // swarm and debug: their gates run in fresh worktrees and the host does not install dependencies there yet
   // (follow-up), so on real projects they would block. The routing for them is in place.
   mode("review", "Review", "Several reviewers judge existing work; a policy merges their verdicts.", "static", false, true, review),
   mode("negotiate", "Negotiate", "Several peers reach consensus with a strategy (vote, debate, synthesize).", "static", true, true, negotiate),
-  mode("lead", "Lead (Supervisor)", "A lead seat plans tasks, picks agents and accepts or rejects their reports.", "dynamic", true, true, lead),
+  mode("lead", "Lead (Supervisor)", "A lead seat plans tasks, picks agents and accepts or rejects their reports. Not runnable yet: new worktrees get no dependency install before its gates.", "dynamic", true, false, lead),
   mode("cascade", "Cascade", "Start with a cheap model; escalate on failure or risk.", "dynamic", true, true, {
     validate: cascadeProblems,
     createController: (input) => createCascadeController(input, { approve: (question) => input.requestApproval({ question }) }),
   }),
   mode("pipeline", "Pipeline", "Requirements, architect, coder, tester, reviewer and docs stages in order.", "static", true, true, pipeline),
   // A controller loop (driver turns, live navigator, gates, review), not a stage graph: an interjection restarts a turn.
-  mode("pair", "Pair", "A driver codes while a navigator watches the stream and interjects.", "dynamic", true, true, {
+  mode("pair", "Pair", "A driver codes while a navigator watches the stream and interjects. Not runnable yet: new worktrees get no dependency install before its gates.", "dynamic", true, false, {
     validate: (config) => [...teamProblems(config), ...pairProblems(config)],
     createController: (input) => createPairController(input, { approve: (question) => input.requestApproval({ question }) }),
   }),

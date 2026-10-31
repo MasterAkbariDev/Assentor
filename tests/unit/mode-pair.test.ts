@@ -661,8 +661,8 @@ describe("pair mode", () => {
   });
 
   describe("config and registry", () => {
-    it("pair is a dynamic, CLI-available mode", () => {
-      expect(getMode("pair")).toMatchObject({ kind: "dynamic", available: true, editsCode: true });
+    it("pair is a dynamic mode, not CLI-available until worktrees get dependencies", () => {
+      expect(getMode("pair")).toMatchObject({ kind: "dynamic", available: false, editsCode: true });
       expect(getMode("pair")?.createController).toBeTypeOf("function");
     });
 

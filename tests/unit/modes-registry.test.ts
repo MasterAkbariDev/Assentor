@@ -34,10 +34,10 @@ describe("mode registry", () => {
 
   it("marks available exactly the modes assentor run --mode runs (each has a buildSession or controller)", () => {
     expect(listModes().filter((m) => m.available).map((m) => m.id)).toEqual([
-      "solo", "review", "negotiate", "lead", "cascade", "pipeline", "pair", "explore", "plan",
+      "solo", "review", "negotiate", "cascade", "pipeline", "explore", "plan",
     ]);
     // Runnable but held back: their gates need dependencies installed in new worktrees.
-    for (const id of ["redteam", "tdd", "swarm", "debug"]) expect(getMode(id)?.available).toBe(false);
+    for (const id of ["lead", "pair", "redteam", "tdd", "swarm", "debug"]) expect(getMode(id)?.available).toBe(false);
   });
 
   it("records the kind and read-only modes from the design", () => {
