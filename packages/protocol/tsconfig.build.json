@@ -4,7 +4,10 @@
     "composite": true,
     "rootDir": "src",
     "outDir": "../../dist/protocol",
-    "tsBuildInfoFile": "tsconfig.build.tsbuildinfo"
+    "tsBuildInfoFile": "tsconfig.build.tsbuildinfo",
+    // Node-free: the web UI bundles this package. DOM only for the global Web Crypto.
+    "types": [],
+    "lib": ["ES2022", "DOM"]
   },
   "include": ["src/**/*.ts"]
 }

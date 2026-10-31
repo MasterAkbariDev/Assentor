@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
 import {
   MessagePayloadByType,
   MessageType,
@@ -266,7 +265,7 @@ export function createProtocolMessage<T extends ProtocolMessage["type"]>(
   input: CreateMessageInput<T>,
 ): Extract<ProtocolMessage, { type: T }> {
   const message = {
-    messageId: input.messageId ?? randomUUID(),
+    messageId: input.messageId ?? globalThis.crypto.randomUUID(),
     conversationId: input.conversationId,
     round: input.round,
     from: input.from,
