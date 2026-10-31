@@ -262,6 +262,8 @@ pnpm build
 ./scripts/install-cli.sh   # symlink into ~/.local/bin
 ```
 
+The source is a pnpm workspace: `packages/protocol` (zod contract: events, seats, review results, RPC), `packages/ui-shared` (Node-free display logic for the TUI and web UI), `packages/engine` (supervisor, providers, modes, RPC, `serve`; no Ink/React), `packages/cli` (the `assentor` command and Ink TUI) and `packages/ui` (web UI). Packages import each other as `#assentor/<package>/…`; the root `package.json` maps those to the single `dist/` that `bin/assentor` runs and npm publishes.
+
 ---
 
 ## Requirements
