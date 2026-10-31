@@ -7,16 +7,17 @@ const sessions: SessionSummary[] = [
   { id: "b", title: "Old run", hasLiveLog: false, lastSeq: 0 },
 ];
 
-const none = { hasSeats: false, hasNegotiation: false, hasLeadBoard: false };
+const none = { hasSeats: false, hasNegotiation: false, hasLeadBoard: false, hasReview: false };
 
 describe("buildPaletteItems", () => {
   it("lists recent runs first, then the other runs, then the views on screen", () => {
-    const items = buildPaletteItems({ sessions, recentIds: ["b", "gone"], ...none, hasSeats: true, hasLeadBoard: true });
+    const items = buildPaletteItems({ sessions, recentIds: ["b", "gone"], ...none, hasSeats: true, hasLeadBoard: true, hasReview: true });
     expect(items.map((i) => i.id)).toEqual([
       "recent:b",
       "session:a",
       "view:.seat-board",
       "view:.lead-board",
+      "view:.review",
       "write:model",
       "write:pause",
       "write:inject",

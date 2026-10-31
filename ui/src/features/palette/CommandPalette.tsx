@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { detectPlatform, isComposing, shortcutLabel } from "../../keymap.js";
 import { useEngine } from "../../store/context.js";
-import { selectHasNegotiation, selectLeadBoard } from "../../store/selectors.js";
+import { selectHasNegotiation, selectHasReview, selectLeadBoard } from "../../store/selectors.js";
 import { holdTab, restoreFocus, useEscapeKey } from "./dialog.js";
 import { rankItems } from "./fuzzy.js";
 import { buildPaletteItems, type PaletteItem } from "./items.js";
@@ -45,6 +45,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const hasSeats = useEngine((s) => Object.keys(s.session?.seats ?? {}).length > 0);
   const hasNegotiation = useEngine(selectHasNegotiation);
   const hasLeadBoard = useEngine((s) => selectLeadBoard(s) !== undefined);
+  const hasReview = useEngine(selectHasReview);
 
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -57,8 +58,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const platform = useMemo(() => detectPlatform(), []);
 
   const items = useMemo(
-    () => buildPaletteItems({ sessions, recentIds, hasSeats, hasNegotiation, hasLeadBoard }),
-    [sessions, recentIds, hasSeats, hasNegotiation, hasLeadBoard],
+    () => buildPaletteItems({ sessions, recentIds, hasSeats, hasNegotiation, hasLeadBoard, hasReview }),
+    [sessions, recentIds, hasSeats, hasNegotiation, hasLeadBoard, hasReview],
   );
   const ranked = useMemo(() => rankItems(items, query), [items, query]);
   const shown = ranked.slice(0, MAX_RESULTS);

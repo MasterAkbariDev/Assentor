@@ -163,6 +163,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-10 · Review view
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T04-06
 
+**Status: ✅ preview cut T04-10p done** (`afd1882` + `4e3c050`, Haiku; Sonnet review PASS with should-fixes → fixed; merged 2026-10-31). Watch-only, in `ui/src/features/review/`: reviewer seat rows, findings grouped by file in `rankCorrelatedFindings` order with severity filter (unknown severities kept, under "other") and an "only disagreements" switch (disabled with a reason while agreement isn't recorded), decision banner. `rankCorrelatedFindings` and friends moved to Node-free `src/review/ranking.ts` (re-exported from coordinator.ts) so the UI can import them. Gaps that need engine events: per-reviewer verdict and confidence, `review.finding` with agreement (no emitter yet), panel policy on `review.completed`, reviewer filter; no diff view to link files to.
+
 **Allowed files** — `packages/ui/src/features/review/*`, tests.
 
 **Spec**

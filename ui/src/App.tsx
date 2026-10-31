@@ -5,10 +5,11 @@ import { SeatDrawer } from "./features/seat-drawer/SeatDrawer.js";
 import { CommandPalette } from "./features/palette/CommandPalette.js";
 import { KeyboardHelp } from "./features/palette/KeyboardHelp.js";
 import { useShortcuts } from "./features/palette/useShortcuts.js";
+import { ReviewView } from "./features/review/ReviewView.js";
 import { SessionBoard } from "./features/session-board/SessionBoard.js";
 import { useEngine } from "./store/context.js";
 import type { ConnectionStatus } from "./store/engineStore.js";
-import { selectHasNegotiation } from "./store/selectors.js";
+import { selectHasNegotiation, selectHasReview } from "./store/selectors.js";
 
 const CONNECTION_LABEL: Record<ConnectionStatus, string> = {
   connecting: "Connecting…",
@@ -131,6 +132,7 @@ export function SessionList() {
 export function SessionPanel() {
   const session = useEngine((s) => s.session);
   const summary = useEngine((s) => s.sessions.find((x) => x.id === s.selectedId));
+  const hasReview = useEngine(selectHasReview);
   const hasNegotiation = useEngine(selectHasNegotiation);
 
   if (!session) {
@@ -154,6 +156,7 @@ export function SessionPanel() {
         <>
           <SessionBoard />
           <SeatDrawer />
+          {hasReview ? <ReviewView /> : null}
         </>
       )}
       {hasNegotiation ? <NegotiationView key={session.id} /> : null}

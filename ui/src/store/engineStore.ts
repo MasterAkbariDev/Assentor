@@ -1,5 +1,5 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
-import type { EngineEvent, EngineEventType } from "@engine/protocol/events.js";
+import type { EngineEvent, EngineEventOf, EngineEventType } from "@engine/protocol/events.js";
 import type { SessionSummary } from "@engine/protocol/rpc.js";
 import { emptyLeadBoardView, reduceLeadEvents, type LeadBoardView } from "@engine/ui-shared/lead.js";
 import { reduceSeatEvents, type SeatState } from "@engine/ui-shared/status.js";
@@ -37,6 +37,8 @@ export const ACTIVITY_EVENT_TYPES: ReadonlySet<EngineEventType> = new Set<Engine
 /** Most activity events kept per seat (see `ACTIVITY_EVENT_TYPES`). */
 export const SEAT_EVENT_CAP = 200;
 
+/** Most `review.finding` events kept per run, newest last. */
+export const REVIEW_FINDING_CAP = 200;
 /**
  * Events the negotiation view rebuilds a run from: the `negotiation.*` stream, the
  * `stage.started` that names each negotiation's strategy and attempt, and `seat.error`
@@ -71,6 +73,10 @@ export interface SessionView {
   /** Last applied `seq`; resubscribe from here. */
   lastSeq: number;
   eventCount: number;
+  /** Latest reviewer-scoped `review.verdict` (it has a seat id; Lead's per-task verdict does not). */
+  reviewVerdict?: EngineEventOf<"review.verdict">;
+  /** The last `REVIEW_FINDING_CAP` `review.finding` events, oldest first. */
+  reviewFindings: EngineEventOf<"review.finding">[];
   /** The lead team board, folded by the shared `reduceLeadEvents` (T02B-18). Empty outside lead mode. */
   lead: LeadBoardView;
   /** Latest `session.state` value, e.g. EXECUTING. */
@@ -104,7 +110,7 @@ export type EngineStore = StoreApi<EngineState>;
 export const RECENT_LIMIT = 5;
 
 function emptySession(id: string): SessionView {
-  return { id, seats: {}, seatInfo: {}, seatEvents: {}, negotiationEvents: [], lead: emptyLeadBoardView(), lastSeq: 0, eventCount: 0 };
+  return { id, seats: {}, seatInfo: {}, seatEvents: {}, negotiationEvents: [], lead: emptyLeadBoardView(), reviewFindings: [], lastSeq: 0, eventCount: 0 };
 }
 
 export function createEngineStore(): EngineStore {
@@ -133,7 +139,7 @@ export function createEngineStore(): EngineStore {
         if (!current || current.id !== sessionId || events.length === 0) {
           return s;
         }
-        let { seats, seatInfo, seatEvents, negotiationEvents, lead, lastSeq, eventCount, state, mode } = current;
+        let { seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, reviewFindings, lastSeq, eventCount, state, mode } = current;
         for (const event of events) {
           if (event.sessionId !== sessionId || event.seq <= lastSeq) {
             continue;
@@ -150,6 +156,12 @@ export function createEngineStore(): EngineStore {
           if (event.seatId && ACTIVITY_EVENT_TYPES.has(event.type)) {
             seatEvents = { ...seatEvents, [event.seatId]: [...(seatEvents[event.seatId] ?? []), event].slice(-SEAT_EVENT_CAP) };
           }
+          if (event.type === "review.verdict" && event.seatId) {
+            reviewVerdict = event;
+          }
+          if (event.type === "review.finding") {
+            reviewFindings = [...reviewFindings, event].slice(-REVIEW_FINDING_CAP);
+          }
           if (NEGOTIATION_EVENT_TYPES.has(event.type)) {
             negotiationEvents = [...negotiationEvents, event].slice(-NEGOTIATION_EVENT_CAP);
           }
@@ -163,7 +175,7 @@ export function createEngineStore(): EngineStore {
           return s;
         }
         return {
-          session: { ...current, seats, seatInfo, seatEvents, negotiationEvents, lead, lastSeq, eventCount, mode, ...(state ? { state } : {}) },
+          session: { ...current, seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, reviewFindings, lastSeq, eventCount, mode, ...(state ? { state } : {}) },
         };
       }),
     failSession: (sessionId, message) =>

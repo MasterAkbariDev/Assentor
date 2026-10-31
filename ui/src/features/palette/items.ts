@@ -25,6 +25,7 @@ export interface PaletteInput {
   hasSeats: boolean;
   hasNegotiation: boolean;
   hasLeadBoard: boolean;
+  hasReview: boolean;
 }
 
 /** Actions that need write RPCs. Listed disabled so the palette shows what the full UI will do. */
@@ -35,14 +36,12 @@ export const WRITE_ACTIONS: ReadonlyArray<{ id: string; label: string; detail: s
   { id: "approve", label: "/approve", detail: "Approve the integration" },
 ];
 
-/**
- * Views the UI renders, by the class of their root element. The review view
- * (T04-10p) is not on this branch yet, so it is not listed.
- */
-export const VIEW_TARGETS: ReadonlyArray<{ label: string; selector: string; shown: "hasSeats" | "hasNegotiation" | "hasLeadBoard" }> = [
+/** Views the UI renders, by the class of their root element. */
+export const VIEW_TARGETS: ReadonlyArray<{ label: string; selector: string; shown: "hasSeats" | "hasNegotiation" | "hasLeadBoard" | "hasReview" }> = [
   { label: "Session board", selector: ".seat-board", shown: "hasSeats" },
   { label: "Negotiation", selector: ".negotiation", shown: "hasNegotiation" },
   { label: "Team board", selector: ".lead-board", shown: "hasLeadBoard" },
+  { label: "Review", selector: ".review", shown: "hasReview" },
 ];
 
 /**

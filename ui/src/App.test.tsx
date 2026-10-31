@@ -10,7 +10,7 @@ afterEach(() => cleanup());
 
 describe("App shell", () => {
   it("lists sessions, shows connection status, and renders seats for the selected run", () => {
-    const { store, getByText, getByRole, queryByText } = renderWithStore(<App />);
+    const { store, getByText, getAllByText, getByRole, queryByText } = renderWithStore(<App />);
     act(() => {
       store.getState().setConnection("connected", "0.4.0");
       store.getState().setSessions([
@@ -28,8 +28,9 @@ describe("App shell", () => {
     act(() => {
       store.getState().applyEvents(sessionFixture.id, sessionFixture.events);
     });
-    expect(getByText("Opus#2")).toBeTruthy();
-    expect(getByText("failed")).toBeTruthy();
+    // The board and the review view both name the reviewers.
+    expect(getAllByText("Opus#2").length).toBeGreaterThan(0);
+    expect(getAllByText("failed").length).toBeGreaterThan(0);
     expect(getByRole("heading", { level: 1 }).textContent).toContain("REVIEWING");
   });
 
