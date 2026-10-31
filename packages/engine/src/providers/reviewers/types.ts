@@ -2,6 +2,7 @@ import type { TaskContract } from "../../core/task-contract.js";
 import type { ProtocolMessage } from "#assentor/protocol/messages.js";
 import type { ReviewResult, PhaseProgress } from "#assentor/protocol/review-result.js";
 import type { ProjectReviewEvidencePack } from "../../review/evidence-pack.js";
+import type { CorrelatedFinding } from "../../review/ranking.js";
 
 export interface ReviewInput {
   taskId: string;
@@ -55,6 +56,9 @@ export interface ReviewerTurnResult {
    * decides from the error text.
    */
   retryable?: boolean;
+  /** Set by a panel with a result: its decision policy and the findings correlated across members. */
+  policy?: string;
+  correlated?: CorrelatedFinding[];
 }
 
 /**

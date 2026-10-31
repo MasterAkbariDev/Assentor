@@ -352,7 +352,7 @@ export class RunSeatEvents {
 
   trackMembers(members: Reviewer[]): Reviewer[] {
     return members.map((member, index) =>
-      trackReviewerSeat(member, reviewerSeatId(index), () => this.sink),
+      trackReviewerSeat(member, reviewerSeatId(index), () => this.sink, members.length > 1),
     );
   }
 

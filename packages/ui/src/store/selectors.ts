@@ -73,6 +73,12 @@ export function selectReviewVerdict(state: EngineState) {
   return state.session?.reviewVerdict;
 }
 
+/** Each panel member's own verdict, keyed by seat id. */
+export function selectMemberVerdicts(state: EngineState) {
+  return state.session?.memberVerdicts ?? NO_MEMBER_VERDICTS;
+}
+const NO_MEMBER_VERDICTS: Readonly<Record<string, EngineEventOf<"review.verdict">>> = {};
+
 const NO_FINDINGS: readonly EngineEventOf<"review.finding">[] = [];
 
 /** The run's `review.finding` events, oldest first. Stable empty array, so selectors don't loop. */

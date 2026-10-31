@@ -28,7 +28,7 @@ export interface ReviewDecision {
   status: string;
   summary?: string;
   confidence?: number;
-  /** Only when the summary carries the engine's `Panel [policy]` label, which it does for non-default policies. */
+  /** From the verdict's `policy`; older logs only have the summary's `Panel [policy]` label, which non-default policies add. */
   policy?: ReviewPolicy;
 }
 
@@ -38,7 +38,7 @@ export function decisionOf(verdict: Verdict | undefined): ReviewDecision | undef
     return undefined;
   }
   const { status, summary, confidence } = verdict.data;
-  const label = summary?.match(/^Panel \[([a-z-]+)\]/)?.[1];
+  const label = verdict.data.policy ?? summary?.match(/^Panel \[([a-z-]+)\]/)?.[1];
   return {
     status,
     summary,
@@ -84,13 +84,13 @@ export function findingsOf(
 }
 
 function fromFindingEvent(event: FindingEvent): FindingView {
-  const { key, description, severity, affectedFiles, agreement } = event.data;
+  const { key, description, severity, affectedFiles, agreement, reviewerIds } = event.data;
   return {
     key,
     description,
     severity,
     category: "other",
-    agentIds: [],
+    agentIds: reviewerIds ?? [],
     issueIds: [],
     affectedFiles,
     evidence: [],

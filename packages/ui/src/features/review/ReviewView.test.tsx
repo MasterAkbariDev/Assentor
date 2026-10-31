@@ -101,7 +101,51 @@ describe("ReviewView grouping and ordering", () => {
     expect(rows[1]).toContain("Looks correct");
     expect(rows[2]).toContain("failed");
     expect(getByText("timed out")).toBeTruthy();
-    expect(getByText(/per-reviewer verdict and confidence are not in the event stream/)).toBeTruthy();
+    expect(getByText(/Logs from before per-reviewer verdicts do not carry them/)).toBeTruthy();
+  });
+});
+
+describe("ReviewView per-reviewer verdicts and panel data", () => {
+  const panelEvents = () =>
+    stream([
+      spawn("panel", "Review panel", "AUTO", "panel"),
+      spawn("reviewer-1", "Opus#1", "claude-opus", "code-reviewer"),
+      spawn("reviewer-2", "Opus#2", "claude-opus", "security-reviewer"),
+      { type: "review.verdict", seatId: "reviewer-1", data: { status: "PASS", confidence: 0.9, panelMember: true } },
+      { type: "review.verdict", seatId: "reviewer-2", data: { status: "NEEDS_WORK", confidence: 0.6, summary: "member", panelMember: true } },
+      {
+        type: "review.finding",
+        data: { key: "f1", description: "Token compared with ==", severity: "major", affectedFiles: ["a.ts"], agreement: { count: 1, total: 2 }, reviewerIds: ["Opus#2"] },
+      },
+      { type: "review.verdict", seatId: "panel", data: { status: "NEEDS_WORK", summary: "Merged", policy: "security-veto" } },
+    ]);
+
+  it("shows each member's own verdict and confidence on its row", () => {
+    const { container, getByText } = renderReview(panelEvents());
+    const rows = Array.from(container.querySelectorAll(".review-reviewer")).map((el) => el.textContent ?? "");
+    expect(rows.find((r) => r.includes("Opus#1"))).toContain("Verdict Pass · confidence 0.9");
+    expect(rows.find((r) => r.includes("Opus#2"))).toContain("Verdict Needs work · confidence 0.6");
+    expect(rows.find((r) => r.includes("Review panel"))).not.toContain("Verdict");
+    expect(getByText(/Each row shows the seat's run status and its own verdict/)).toBeTruthy();
+  });
+
+  it("keeps the merged verdict as the decision, even when a member verdict arrives after it", () => {
+    const { store, getByRole } = renderReview([
+      ...panelEvents(),
+      ...stream([{ type: "review.verdict", seatId: "reviewer-1", data: { status: "PASS", panelMember: true } }]).map((e) => ({ ...e, seq: 99 })),
+    ]);
+    expect(store.getState().session?.reviewVerdict?.seatId).toBe("panel");
+    expect(getByRole("status").textContent).toContain("Decision: Needs work");
+  });
+
+  it("reads the policy from the verdict, including the default security-veto that the summary never names", () => {
+    const { getByRole } = renderReview(panelEvents());
+    expect(getByRole("status").textContent).toContain("Policy: security-veto");
+  });
+
+  it("lists the reviewers who flagged a finding", () => {
+    const { getByText } = renderReview(panelEvents());
+    expect(getByText("Flagged by: Opus#2")).toBeTruthy();
   });
 });
 

@@ -104,7 +104,7 @@ export class ReviewCoordinator {
   private readonly adjudicatorProfile?: LogicalAgentProfile;
   private readonly goal: string;
   private readonly acceptanceCriteria: string[];
-  private readonly policy: ReviewPolicy;
+  readonly policy: ReviewPolicy;
   private readonly tiebreak: "adjudicator" | "negotiate";
   private readonly onDisagreement?: ReviewCoordinatorOptions["onDisagreement"];
   /** Member id (as in `runIndependentReviews`) → weight. */
@@ -500,10 +500,13 @@ export class PanelReviewer implements Reviewer {
       };
     }
 
+    const correlated = this.coordinator.correlate(findings);
     return {
       result,
       messages: communication.length > 0 ? communication : undefined,
-      rawOutput: rawOutput(this.coordinator.correlate(findings)),
+      rawOutput: rawOutput(correlated),
+      policy: this.coordinator.policy,
+      correlated,
     };
   }
 }

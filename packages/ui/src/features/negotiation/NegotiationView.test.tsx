@@ -172,6 +172,32 @@ describe("NegotiationView: vote tally, consensus and decision", () => {
   });
 });
 
+describe("NegotiationView: threshold and decision from the stream", () => {
+  const events = (reached: boolean): EngineEvent[] => [
+    { seq: 1, sessionId: "dec", at: "2026-10-25T11:00:00.000Z", type: "stage.started", stageId: "d", data: { kind: "negotiate", strategy: "debate", attempt: 1 } } as EngineEvent,
+    { seq: 2, sessionId: "dec", at: "2026-10-25T11:00:01.000Z", type: "negotiation.proposal", stageId: "d", data: { round: 1, label: "Proposal A", text: "Plan A." } } as EngineEvent,
+    { seq: 3, sessionId: "dec", at: "2026-10-25T11:00:01.000Z", type: "negotiation.proposal", stageId: "d", data: { round: 1, label: "Proposal B", text: "Plan B." } } as EngineEvent,
+    { seq: 4, sessionId: "dec", at: "2026-10-25T11:00:02.000Z", type: "negotiation.consensus", stageId: "d", data: { round: 1, score: 0.4, reached, threshold: 0.7, preferred: "Proposal A" } } as EngineEvent,
+    { seq: 5, sessionId: "dec", at: "2026-10-25T11:00:03.000Z", type: "negotiation.decided", stageId: "d", data: { rationale: "no consensus; the judge chose Proposal B <b>x</b>", winner: "Proposal B" } } as EngineEvent,
+  ];
+
+  it("shows the threshold, the rationale as text, and the decided winner instead of the leader", () => {
+    const { container, store, getByRole, getByText, queryByText } = renderWithStore(<NegotiationView />);
+    act(() => {
+      store.getState().select("dec");
+      store.getState().applyEvents("dec", events(false));
+    });
+    expect(getByText(/threshold 70%/)).toBeTruthy();
+    const card = getByRole("region", { name: "Decision" });
+    expect(within(card).getByText("No consensus · preferred Proposal B")).toBeTruthy();
+    expect(within(card).getByText("no consensus; the judge chose Proposal B <b>x</b>")).toBeTruthy();
+    expect(within(card).getByText("Plan B.")).toBeTruthy();
+    expect(container.querySelector(".decision-rationale b")).toBeNull();
+    expect(queryByText(/Not in the event stream: the rationale/)).toBeNull();
+    expect(within(card).getByText(/Not in the event stream: dissent from invalid ballots/)).toBeTruthy();
+  });
+});
+
 describe("NegotiationView: run labels and no-consensus runs", () => {
   it("names each run in the picker with its strategy, stage and attempt", () => {
     const { container } = renderFixture();

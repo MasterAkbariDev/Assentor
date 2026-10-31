@@ -285,10 +285,7 @@ function rankCell(ranking: readonly string[], label: string): string {
   return position < 0 ? "–" : String(position + 1);
 }
 
-/**
- * Consensus score from the event. The threshold is not in the stream, so there is no
- * threshold marker; the reached flag is the engine's own.
- */
+/** Consensus score from the event, with its threshold when the log has one; the reached flag is the engine's own. */
 function ConsensusMeter({ consensus }: { consensus: ConsensusView }) {
   const percent = Math.round(consensus.score * 100);
   return (
@@ -299,6 +296,9 @@ function ConsensusMeter({ consensus }: { consensus: ConsensusView }) {
         <span className={consensus.reached ? "consensus-state is-reached" : "consensus-state"}>
           {consensus.reached ? "Consensus reached" : "No consensus"}
         </span>
+        {consensus.threshold !== undefined ? (
+          <span className="consensus-threshold"> · threshold {Math.round(consensus.threshold * 100)}%</span>
+        ) : null}
       </p>
     </section>
   );
@@ -311,11 +311,17 @@ interface DecisionCardProps {
 
 function DecisionCard({ run, name }: DecisionCardProps) {
   const last = run.consensus[run.consensus.length - 1];
-  const preferred = last?.preferred;
+  const { decided } = run;
+  const preferred = decided ? decided.winner : last?.preferred;
   const preferredProposal = preferred ? [...run.proposals].reverse().find((p) => p.label === preferred) : undefined;
   const status = !last ? "In progress" : last.reached ? "Consensus reached" : "No consensus";
-  // Without consensus the engine's final decision (a judge, a moderator) is not in the stream.
-  const title = last && !last.reached ? "Leading proposal (final decision not in the event stream)" : "Decision";
+  // Without consensus, logs from before `negotiation.decided` lack the final decision (a judge, a moderator).
+  const title = !decided && last && !last.reached ? "Leading proposal (final decision not in the event stream)" : "Decision";
+  const gaps = [
+    ...(decided ? [] : ["the rationale"]),
+    ...(last?.threshold === undefined ? ["the consensus threshold"] : []),
+    "dissent from invalid ballots",
+  ];
 
   return (
     <section className="decision-card" aria-label={title}>
@@ -324,6 +330,7 @@ function DecisionCard({ run, name }: DecisionCardProps) {
         {status}
         {preferred ? ` · preferred ${preferred}` : ""}
       </p>
+      {decided ? <p className="decision-rationale">{decided.rationale}</p> : null}
       {preferredProposal ? (
         <blockquote className="decision-text">
           <p>{preferredProposal.text}</p>
@@ -345,8 +352,7 @@ function DecisionCard({ run, name }: DecisionCardProps) {
         <p className="empty">No failed seat asks in the event stream.</p>
       )}
       <p className="negotiation-gaps">
-        Not in the event stream: the rationale, the consensus threshold, and dissent from invalid ballots. Those are in the
-        session&apos;s negotiation file.
+        Not in the event stream: {gaps.join(", ")}. Those are in the session&apos;s negotiation file.
       </p>
     </section>
   );

@@ -1145,7 +1145,9 @@ export class Supervisor {
       requiredChanges: turn.result.requiredChanges,
       optionalChanges: turn.result.optionalChanges,
       evidenceRequests: turn.result.evidenceRequests,
+      ...(turn.policy ? { policy: turn.policy } : {}),
     });
+    this.emitPanelFindings(turn.correlated);
 
     this.absorbReview(turn.result);
 
@@ -1604,6 +1606,26 @@ export class Supervisor {
     });
     this.absorbReview(review);
     return review;
+  }
+
+  /** One `review.finding` per correlated finding of a panel turn, from the panel seat. */
+  private emitPanelFindings(correlated: ReviewerTurnResult["correlated"]): void {
+    const sink = this.config.seatEvents;
+    for (const finding of correlated ?? []) {
+      sink?.emit({
+        type: "review.finding",
+        sessionId: sink.sessionId,
+        seatId: this.reviewerSeatId,
+        data: {
+          key: finding.key,
+          description: finding.description,
+          severity: finding.severity,
+          affectedFiles: finding.affectedFiles,
+          agreement: { count: finding.agreement.count, total: finding.agreement.total },
+          reviewerIds: finding.agentIds,
+        },
+      });
+    }
   }
 
   private emit(

@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { Severity } from "#assentor/protocol/review-result.js";
 import { STATUS_META, type StatusTone } from "#assentor/ui-shared/status.js";
 import { useEngine } from "../../store/context.js";
-import { groupSeats, selectReviewFindings, selectReviewVerdict, selectSeats } from "../../store/selectors.js";
+import { groupSeats, selectMemberVerdicts, selectReviewFindings, selectReviewVerdict, selectSeats } from "../../store/selectors.js";
 import {
   agreementText,
   decisionOf,
@@ -55,6 +55,7 @@ export function ReviewView() {
   const verdict = useEngine(selectReviewVerdict);
   const findingEvents = useEngine(selectReviewFindings);
   const seats = useEngine(selectSeats);
+  const memberVerdicts = useEngine(selectMemberVerdicts);
   const reviewers = useMemo(
     () => groupSeats(seats ?? {}).find((group) => group.key === "reviewers")?.seats ?? [],
     [seats],
@@ -94,6 +95,7 @@ export function ReviewView() {
         <ul className="review-reviewers">
           {reviewers.map((seat) => {
             const meta = STATUS_META[seat.status];
+            const own = memberVerdicts[seat.seatId];
             return (
               <li key={seat.seatId} className={`review-reviewer tone-${meta.tone}`} data-seat-id={seat.seatId}>
                 <span className="review-reviewer-status">
@@ -106,6 +108,12 @@ export function ReviewView() {
                 <span className="review-reviewer-meta">
                   {seat.model} · {seat.role || "—"}
                 </span>
+                {own ? (
+                  <span className="review-reviewer-verdict">
+                    Verdict {DECISION_LABEL[own.data.status] ?? own.data.status}
+                    {own.data.confidence !== undefined ? ` · confidence ${own.data.confidence}` : ""}
+                  </span>
+                ) : null}
                 {seat.detail ? <span className="review-reviewer-detail">{seat.detail}</span> : null}
               </li>
             );
@@ -113,7 +121,7 @@ export function ReviewView() {
         </ul>
       )}
       <p className="review-note">
-        Each row shows the seat's run status. The per-reviewer verdict and confidence are not in the event stream yet.
+        Each row shows the seat's run status{Object.keys(memberVerdicts).length > 0 ? " and its own verdict" : ". Logs from before per-reviewer verdicts do not carry them"}.
       </p>
 
       <h3 className="review-subheading">Findings</h3>
@@ -213,6 +221,7 @@ function FindingItem({ finding }: { finding: FindingView }) {
       </div>
       <p className="review-finding-text">{finding.description}</p>
       {others.length > 0 ? <p className="review-finding-files">Also in: {others.join(", ")}</p> : null}
+      {finding.agentIds.length > 0 ? <p className="review-finding-reviewers">Flagged by: {finding.agentIds.join(", ")}</p> : null}
       {finding.evidence.length > 0 ? (
         <ul className="review-evidence">
           {finding.evidence.map((item, index) => (
