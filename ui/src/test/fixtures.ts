@@ -42,6 +42,56 @@ function stream(sessionId: string): EngineEvent[] {
 
 export const sessionFixture = { id: SESSION_ID, events: stream(SESSION_ID) };
 
+const NEGOTIATION_ID = "7a1d3e5f-2c4b-4d6e-9f08-1a2b3c4d5e6f";
+
+/**
+ * Two negotiations in one run, in the shape the engine emits them (stage-scoped):
+ * - `debate-1`: two rounds, a critique with citations, a failed ask (dissent), consensus reached in round 2.
+ * - `vote-1`: three proposals, three ballots, Borda A 3 / B 5 / C 1 of 6 possible, consensus 5/6.
+ * Proposal events carry no author, as the current strategies send none.
+ */
+function negotiationStream(sessionId: string): EngineEvent[] {
+  let seq = 0;
+  const at = (s: number) => new Date(Date.UTC(2026, 9, 25, 11, 0, s)).toISOString();
+  const e = (draft: Record<string, unknown>): EngineEvent => ({ ...draft, sessionId, seq: ++seq, at: at(seq) }) as EngineEvent;
+  const spawn = (seatId: string, displayName: string, role: string) =>
+    e({
+      type: "seat.spawned",
+      seatId,
+      data: { displayName, provider: "mock", transport: "api", model: "AUTO", role, permissions: "read-only" },
+    });
+
+  return [
+    e({ type: "session.created", data: { title: "Pick an approach" } }),
+    spawn("seat-a", "Opus#1", "proposer"),
+    spawn("seat-b", "Opus#2", "critic"),
+    spawn("seat-c", "Sonnet#1", "critic"),
+    e({ type: "stage.started", stageId: "debate-1", data: { kind: "negotiate", strategy: "debate", attempt: 1 } }),
+    e({ type: "seat.error", stageId: "debate-1", seatId: "seat-c", data: { message: "invalid negotiate-propose reply: no JSON found" } }),
+    e({ type: "negotiation.proposal", stageId: "debate-1", data: { round: 1, label: "Proposal A", text: "Stream the file in chunks. <b>Bold</b> is text." } }),
+    e({ type: "negotiation.proposal", stageId: "debate-1", data: { round: 1, label: "Proposal B", text: "Load the whole file, then sum." } }),
+    e({
+      type: "negotiation.critique",
+      stageId: "debate-1",
+      seatId: "seat-b",
+      data: { round: 1, targetLabel: "Proposal A", text: "Chunking misses the last partial line.", citations: ["src/average.ts:12", "spec §3.2"] },
+    }),
+    e({ type: "negotiation.consensus", stageId: "debate-1", data: { round: 1, score: 0.4, reached: false } }),
+    e({ type: "negotiation.proposal", stageId: "debate-1", data: { round: 2, label: "Proposal A", text: "Stream in chunks and carry the partial line." } }),
+    e({ type: "negotiation.consensus", stageId: "debate-1", data: { round: 2, score: 0.8, reached: true, preferred: "Proposal A" } }),
+    e({ type: "stage.started", stageId: "vote-1", data: { kind: "negotiate", strategy: "vote", attempt: 1 } }),
+    e({ type: "negotiation.proposal", stageId: "vote-1", data: { round: 1, label: "Proposal A", text: "Sum with a loop." } }),
+    e({ type: "negotiation.proposal", stageId: "vote-1", data: { round: 1, label: "Proposal B", text: "Use reduce." } }),
+    e({ type: "negotiation.proposal", stageId: "vote-1", data: { round: 1, label: "Proposal C", text: "Return NaN for empty input." } }),
+    e({ type: "negotiation.vote", stageId: "vote-1", seatId: "seat-a", data: { round: 2, ranking: ["Proposal B", "Proposal A", "Proposal C"] } }),
+    e({ type: "negotiation.vote", stageId: "vote-1", seatId: "seat-b", data: { round: 2, ranking: ["Proposal A", "Proposal B", "Proposal C"] } }),
+    e({ type: "negotiation.vote", stageId: "vote-1", seatId: "seat-c", data: { round: 2, ranking: ["Proposal B", "Proposal C", "Proposal A"] } }),
+    e({ type: "negotiation.consensus", stageId: "vote-1", data: { round: 2, score: 5 / 6, reached: true, preferred: "Proposal B" } }),
+  ];
+}
+
+export const negotiationFixture = { id: NEGOTIATION_ID, events: negotiationStream(NEGOTIATION_ID) };
+
 /** `seats` × `perSeat` output deltas, for throughput tests. */
 export function burstFixture(seats: number, perSeat: number): { id: string; events: EngineEvent[] } {
   const id = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";

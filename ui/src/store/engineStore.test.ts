@@ -39,6 +39,7 @@ describe("engine store", () => {
       seats: {},
       seatInfo: {},
       seatEvents: {},
+      negotiationEvents: [],
       lastSeq: 0,
       eventCount: 0,
     });

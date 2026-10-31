@@ -36,6 +36,26 @@ export const ACTIVITY_EVENT_TYPES: ReadonlySet<EngineEventType> = new Set<Engine
 /** Most activity events kept per seat (see `ACTIVITY_EVENT_TYPES`). */
 export const SEAT_EVENT_CAP = 200;
 
+/**
+ * Events the negotiation view rebuilds a run from: the `negotiation.*` stream, the
+ * `stage.started` that names each negotiation's strategy and attempt, and `seat.error`
+ * (failed asks are the dissent the stream carries).
+ */
+export const NEGOTIATION_EVENT_TYPES: ReadonlySet<EngineEventType> = new Set<EngineEventType>([
+  "negotiation.proposal",
+  "negotiation.critique",
+  "negotiation.vote",
+  "negotiation.consensus",
+  "stage.started",
+  "seat.error",
+]);
+
+/**
+ * Most negotiation events kept per session, oldest dropped.
+ * shortcut: a very long session can lose an early stage.started (its strategy name), upgrade to per-stage storage if that shows up.
+ */
+export const NEGOTIATION_EVENT_CAP = 1_000;
+
 export interface SessionView {
   id: string;
   seats: Record<string, SeatState>;
@@ -43,6 +63,8 @@ export interface SessionView {
   seatInfo: Record<string, SeatInfo>;
   /** The last `SEAT_EVENT_CAP` events of each seat whose type is in `ACTIVITY_EVENT_TYPES`, oldest first. */
   seatEvents: Record<string, EngineEvent[]>;
+  /** The last `NEGOTIATION_EVENT_CAP` events whose type is in `NEGOTIATION_EVENT_TYPES`, oldest first. */
+  negotiationEvents: EngineEvent[];
   /** Last applied `seq`; resubscribe from here. */
   lastSeq: number;
   eventCount: number;
@@ -72,7 +94,7 @@ export interface EngineState {
 export type EngineStore = StoreApi<EngineState>;
 
 function emptySession(id: string): SessionView {
-  return { id, seats: {}, seatInfo: {}, seatEvents: {}, lastSeq: 0, eventCount: 0 };
+  return { id, seats: {}, seatInfo: {}, seatEvents: {}, negotiationEvents: [], lastSeq: 0, eventCount: 0 };
 }
 
 export function createEngineStore(): EngineStore {
@@ -95,7 +117,7 @@ export function createEngineStore(): EngineStore {
         if (!current || current.id !== sessionId || events.length === 0) {
           return s;
         }
-        let { seats, seatInfo, seatEvents, lastSeq, eventCount, state } = current;
+        let { seats, seatInfo, seatEvents, negotiationEvents, lastSeq, eventCount, state } = current;
         for (const event of events) {
           if (event.sessionId !== sessionId || event.seq <= lastSeq) {
             continue;
@@ -108,6 +130,9 @@ export function createEngineStore(): EngineStore {
           if (event.seatId && ACTIVITY_EVENT_TYPES.has(event.type)) {
             seatEvents = { ...seatEvents, [event.seatId]: [...(seatEvents[event.seatId] ?? []), event].slice(-SEAT_EVENT_CAP) };
           }
+          if (NEGOTIATION_EVENT_TYPES.has(event.type)) {
+            negotiationEvents = [...negotiationEvents, event].slice(-NEGOTIATION_EVENT_CAP);
+          }
           lastSeq = event.seq;
           eventCount += 1;
           if (event.type === "session.state") {
@@ -117,7 +142,9 @@ export function createEngineStore(): EngineStore {
         if (lastSeq === current.lastSeq) {
           return s;
         }
-        return { session: { ...current, seats, seatInfo, seatEvents, lastSeq, eventCount, ...(state ? { state } : {}) } };
+        return {
+          session: { ...current, seats, seatInfo, seatEvents, negotiationEvents, lastSeq, eventCount, ...(state ? { state } : {}) },
+        };
       }),
     failSession: (sessionId, message) =>
       set((s) => (s.session?.id === sessionId ? { session: { ...s.session, error: message } } : s)),

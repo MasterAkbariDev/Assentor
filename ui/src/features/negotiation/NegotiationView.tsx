@@ -1,0 +1,345 @@
+import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import type { SeatState } from "@engine/ui-shared/status.js";
+import { useEngine } from "../../store/context.js";
+import { selectNegotiationEvents, selectSeats } from "../../store/selectors.js";
+import {
+  bordaTally,
+  buildNegotiationRuns,
+  labelsOf,
+  type ConsensusView,
+  type CritiqueView,
+  type NegotiationRun,
+  type ProposalView,
+  type Tally,
+  type VoteView,
+} from "./model.js";
+
+/**
+ * Read-only negotiation view for the selected run (T04-09p): one tab per round,
+ * proposals side by side with their critiques, the vote tally (vote strategy),
+ * the consensus meter, and the decision card with dissent. Shown only when the
+ * run has `negotiation.*` events. Text from seats is rendered as text, never HTML.
+ */
+export function NegotiationView() {
+  const events = useEngine(selectNegotiationEvents);
+  const seats = useEngine(selectSeats);
+  const runs = useMemo(() => buildNegotiationRuns(events), [events]);
+  const [runKey, setRunKey] = useState<string>();
+  const [round, setRound] = useState<number>();
+  const [reveal, setReveal] = useState(false);
+  const base = useId();
+
+  if (runs.length === 0) {
+    return null;
+  }
+  const run = runs.find((r) => r.key === runKey) ?? runs[runs.length - 1]!;
+  const selectedRound = round !== undefined && run.rounds.includes(round) ? round : run.rounds[run.rounds.length - 1];
+  const name = (seatId: string | undefined) => seatName(seats, seatId);
+
+  return (
+    <section className="negotiation" aria-labelledby={`${base}-heading`}>
+      <header className="negotiation-head">
+        <h2 id={`${base}-heading`} className="negotiation-title">
+          Negotiation
+          {run.strategy ? <span className="negotiation-strategy"> · {run.strategy}</span> : null}
+        </h2>
+        {runs.length > 1 ? (
+          <label className="negotiation-run">
+            Run{" "}
+            <select value={run.key} onChange={(e) => setRunKey(e.target.value)}>
+              {runs.map((r, i) => (
+                <option key={r.key} value={r.key}>
+                  {`${i + 1}. ${r.strategy ?? "negotiation"}${r.stageId ? ` (${r.stageId})` : ""}`}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        <button
+          type="button"
+          role="switch"
+          aria-checked={reveal}
+          className="switch"
+          onClick={() => setReveal(!reveal)}
+        >
+          <span className="switch-track" aria-hidden="true" />
+          Reveal authors
+        </button>
+      </header>
+
+      {selectedRound === undefined ? (
+        <p className="empty">No rounds yet.</p>
+      ) : (
+        <>
+          <RoundTabs base={base} rounds={run.rounds} selected={selectedRound} onSelect={setRound} />
+          <RoundPanel base={base} run={run} round={selectedRound} reveal={reveal} name={name} />
+        </>
+      )}
+
+      <DecisionCard run={run} name={name} />
+    </section>
+  );
+}
+
+function seatName(seats: Record<string, SeatState> | undefined, seatId: string | undefined): string {
+  if (!seatId) return "Unknown seat";
+  return seats?.[seatId]?.displayName ?? seatId;
+}
+
+interface RoundTabsProps {
+  base: string;
+  rounds: number[];
+  selected: number;
+  onSelect: (round: number) => void;
+}
+
+/** Round tabs: arrows, Home and End move between them, as in the seat drawer. */
+function RoundTabs({ base, rounds, selected, onSelect }: RoundTabsProps) {
+  const refs = useRef<Array<HTMLButtonElement | null>>([]);
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const count = rounds.length;
+    const index = rounds.indexOf(selected);
+    let next: number;
+    switch (event.key) {
+      case "ArrowRight":
+        next = (index + 1) % count;
+        break;
+      case "ArrowLeft":
+        next = (index - 1 + count) % count;
+        break;
+      case "Home":
+        next = 0;
+        break;
+      case "End":
+        next = count - 1;
+        break;
+      default:
+        return;
+    }
+    const target = rounds[next];
+    if (target === undefined) return;
+    event.preventDefault();
+    onSelect(target);
+    refs.current[next]?.focus();
+  };
+  return (
+    <div role="tablist" aria-label="Rounds" className="round-tabs" onKeyDown={onKeyDown}>
+      {rounds.map((r, i) => {
+        const isSelected = r === selected;
+        return (
+          <button
+            key={r}
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
+            id={`${base}-tab-${r}`}
+            type="button"
+            role="tab"
+            aria-selected={isSelected}
+            aria-controls={`${base}-panel`}
+            tabIndex={isSelected ? 0 : -1}
+            className="round-tab"
+            onClick={() => onSelect(r)}
+          >
+            Round {r}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+interface RoundPanelProps {
+  base: string;
+  run: NegotiationRun;
+  round: number;
+  reveal: boolean;
+  name: (seatId: string | undefined) => string;
+}
+
+function RoundPanel({ base, run, round, reveal, name }: RoundPanelProps) {
+  const proposals = run.proposals.filter((p) => p.round === round);
+  const votes = run.votes.filter((v) => v.round === round);
+  const consensus = lastConsensus(run.consensus.filter((c) => c.round === round));
+  const labels = labelsOf(run.proposals);
+  const tally = votes.length > 0 ? bordaTally(votes, labels) : undefined;
+
+  return (
+    <div role="tabpanel" id={`${base}-panel`} aria-labelledby={`${base}-tab-${round}`} className="round-panel">
+      {proposals.length > 0 ? (
+        <ol className="proposal-row" aria-label={`Proposals, round ${round}`}>
+          {proposals.map((proposal) => (
+            <li key={`${proposal.label}-${proposal.round}`} className="proposal-item">
+              <ProposalCard proposal={proposal} critiques={run.critiques.filter((c) => c.round === round && c.targetLabel === proposal.label)} reveal={reveal} name={name} />
+            </li>
+          ))}
+        </ol>
+      ) : null}
+
+      {tally ? <VoteTally votes={votes} tally={tally} name={name} /> : null}
+
+      {consensus ? <ConsensusMeter consensus={consensus} /> : null}
+
+      {proposals.length === 0 && !tally && !consensus ? <p className="empty">No events in this round.</p> : null}
+    </div>
+  );
+}
+
+function lastConsensus(list: readonly ConsensusView[]): ConsensusView | undefined {
+  return list[list.length - 1];
+}
+
+interface ProposalCardProps {
+  proposal: ProposalView;
+  critiques: CritiqueView[];
+  reveal: boolean;
+  name: (seatId: string | undefined) => string;
+}
+
+function ProposalCard({ proposal, critiques, reveal, name }: ProposalCardProps) {
+  return (
+    <section className="proposal-card" aria-label={proposal.label}>
+      <h3 className="proposal-label">{proposal.label}</h3>
+      {reveal ? (
+        <p className="proposal-author">
+          {proposal.seatId ? `Author: ${name(proposal.seatId)}` : "Author not in the event stream"}
+        </p>
+      ) : null}
+      <p className="proposal-text">{proposal.text}</p>
+      {critiques.length > 0 ? (
+        <ol className="critique-thread" aria-label={`Critiques of ${proposal.label}`}>
+          {critiques.map((critique, i) => (
+            <li key={i} className="critique">
+              <p className="critique-meta">
+                <strong>{name(critique.seatId)}</strong> critiques
+              </p>
+              <p className="critique-text">{critique.text}</p>
+              {critique.citations.length > 0 ? (
+                <ul className="chips" aria-label="Evidence">
+                  {critique.citations.map((citation, j) => (
+                    <li key={j} className="chip">
+                      {citation}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </section>
+  );
+}
+
+interface VoteTallyProps {
+  votes: VoteView[];
+  tally: Tally;
+  name: (seatId: string | undefined) => string;
+}
+
+/** Per-seat rankings (1 = first) and the Borda totals. Ties go to the earlier proposal. */
+function VoteTally({ votes, tally, name }: VoteTallyProps) {
+  return (
+    <section className="vote-tally" aria-label="Vote tally">
+      <table className="vote-table">
+        <caption>
+          Rankings and Borda points ({tally.maxPoints} possible across {votes.length} ballot
+          {votes.length === 1 ? "" : "s"}). Ties go to the earlier proposal.
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">Seat</th>
+            {tally.labels.map((label) => (
+              <th key={label} scope="col">
+                {label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {votes.map((vote) => (
+            <tr key={vote.seatId}>
+              <th scope="row">{name(vote.seatId)}</th>
+              {tally.labels.map((label) => (
+                <td key={label}>{vote.ranking.indexOf(label) + 1}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <th scope="row">Borda points</th>
+            {tally.labels.map((label) => (
+              <td key={label}>{tally.points[label] ?? 0}</td>
+            ))}
+          </tr>
+        </tfoot>
+      </table>
+    </section>
+  );
+}
+
+/**
+ * Consensus score from the event. The threshold is not in the stream, so there is no
+ * threshold marker; the reached flag is the engine's own.
+ */
+function ConsensusMeter({ consensus }: { consensus: ConsensusView }) {
+  const percent = Math.round(consensus.score * 100);
+  return (
+    <section className="consensus" aria-label="Consensus">
+      <p className="consensus-line">
+        <meter min={0} max={1} value={consensus.score} aria-label="Consensus score" />
+        <span className="consensus-value">{percent}%</span>
+        <span className={consensus.reached ? "consensus-state is-reached" : "consensus-state"}>
+          {consensus.reached ? "Consensus reached" : "No consensus"}
+        </span>
+      </p>
+    </section>
+  );
+}
+
+interface DecisionCardProps {
+  run: NegotiationRun;
+  name: (seatId: string | undefined) => string;
+}
+
+function DecisionCard({ run, name }: DecisionCardProps) {
+  const last = run.consensus[run.consensus.length - 1];
+  const preferred = last?.preferred;
+  const preferredProposal = preferred ? [...run.proposals].reverse().find((p) => p.label === preferred) : undefined;
+  const status = !last ? "In progress" : last.reached ? "Consensus reached" : "No consensus";
+
+  return (
+    <section className="decision-card" aria-label="Decision">
+      <h2 className="decision-title">Decision</h2>
+      <p className="decision-status">
+        {status}
+        {preferred ? ` · preferred ${preferred}` : ""}
+      </p>
+      {preferredProposal ? (
+        <blockquote className="decision-text">
+          <p>{preferredProposal.text}</p>
+        </blockquote>
+      ) : null}
+      <h3 className="decision-dissent-title">Dissent</h3>
+      {run.dissent.length > 0 ? (
+        <ul className="dissent-list">
+          {run.dissent.map((d, i) => (
+            <li key={i} className="dissent">
+              <span className="dissent-flag" aria-hidden="true">
+                ⚑
+              </span>{" "}
+              <strong>{name(d.seatId)}</strong>: {d.message}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="empty">No failed seat asks in the event stream.</p>
+      )}
+      <p className="negotiation-gaps">
+        Not in the event stream: the rationale, the consensus threshold, and dissent from invalid ballots. Those are in the
+        session&apos;s negotiation file.
+      </p>
+    </section>
+  );
+}
