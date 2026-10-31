@@ -332,7 +332,7 @@ interface PartRun {
 }
 
 /** Symlinks among `files` whose target resolves outside the worktree or into its `.git` / `.assentor`. */
-async function escapingSymlinks(root: string, files: readonly string[]): Promise<string[]> {
+export async function escapingSymlinks(root: string, files: readonly string[]): Promise<string[]> {
   const realRoot = await fs.realpath(root);
   const bad: string[] = [];
   for (const file of files) {
