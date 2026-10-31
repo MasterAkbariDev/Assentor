@@ -5,7 +5,7 @@ import type { Autonomy } from "../core/run-mode.js";
 import type { Seat, SessionSpecSchema } from "#assentor/protocol/seats.js";
 import type { Executor } from "../providers/executors/types.js";
 import type { StageRunnerDeps } from "../orchestrator/session-stages.js";
-import type { StageRunners } from "../orchestrator/session-runner.js";
+import type { StageResult, StageRunners } from "../orchestrator/session-runner.js";
 import type { EngineEventDraft } from "#assentor/protocol/events.js";
 import type { PromptLibrary } from "../prompts/library.js";
 import type { Usage } from "../seats/scheduler.js";
@@ -124,6 +124,12 @@ export interface ModeHostServices {
 export class ApprovalDeniedError extends Error {
   override name = "ApprovalDeniedError";
 }
+
+/**
+ * The stage result the session's `manual` gate returns when the user declines a stage. Compare by identity:
+ * a model-written BLOCKED review with the same words is a different object and must still escalate.
+ */
+export const STAGE_DENIED: StageResult = Object.freeze({ outcome: "blocked" as const, summary: "the user did not approve this stage" });
 
 /** What a controller may do with worktrees. `applyTo("main")` passes the session's approval floor. */
 export type ControllerWorktrees = Pick<WorktreeManager, "create" | "diff" | "list" | "applyTo" | "discard" | "markFailed" | "cleanup" | "readAtBase">;

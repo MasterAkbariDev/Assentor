@@ -25,10 +25,18 @@ export const DEFAULT_TEST_PATTERNS: readonly string[] = [
 
 /**
  * Files that decide what the test command runs or whether it exits 0 (by basename, any depth).
- * TDD mode treats a change to one, or a new one, as tampering. Not covered: babel, tsconfig and the like.
+ * The one list shared by TDD mode (a change to one, or a new one, is tampering) and red-team
+ * mode (an attacker may not add one, a builder may not change one). Red-team compares package.json by its runner keys
+ * instead of treating every edit as tampering (see `isRunnerFile`).
+ * The merged list is stricter for both modes: TDD now also protects go.mod, setup.py, tsconfig*.json, babel/.babelrc,
+ * global-setup and *.setup.* files; red-team now also protects justfile, noxfile.py and .gitignore.
  */
 export const RUNNER_CONFIG =
-  /(?:^|\/)(?:[^/]*(?:vitest|vite|jest|playwright|cypress|ava)\.(?:config|workspace)\.[^/]*|karma\.conf\.[^/]*|\.mocharc\.[^/]*|setupTests\.[^/]*|package\.json|\.?pytest\.ini|pyproject\.toml|setup\.cfg|tox\.ini|conftest\.py|noxfile\.py|Cargo\.toml|Makefile|justfile|\.gitignore)$/i;
+  /(?:^|\/)(?:[^/]*(?:vitest|vite|jest|playwright|cypress|ava)\.(?:config|workspace)\.[^/]*|(?:vitest|vite|jest|playwright|karma|mocha|ava|cypress|babel)\.(?:config|workspace|setup)(?:\.[^/]*)?|karma\.conf\.[^/]*|\.mocharc(?:\.[^/]*)?|\.babelrc(?:\.[^/]*)?|setuptests\.[^/]*|global-?setup\.[^/]*|[^/]+\.setup\.[^/.]+|package\.json|\.?pytest\.ini|pyproject\.toml|setup\.cfg|setup\.py|tox\.ini|conftest\.py|noxfile\.py|cargo\.toml|go\.mod|tsconfig[^/]*\.json|makefile|gnumakefile|justfile|\.gitignore)$/i;
+
+/** Whether a path is on the shared runner list, package.json excluded (red-team checks it by runner keys). */
+export const isRunnerFile = (filePath: string): boolean =>
+  RUNNER_CONFIG.test(normalizePath(filePath)) && !/(?:^|\/)package\.json$/i.test(normalizePath(filePath));
 
 export interface TamperInput {
   /** Test files the test writer produced; the coder must not change them. */

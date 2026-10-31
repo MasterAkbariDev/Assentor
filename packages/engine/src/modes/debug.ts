@@ -13,7 +13,7 @@ import { runShellCommand } from "../process/run-shell.js";
 import { redactSecrets } from "../security/redact.js";
 import { WorktreeError, type SeatKey, type WorktreeDiff } from "../worktrees/manager.js";
 import { classifyRisk } from "./danger.js";
-import type { ModeController, ModeControllerInput, ModeControllerResult } from "./registry.js";
+import { ApprovalDeniedError, type ModeController, type ModeControllerInput, type ModeControllerResult } from "./registry.js";
 
 /**
  * Debug mode (T02B-16): collect evidence, K hypothesis seats each test one
@@ -251,10 +251,10 @@ export interface DebugExtras {
   /** Command runner for the repro, evidence commands and gates (tests); default runs the shell. */
   runCommand?: RunVerificationCommand;
   /**
-   * Asks the user before the passed fix is applied to main. Without it only
-   * `autopilot` runs (supervised and manual end `blocked` before any work: the
-   * controller contract has no approval channel yet, T02B-02), and a danger-area
-   * fix ends `blocked` with the worktree kept.
+   * Asks the user before a danger-area fix is applied under `autopilot` (the
+   * session asks under supervised, in `applyTo("main")`, so this is never asked
+   * twice). Without it that fix ends `blocked` with the worktree kept. `manual`
+   * does not start.
    */
   approve?: (summary: string) => Promise<boolean>;
 }
@@ -275,9 +275,9 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
   if (problems.length > 0) throw new Error(problems.join("; "));
   const settings = (parseConfig(input.config) as { ok: true; value: DebugConfig }).value;
   if (!manager) throw new Error("debug mode needs a worktree manager from the host");
-  // Fail before any work: applying needs an approval the host cannot give yet (T02B-02).
-  if (input.autonomy !== "autopilot" && !extras.approve) {
-    return { status: "blocked", reason: `${input.autonomy} autonomy needs an approval channel for debug mode, and none is wired yet; use autopilot` };
+  // Fail before any work: manual is not supported.
+  if (input.autonomy === "manual") {
+    return { status: "blocked", reason: "manual autonomy is not supported for debug mode; use supervised or autopilot" };
   }
 
   const emit = (draft: EngineEventDraft) => {
@@ -564,7 +564,8 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
       { projectRoot: root, extraRules: input.config.modes.cascade?.dangerAreas },
     );
     const summary = `debug: fixed ${winner.hypothesis.slice(0, 120)} in ${reviewed.files.length} file(s)${risk.level === "danger" ? ` [danger area: ${risk.categories.join(", ")}]` : ""}`;
-    if (input.autonomy !== "autopilot" || risk.level === "danger") {
+    // The session asks before applyTo("main") under supervised (and shows this message); only autopilot, which it does not gate, asks here.
+    if (input.autonomy === "autopilot" && risk.level === "danger") {
       if (!extras.approve) throw new Stop({ status: "blocked", reason: `review passed; approval needed to apply the fix${risk.level === "danger" ? ` (danger area: ${risk.categories.join(", ")})` : ""}${kept}` });
       if (!(await extras.approve(summary))) throw new Stop({ status: "blocked", reason: `apply was not approved${kept}` });
     }
@@ -577,6 +578,7 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
     try {
       result = await manager.applyTo("main", fixKey, { strategy: "squash", message: summary.slice(0, 200), allowedPaths: reviewed.files });
     } catch (error) {
+      if (error instanceof ApprovalDeniedError) throw new Stop({ status: "blocked", reason: `apply was not approved${kept}` });
       if (error instanceof WorktreeError) throw new Stop({ status: "blocked", reason: `applying the fix was refused: ${error.message}${kept}` });
       throw error;
     }

@@ -80,7 +80,7 @@ import { detectTamper, isTestFile, lockTests, normalizePath, RUNNER_CONFIG } fro
  * level.
  *
  * Known limits: a coder can still weaken tests through helpers or fixtures that are not test files by
- * the patterns, or through config that is not on the `RUNNER_CONFIG` list (babel, tsconfig, ...); and a process the coder left running could change a test between the tamper check and
+ * the patterns, or through config that is not on the `RUNNER_CONFIG` list (config this list does not name); and a process the coder left running could change a test between the tamper check and
  * `applyTo` (not detected: the lock is re-read from the target afterwards).
  */
 
