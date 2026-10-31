@@ -1,3 +1,4 @@
+import { Severity } from "@engine/core/types.js";
 import type { EngineEventOf } from "@engine/protocol/events.js";
 import { ReviewIssueSchema } from "@engine/protocol/review-result.js";
 import {
@@ -15,10 +16,14 @@ import {
 export type Verdict = EngineEventOf<"review.verdict">;
 export type FindingEvent = EngineEventOf<"review.finding">;
 
-/** A finding as the view shows it: the engine's correlated shape plus the required change, when the stream has one. */
-export type FindingView = CorrelatedFinding & { requiredChange?: string };
+/**
+ * A finding as the view shows it: the engine's correlated shape plus the required change, when the stream has one.
+ * `severity` is the stream's string, kept as given when the schema does not know it.
+ */
+export type FindingView = Omit<CorrelatedFinding, "severity"> & { severity: string; requiredChange?: string };
 
-const SEVERITY = ReviewIssueSchema.shape.severity;
+/** Severities the schema knows. Any other string in the stream is shown as given and matches the "other" filter. */
+const KNOWN_SEVERITIES: ReadonlySet<string> = new Set<string>(Object.values(Severity));
 
 export interface ReviewDecision {
   status: string;
@@ -47,19 +52,21 @@ export function decisionOf(verdict: Verdict | undefined): ReviewDecision | undef
  * The findings to show. `review.finding` events carry the correlated shape
  * with agreement, so they win. Otherwise the findings are the latest verdict's
  * `issues`, which carry evidence and required changes but no agreement count.
+ * `unreadable` counts issues that fail `ReviewIssueSchema` and are left out.
  */
 export function findingsOf(
   findingEvents: readonly FindingEvent[],
   verdict: Verdict | undefined,
-): { source: "findings" | "issues"; findings: FindingView[] } {
+): { source: "findings" | "issues"; findings: FindingView[]; unreadable: number } {
   if (findingEvents.length > 0) {
-    return { source: "findings", findings: rankFindings(findingEvents.map(fromFindingEvent)) };
+    return { source: "findings", findings: rankFindings(findingEvents.map(fromFindingEvent)), unreadable: 0 };
   }
   const issues: unknown = verdict?.data.issues;
   const parsed = Array.isArray(issues) ? issues.map((item) => ReviewIssueSchema.safeParse(item)) : [];
   const findings = parsed.flatMap((result) => (result.success ? [result.data] : []));
   return {
     source: "issues",
+    unreadable: parsed.length - findings.length,
     findings: rankFindings(
       findings.map((issue) => ({
         key: issue.id,
@@ -79,12 +86,10 @@ export function findingsOf(
 
 function fromFindingEvent(event: FindingEvent): FindingView {
   const { key, description, severity, affectedFiles, agreement } = event.data;
-  const parsed = SEVERITY.safeParse(severity);
   return {
     key,
     description,
-    // An unknown severity ranks last rather than breaking the sort.
-    severity: parsed.success ? parsed.data : "info",
+    severity,
     category: "other",
     agentIds: [],
     issueIds: [],
@@ -96,9 +101,26 @@ function fromFindingEvent(event: FindingEvent): FindingView {
   };
 }
 
-/** Engine order: severity, then agreement, then key. `rankCorrelatedFindings` keeps the object identities, so extra fields survive. */
+/**
+ * Engine order: severity, then agreement, then key. Only the severity rank and
+ * the agreement count are read, and an unknown severity ranks after every known
+ * one. The objects are kept as they are, so the extra fields survive.
+ */
 function rankFindings(list: FindingView[]): FindingView[] {
-  return rankCorrelatedFindings(list) as FindingView[];
+  return rankCorrelatedFindings(list as CorrelatedFinding[]) as FindingView[];
+}
+
+/** True when at least one finding has an agreement count. Without one, "only disagreements" cannot apply. */
+export function hasAgreement(findings: readonly FindingView[]): boolean {
+  return findings.some((f) => f.agreement.total > 0);
+}
+
+/**
+ * The panel seat exists only for more than one reviewer, so one `reviewer-N`
+ * seat and no panel seat means a single reviewer.
+ */
+export function isSingleReviewer(seatIds: readonly string[]): boolean {
+  return !seatIds.includes("panel") && seatIds.filter((id) => id.startsWith("reviewer-")).length === 1;
 }
 
 export interface FileGroup {
@@ -132,15 +154,19 @@ export function agreementText(finding: FindingView): string {
   return finding.agreement.total > 0 ? `${finding.agreement.count}/${finding.agreement.total}` : "agreement not recorded";
 }
 
+/** `"other"` matches any severity string the schema does not know. */
+export type SeverityFilter = Severity | "other" | "all";
+
 export interface FindingFilter {
-  severity: FindingView["severity"] | "all";
+  severity: SeverityFilter;
   onlyDisagreements: boolean;
 }
 
 export function filterFindings(findings: readonly FindingView[], filter: FindingFilter): FindingView[] {
   return findings.filter(
     (f) =>
-      (filter.severity === "all" || f.severity === filter.severity) &&
+      (filter.severity === "all" ||
+        (filter.severity === "other" ? !KNOWN_SEVERITIES.has(f.severity) : f.severity === filter.severity)) &&
       (!filter.onlyDisagreements || isDisagreement(f)),
   );
 }

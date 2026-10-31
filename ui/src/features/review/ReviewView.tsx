@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Severity } from "@engine/core/types.js";
 import { STATUS_META, type StatusTone } from "@engine/ui-shared/status.js";
 import { useEngine } from "../../store/context.js";
@@ -9,8 +9,11 @@ import {
   filterFindings,
   findingsOf,
   groupByFile,
+  hasAgreement,
+  isSingleReviewer,
   type FindingView,
   type ReviewDecision,
+  type SeverityFilter,
 } from "./reviewModel.js";
 
 /**
@@ -20,6 +23,7 @@ import {
  */
 
 const SEVERITIES: readonly Severity[] = Object.values(Severity);
+const NOTE_NO_AGREEMENT = "Agreement is not in the event stream, so the disagreements filter is unavailable.";
 
 const DECISION_LABEL: Record<string, string> = {
   PASS: "Pass",
@@ -42,6 +46,11 @@ const SEVERITY_TONE: Record<Severity, StatusTone> = {
   info: "muted",
 };
 
+/** Unknown severities are shown as given, with the neutral tone. */
+function toneOf(severity: string): StatusTone {
+  return (SEVERITY_TONE as Record<string, StatusTone | undefined>)[severity] ?? "muted";
+}
+
 export function ReviewView() {
   const verdict = useEngine(selectReviewVerdict);
   const findingEvents = useEngine(selectReviewFindings);
@@ -51,12 +60,21 @@ export function ReviewView() {
     [seats],
   );
   const decision = decisionOf(verdict);
-  const { source, findings } = useMemo(() => findingsOf(findingEvents, verdict), [findingEvents, verdict]);
+  const { source, findings, unreadable } = useMemo(() => findingsOf(findingEvents, verdict), [findingEvents, verdict]);
+  const agreementKnown = hasAgreement(findings);
+  const singleReviewer = isSingleReviewer(reviewers.map((seat) => seat.seatId));
 
-  const [severity, setSeverity] = useState<Severity | "all">("all");
+  const [severity, setSeverity] = useState<SeverityFilter>("all");
   const [onlyDisagreements, setOnlyDisagreements] = useState(false);
   const uid = useId();
-  const visible = filterFindings(findings, { severity, onlyDisagreements });
+  const noteId = `${uid}-agreement-note`;
+  // Agreement data gone (a new run, or no finding has a count): the switch cannot apply, so clear it.
+  useEffect(() => {
+    if (!agreementKnown && onlyDisagreements) {
+      setOnlyDisagreements(false);
+    }
+  }, [agreementKnown, onlyDisagreements]);
+  const visible = filterFindings(findings, { severity, onlyDisagreements: onlyDisagreements && agreementKnown });
 
   return (
     <section className="review" aria-labelledby={`${uid}-heading`}>
@@ -66,7 +84,7 @@ export function ReviewView() {
 
       {/* role=status so the decision is announced when it arrives or changes. */}
       <div className="review-decision" role="status">
-        {decision ? <DecisionBanner decision={decision} /> : <p className="review-pending">No decision yet.</p>}
+        {decision ? <DecisionBanner decision={decision} singleReviewer={singleReviewer} /> : <p className="review-pending">No decision yet.</p>}
       </div>
 
       <h3 className="review-subheading">Reviewers</h3>
@@ -104,7 +122,7 @@ export function ReviewView() {
         <select
           id={`${uid}-severity`}
           value={severity}
-          onChange={(event) => setSeverity(event.target.value as Severity | "all")}
+          onChange={(event) => setSeverity(event.target.value as SeverityFilter)}
         >
           <option value="all">All</option>
           {SEVERITIES.map((item) => (
@@ -112,23 +130,35 @@ export function ReviewView() {
               {item}
             </option>
           ))}
+          <option value="other">other</option>
         </select>
         <button
           type="button"
           role="switch"
-          aria-checked={onlyDisagreements}
+          aria-checked={onlyDisagreements && agreementKnown}
+          aria-disabled={agreementKnown ? undefined : "true"}
+          aria-describedby={agreementKnown ? undefined : noteId}
           className="review-switch"
-          onClick={() => setOnlyDisagreements((on) => !on)}
+          onClick={() => {
+            if (agreementKnown) {
+              setOnlyDisagreements((on) => !on);
+            }
+          }}
         >
           <span className="review-switch-track" aria-hidden="true" />
           Only disagreements
         </button>
       </div>
 
-      {source === "issues" && findings.length > 0 ? (
+      {!agreementKnown ? (
+        <p className="review-note" id={noteId}>
+          {NOTE_NO_AGREEMENT}
+          {source === "issues" && findings.length > 0 ? " These findings come from the decision's issue list." : null}
+        </p>
+      ) : null}
+      {unreadable > 0 ? (
         <p className="review-note">
-          Agreement is not in the event stream, so these findings come from the decision's issue list. None counts as a
-          disagreement.
+          {unreadable} {unreadable === 1 ? "issue" : "issues"} could not be read.
         </p>
       ) : null}
 
@@ -152,7 +182,7 @@ export function ReviewView() {
   );
 }
 
-function DecisionBanner({ decision }: { decision: ReviewDecision }) {
+function DecisionBanner({ decision, singleReviewer }: { decision: ReviewDecision; singleReviewer: boolean }) {
   const tone = DECISION_TONE[decision.status] ?? "muted";
   return (
     <div className={`review-verdict tone-${tone}`}>
@@ -163,7 +193,8 @@ function DecisionBanner({ decision }: { decision: ReviewDecision }) {
         ) : null}
       </p>
       <p className="review-policy">
-        Policy: {decision.policy ?? "not recorded in the event stream"}
+        Policy:{" "}
+        {decision.policy ?? (singleReviewer ? "not applicable (single reviewer)" : "not recorded in the event stream")}
       </p>
       {decision.summary ? <p className="review-summary">{decision.summary}</p> : null}
     </div>
@@ -173,7 +204,7 @@ function DecisionBanner({ decision }: { decision: ReviewDecision }) {
 function FindingItem({ finding }: { finding: FindingView }) {
   const others = finding.affectedFiles.slice(1);
   return (
-    <li className={`review-finding tone-${SEVERITY_TONE[finding.severity]}`}>
+    <li className={`review-finding tone-${toneOf(finding.severity)}`}>
       <div className="review-finding-head">
         <span className="review-severity">{finding.severity}</span>
         <span className="review-agreement" title="Reviewers who flagged this finding">

@@ -152,8 +152,8 @@ describe("ReviewView filters and agreement", () => {
     expect(getByText("Null dereference")).toBeTruthy();
   });
 
-  it("without agreement data, 'only disagreements' hides everything and says why", () => {
-    const { getByRole, getByText, queryByText } = renderReview(
+  it("without agreement data, 'only disagreements' is disabled, does nothing and is described by the note", () => {
+    const { getByRole, getByText } = renderReview(
       stream([
         {
           type: "review.verdict",
@@ -177,12 +177,81 @@ describe("ReviewView filters and agreement", () => {
       ]),
     );
     expect(getByText("Use <= here")).toBeTruthy();
-    expect(getByText("Off by one")).toBeTruthy();
     expect(getByText("agreement not recorded")).toBeTruthy();
-    expect(getByText(/Agreement is not in the event stream/)).toBeTruthy();
+    const toggle = getByRole("switch", { name: "Only disagreements" });
+    expect(toggle.getAttribute("aria-disabled")).toBe("true");
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    const note = getByText(/Agreement is not in the event stream/);
+    expect(toggle.getAttribute("aria-describedby")).toBe(note.id);
+    expect(note.id).not.toBe("");
+    // Focusable, but a click changes nothing and hides nothing.
+    toggle.focus();
+    expect(document.activeElement).toBe(toggle);
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(getByText("Off by one")).toBeTruthy();
+  });
+
+  it("clears the disagreements switch when agreement data goes away", () => {
+    const { store, getByRole, getByText, queryByText } = renderWithStore(<ReviewView />);
+    const withAgreement = [
+      finding("f-a", "Has counts", "major", ["a.ts"], { count: 1, total: 4 }),
+      finding("f-b", "Full counts", "minor", ["b.ts"], { count: 4, total: 4 }),
+    ];
+    act(() => {
+      store.getState().select(SESSION);
+      store.getState().applyEvents(SESSION, stream(withAgreement));
+    });
     fireEvent.click(getByRole("switch", { name: "Only disagreements" }));
-    expect(queryByText("Off by one")).toBeNull();
-    expect(getByText("No findings match these filters.")).toBeTruthy();
+    expect(queryByText("Full counts")).toBeNull();
+
+    // A new run with findings but no counts: the switch is cleared, not left on.
+    act(() => {
+      store.getState().select(undefined);
+      store.getState().select(SESSION);
+      store.getState().applyEvents(SESSION, stream([finding("f-c", "No counts", "major", ["c.ts"])]));
+    });
+    const toggle = getByRole("switch", { name: "Only disagreements" });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(toggle.getAttribute("aria-disabled")).toBe("true");
+    expect(getByText("No counts")).toBeTruthy();
+  });
+
+  it("keeps an unknown severity as given, ranks it last, and filters it with 'other'", () => {
+    const { getByLabelText, getByText, queryByText, container } = renderReview(
+      stream([
+        finding("f-info", "Known info", "info", ["a.ts"], { count: 1, total: 2 }),
+        finding("f-odd", "Odd severity", "critical", ["a.ts"], { count: 1, total: 2 }),
+      ]),
+    );
+    const descriptions = Array.from(container.querySelectorAll(".review-finding-text")).map((el) => el.textContent);
+    expect(descriptions).toEqual(["Known info", "Odd severity"]);
+    expect(getByText("critical")).toBeTruthy();
+    fireEvent.change(getByLabelText("Severity"), { target: { value: "other" } });
+    expect(getByText("Odd severity")).toBeTruthy();
+    expect(queryByText("Known info")).toBeNull();
+  });
+
+  it("says how many issues could not be read and leaves them out", () => {
+    const { getByText, queryByText } = renderReview(
+      stream([
+        {
+          type: "review.verdict",
+          seatId: "panel",
+          data: {
+            status: "NEEDS_WORK",
+            summary: "x",
+            issues: [
+              { id: "I-1", severity: "major", description: "Readable issue", affectedFiles: ["a.ts"], evidence: [] },
+              { severity: "major", description: "No id, so unreadable" },
+            ],
+          },
+        },
+      ]),
+    );
+    expect(getByText("Readable issue")).toBeTruthy();
+    expect(queryByText("No id, so unreadable")).toBeNull();
+    expect(getByText("1 issue could not be read.")).toBeTruthy();
   });
 });
 
@@ -194,6 +263,16 @@ describe("ReviewView decision and safety", () => {
     expect(banner.textContent).toContain("confidence 0.8");
     expect(banner.textContent).toContain("Policy: unanimous");
     expect(banner.textContent).toContain("Panel [unanimous] Opus#1 PASS, Opus#2 NEEDS_WORK. Changes required");
+  });
+
+  it("says the policy does not apply to a single reviewer", () => {
+    const { getByRole } = renderReview(
+      stream([
+        spawn("reviewer-1", "Opus#1", "claude-opus", "code-reviewer"),
+        { type: "review.verdict", seatId: "reviewer-1", data: { status: "PASS", summary: "Looks fine" } },
+      ]),
+    );
+    expect(getByRole("status").textContent).toContain("Policy: not applicable (single reviewer)");
   });
 
   it("says the policy is not recorded when the summary has no policy label", () => {
