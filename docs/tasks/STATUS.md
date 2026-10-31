@@ -54,7 +54,7 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**53 of 80 cards done** (2026-10-31; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 28/41 · 🟡 Sonnet-tier 13/17 · 🔴 Opus-tier 12/22. Tests: 2493 passing. **Core (Phases 0–3 + 2b) complete.** Phase 4 preview cuts merged: T04-09p, T04-10p, T04-14p, T04-17p. **T04-01 monorepo split merged (`c5f4201`)** — code now lives in `packages/{protocol,ui-shared,engine,cli,ui}/src`.
+**54 of 80 cards done** (2026-10-31; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 28/41 · 🟡 Sonnet-tier 13/17 · 🔴 Opus-tier 13/22. Tests: 2501. **Core (Phases 0–3 + 2b) complete.** Phase 4 preview cuts merged: T04-09p, T04-10p, T04-14p, T04-17p. **T04-01 monorepo split merged (`c5f4201`)** — code now lives in `packages/{protocol,ui-shared,engine,cli,ui}/src`.
 
 | Phase | Done | Open |
 |---|---|---|
@@ -63,7 +63,7 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 | 2 Negotiate | 10/10 | — |
 | 2b Lead & modes | 8/19 (+01b) | T02B-02 Lead, 11 TDD, 14 red-team building; 09 and 10 in review; 06 Cascade and 16 debug starting; then 13, 15, 18, 19 |
 | 3 Prompt library | 6/6 | — |
-| 4 Engine & web UI | 2/17 | web preview fast path merged (§6); rest paused (core first) |
+| 4 Engine & web UI | 3/17 | web preview fast path merged (§6); rest paused (core first) |
 | 5 Desktop | 0/12 | — |
 
 | Card | Status | Commit |
@@ -153,6 +153,26 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
   - **T04-01 merged `c5f4201`** (O2 PASS; fixes `7a55c91`). Layout: `packages/protocol` (zod schemas, Node-free), `packages/ui-shared` (Node-free), `packages/engine` (no Ink/React), `packages/cli` (CLI + TUI), `packages/ui` (web UI, built to `packages/ui/dist`). Packages import each other as `#assentor/<pkg>/…` (root `package.json` `imports` → `dist/`); `tsc -b --force` builds all into the one root `dist/`. Older notes in this file that say `src/…` or `ui/…` mean the same module under `packages/<pkg>/src/…`.
   - **Gate after the split:** run it in the worktree itself (`pnpm install --frozen-lockfile` first, then typecheck, `npx vitest run --maxWorkers=3`, `pnpm build`). The old checkout-index copy with one symlinked `node_modules` does not cover the per-package `node_modules`.
   - Next: write RPCs (rest of T04-02, T04-03 auth for writes) unblock T04-11/12/13/16 and the write half of the preview cuts; T04-05 sessions/seats/worktrees handlers; engine events the views need (listed above).
+- **Resumed 2026-10-31 evening** with four builders (load ~9): T04-02 review fixes, T04-04, FU-09, mode routing. T04-03, T04-05, FU-08 and T04-06 stay paused until slots free.
+  - **T04-02 merged `9819eaf`** (+ review fixes `d81be9c`). Planner slip: that merge was committed with 2 failing tests because my gate line printed `EXIT=$?` and then exited 0 itself; both were load timeouts — `persistence` passes alone, the `runShellCommand` abort test got a 30 s limit in `7abbd61` and passes alone in 0.4 s. From now on check the vitest summary for "failed", not the wrapper's exit code.
+  - Reviews: T04-04 O2 NEEDS_WORK (settings.get wrote the vault master key; settings.save accepted flag-like model ids; plus prompt symlink escape, playbook team references, atomic config writes) → fixing. FU-09 O2 NEEDS_WORK (a model could fake a stage denial by text; manual question lacked the danger reason; diff not re-checked after approval) → fixing. Mode routing O2 NEEDS_WORK (Ctrl+D hangs a prompt; tdd/redteam/debug/swarm marked available without the worktree dependency-install host duty — to stay unavailable for now; reviewer CLIs not tracked/killed) → fixing.
+  - Still building: T04-03 (merging T04-02 in), T04-05. Paused: FU-08 events, T04-06.
+- **Paused by the user on 2026-10-31 (afternoon).** All eight builders stopped; leftover test processes killed. Nothing in this batch is committed except T04-02's card commit `102812f`. Every worktree below holds **uncommitted, untested** work — review its `git diff` first, then finish:
+  - T04-02 (`card-t04-02`, 5 files): O2 review PASS on `102812f`; in progress were the two should-fixes (duplicate `register` throws; `engine.hello` lists write methods only on write-capable connections) + a README note that stdio = full trust. Merge this first.
+  - T04-03 write auth (`card-t04-03`, 9 files, from `102812f`): told not to do the hello fix itself; merge T04-02 in when it lands.
+  - T04-04 library handlers (`card-t04-04`, 6 files, from `102812f`): typecheck passed; full gate was running.
+  - T04-05 session handlers (`card-t04-05`, 7 files, from `102812f`): was updating the README, then gate.
+  - FU-08 engine events (`card-fu-08-events`, 27 files): gate was running.
+  - Mode routing (`card-mode-routing`, 7 files): was flipping `available: true` for 13 modes, to revert any that don't verify.
+  - T04-06 UI scaffold (`card-t04-06`, 23 files): was updating the README.
+  - FU-09 cleanup (`card-fu-09-cleanup`, 11 files): close to done.
+  - Lesson: eight builders gating at once pushed load to ~415. Resume with at most 3–4 builders at a time.
+- **Fan-out 2026-10-31 (owner: "use more agents").** In flight, each in `.claude/worktrees/card-<id>`:
+  - T04-02 rest (`102812f`, Opus review running): typed client moved to protocol; `access: read|write` per method, writes default-denied, refused on serve (-32002).
+  - From `102812f`: T04-03 write-auth for serve (Opus), T04-04 library handlers (Sonnet), T04-05 session/seat/worktree handlers (Sonnet).
+  - From integration: FU-08 engine events for the views (Sonnet), mode routing — `assentor run --mode <id>` through prepareModeSession (Opus), T04-06 rest (Sonnet), FU-09 shared runner-file list + one approval per decision (Sonnet).
+  - Phase 5 spikes (T05-01/02/03) need a Tauri app and runs on three OSes by the owner — not started.
+  - Merge order: T04-02 first (the three cards above build on it), then whatever passes review. Every builder gates once with `--maxWorkers=2`; real-git timeouts under load get rerun alone.
   - Engine follow-ups the views need (they show "not in the event stream" today): proposal authors on `negotiation.proposal`; consensus threshold and decision rationale events; per-reviewer `review.verdict` with confidence; an emitter for `review.finding` with agreement; panel policy on `review.completed`.
   - Gate note: full suites at load 150–370 time out real-git tests (strategy-divide, swarm-mode, tdd-mode, cascade-mode); they pass alone. Run at most two gates at once.
 - **Paused by the user on 2026-10-30 after merging T02B-18** (`b94c4a9`, Lead team board + lead log; Sonnet review fixes `426369a`). All agents stopped. Paused cards, all on branches `claude/card-<id>` from `248f8e0`, **uncommitted and untested** — review the diff first, then finish:
