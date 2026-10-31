@@ -54,7 +54,7 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**52 of 80 cards done** (2026-10-31; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 28/41 · 🟡 Sonnet-tier 13/17 · 🔴 Opus-tier 11/22. Tests: 2432 passing. **Core (Phases 0–3 + 2b) complete.** Phase 4 preview cuts merged: T04-09p, T04-10p, T04-14p, T04-17p. T04-01 monorepo split started.
+**53 of 80 cards done** (2026-10-31; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 28/41 · 🟡 Sonnet-tier 13/17 · 🔴 Opus-tier 12/22. Tests: 2493 passing. **Core (Phases 0–3 + 2b) complete.** Phase 4 preview cuts merged: T04-09p, T04-10p, T04-14p, T04-17p. **T04-01 monorepo split merged (`c5f4201`)** — code now lives in `packages/{protocol,ui-shared,engine,cli,ui}/src`.
 
 | Phase | Done | Open |
 |---|---|---|
@@ -63,7 +63,7 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 | 2 Negotiate | 10/10 | — |
 | 2b Lead & modes | 8/19 (+01b) | T02B-02 Lead, 11 TDD, 14 red-team building; 09 and 10 in review; 06 Cascade and 16 debug starting; then 13, 15, 18, 19 |
 | 3 Prompt library | 6/6 | — |
-| 4 Engine & web UI | 1/17 | web preview fast path merged (§6); rest paused (core first) |
+| 4 Engine & web UI | 2/17 | web preview fast path merged (§6); rest paused (core first) |
 | 5 Desktop | 0/12 | — |
 
 | Card | Status | Commit |
@@ -150,6 +150,9 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
 - ✅ T02B-07 danger classifier merged (`9716d2a`): O2 PASS after 3 rounds; user signed off. Merge fix: `modes.cascade` passthrough, `dangerAreas` optional. Follow-up: project `.assentor/config.yaml` with this repo's danger files.
 - **Owner direction (2026-10-30): merge without asking for sign-off.** Cards still need an independent O2 review that ends PASS (or only nits) and a green staged-tree gate; the planner then merges and records it here instead of asking the owner.
 - **2026-10-31: core complete.** Merged: T02B-19 retro `0444b42`, T02B-13 pair `ddc7ad3`, T02B-15 swarm `3ce4b91` (each O2/Sonnet review → fixes → PASS). Then Phase 4 watch-only preview cuts on the single package (no T04-01 split yet — it would block parallel work): T04-09p negotiation view `9528ff3`, T04-17p Lead board view `e0b592c`; T04-10p review view `8a4a114`, T04-14p command palette `d8ca52f`. Then **T04-01 monorepo split started** (Opus, worktree `card-t04-01` from `d8ca52f`) with nothing else in flight — it moves almost every file, so no other card starts until it merges.
+  - **T04-01 merged `c5f4201`** (O2 PASS; fixes `7a55c91`). Layout: `packages/protocol` (zod schemas, Node-free), `packages/ui-shared` (Node-free), `packages/engine` (no Ink/React), `packages/cli` (CLI + TUI), `packages/ui` (web UI, built to `packages/ui/dist`). Packages import each other as `#assentor/<pkg>/…` (root `package.json` `imports` → `dist/`); `tsc -b --force` builds all into the one root `dist/`. Older notes in this file that say `src/…` or `ui/…` mean the same module under `packages/<pkg>/src/…`.
+  - **Gate after the split:** run it in the worktree itself (`pnpm install --frozen-lockfile` first, then typecheck, `npx vitest run --maxWorkers=3`, `pnpm build`). The old checkout-index copy with one symlinked `node_modules` does not cover the per-package `node_modules`.
+  - Next: write RPCs (rest of T04-02, T04-03 auth for writes) unblock T04-11/12/13/16 and the write half of the preview cuts; T04-05 sessions/seats/worktrees handlers; engine events the views need (listed above).
   - Engine follow-ups the views need (they show "not in the event stream" today): proposal authors on `negotiation.proposal`; consensus threshold and decision rationale events; per-reviewer `review.verdict` with confidence; an emitter for `review.finding` with agreement; panel policy on `review.completed`.
   - Gate note: full suites at load 150–370 time out real-git tests (strategy-divide, swarm-mode, tdd-mode, cascade-mode); they pass alone. Run at most two gates at once.
 - **Paused by the user on 2026-10-30 after merging T02B-18** (`b94c4a9`, Lead team board + lead log; Sonnet review fixes `426369a`). All agents stopped. Paused cards, all on branches `claude/card-<id>` from `248f8e0`, **uncommitted and untested** — review the diff first, then finish:
