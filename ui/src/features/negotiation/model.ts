@@ -61,7 +61,7 @@ export interface NegotiationRun {
 export interface Tally {
   labels: string[];
   points: Record<string, number>;
-  /** Points if every ballot ranked the same proposal first: ballots × (labels − 1). */
+  /** Points if every ballot ranked the same proposal first: the sum over ballots of (ballot length − 1). */
   maxPoints: number;
 }
 
@@ -71,23 +71,30 @@ export function labelsOf(proposals: readonly ProposalView[]): string[] {
 }
 
 /**
- * Borda count as `strategies/vote.ts` runs it: position i of n scores n − 1 − i.
- * The rankings in `negotiation.vote` are the moved rankings, so this matches the engine's tallies.
+ * Borda count as `strategies/vote.ts` runs it. Each ballot is scored by its own
+ * length n: position i scores n − 1 − i. The rankings in `negotiation.vote` are the
+ * moved rankings, so this matches the engine's tallies. Labels are the proposal
+ * labels plus any label a ballot ranks, in first-seen order.
  */
-export function bordaTally(votes: readonly VoteView[], labels: readonly string[]): Tally {
-  const n = labels.length;
+export function bordaTally(votes: readonly VoteView[], proposalLabels: readonly string[]): Tally {
+  const labels = [...new Set([...proposalLabels, ...votes.flatMap((vote) => vote.ranking)])];
   const points: Record<string, number> = Object.fromEntries(labels.map((label) => [label, 0]));
+  let maxPoints = 0;
   for (const vote of votes) {
+    const n = vote.ranking.length;
+    maxPoints += Math.max(n - 1, 0);
     vote.ranking.forEach((label, i) => {
       points[label] = (points[label] ?? 0) + (n - 1 - i);
     });
   }
-  return { labels: [...labels], points, maxPoints: votes.length * Math.max(n - 1, 0) };
+  return { labels, points, maxPoints };
 }
 
 /** A stage window: the events between one `stage.started` and the next for the same stage. */
 interface Window {
   stageId?: string;
+  /** From `stage.started`: "negotiate" for the negotiation stage, "execute" for best-of-n and divide work. */
+  kind?: string;
   strategy?: string;
   attempt?: number;
   negotiation: EngineEvent[];
@@ -96,8 +103,9 @@ interface Window {
 
 /**
  * One run per stage window that has negotiation events, in stream order. Events
- * without a stage id share one window. Seat errors count as dissent only inside a
- * window that has negotiation events, so an executor's failure is not dissent.
+ * without a stage id share one window. A seat error is dissent only in a
+ * `negotiate` stage: best-of-n and divide also emit negotiation events from
+ * execute stages, where a failed seat is work, not dissent.
  */
 export function buildNegotiationRuns(events: readonly EngineEvent[]): NegotiationRun[] {
   const windows: Window[] = [];
@@ -119,6 +127,7 @@ export function buildNegotiationRuns(events: readonly EngineEvent[]): Negotiatio
           stageId: event.stageId,
           negotiation: [],
           errors: [],
+          ...(event.data.kind ? { kind: event.data.kind } : {}),
           ...(event.data.strategy ? { strategy: event.data.strategy } : {}),
           ...(typeof event.data.attempt === "number" ? { attempt: event.data.attempt } : {}),
         };
@@ -126,12 +135,16 @@ export function buildNegotiationRuns(events: readonly EngineEvent[]): Negotiatio
         current.set(event.stageId, window);
         break;
       }
-      case "seat.error":
-        current.get(event.stageId)?.errors.push({
-          message: event.data.message,
-          ...(event.seatId ? { seatId: event.seatId } : {}),
-        });
+      case "seat.error": {
+        const window = current.get(event.stageId);
+        if (window?.kind === "negotiate") {
+          window.errors.push({
+            message: event.data.message,
+            ...(event.seatId ? { seatId: event.seatId } : {}),
+          });
+        }
         break;
+      }
       case "negotiation.proposal":
       case "negotiation.critique":
       case "negotiation.vote":

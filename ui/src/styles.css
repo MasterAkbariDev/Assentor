@@ -306,15 +306,16 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
   padding: 4px 8px; border: 1px solid var(--border); border-radius: 999px;
   background: var(--panel); color: var(--text); font: inherit; font-size: 13px; cursor: pointer;
 }
+/* Off track uses --muted (3:1+ against the panel), not the faint --border. */
 .switch-track {
-  position: relative; width: 28px; height: 16px; border-radius: 999px; background: var(--border);
+  position: relative; width: 28px; height: 16px; border-radius: 999px; background: var(--muted);
 }
 .switch-track::after {
   content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px;
-  border-radius: 50%; background: var(--text);
+  border-radius: 50%; background: var(--panel);
 }
 .switch[aria-checked="true"] .switch-track { background: var(--accent); }
-.switch[aria-checked="true"] .switch-track::after { left: 14px; background: var(--panel); }
+.switch[aria-checked="true"] .switch-track::after { left: 14px; }
 .round-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 12px; overflow-x: auto; }
 .round-tab {
   padding: 8px 10px; border: none; border-bottom: 2px solid transparent; background: none;

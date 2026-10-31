@@ -55,6 +55,26 @@ describe("buildNegotiationRuns", () => {
     expect(run!.proposals.map((p) => p.seatId)).toEqual(["seat-a", undefined]);
     expect(labelsOf(run!.proposals)).toEqual(["Proposal A", "Proposal B"]);
   });
+
+  it("does not count seat errors as dissent in an execute stage, even one with negotiation events", () => {
+    // best-of-n and divide emit negotiation events from execute stages; a failed seat there is work, not dissent.
+    const runs = buildNegotiationRuns([
+      ev(1, { type: "stage.started", stageId: "bon-1", data: { kind: "execute", strategy: "best-of-n", attempt: 1 } }),
+      ev(2, { type: "negotiation.proposal", stageId: "bon-1", data: { round: 1, label: "Proposal A", text: "x" } }),
+      ev(3, { type: "seat.error", stageId: "bon-1", seatId: "seat-b", data: { message: "tool crashed" } }),
+    ]);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.dissent).toEqual([]);
+  });
+
+  it("keeps the stage kind on the run's window, so a review tiebreak window has no dissent either", () => {
+    const runs = buildNegotiationRuns([
+      ev(1, { type: "stage.started", stageId: "review-1", data: { kind: "review", attempt: 1 } }),
+      ev(2, { type: "seat.error", stageId: "review-1", seatId: "reviewer-1", data: { message: "timed out" } }),
+      ev(3, { type: "negotiation.consensus", stageId: "review-1", data: { round: 1, score: 0.6, reached: true } }),
+    ]);
+    expect(runs[0]!.dissent).toEqual([]);
+  });
 });
 
 describe("bordaTally", () => {
@@ -63,6 +83,20 @@ describe("bordaTally", () => {
     const tally = bordaTally(vote!.votes, labelsOf(vote!.proposals));
     expect(tally.points).toEqual({ "Proposal A": 3, "Proposal B": 5, "Proposal C": 1 });
     expect(tally.maxPoints).toBe(6);
+  });
+
+  it("scores each ballot by its own length and includes any ranked label", () => {
+    const tally = bordaTally(
+      [
+        { round: 2, seatId: "a", ranking: ["Proposal B", "Proposal A"] },
+        { round: 2, seatId: "b", ranking: ["Proposal A", "Proposal C", "Proposal B"] },
+      ],
+      ["Proposal A", "Proposal B"],
+    );
+    expect(tally.labels).toEqual(["Proposal A", "Proposal B", "Proposal C"]);
+    // a: B 1, A 0. b: A 2, C 1, B 0.
+    expect(tally.points).toEqual({ "Proposal A": 2, "Proposal B": 1, "Proposal C": 1 });
+    expect(tally.maxPoints).toBe(1 + 2);
   });
 
   it("gives no points and no maximum when there are no ballots", () => {

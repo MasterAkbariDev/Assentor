@@ -49,7 +49,7 @@ export function NegotiationView() {
             <select value={run.key} onChange={(e) => setRunKey(e.target.value)}>
               {runs.map((r, i) => (
                 <option key={r.key} value={r.key}>
-                  {`${i + 1}. ${r.strategy ?? "negotiation"}${r.stageId ? ` (${r.stageId})` : ""}`}
+                  {`${i + 1}. ${r.strategy ?? "negotiation"}${r.stageId ? ` (${r.stageId})` : ""}${r.attempt !== undefined ? ` · attempt ${r.attempt}` : ""}`}
                 </option>
               ))}
             </select>
@@ -167,7 +167,7 @@ function RoundPanel({ base, run, round, reveal, name }: RoundPanelProps) {
   return (
     <div role="tabpanel" id={`${base}-panel`} aria-labelledby={`${base}-tab-${round}`} className="round-panel">
       {proposals.length > 0 ? (
-        <ol className="proposal-row" aria-label={`Proposals, round ${round}`}>
+        <ol className="proposal-row" aria-label={`Proposals, round ${round}`} tabIndex={0}>
           {proposals.map((proposal) => (
             <li key={`${proposal.label}-${proposal.round}`} className="proposal-item">
               <ProposalCard proposal={proposal} critiques={run.critiques.filter((c) => c.round === round && c.targetLabel === proposal.label)} reveal={reveal} name={name} />
@@ -261,7 +261,7 @@ function VoteTally({ votes, tally, name }: VoteTallyProps) {
             <tr key={vote.seatId}>
               <th scope="row">{name(vote.seatId)}</th>
               {tally.labels.map((label) => (
-                <td key={label}>{vote.ranking.indexOf(label) + 1}</td>
+                <td key={label}>{rankCell(vote.ranking, label)}</td>
               ))}
             </tr>
           ))}
@@ -279,6 +279,12 @@ function VoteTally({ votes, tally, name }: VoteTallyProps) {
   );
 }
 
+/** 1-based position of `label` in a ballot; "–" when the ballot does not rank it. */
+function rankCell(ranking: readonly string[], label: string): string {
+  const position = ranking.indexOf(label);
+  return position < 0 ? "–" : String(position + 1);
+}
+
 /**
  * Consensus score from the event. The threshold is not in the stream, so there is no
  * threshold marker; the reached flag is the engine's own.
@@ -288,7 +294,7 @@ function ConsensusMeter({ consensus }: { consensus: ConsensusView }) {
   return (
     <section className="consensus" aria-label="Consensus">
       <p className="consensus-line">
-        <meter min={0} max={1} value={consensus.score} aria-label="Consensus score" />
+        <meter min={0} max={1} value={consensus.score} aria-label="Consensus score" aria-valuetext={`${percent}%`} />
         <span className="consensus-value">{percent}%</span>
         <span className={consensus.reached ? "consensus-state is-reached" : "consensus-state"}>
           {consensus.reached ? "Consensus reached" : "No consensus"}
@@ -308,10 +314,12 @@ function DecisionCard({ run, name }: DecisionCardProps) {
   const preferred = last?.preferred;
   const preferredProposal = preferred ? [...run.proposals].reverse().find((p) => p.label === preferred) : undefined;
   const status = !last ? "In progress" : last.reached ? "Consensus reached" : "No consensus";
+  // Without consensus the engine's final decision (a judge, a moderator) is not in the stream.
+  const title = last && !last.reached ? "Leading proposal (final decision not in the event stream)" : "Decision";
 
   return (
-    <section className="decision-card" aria-label="Decision">
-      <h2 className="decision-title">Decision</h2>
+    <section className="decision-card" aria-label={title}>
+      <h3 className="decision-title">{title}</h3>
       <p className="decision-status">
         {status}
         {preferred ? ` · preferred ${preferred}` : ""}

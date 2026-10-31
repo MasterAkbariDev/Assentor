@@ -139,7 +139,7 @@ export function SessionPanel() {
           <SeatDrawer />
         </>
       )}
-      {hasNegotiation ? <NegotiationView /> : null}
+      {hasNegotiation ? <NegotiationView key={session.id} /> : null}
     </section>
   );
 }

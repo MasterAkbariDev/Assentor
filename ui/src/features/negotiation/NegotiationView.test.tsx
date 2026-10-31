@@ -138,6 +138,7 @@ describe("NegotiationView: vote tally, consensus and decision", () => {
     roundTab(container, 2);
     const meter = container.querySelector("meter") as HTMLMeterElement;
     expect(meter.value).toBe(0.8);
+    expect(meter.getAttribute("aria-valuetext")).toBe("80%");
     expect(within(container).getByText("80%")).toBeTruthy();
     expect(within(container).getByText("Consensus reached")).toBeTruthy();
 
@@ -168,6 +169,35 @@ describe("NegotiationView: vote tally, consensus and decision", () => {
     expect(within(dissent).getByText("Sonnet#1", { exact: false })).toBeTruthy();
     expect(dissent.textContent).toContain("invalid negotiate-propose reply: no JSON found");
     expect(within(card).getByText(/Not in the event stream: the rationale, the consensus threshold/)).toBeTruthy();
+  });
+});
+
+describe("NegotiationView: run labels and no-consensus runs", () => {
+  it("names each run in the picker with its strategy, stage and attempt", () => {
+    const { container } = renderFixture();
+    const select = container.querySelector("select") as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual([
+      "1. debate (debate-1) · attempt 1",
+      "2. vote (vote-1) · attempt 1",
+    ]);
+  });
+
+  it("titles a run without consensus as a leading proposal, not a decision", () => {
+    const events: EngineEvent[] = [
+      { seq: 1, sessionId: "nc", at: "2026-10-25T11:00:00.000Z", type: "stage.started", stageId: "d", data: { kind: "negotiate", strategy: "debate", attempt: 1 } } as EngineEvent,
+      { seq: 2, sessionId: "nc", at: "2026-10-25T11:00:01.000Z", type: "negotiation.proposal", stageId: "d", data: { round: 1, label: "Proposal A", text: "Only option." } } as EngineEvent,
+      { seq: 3, sessionId: "nc", at: "2026-10-25T11:00:02.000Z", type: "negotiation.consensus", stageId: "d", data: { round: 1, score: 0.3, reached: false, preferred: "Proposal A" } } as EngineEvent,
+    ];
+    const { container, store, getByRole, queryByRole } = renderWithStore(<NegotiationView />);
+    act(() => {
+      store.getState().select("nc");
+      store.getState().applyEvents("nc", events);
+    });
+    expect(queryByRole("region", { name: "Decision" })).toBeNull();
+    const card = getByRole("region", { name: "Leading proposal (final decision not in the event stream)" });
+    expect(within(card).getByRole("heading", { level: 3, name: "Leading proposal (final decision not in the event stream)" })).toBeTruthy();
+    expect(within(card).getByText("No consensus · preferred Proposal A")).toBeTruthy();
+    expect(container.querySelector("select")).toBeNull();
   });
 });
 
