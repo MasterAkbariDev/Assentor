@@ -153,6 +153,16 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
   - **T04-01 merged `c5f4201`** (O2 PASS; fixes `7a55c91`). Layout: `packages/protocol` (zod schemas, Node-free), `packages/ui-shared` (Node-free), `packages/engine` (no Ink/React), `packages/cli` (CLI + TUI), `packages/ui` (web UI, built to `packages/ui/dist`). Packages import each other as `#assentor/<pkg>/…` (root `package.json` `imports` → `dist/`); `tsc -b --force` builds all into the one root `dist/`. Older notes in this file that say `src/…` or `ui/…` mean the same module under `packages/<pkg>/src/…`.
   - **Gate after the split:** run it in the worktree itself (`pnpm install --frozen-lockfile` first, then typecheck, `npx vitest run --maxWorkers=3`, `pnpm build`). The old checkout-index copy with one symlinked `node_modules` does not cover the per-package `node_modules`.
   - Next: write RPCs (rest of T04-02, T04-03 auth for writes) unblock T04-11/12/13/16 and the write half of the preview cuts; T04-05 sessions/seats/worktrees handlers; engine events the views need (listed above).
+- **Paused by the user on 2026-10-31 (afternoon).** All eight builders stopped; leftover test processes killed. Nothing in this batch is committed except T04-02's card commit `102812f`. Every worktree below holds **uncommitted, untested** work — review its `git diff` first, then finish:
+  - T04-02 (`card-t04-02`, 5 files): O2 review PASS on `102812f`; in progress were the two should-fixes (duplicate `register` throws; `engine.hello` lists write methods only on write-capable connections) + a README note that stdio = full trust. Merge this first.
+  - T04-03 write auth (`card-t04-03`, 9 files, from `102812f`): told not to do the hello fix itself; merge T04-02 in when it lands.
+  - T04-04 library handlers (`card-t04-04`, 6 files, from `102812f`): typecheck passed; full gate was running.
+  - T04-05 session handlers (`card-t04-05`, 7 files, from `102812f`): was updating the README, then gate.
+  - FU-08 engine events (`card-fu-08-events`, 27 files): gate was running.
+  - Mode routing (`card-mode-routing`, 7 files): was flipping `available: true` for 13 modes, to revert any that don't verify.
+  - T04-06 UI scaffold (`card-t04-06`, 23 files): was updating the README.
+  - FU-09 cleanup (`card-fu-09-cleanup`, 11 files): close to done.
+  - Lesson: eight builders gating at once pushed load to ~415. Resume with at most 3–4 builders at a time.
 - **Fan-out 2026-10-31 (owner: "use more agents").** In flight, each in `.claude/worktrees/card-<id>`:
   - T04-02 rest (`102812f`, Opus review running): typed client moved to protocol; `access: read|write` per method, writes default-denied, refused on serve (-32002).
   - From `102812f`: T04-03 write-auth for serve (Opus), T04-04 library handlers (Sonnet), T04-05 session/seat/worktree handlers (Sonnet).
