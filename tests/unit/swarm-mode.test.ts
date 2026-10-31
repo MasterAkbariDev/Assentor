@@ -319,21 +319,77 @@ describe("swarm mode", () => {
     for (const f of FILES) expect(await read(s.repo, f)).toBe(`new ${f}\n`);
   });
 
-  it("a batch the reviewer sends back is retried; the reviewer sees each item's diff as data", async () => {
-    const s = await setup({ review: [{ type: "needs_work", summary: "too clever", requiredChanges: ["simplify"] }] });
+  it("a batch the reviewer sends back is judged item by item: the good one lands, only the bad one goes up a tier", async () => {
+    // Batch verdict, then i1 on its own, then i2 on its own.
+    const s = await setup({
+      review: [{ type: "needs_work", summary: "batch is off" }, { type: "pass" }, { type: "needs_work", summary: "too clever", requiredChanges: ["simplify"] }],
+    });
     const result = await s.run();
     expect(result.status).toBe("completed");
-    expect(s.prompts.filter((p) => p.tier === 2).map((p) => p.itemId)).toEqual(["i1", "i2"]);
+    expect(s.prompts.filter((p) => p.tier === 2).map((p) => p.itemId)).toEqual(["i2"]);
     expect(s.prompts.find((p) => p.tier === 2)!.prompt).toContain("too clever");
+    expect(statusesOf(s, "i1")).toEqual(["queued", "running", "merged"]);
+    for (const f of FILES) expect(await read(s.repo, f)).toBe(`new ${f}\n`);
   });
 
-  it("items whose workers change nothing are reported unchanged and land nothing", async () => {
-    const s = await setup({ work: () => done("already fine") });
+  it("items that change nothing and say why are unchanged and land nothing; the ids are listed", async () => {
+    const s = await setup({ work: () => done("x", "### Notes\nunchanged: already fine") });
     const result = await s.run();
-    expect(result).toMatchObject({ status: "completed" });
+    expect(result.status).toBe("completed");
     expect(result.reason).toContain("no item needed a change");
+    expect(result.reason).toContain("i1, i2, i3, i4, i5");
     expect(statusesOf(s, "i1")).toEqual(["queued", "running", "unchanged"]);
     await expectUntouched(s);
+  });
+
+  it("an item that changes nothing without saying why is retried on the next tier, then fails", async () => {
+    const s = await setup({ work: () => done("looks fine") });
+    const result = await s.run();
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("made no change and gave no reason");
+    expect(s.prompts.filter((p) => p.tier === 2)).toHaveLength(5);
+    expect(s.prompts.find((p) => p.tier === 2)!.prompt).toContain("gave no reason");
+    await expectUntouched(s);
+  });
+
+  it("an item whose change is too large to review fails instead of being truncated", async () => {
+    const s = await setup({
+      config: baseConfig({ files: ["a.txt"] }),
+      work: (w) => (w.tier === 1 ? fs.writeFile(path.join(w.cwd, w.file), "x".repeat(41_000)).then(() => done()) : edit(w)),
+    });
+    expect((await s.run()).status).toBe("completed");
+    expect(s.prompts[1]!.prompt).toContain("too large to review");
+    expect(await read(s.repo, "a.txt")).toBe("new a.txt\n");
+  });
+
+  it("checks that already fail stop the swarm before any worker runs", async () => {
+    const repo = await makeRepo();
+    await fs.writeFile(path.join(repo, "e.txt"), "BAD\n");
+    await git(repo, "commit", "-qam", "red");
+    const s = await setup({ repo });
+    const result = await s.run();
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("the checks fail before any change");
+    expect(s.prompts).toHaveLength(0);
+  });
+
+  it.each([
+    ["rewrites an owned file", "a.txt", "tampered\n"],
+    ["writes a file nobody owns", "stray.txt", "stray\n"],
+  ])("a check that %s fails the batch instead of landing unreviewed changes", async (_name, file, text) => {
+    const s = await setup({ config: baseConfig({ files: ["a.txt"] }) });
+    let calls = 0;
+    const meddling: NonNullable<SwarmExtras["runCommand"]> = async (command, cwd, options) => {
+      // Call 1 is the baseline; call 2 is the first batch's gate; later ones are left alone.
+      if ((calls += 1) === 2) await fs.writeFile(path.join(cwd, file), text);
+      return runCommand(command, cwd, options);
+    };
+    const result = await s.run({}, { runCommand: meddling });
+    expect(result.status).toBe("completed");
+    expect(s.prompts.map((p) => p.tier)).toEqual([1, 2]);
+    expect(s.prompts[1]!.prompt).toContain("the checks changed files in the batch worktree");
+    expect(await read(s.repo, "a.txt")).toBe("new a.txt\n");
+    await expect(fs.access(path.join(s.repo, "stray.txt"))).rejects.toBeTruthy();
   });
 
   it("cancel stops the workers, kills commands, applies nothing and keeps the work", async () => {
@@ -391,6 +447,56 @@ describe("swarm mode", () => {
     expect(second.events.some((e) => e.type === "session.warning")).toBe(true);
   });
 
+  /** First run cancelled at i3, so i1 and i2 are merged into the integration worktree; returns the base commit. */
+  async function cancelledAtThird() {
+    const ac = new AbortController();
+    const first = await setup({
+      work: async (w) => {
+        if (w.itemId === "i3") ac.abort();
+        return edit(w);
+      },
+    });
+    const base = await git(first.repo, "rev-parse", "HEAD");
+    await first.run({ signal: ac.signal });
+    const stateFile = path.join(first.repo, ".assentor/sessions", SESSION, "swarm.json");
+    return { first, base, stateFile, state: JSON.parse(await fs.readFile(stateFile, "utf8")) };
+  }
+
+  it("a hard crash while landing: the items that did land are not redone, and worktree names never repeat", async () => {
+    const { first, base, stateFile, state } = await cancelledAtThird();
+    // What a crash right after the landing leaves behind: the state from before it, and a stale counter.
+    for (const item of state.items.slice(0, 2)) item.status = "pending";
+    Object.assign(state, { landing: ["i1", "i2"], integrationHead: base, counter: 0 });
+    await fs.writeFile(stateFile, JSON.stringify(state));
+    const second = await setup({ repo: first.repo });
+    const result = await second.run({ resume: true });
+    expect(result.status).toBe("completed");
+    expect(second.prompts.map((p) => p.itemId)).toEqual(["i3", "i4", "i5"]);
+    for (const f of FILES) expect(await read(first.repo, f)).toBe(`new ${f}\n`);
+  });
+
+  it("resume finds the integration worktree already applied to your branch and finishes", async () => {
+    const { first, stateFile, state } = await cancelledAtThird();
+    await first.manager.applyTo("main", { sessionId: SESSION, seatId: "sw-int" }, { strategy: "squash", allowedPaths: ["a.txt", "b.txt"] });
+    expect(state.applied).toBe(false);
+    const second = await setup({ repo: first.repo });
+    const result = await second.run({ resume: true });
+    expect(result.reason).toContain("already applied");
+    expect(second.prompts).toHaveLength(0);
+    expect(JSON.parse(await fs.readFile(stateFile, "utf8")).applied).toBe(true);
+  });
+
+  it("an integration worktree that moved outside the swarm is not applied", async () => {
+    const { first, stateFile, state } = await cancelledAtThird();
+    state.integrationHead = "0".repeat(40);
+    await fs.writeFile(stateFile, JSON.stringify(state));
+    const second = await setup({ repo: first.repo });
+    const result = await second.run({ resume: true });
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("changed outside the swarm");
+    expect(await read(first.repo, "a.txt")).toBe("old a.txt\n");
+  });
+
   it("a danger-area change needs approval even under autopilot; a no keeps the work", async () => {
     const repo = await makeRepo();
     await fs.mkdir(path.join(repo, ".github/workflows"), { recursive: true });
@@ -413,9 +519,12 @@ describe("swarm mode", () => {
     const s = await setup({ repo, config: baseConfig({ files: ["a.txt"] }) });
     // Hooks are shared by every worktree: install it when the gates run, so only the final commit to main meets it.
     const hook = path.join(repo, ".git/hooks/post-commit");
+    let calls = 0;
     const installing: NonNullable<SwarmExtras["runCommand"]> = async (command, cwd, options) => {
-      await fs.mkdir(path.dirname(hook), { recursive: true });
-      await fs.writeFile(hook, "#!/bin/sh\nkill -9 $PPID\n", { mode: 0o755 });
+      if ((calls += 1) === 2) {
+        await fs.mkdir(path.dirname(hook), { recursive: true });
+        await fs.writeFile(hook, "#!/bin/sh\nkill -9 $PPID\n", { mode: 0o755 });
+      }
       return runCommand(command, cwd, options);
     };
     const result = await s.run({}, { runCommand: installing });
