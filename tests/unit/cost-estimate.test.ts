@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseAssentorConfig } from "../../src/config/schema.js";
-import { resolveTeams, type ReviewMode } from "../../src/config/teams.js";
-import { TeamSchema } from "../../src/core/seats.js";
-import { estimateSession, type PricingTable } from "../../src/estimate/cost.js";
+import { parseAssentorConfig } from "../../packages/engine/src/config/schema.js";
+import { resolveTeams, type ReviewMode } from "../../packages/engine/src/config/teams.js";
+import { TeamSchema } from "../../packages/protocol/src/seats.js";
+import { estimateSession, type PricingTable } from "../../packages/engine/src/estimate/cost.js";
 
 // Heuristic constants (see src/estimate/cost.ts):
 //   input per turn  = contextTokens + 2_000

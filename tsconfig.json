@@ -17,8 +17,22 @@
     "noImplicitOverride": true,
     "rootDir": ".",
     "outDir": "dist",
-    "types": ["node"]
+    "types": ["node"],
+    // Workspace packages import each other through the root package.json "imports".
+    "paths": {
+      "#assentor/protocol/*": ["./packages/protocol/src/*"],
+      "#assentor/ui-shared/*": ["./packages/ui-shared/src/*"],
+      "#assentor/engine/*": ["./packages/engine/src/*"]
+    }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "tests/**/*.ts", "vitest.config.ts"],
+  "include": [
+    "packages/protocol/src/**/*.ts",
+    "packages/ui-shared/src/**/*.ts",
+    "packages/engine/src/**/*.ts",
+    "packages/cli/src/**/*.ts",
+    "packages/cli/src/**/*.tsx",
+    "tests/**/*.ts",
+    "vitest.config.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

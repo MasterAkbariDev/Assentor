@@ -6,7 +6,7 @@ import {
   repairPrompt,
   verifyReportClaims,
   type AgentReport,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 const REPORT = {
   taskId: "T1",

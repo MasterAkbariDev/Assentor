@@ -6,13 +6,13 @@ import {
   CliModelCatalog,
   parseDiscoveryOutput,
   type CliRunResult,
-} from "../../src/models/cli-catalog.js";
+} from "../../packages/engine/src/models/cli-catalog.js";
 
 // Lets a test make the real spawn throw synchronously, as Node does for a NUL byte in an argument.
 const spawnControl = vi.hoisted(() => ({ throwMessage: undefined as string | undefined }));
 
-vi.mock("../../src/executors/cli-locator.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/executors/cli-locator.js")>();
+vi.mock("../../packages/engine/src/executors/cli-locator.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../packages/engine/src/executors/cli-locator.js")>();
   return {
     ...actual,
     spawnCliProcess: (...args: Parameters<typeof actual.spawnCliProcess>) => {

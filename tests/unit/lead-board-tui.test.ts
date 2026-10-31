@@ -2,13 +2,13 @@ import React from "react";
 import { describe, expect, it } from "vitest";
 import { render } from "ink";
 import { PassThrough } from "node:stream";
-import { parseEngineEvent, type EngineEvent } from "../../src/protocol/events.js";
-import { LeadBoard } from "../../src/tui/components/lead-board.js";
+import { parseEngineEvent, type EngineEvent } from "../../packages/protocol/src/events.js";
+import { LeadBoard } from "../../packages/cli/src/tui/components/lead-board.js";
 import {
   emptyLeadBoardView,
   reduceLeadEvents,
   type LeadBoardView,
-} from "../../src/ui-shared/lead.js";
+} from "../../packages/ui-shared/src/lead.js";
 
 const T0 = Date.parse("2026-10-24T10:00:00.000Z");
 let seq = 0;

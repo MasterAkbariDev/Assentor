@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { expandSeatSpecs, NegotiationCancelledError, NegotiationResultSchema } from "../../src/index.js";
-import { getStrategy, registerBuiltinStrategies } from "../../src/negotiation/strategies/index.js";
-import { synthesizeStrategy } from "../../src/negotiation/strategies/synthesize.js";
-import { createMockNegotiationContext, type MockAsk } from "../../src/negotiation/testing/mock-context.js";
+import { expandSeatSpecs, NegotiationCancelledError, NegotiationResultSchema } from "../../packages/engine/src/index.js";
+import { getStrategy, registerBuiltinStrategies } from "../../packages/engine/src/negotiation/strategies/index.js";
+import { synthesizeStrategy } from "../../packages/engine/src/negotiation/strategies/synthesize.js";
+import { createMockNegotiationContext, type MockAsk } from "../../packages/engine/src/negotiation/testing/mock-context.js";
 
 // The aggregator is sol-1. opus-1 proposes Proposal A and opus-2 proposes Proposal B.
 const seats = expandSeatSpecs([

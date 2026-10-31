@@ -17,10 +17,10 @@ import {
   type ModeControllerInput,
   type ModeControllerResult,
   type StageSpec,
-} from "../../src/index.js";
-import type { MockReviewerStep } from "../../src/providers/reviewers/mock/index.js";
-import { checkSwarmItems, chunkItems, createSwarmController, swarmProblems, swarmTiers, type SwarmExtras, type SwarmWorkItem } from "../../src/modes/swarm.js";
-import { SeatScheduler } from "../../src/seats/index.js";
+} from "../../packages/engine/src/index.js";
+import type { MockReviewerStep } from "../../packages/engine/src/providers/reviewers/mock/index.js";
+import { checkSwarmItems, chunkItems, createSwarmController, swarmProblems, swarmTiers, type SwarmExtras, type SwarmWorkItem } from "../../packages/engine/src/modes/swarm.js";
+import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
 
 const exec = promisify(execFile);
 // Real git in temp repos, like the debug and best-of-n tests.

@@ -1,0 +1,10 @@
+{
+  "name": "@assentor/ui-shared",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Node-free display logic shared by the TUI and the web UI (status icons, seat and Lead reducers)",
+  "type": "module",
+  "dependencies": {
+    "@assentor/protocol": "workspace:*"
+  }
+}

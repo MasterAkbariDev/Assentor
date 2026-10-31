@@ -1,7 +1,7 @@
 import { readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { AssentorConfigSchema } from "../../src/config/schema.js";
+import { AssentorConfigSchema } from "../../packages/engine/src/config/schema.js";
 import {
   classifyRisk,
   DANGER_CATEGORIES,
@@ -13,7 +13,7 @@ import {
   MAX_RISK_TASK_CHARS,
   RISK_UNSCANNED,
   type RiskInput,
-} from "../../src/modes/danger.js";
+} from "../../packages/engine/src/modes/danger.js";
 
 const repo = path.resolve(import.meta.dirname, "../..");
 
@@ -225,29 +225,29 @@ describe("classifyRisk: this repo's real danger files (false-negative guard)", (
       .map((name) => `${dir}/${name}`);
 
   const dangerFiles = [
-    ...listed("src/process"),
-    ...listed("src/keys"),
-    ...listed("src/git"),
-    ...listed("src/security"),
-    ...listed("src/worktrees"),
-    ...listed("src/serve"),
-    ...listed("src/self"),
-    ...listed("src/executors"),
+    ...listed("packages/engine/src/process"),
+    ...listed("packages/engine/src/keys"),
+    ...listed("packages/engine/src/git"),
+    ...listed("packages/engine/src/security"),
+    ...listed("packages/engine/src/worktrees"),
+    ...listed("packages/engine/src/serve"),
+    ...listed("packages/engine/src/self"),
+    ...listed("packages/engine/src/executors"),
     ...listed("scripts", (n) => /^(?:un)?install|^update/.test(n)),
     ...listed(".github/workflows"),
-    ...listed("src/seats"),
-    "src/core/seats.ts",
-    "src/rpc/server.ts",
-    "src/config/load.ts",
-    "src/config/schema.ts",
-    "src/modes/lead/types.ts",
+    ...listed("packages/engine/src/seats"),
+    "packages/protocol/src/seats.ts",
+    "packages/engine/src/rpc/server.ts",
+    "packages/engine/src/config/load.ts",
+    "packages/engine/src/config/schema.ts",
+    "packages/engine/src/modes/lead/types.ts",
     "bin/assentor",
     "package.json",
     "pnpm-lock.yaml",
   ];
 
   it("found the expected files on disk", () => {
-    expect(dangerFiles.filter((f) => f.startsWith("src/process/")).length).toBeGreaterThanOrEqual(3);
+    expect(dangerFiles.filter((f) => f.startsWith("packages/engine/src/process/")).length).toBeGreaterThanOrEqual(3);
     expect(dangerFiles.filter((f) => f.startsWith("scripts/install")).length).toBeGreaterThanOrEqual(2);
   });
 
@@ -264,7 +264,7 @@ describe("classifyRisk: this repo's real danger files (false-negative guard)", (
   });
 
   it("ordinary files stay normal", () => {
-    for (const file of ["src/modes/lead/board.ts", "src/review/plan-explain.ts", "src/tui/App.tsx", "docs/plans/modes.md", "ui/src/components/Board.tsx", "README.md"]) {
+    for (const file of ["packages/engine/src/modes/lead/board.ts", "packages/engine/src/review/plan-explain.ts", "packages/cli/src/tui/App.tsx", "docs/plans/modes.md", "packages/ui/src/components/Board.tsx", "README.md"]) {
       expect(classifyRisk({ paths: [file] }).categories, file).toEqual([]);
     }
   });

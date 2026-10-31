@@ -8,17 +8,17 @@ import {
   PRINT_CLI_RECIPES,
   PrintCliExecutor,
   createEmptyContract,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 import {
   createExecutor,
   resolveExecutorModel,
-} from "../../src/cli/commands.js";
+} from "../../packages/cli/src/cli/commands.js";
 
 // Captures what the real default spawn would launch, without starting any CLI.
 const spawned = vi.hoisted(() => [] as Array<{ command: string; args: string[] }>);
 
-vi.mock("../../src/executors/cli-locator.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/executors/cli-locator.js")>();
+vi.mock("../../packages/engine/src/executors/cli-locator.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../packages/engine/src/executors/cli-locator.js")>();
   return {
     ...actual,
     locateBinary: () => "/fake/bin",

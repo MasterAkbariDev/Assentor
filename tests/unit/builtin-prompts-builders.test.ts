@@ -1,13 +1,13 @@
 import { readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { STALL_PATTERNS } from "../../src/orchestrator/phase-steering.js";
+import { STALL_PATTERNS } from "../../packages/engine/src/orchestrator/phase-steering.js";
 import {
   builtinPromptDir,
   PromptLibrary,
   renderPrompt,
   templateVariables,
   type PromptDefinition,
-} from "../../src/prompts/index.js";
+} from "../../packages/engine/src/prompts/index.js";
 
 /** The eleven builder prompts (T03-02), with the permissions, output, and variables each one must declare. */
 const EXPECTED: Record<

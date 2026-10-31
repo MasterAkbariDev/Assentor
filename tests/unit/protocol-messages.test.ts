@@ -6,7 +6,7 @@ import {
   MessageType,
   parseProtocolMessage,
   peekMessageType,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 const baseEnvelope = {
   messageId: "11111111-1111-4111-8111-111111111111",

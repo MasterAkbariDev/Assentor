@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   fingerprintChangeRequest,
   LoopDetector,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 describe("loop detector", () => {
   it("fingerprints issue ids and required changes stably", () => {

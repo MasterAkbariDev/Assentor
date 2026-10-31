@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { formatModesJson, formatModesTable, registerModesCommand } from "../../src/cli/modes.js";
-import { listModes } from "../../src/modes/registry.js";
+import { formatModesJson, formatModesTable, registerModesCommand } from "../../packages/cli/src/cli/modes.js";
+import { listModes } from "../../packages/engine/src/modes/registry.js";
 
 afterEach(() => {
   vi.restoreAllMocks();

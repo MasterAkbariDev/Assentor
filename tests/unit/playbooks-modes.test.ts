@@ -18,10 +18,10 @@ import {
   type SeatStepRunner,
   type StageRunnerDeps,
   type StageSpec,
-} from "../../src/index.js";
-import { validateSessionGraph } from "../../src/orchestrator/session-runner.js";
-import { builtinPlaybook } from "../../src/modes/playbook-modes.js";
-import { SeatScheduler } from "../../src/seats/index.js";
+} from "../../packages/engine/src/index.js";
+import { validateSessionGraph } from "../../packages/engine/src/orchestrator/session-runner.js";
+import { builtinPlaybook } from "../../packages/engine/src/modes/playbook-modes.js";
+import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
 
 // Playbook-backed modes: pipeline, explore, plan (T02B-09).
 

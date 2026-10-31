@@ -7,8 +7,8 @@ import {
   MAX_PLAYBOOK_FILE_BYTES,
   PlaybookLibrary,
   type PlaybookLoadError,
-} from "../../src/playbooks/library.js";
-import { PromptLibrary, builtinPromptDir } from "../../src/prompts/index.js";
+} from "../../packages/engine/src/playbooks/library.js";
+import { PromptLibrary, builtinPromptDir } from "../../packages/engine/src/prompts/index.js";
 
 /** A valid two-debater playbook. Edit the text to break one thing at a time. */
 function playbookText(id: string): string {

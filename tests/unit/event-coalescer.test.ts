@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDeltaCoalescer, type CoalescedDelta } from "../../src/index.js";
+import { createDeltaCoalescer, type CoalescedDelta } from "../../packages/engine/src/index.js";
 
 describe("createDeltaCoalescer", () => {
   let frames: CoalescedDelta[];

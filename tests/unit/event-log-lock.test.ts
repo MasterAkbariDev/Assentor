@@ -9,8 +9,8 @@ import {
   EventLogLockedError,
   readSessionEvents,
   sessionPaths,
-} from "../../src/index.js";
-import { runAssentorTask } from "../../src/cli/commands.js";
+} from "../../packages/engine/src/index.js";
+import { runAssentorTask } from "../../packages/cli/src/cli/commands.js";
 
 const dirs: string[] = [];
 const children: Array<ReturnType<typeof spawn>> = [];

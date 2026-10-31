@@ -2,8 +2,8 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { checkPlaybookRun, listPlaybooks, type PlaybookCommandOptions } from "../../src/cli/playbooks.js";
-import { builtinPlaybookDir } from "../../src/playbooks/library.js";
+import { checkPlaybookRun, listPlaybooks, type PlaybookCommandOptions } from "../../packages/cli/src/cli/playbooks.js";
+import { builtinPlaybookDir } from "../../packages/engine/src/playbooks/library.js";
 
 describe("assentor playbooks", () => {
   let root: string;

@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { parseAssentorConfig } from "../../src/index.js";
-import { doctorAssentor, initAssentorProject } from "../../src/cli/commands.js";
+import { parseAssentorConfig } from "../../packages/engine/src/index.js";
+import { doctorAssentor, initAssentorProject } from "../../packages/cli/src/cli/commands.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -77,7 +77,7 @@ describe("config + cli helpers", () => {
 
   it("saves and reloads project overrides", async () => {
     const { loadAssentorConfig, saveAssentorConfig, parseAssentorConfig } =
-      await import("../../src/config/load.js");
+      await import("../../packages/engine/src/config/load.js");
     await fs.mkdir(TEMP_ROOT, { recursive: true });
     const dir = await fs.mkdtemp(path.join(TEMP_ROOT, "proj-"));
     tempDirs.push(dir);
@@ -100,7 +100,7 @@ describe("config + cli helpers", () => {
       saveAssentorConfig,
       parseAssentorConfig,
       mergeConfigLayers,
-    } = await import("../../src/config/load.js");
+    } = await import("../../packages/engine/src/config/load.js");
 
     const merged = mergeConfigLayers(
       { executor: { provider: "cursor" }, models: { gemini: "AUTO" } },

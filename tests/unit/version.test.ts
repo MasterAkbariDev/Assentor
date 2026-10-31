@@ -8,7 +8,7 @@ import {
   isUpdateCacheReusable,
   parseSemver,
   updateCheckCachePath,
-} from "../../src/self/version.js";
+} from "../../packages/engine/src/self/version.js";
 
 const TEMP_USER_DIR = path.join(process.cwd(), ".tmp", "version-tests", ".assentor");
 

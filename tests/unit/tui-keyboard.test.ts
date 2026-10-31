@@ -7,7 +7,7 @@ import {
   NAV_SCREENS,
   reduceUi,
   screenAt,
-} from "../../src/tui/keymap.js";
+} from "../../packages/cli/src/tui/keymap.js";
 
 describe("TUI keyboard map (§44 + UX rewrite)", () => {
   it("defaults to workspace with main focus", () => {

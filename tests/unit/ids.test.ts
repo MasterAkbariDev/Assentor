@@ -5,7 +5,7 @@ import {
   createMessageId,
   createTaskId,
   isId,
-} from "../../src/core/ids.js";
+} from "../../packages/engine/src/core/ids.js";
 
 describe("ids", () => {
   it("generates unique UUID v4 ids", () => {

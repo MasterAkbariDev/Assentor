@@ -6,7 +6,7 @@ import {
   resolveExecutorFailureMessage,
   summarizeExecutorStreamOutput,
   summarizeStreamJson,
-} from "../../src/providers/executors/cursor/stream-status.js";
+} from "../../packages/engine/src/providers/executors/cursor/stream-status.js";
 
 describe("Cursor stream-json status", () => {
   it("maps read/write/shell tool events", () => {

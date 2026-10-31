@@ -2,8 +2,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createExecutor } from "../../src/cli/commands.js";
-import { buildExecutorRegistry } from "../../src/executors/adapters.js";
+import { createExecutor } from "../../packages/cli/src/cli/commands.js";
+import { buildExecutorRegistry } from "../../packages/engine/src/executors/adapters.js";
 import {
   createBudgets,
   createEmptyContract,
@@ -13,7 +13,7 @@ import {
   trackedProcessCount,
   type Executor,
   type ReviewerTurnResult,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 /**
  * The executors `assentor run` really builds (registry adapter wrapped by

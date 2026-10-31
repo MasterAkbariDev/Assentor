@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { SEAT_PROVIDERS, type SeatProvider } from "../../src/core/seats.js";
-import { DEFAULT_CAPABILITIES, mergeCapabilities } from "../../src/modes/capabilities.js";
+import { SEAT_PROVIDERS, type SeatProvider } from "../../packages/protocol/src/seats.js";
+import { DEFAULT_CAPABILITIES, mergeCapabilities } from "../../packages/engine/src/modes/capabilities.js";
 import {
   CapabilityProfileSchema,
   type CapabilityProfile,
   type ProviderAvailability,
   type RosterPolicy,
-} from "../../src/modes/roster.js";
+} from "../../packages/engine/src/modes/roster.js";
 import {
   buildRoster,
   formatRosterForPrompt,
   type RosterCatalogItem,
-} from "../../src/modes/roster-build.js";
+} from "../../packages/engine/src/modes/roster-build.js";
 
 function item(provider: SeatProvider, id: string, label = id): RosterCatalogItem {
   return { provider, id, label };

@@ -16,8 +16,8 @@ import {
   makeReviewResult,
   securityVeto,
   writeProjectFiles,
-} from "../../src/index.js";
-import { MockReviewer } from "../../src/providers/reviewers/mock/index.js";
+} from "../../packages/engine/src/index.js";
+import { MockReviewer } from "../../packages/engine/src/providers/reviewers/mock/index.js";
 
 const TEMP_ROOT = path.join(process.cwd(), ".tmp", "architecture-mistake");
 const tempDirs: string[] = [];

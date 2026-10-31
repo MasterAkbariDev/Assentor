@@ -13,7 +13,7 @@ import {
   validatePrompts,
   type EditorSpawn,
   type PromptCommandOptions,
-} from "../../src/cli/prompts.js";
+} from "../../packages/cli/src/cli/prompts.js";
 
 /** Minimal valid prompt file. `extra` adds front-matter lines (each ending in a newline). */
 function promptText(

@@ -5,8 +5,8 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { WebSocket } from "ws";
-import { createId, EventLog, type EngineEvent } from "../../src/index.js";
-import { isLoopbackHost, ServeRefusedError, startServe, type ServeHandle } from "../../src/serve/index.js";
+import { createId, EventLog, type EngineEvent } from "../../packages/engine/src/index.js";
+import { isLoopbackHost, ServeRefusedError, startServe, type ServeHandle } from "../../packages/engine/src/serve/index.js";
 
 const TOKEN = "a".repeat(64);
 const dirs: string[] = [];

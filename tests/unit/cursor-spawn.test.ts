@@ -3,19 +3,19 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createEmptyContract } from "../../src/index.js";
-import { createExecutor } from "../../src/cli/commands.js";
+import { createEmptyContract } from "../../packages/engine/src/index.js";
+import { createExecutor } from "../../packages/cli/src/cli/commands.js";
 import {
   CursorExecutor,
   defaultSpawn,
-} from "../../src/providers/executors/cursor/index.js";
+} from "../../packages/engine/src/providers/executors/cursor/index.js";
 
 // While `capture.calls` is set, cursor launches are recorded and never started.
 // Otherwise the real spawn runs, so defaultSpawn's real-process tests still work.
 const capture = vi.hoisted(() => ({ calls: undefined as undefined | Array<{ command: string; args: string[] }> }));
 
-vi.mock("../../src/executors/cli-locator.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/executors/cli-locator.js")>();
+vi.mock("../../packages/engine/src/executors/cli-locator.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../packages/engine/src/executors/cli-locator.js")>();
   return {
     ...actual,
     spawnCliProcess: (

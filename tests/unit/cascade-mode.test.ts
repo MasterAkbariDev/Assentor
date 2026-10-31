@@ -18,10 +18,10 @@ import {
   type ModeControllerInput,
   type StageRunnerDeps,
   type StageSpec,
-} from "../../src/index.js";
-import { SeatScheduler } from "../../src/seats/index.js";
-import { cascadeProblems, createCascadeController, type CascadeExtras } from "../../src/modes/cascade.js";
-import type { MockReviewerStep } from "../../src/providers/reviewers/mock/index.js";
+} from "../../packages/engine/src/index.js";
+import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
+import { cascadeProblems, createCascadeController, type CascadeExtras } from "../../packages/engine/src/modes/cascade.js";
+import type { MockReviewerStep } from "../../packages/engine/src/providers/reviewers/mock/index.js";
 
 const dirs: string[] = [];
 afterEach(async () => {

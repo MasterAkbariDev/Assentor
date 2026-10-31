@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runPreflight } from "../../src/cli/preflight.js";
+import { runPreflight } from "../../packages/cli/src/cli/preflight.js";
 
 describe("runPreflight", () => {
   it("does not spawn a live Cursor PONG probe by default", async () => {

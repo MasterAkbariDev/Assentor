@@ -9,7 +9,7 @@ import {
   shortSeatName,
   worktreeRelativePath,
   type SeatKey,
-} from "../../src/worktrees/index.js";
+} from "../../packages/engine/src/worktrees/index.js";
 
 const exec = promisify(execFile);
 // Every test drives real git in temp repos; Windows CI is slow at process spawns.

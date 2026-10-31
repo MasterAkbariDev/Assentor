@@ -11,7 +11,7 @@ import {
   makeReviewResult,
   MessageType,
   ReviewStatus,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 describe("phase steering", () => {
   it("detects stall phrases", () => {

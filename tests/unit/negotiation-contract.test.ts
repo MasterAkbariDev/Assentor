@@ -9,8 +9,8 @@ import {
   proposalLabel,
   registerStrategy,
   type NegotiationStrategy,
-} from "../../src/index.js";
-import { createMockNegotiationContext } from "../../src/negotiation/testing/mock-context.js";
+} from "../../packages/engine/src/index.js";
+import { createMockNegotiationContext } from "../../packages/engine/src/negotiation/testing/mock-context.js";
 
 const seats = expandSeatSpecs([
   { provider: "claude-code", model: "opus", count: 2 },
@@ -157,7 +157,7 @@ describe("README example strategy", () => {
 
 describe("consensus helpers", () => {
   it("matches labels loosely and canonically", async () => {
-    const { matchLabel } = await import("../../src/index.js");
+    const { matchLabel } = await import("../../packages/engine/src/index.js");
     const labels = ["Proposal A", "Proposal B"];
     expect(["Proposal B", "proposal b", "B", " b "].map((raw) => matchLabel(raw, labels))).toEqual([
       "Proposal B",
@@ -170,7 +170,7 @@ describe("consensus helpers", () => {
   });
 
   it("scores agreement by confidence toward the top label", async () => {
-    const { agreementScore } = await import("../../src/index.js");
+    const { agreementScore } = await import("../../packages/engine/src/index.js");
     const labels = ["Proposal A", "Proposal B"];
     expect(
       agreementScore(

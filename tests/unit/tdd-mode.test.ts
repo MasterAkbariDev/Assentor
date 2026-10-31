@@ -30,10 +30,10 @@ import {
   type StageSpec,
   type TddDeps,
   type TestChangeRequest,
-} from "../../src/index.js";
-import { createEmptyContract } from "../../src/core/task-contract.js";
-import { runShellCommand } from "../../src/process/run-shell.js";
-import { SeatScheduler } from "../../src/seats/index.js";
+} from "../../packages/engine/src/index.js";
+import { createEmptyContract } from "../../packages/engine/src/core/task-contract.js";
+import { runShellCommand } from "../../packages/engine/src/process/run-shell.js";
+import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
 
 const exec = promisify(execFile);
 // Real git and real shell test commands in temp repos, like strategy-best-of-n.test.ts.

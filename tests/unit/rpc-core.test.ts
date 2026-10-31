@@ -16,8 +16,8 @@ import {
   sessionPaths,
   type EngineEvent,
   type ResyncRequiredParams,
-} from "../../src/index.js";
-import { runAssentorTask } from "../../src/cli/commands.js";
+} from "../../packages/engine/src/index.js";
+import { runAssentorTask } from "../../packages/cli/src/cli/commands.js";
 
 const dirs: string[] = [];
 const cleanups: Array<() => void | Promise<void>> = [];
@@ -569,10 +569,13 @@ describe("RpcConnection limits", () => {
           nodeImports.push(`${path.relative(process.cwd(), file)} → ${spec}`);
         } else if (spec.startsWith(".")) {
           await visit(path.resolve(path.dirname(file), spec.replace(/\.js$/, ".ts")));
+        } else if (spec.startsWith("#assentor/")) {
+          const [, pkg, ...rest] = spec.split("/");
+          await visit(path.resolve("packages", pkg!, "src", rest.join("/").replace(/\.js$/, ".ts")));
         }
       }
     };
-    await visit(path.resolve("src/rpc/browser.ts"));
+    await visit(path.resolve("packages/engine/src/rpc/browser.ts"));
     expect(nodeImports).toEqual([]);
   });
 });

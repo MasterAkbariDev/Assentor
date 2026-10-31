@@ -4,11 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createId } from "../../src/core/ids.js";
-import { expandSeatSpecs } from "../../src/core/seats.js";
-import { isRetryableExecutorResult } from "../../src/core/retry.js";
-import { createEmptyContract } from "../../src/core/task-contract.js";
-import type { SeatStepRunner } from "../../src/negotiation/engine.js";
+import { createId } from "../../packages/engine/src/core/ids.js";
+import { expandSeatSpecs } from "../../packages/protocol/src/seats.js";
+import { isRetryableExecutorResult } from "../../packages/engine/src/core/retry.js";
+import { createEmptyContract } from "../../packages/engine/src/core/task-contract.js";
+import type { SeatStepRunner } from "../../packages/engine/src/negotiation/engine.js";
 import {
   SplitPlanSchema,
   buildSplitPlanSchema,
@@ -17,12 +17,12 @@ import {
   parseDivideOptions,
   pathsOverlap,
   planWaves,
-} from "../../src/negotiation/strategies/divide.js";
-import type { EngineEventDraft } from "../../src/protocol/events.js";
-import type { Executor, ExecutorResult, ExecutorTask } from "../../src/providers/executors/types.js";
-import { PromptLibrary } from "../../src/prompts/index.js";
-import { SeatScheduler } from "../../src/seats/index.js";
-import { WorktreeManager } from "../../src/worktrees/index.js";
+} from "../../packages/engine/src/negotiation/strategies/divide.js";
+import type { EngineEventDraft } from "../../packages/protocol/src/events.js";
+import type { Executor, ExecutorResult, ExecutorTask } from "../../packages/engine/src/providers/executors/types.js";
+import { PromptLibrary } from "../../packages/engine/src/prompts/index.js";
+import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
+import { WorktreeManager } from "../../packages/engine/src/worktrees/index.js";
 
 const exec = promisify(execFile);
 // Real git in temp repos; slow CI machines need the headroom.

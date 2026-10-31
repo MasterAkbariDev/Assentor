@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { parseEngineEvent, type EngineEvent } from "../../src/protocol/events.js";
-import { RunReporter } from "../../src/cli/ui/reporter.js";
+import { parseEngineEvent, type EngineEvent } from "../../packages/protocol/src/events.js";
+import { RunReporter } from "../../packages/cli/src/cli/ui/reporter.js";
 import {
   emptyLeadBoardView,
   LEAD_ACTION_LIMIT,
@@ -12,7 +12,7 @@ import {
   plainText,
   reduceLeadEvents,
   type LeadBoardView,
-} from "../../src/ui-shared/lead.js";
+} from "../../packages/ui-shared/src/lead.js";
 
 const T0 = Date.parse("2026-10-24T10:00:00.000Z");
 let seq = 0;

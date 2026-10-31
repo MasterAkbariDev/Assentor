@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { spawn } from "node:child_process";
-import { killProcessTree } from "../../src/process/kill-tree.js";
+import { killProcessTree } from "../../packages/engine/src/process/kill-tree.js";
 import {
   killAllTrackedProcesses,
   trackChildProcess,
   trackedProcessCount,
-} from "../../src/process/tracker.js";
+} from "../../packages/engine/src/process/tracker.js";
 
 describe("process tracker", () => {
   it("tracks and kills shell children", async () => {

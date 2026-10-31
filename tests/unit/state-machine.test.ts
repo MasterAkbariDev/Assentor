@@ -11,7 +11,7 @@ import {
   TaskState,
   TRANSITIONS,
   transition,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 describe("state machine", () => {
   it("defines transitions for every TaskState", () => {

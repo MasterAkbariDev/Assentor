@@ -5,7 +5,7 @@ import {
   EvidenceKind,
   MessageType,
   MockExecutor,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 describe("MockExecutor", () => {
   it("completes by default and tracks calls", async () => {

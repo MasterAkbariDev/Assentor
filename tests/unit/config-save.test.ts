@@ -8,10 +8,10 @@ import {
   parseAssentorConfig,
   saveAssentorConfig,
   userConfigPath,
-} from "../../src/index.js";
-import { saveGlobalDefaults, type AssentorServices } from "../../src/services/app.js";
-import { initAssentorProject } from "../../src/cli/commands.js";
-import { cycleRunMode } from "../../src/tui/screens/settings.js";
+} from "../../packages/engine/src/index.js";
+import { saveGlobalDefaults, type AssentorServices } from "../../packages/engine/src/services/app.js";
+import { initAssentorProject } from "../../packages/cli/src/cli/commands.js";
+import { cycleRunMode } from "../../packages/cli/src/tui/screens/settings.js";
 
 const TEMP_ROOT = path.join(process.cwd(), ".tmp", "config-save-tests");
 const tempDirs: string[] = [];

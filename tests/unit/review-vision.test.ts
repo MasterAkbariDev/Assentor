@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ArtifactType } from "../../src/artifacts/types.js";
-import { extractReviewImages } from "../../src/providers/reviewers/shared/prompt.js";
+import { ArtifactType } from "../../packages/engine/src/artifacts/types.js";
+import { extractReviewImages } from "../../packages/engine/src/providers/reviewers/shared/prompt.js";
 
 describe("review vision artifacts", () => {
   it("extracts screenshot artifacts as Gemini vision inputs", () => {

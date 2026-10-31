@@ -2,18 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseAssentorConfig } from "../../src/config/schema.js";
+import { parseAssentorConfig } from "../../packages/engine/src/config/schema.js";
 import { EventLog,
-  readSessionEvents, type EngineEvent } from "../../src/index.js";
-import { parseEngineEvent } from "../../src/protocol/events.js";
+  readSessionEvents, type EngineEvent } from "../../packages/engine/src/index.js";
+import { parseEngineEvent } from "../../packages/protocol/src/events.js";
 import {
   assertReviewerOrTeam,
   doctorAssentor,
   resumeAssentorTask,
   runAssentorTask,
   withReviewTeam,
-} from "../../src/cli/commands.js";
-import { RunReporter } from "../../src/cli/ui/reporter.js";
+} from "../../packages/cli/src/cli/commands.js";
+import { RunReporter } from "../../packages/cli/src/cli/ui/reporter.js";
 
 const TEAM_CONFIG = [
   "git:",

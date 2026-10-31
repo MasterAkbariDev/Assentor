@@ -1,0 +1,15 @@
+{
+  "name": "@assentor/ui",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Web UI (Vite + React) served by assentor serve / assentor app",
+  "type": "module",
+  "dependencies": {
+    "@assentor/engine": "workspace:*",
+    "@assentor/protocol": "workspace:*",
+    "@assentor/ui-shared": "workspace:*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.16"
+  }
+}

@@ -8,7 +8,7 @@ import {
   remaining,
   spend,
   ValidationError,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 describe("budgets", () => {
   it("creates budgets with defaults and overrides", () => {

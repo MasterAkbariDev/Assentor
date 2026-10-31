@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ComplexityAnalysis, ComplexityRisk } from "../../src/review/complexity.js";
-import { suggestMode } from "../../src/modes/auto.js";
+import type { ComplexityAnalysis, ComplexityRisk } from "../../packages/engine/src/review/complexity.js";
+import { suggestMode } from "../../packages/engine/src/modes/auto.js";
 
 const ALL_MODES = ["solo", "review", "explore", "plan", "swarm", "debug", "tdd", "cascade", "lead"];
 

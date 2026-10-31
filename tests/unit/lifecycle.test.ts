@@ -6,7 +6,7 @@ import {
   defaultInstallHome,
   lifecycleProcessArgs,
   lifecycleScriptName,
-} from "../../src/self/lifecycle.js";
+} from "../../packages/engine/src/self/lifecycle.js";
 
 describe("lifecycle scripts", () => {
   it("runs PowerShell scripts on Windows instead of bash", () => {

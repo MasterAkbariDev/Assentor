@@ -5,7 +5,7 @@ import {
   buildReviewPrompt,
   createEmptyContract,
   specialtyAddendum,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 describe("specialty prompts", () => {
   it("provides addenda for all specialties", () => {

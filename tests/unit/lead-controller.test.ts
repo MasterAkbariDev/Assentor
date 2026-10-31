@@ -22,9 +22,9 @@ import {
   type RosterEntry,
   type Seat,
   type StageRunnerDeps,
-} from "../../src/index.js";
-import { builtinPromptDir, PromptLibrary } from "../../src/prompts/index.js";
-import { SeatScheduler, type SchedulerOptions } from "../../src/seats/index.js";
+} from "../../packages/engine/src/index.js";
+import { builtinPromptDir, PromptLibrary } from "../../packages/engine/src/prompts/index.js";
+import { SeatScheduler, type SchedulerOptions } from "../../packages/engine/src/seats/index.js";
 
 const exec = promisify(execFile);
 // Real git in temp repos, like strategy-best-of-n.test.ts.

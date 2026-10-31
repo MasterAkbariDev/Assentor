@@ -8,7 +8,7 @@ import {
   type LeadTask,
   type LeadTaskPlan,
   type TaskBoard,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 /** Recursively freezes an object graph, so any mutation throws in strict (ESM) code. */
 function deepFreeze<T>(value: T): T {

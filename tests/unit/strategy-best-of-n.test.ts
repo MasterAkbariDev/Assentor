@@ -17,9 +17,9 @@ import {
   type ExecutorResult,
   type ExecutorTask,
   type SeatStepRunner,
-} from "../../src/index.js";
-import { createEmptyContract } from "../../src/core/task-contract.js";
-import { SeatScheduler } from "../../src/seats/index.js";
+} from "../../packages/engine/src/index.js";
+import { createEmptyContract } from "../../packages/engine/src/core/task-contract.js";
+import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
 
 const exec = promisify(execFile);
 // Real git in temp repos, like worktree-manager.test.ts.

@@ -1,15 +1,15 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseEngineEvent, type EngineEvent } from "../../src/protocol/events.js";
-import { PromptLibrary } from "../../src/prompts/library.js";
+import { parseEngineEvent, type EngineEvent } from "../../packages/protocol/src/events.js";
+import { PromptLibrary } from "../../packages/engine/src/prompts/library.js";
 import {
   LESSONS_PATH,
   appendLessons,
   buildRetroInput,
   retroVariables,
   scoreboardRows,
-} from "../../src/modes/retro.js";
+} from "../../packages/engine/src/modes/retro.js";
 
 const SESSION = "5f0c8a52-1b7e-4d2a-9c3e-0a1b2c3d4e5f";
 const TEMP_ROOT = path.join(process.cwd(), ".tmp", "retro-tests");

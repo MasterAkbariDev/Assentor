@@ -7,7 +7,7 @@ import {
   ensureAssentorGitignored,
   withAssentorGitignore,
   createEmptyContract,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 const TEMP_ROOT = path.join(process.cwd(), ".tmp", "gitignore-tests");
 const tempDirs: string[] = [];

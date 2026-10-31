@@ -3,7 +3,7 @@ import {
   findExecutorHandoff,
   parseArchitectureSummary,
   parseExecutorExplanation,
-} from "../../src/review/pack-builder.js";
+} from "../../packages/engine/src/review/pack-builder.js";
 
 const handoff = {
   whatChanged: "Added average()",
@@ -90,7 +90,7 @@ describe("executor handoff parsing", () => {
 
 describe("quoteCmdArg", () => {
   it("quotes cmd.exe metacharacters, whitespace, quotes and empty strings", async () => {
-    const { quoteCmdArg } = await import("../../src/executors/cli-locator.js");
+    const { quoteCmdArg } = await import("../../packages/engine/src/executors/cli-locator.js");
     expect(quoteCmdArg("C:\\w\\plain.md")).toBe("C:\\w\\plain.md");
     expect(quoteCmdArg("C:\\w\\a&b\\x.md")).toBe('"C:\\w\\a&b\\x.md"');
     expect(quoteCmdArg("a|b")).toBe('"a|b"');

@@ -24,9 +24,9 @@ import {
   type StageRunnerDeps,
   type StageRunners,
   type StageSpec,
-} from "../../src/index.js";
-import type { ReviewerFinding } from "../../src/agents/routed-reviewer.js";
-import { SeatScheduler } from "../../src/seats/index.js";
+} from "../../packages/engine/src/index.js";
+import type { ReviewerFinding } from "../../packages/engine/src/agents/routed-reviewer.js";
+import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
 
 const dirs: string[] = [];
 afterEach(async () => {

@@ -12,17 +12,17 @@ import {
   type CliSpawnRequest,
   type Reviewer,
   type TeamInput,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 import {
   assertReadOnlyReviewerArgs,
   resolveCliAdapter,
-} from "../../src/providers/reviewers/cli/index.js";
+} from "../../packages/engine/src/providers/reviewers/cli/index.js";
 import {
   createReviewerSeats,
   reviewTeamTargets,
   type ReviewerSeatRequest,
-} from "../../src/seats/index.js";
-import { runAssentorTask } from "../../src/cli/commands.js";
+} from "../../packages/engine/src/seats/index.js";
+import { runAssentorTask } from "../../packages/cli/src/cli/commands.js";
 
 const PASS_JSON = JSON.stringify({
   status: "PASS",

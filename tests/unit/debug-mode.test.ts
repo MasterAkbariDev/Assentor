@@ -16,10 +16,10 @@ import {
   type ModeControllerInput,
   type ModeControllerResult,
   type StageSpec,
-} from "../../src/index.js";
-import type { MockReviewerStep } from "../../src/providers/reviewers/mock/index.js";
-import { createDebugController, debugProblems, instrumentationLines, rankFindings, type DebugExtras } from "../../src/modes/debug.js";
-import { SeatScheduler } from "../../src/seats/index.js";
+} from "../../packages/engine/src/index.js";
+import type { MockReviewerStep } from "../../packages/engine/src/providers/reviewers/mock/index.js";
+import { createDebugController, debugProblems, instrumentationLines, rankFindings, type DebugExtras } from "../../packages/engine/src/modes/debug.js";
+import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
 
 const exec = promisify(execFile);
 // Real git in temp repos, like strategy-best-of-n.test.ts.

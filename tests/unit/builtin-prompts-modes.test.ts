@@ -2,13 +2,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { STALL_PATTERNS } from "../../src/orchestrator/phase-steering.js";
+import { STALL_PATTERNS } from "../../packages/engine/src/orchestrator/phase-steering.js";
 import {
   CONTROLLER_ACTION_NAMES,
   ControllerActionSchema,
   ControllerTurnSchema,
-} from "../../src/modes/controller.js";
-import { parseAgentReport } from "../../src/modes/lead/report.js";
+} from "../../packages/engine/src/modes/controller.js";
+import { parseAgentReport } from "../../packages/engine/src/modes/lead/report.js";
 import {
   PromptLibrary,
   renderPrompt,
@@ -16,7 +16,7 @@ import {
   type PromptDefinition,
   type PromptFrontMatter,
   type TemplateValue,
-} from "../../src/prompts/index.js";
+} from "../../packages/engine/src/prompts/index.js";
 
 /**
  * Mode prompts (T02B-10): the Lead, its report addendum, the pair navigator,

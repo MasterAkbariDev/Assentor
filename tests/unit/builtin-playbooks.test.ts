@@ -2,18 +2,18 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { expandSeatSpecs, type StageSpec } from "../../src/core/seats.js";
+import { expandSeatSpecs, type StageSpec } from "../../packages/protocol/src/seats.js";
 import {
   builtinPlaybookDir,
   PlaybookLibrary,
   sessionSpecFor,
   type Playbook,
   type PlaybookDefinition,
-} from "../../src/playbooks/library.js";
-import { createStageRunners } from "../../src/orchestrator/session-stages.js";
-import type { SeatScheduler } from "../../src/seats/scheduler.js";
-import { PromptLibrary, builtinPromptDir } from "../../src/prompts/index.js";
-import { validateSessionGraph } from "../../src/orchestrator/session-runner.js";
+} from "../../packages/engine/src/playbooks/library.js";
+import { createStageRunners } from "../../packages/engine/src/orchestrator/session-stages.js";
+import type { SeatScheduler } from "../../packages/engine/src/seats/scheduler.js";
+import { PromptLibrary, builtinPromptDir } from "../../packages/engine/src/prompts/index.js";
+import { validateSessionGraph } from "../../packages/engine/src/orchestrator/session-runner.js";
 
 const EXPECTED_IDS = [
   "bug-hunt",

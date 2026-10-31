@@ -5,7 +5,7 @@ import {
   ReviewStatus,
   runVerificationGates,
   syntheticNeedsWorkFromGates,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 describe("verification gates", () => {
   it("skips missing commands and treats them as NOT_RUN", async () => {

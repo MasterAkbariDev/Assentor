@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { expandSeatSpecs, parseAssentorConfig, type EngineEventDraft, type Seat } from "../../src/index.js";
-import { SeatScheduler, classifyRateLimit, createSeatScheduler, type JobContext } from "../../src/seats/index.js";
+import { expandSeatSpecs, parseAssentorConfig, type EngineEventDraft, type Seat } from "../../packages/engine/src/index.js";
+import { SeatScheduler, classifyRateLimit, createSeatScheduler, type JobContext } from "../../packages/engine/src/seats/index.js";
 
 /** Deterministic clock: timers fire only on `advance`, in time order. */
 class FakeClock {

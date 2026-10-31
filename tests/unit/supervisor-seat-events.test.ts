@@ -20,8 +20,8 @@ import {
   type Reviewer,
   type ReviewerTurnResult,
   type SupervisorEvent,
-} from "../../src/index.js";
-import { reduceSeatEvents } from "../../src/ui-shared/status.js";
+} from "../../packages/engine/src/index.js";
+import { reduceSeatEvents } from "../../packages/ui-shared/src/status.js";
 
 const tempDirs: string[] = [];
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TaskComplexityAnalyzer, explainReviewPlan } from "../../src/index.js";
+import { TaskComplexityAnalyzer, explainReviewPlan } from "../../packages/engine/src/index.js";
 
 describe("assentor review CLI parity helpers", () => {
   it("produces a review plan for a security-heavy task", () => {

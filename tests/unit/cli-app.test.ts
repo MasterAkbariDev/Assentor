@@ -4,8 +4,8 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
-import { browserOpenCommand, launchApp, openBrowser, runApp, type SpawnFn } from "../../src/cli/app.js";
-import type { ServeHandle } from "../../src/serve/index.js";
+import { browserOpenCommand, launchApp, openBrowser, runApp, type SpawnFn } from "../../packages/cli/src/cli/app.js";
+import type { ServeHandle } from "../../packages/engine/src/serve/index.js";
 
 const dirs: string[] = [];
 const handles: ServeHandle[] = [];

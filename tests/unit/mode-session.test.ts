@@ -23,8 +23,8 @@ import {
   type StageRunnerDeps,
   type StageSpec,
   type WorktreeManager,
-} from "../../src/index.js";
-import { SeatScheduler } from "../../src/seats/index.js";
+} from "../../packages/engine/src/index.js";
+import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
 
 const dirs: string[] = [];
 afterEach(async () => {

@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { STALL_PATTERNS } from "../../src/orchestrator/phase-steering.js";
-import { EvidenceRequestItemSchema } from "../../src/protocol/messages.js";
-import { makeReviewResult } from "../../src/protocol/review-result.js";
+import { STALL_PATTERNS } from "../../packages/engine/src/orchestrator/phase-steering.js";
+import { EvidenceRequestItemSchema } from "../../packages/protocol/src/messages.js";
+import { makeReviewResult } from "../../packages/protocol/src/review-result.js";
 import {
   PromptLibrary,
   renderPrompt,
   templateVariables,
   type PromptDefinition,
-} from "../../src/prompts/index.js";
+} from "../../packages/engine/src/prompts/index.js";
 
 /** Reviewer roles (T03-03a) and the specialty each one carries, with the permissions, output, and variables they must declare. */
 const REVIEWERS: Record<

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { parseAssentorConfig } from "../../src/index.js";
+import { parseAssentorConfig } from "../../packages/engine/src/index.js";
 import {
   buildAiRows,
   cycleAiField,
   cycleRunMode,
   EXECUTOR_OPTIONS,
-} from "../../src/tui/screens/settings.js";
+} from "../../packages/cli/src/tui/screens/settings.js";
 
 describe("AI defaults", () => {
   it("lists mode then every selectable executor", () => {
