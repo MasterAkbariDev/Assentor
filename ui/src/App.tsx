@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
+import { NegotiationView } from "./features/negotiation/NegotiationView.js";
+import { LeadBoard } from "./features/lead-board/LeadBoard.js";
 import { SeatDrawer } from "./features/seat-drawer/SeatDrawer.js";
 import { ReviewView } from "./features/review/ReviewView.js";
 import { SessionBoard } from "./features/session-board/SessionBoard.js";
 import { useEngine } from "./store/context.js";
 import type { ConnectionStatus } from "./store/engineStore.js";
 import { selectHasReview } from "./store/selectors.js";
+import { selectHasNegotiation } from "./store/selectors.js";
 
 const CONNECTION_LABEL: Record<ConnectionStatus, string> = {
   connecting: "Connecting…",
@@ -116,6 +119,7 @@ export function SessionPanel() {
   const session = useEngine((s) => s.session);
   const summary = useEngine((s) => s.sessions.find((x) => x.id === s.selectedId));
   const hasReview = useEngine(selectHasReview);
+  const hasNegotiation = useEngine(selectHasNegotiation);
 
   if (!session) {
     return <p className="empty">Select a run to watch it live.</p>;
@@ -131,6 +135,7 @@ export function SessionPanel() {
         {session.state ? <span className="session-state"> · {session.state}</span> : null}
       </h1>
       {session.error ? <p className="notice error">{session.error}</p> : null}
+      <LeadBoard />
       {seatCount === 0 ? (
         <p className="empty">Waiting for events…</p>
       ) : (
@@ -140,6 +145,7 @@ export function SessionPanel() {
           {hasReview ? <ReviewView /> : null}
         </>
       )}
+      {hasNegotiation ? <NegotiationView key={session.id} /> : null}
     </section>
   );
 }

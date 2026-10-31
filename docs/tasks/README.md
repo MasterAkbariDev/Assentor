@@ -144,7 +144,7 @@ Design: [modes.md](../plans/modes.md)
 | T02B-12 | Test-tamper detector ✅ | 🟢 H | S | S | — |
 | T02B-13 | Pair mode | 🟡 S | O | M | T02B-01, T01-05, T00-06 ✅ |
 | T02B-14 | Red-team mode | 🟡 S | O | M | T02B-01, T02-01 ✅ |
-| T02B-15 | Swarm mode | 🟡 S | O | L | T02B-01, T02-01, T02-02, T02B-06 |
+| T02B-15 | Swarm mode | 🟡 S | O | L | T02B-01, T02-01, T02-02, T02B-06 ✅ |
 | T02B-16 | Debug mode | 🟡 S | O | M | T02B-01, T02-01 ✅ |
 | T02B-17 | CLI: `--mode`, `--autonomy`, `assentor modes` ✅ | 🟢 H | S | S | T02B-01 |
 | T02B-18 | TUI: Lead team board + lead log | 🟢 H | S | M | T02B-02, T01-06 ✅ |

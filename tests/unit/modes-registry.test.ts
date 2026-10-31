@@ -47,6 +47,7 @@ describe("mode registry", () => {
       "cascade",
       "pair",
       "redteam",
+      "swarm",
       "debug",
       "interactive",
       "auto",

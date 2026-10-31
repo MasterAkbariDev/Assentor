@@ -1,10 +1,28 @@
-import type { EngineEventOf } from "@engine/protocol/events.js";
+import type { EngineEvent, EngineEventOf } from "@engine/protocol/events.js";
+import type { LeadBoardView } from "@engine/ui-shared/lead.js";
 import type { SeatState } from "@engine/ui-shared/status.js";
 import type { EngineState } from "./engineStore.js";
+
+/** The team board of the selected run, only when that run is in lead mode. */
+export function selectLeadBoard(state: EngineState): LeadBoardView | undefined {
+  return state.session?.mode === "lead" ? state.session.lead : undefined;
+}
 
 /** Seats of the selected run, keyed by seat id. Undefined before a run is selected. */
 export function selectSeats(state: EngineState): Record<string, SeatState> | undefined {
   return state.session?.seats;
+}
+
+const NO_EVENTS: readonly EngineEvent[] = [];
+
+/** Negotiation-related events of the selected run (see `NEGOTIATION_EVENT_TYPES`). Stable until one arrives. */
+export function selectNegotiationEvents(state: EngineState): readonly EngineEvent[] {
+  return state.session?.negotiationEvents ?? NO_EVENTS;
+}
+
+/** True when the selected run has at least one `negotiation.*` event; decides whether the negotiation view is shown. */
+export function selectHasNegotiation(state: EngineState): boolean {
+  return selectNegotiationEvents(state).some((event) => event.type.startsWith("negotiation."));
 }
 
 /** A seat that can still change: anything but done and failed. Only live seats need the elapsed ticker. */

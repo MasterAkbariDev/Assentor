@@ -310,6 +310,8 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 ### T02B-15 · Swarm mode
 **Tier:** 🟡 S · **Review:** O · **Size:** L · **Depends:** T02B-01, T02-01, T02-02, T02B-06
 
+**Merged 2026-10-31 (planner, under the owner's standing merge direction):** O2 review NEEDS_WORK (gate side effects could land unreviewed; crash-resume windows; no baseline gate; silent unchanged items; truncated diffs; one verdict failing a batch) → fixed in `7d6433f` → PASS; the reviewer's pre-merge should-fix (pin each item's reviewed diff to the merged commit) done in `82b22a2`. Swarm is a dynamic controller (not static); `escapingSymlinks` is exported from divide.ts. Deviations: no partial landing (one item failing every tier blocks the run); a gate failure sends the whole batch up a tier (no bisecting). Open nits: a worker that owns `package.json` can change what the gates run (reviewer sees it); `.assentor/sessions/<id>/swarm.json` and failed worktrees stay until cleanup.
+
 **Deliverables** — splitter (file list / glob / grep query → work items, each with owned files), batch scheduling on cheap tier, per-item patches, reducer applying patches in order with gates per batch, failed items retried on next Cascade tier, progress events `swarm.item`, resume after crash.
 
 ---

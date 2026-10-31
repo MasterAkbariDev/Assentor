@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EngineEvent } from "@engine/protocol/events.js";
 import { burstFixture, sessionFixture } from "../test/fixtures.js";
+import { emptyLeadBoardView } from "@engine/ui-shared/lead.js";
 import { ACTIVITY_EVENT_TYPES, createEngineStore, createFrameBatcher } from "./engineStore.js";
 
 describe("engine store", () => {
@@ -40,6 +41,8 @@ describe("engine store", () => {
       seatInfo: {},
       seatEvents: {},
       reviewFindings: [],
+      negotiationEvents: [],
+      lead: emptyLeadBoardView(),
       lastSeq: 0,
       eventCount: 0,
     });
@@ -160,5 +163,33 @@ describe("engine store", () => {
     expect(store.getState().session!.eventCount).toBe(2000);
     batcher.flush();
     expect(store.getState().session!.eventCount).toBe(events.length);
+  });
+
+  it("keeps only the last 1,000 negotiation events of a 1,100-event mixed batch, and no other types", () => {
+    const id = "mixed-run";
+    const store = createEngineStore();
+    store.getState().select(id);
+    const events: EngineEvent[] = [];
+    for (let seq = 1; seq <= 1_100; seq += 1) {
+      const at = new Date(Date.UTC(2026, 9, 25, 12, 0, 0, seq)).toISOString();
+      // Every 22nd event is seat output; the rest are negotiation proposals (1,050 of them).
+      events.push(
+        seq % 22 === 0
+          ? ({ seq, sessionId: id, seatId: "executor", at, type: "seat.output.delta", data: { text: "x\n" } } as EngineEvent)
+          : ({ seq, sessionId: id, stageId: "debate-1", at, type: "negotiation.proposal", data: { round: 1, label: `Proposal ${seq}`, text: "t" } } as EngineEvent),
+      );
+    }
+    store.getState().applyEvents(id, events);
+
+    const session = store.getState().session!;
+    const negotiationSeqs = events.filter((e) => e.type.startsWith("negotiation.")).map((e) => e.seq);
+    expect(negotiationSeqs).toHaveLength(1_050);
+    expect(session.negotiationEvents).toHaveLength(1_000);
+    expect(session.negotiationEvents[0]!.seq).toBe(negotiationSeqs[negotiationSeqs.length - 1_000]);
+    expect(session.negotiationEvents.at(-1)!.seq).toBe(negotiationSeqs[negotiationSeqs.length - 1]);
+    expect(session.negotiationEvents.every((e) => e.type.startsWith("negotiation."))).toBe(true);
+    // The rest of the batch still applies.
+    expect(session.eventCount).toBe(1_100);
+    expect(session.lastSeq).toBe(1_100);
   });
 });
