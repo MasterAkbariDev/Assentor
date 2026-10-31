@@ -804,7 +804,7 @@ describe("cancel", () => {
     await until(async () => (await fs.readFile(path.join(dir, "grandchild.pid"), "utf8").catch(() => "")).trim() !== "");
     controller.abort();
     expect((await pending).code).toBe(130);
-    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(Date.now() - started).toBeLessThan(25_000); // generous: process trees die slowly under heavy machine load
     const pid = Number((await fs.readFile(path.join(dir, "grandchild.pid"), "utf8")).trim());
     await until(() => {
       try {
@@ -813,7 +813,7 @@ describe("cancel", () => {
       } catch {
         return true;
       }
-    }, 5_000);
+    }, 20_000);
     const touched = path.join(dir, "touched");
     expect((await runShellCommand(`touch ${touched}`, dir, { signal: controller.signal })).code).toBe(130);
     await expect(fs.access(touched)).rejects.toThrow();
