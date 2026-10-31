@@ -5,7 +5,16 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { WebSocket } from "ws";
-import { createId, EventLog, type EngineEvent } from "../../packages/engine/src/index.js";
+import { z } from "zod";
+import {
+  createId,
+  EventLog,
+  RpcErrorCode,
+  RpcServer,
+  sessionPaths,
+  type EngineEvent,
+} from "../../packages/engine/src/index.js";
+import { RpcMethods, type RpcMethodName } from "../../packages/protocol/src/rpc.js";
 import { isLoopbackHost, ServeRefusedError, startServe, type ServeHandle } from "../../packages/engine/src/serve/index.js";
 
 const TOKEN = "a".repeat(64);
@@ -307,4 +316,76 @@ describe("assentor serve: WebSocket", () => {
     await handle.closed;
     await expect(request(handle.port)).rejects.toThrow();
   });
+
+  it("refuses write methods with a JSON-RPC error and never runs them", async () => {
+    let ran = false;
+    const rpcServer = new RpcServer({
+      ...RpcMethods,
+      "test.write": { access: "write", params: z.object({}).strict(), result: z.object({ ok: z.boolean() }) },
+    })
+      .register("test.write" as RpcMethodName, (() => {
+        ran = true;
+        return { ok: true };
+      }) as never)
+      .register("sessions.list", () => ({ sessions: [] }));
+    const { handle, origin } = await serve({ rpcServer });
+    const ws = await authenticated(handle.port, origin);
+    ws.send(JSON.stringify({ jsonrpc: "2.0", method: "test.write", params: {} }));
+    ws.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "test.write", params: {} }));
+    expect(await nextMessage(ws)).toMatchObject({ id: 1, error: { code: RpcErrorCode.WriteNotAllowed } });
+    // Reads still work on the same connection.
+    ws.send(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "sessions.list" }));
+    expect(await nextMessage(ws)).toEqual({ jsonrpc: "2.0", id: 2, result: { sessions: [] } });
+    expect(ran).toBe(false);
+  });
+
+  it("sheds a client that stops reading; it resumes gap-free from its last seq", async () => {
+    const { handle, origin, projectPath, logs } = await serve({ sendTimeoutMs: 300 });
+    const sessionId = createId();
+    const log = await EventLog.open(projectPath, sessionId);
+    await log.close();
+    // ~24 MB: more than loopback socket buffers hold, so the server's sends stall.
+    const total = 1000;
+    const at = new Date(0).toISOString();
+    const lines = Array.from({ length: total }, (_, i) =>
+      JSON.stringify({ seq: i + 1, sessionId, at, type: "session.created", data: { title: "w".repeat(24_000) } }),
+    );
+    await fs.writeFile(sessionPaths(projectPath, sessionId).events, `${lines.join("\n")}\n`, "utf8");
+
+    const until = async (check: () => boolean) => {
+      const start = Date.now();
+      while (!check()) {
+        if (Date.now() - start > 10_000) throw new Error("timed out waiting");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    };
+    const collect = (ws: WebSocket, into: number[]) =>
+      ws.on("message", (data) => {
+        const message = JSON.parse(data.toString()) as { method?: string; params?: { event: EngineEvent } };
+        if (message.method === "events.event") into.push(message.params!.event.seq);
+      });
+    const contiguous = (seqs: number[], from: number) => seqs.every((seq, i) => seq === from + i);
+
+    const slow = await authenticated(handle.port, origin);
+    const first: number[] = [];
+    collect(slow, first);
+    const closed = closeCode(slow);
+    slow.pause(); // stop reading
+    slow.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "events.subscribe", params: { sessionId } }));
+    await until(() => logs.some((line) => line.includes("slow_consumer")));
+    slow.resume(); // drain what got through, then see the close
+    await closed;
+    const lastSeq = first.at(-1) ?? 0;
+    expect(lastSeq).toBeLessThan(total);
+    expect(contiguous(first, 1)).toBe(true);
+
+    const fresh = await authenticated(handle.port, origin);
+    const second: number[] = [];
+    collect(fresh, second);
+    fresh.send(
+      JSON.stringify({ jsonrpc: "2.0", id: 1, method: "events.subscribe", params: { sessionId, fromSeq: lastSeq } }),
+    );
+    await until(() => second.at(-1) === total);
+    expect(contiguous(second, lastSeq + 1)).toBe(true);
+  }, 20_000);
 });

@@ -1,6 +1,14 @@
-export { RpcClient, RpcRemoteError, type EventSubscriptionHandlers, type RpcClientTransport } from "./client.js";
+export { RpcClient, RpcRemoteError, type EventSubscriptionHandlers, type RpcClientTransport } from "#assentor/protocol/rpc-client.js";
 export { createEngineRpcServer, type EngineRpcOptions } from "./engine.js";
-export { RpcConnection, RpcError, RpcServer, type FrameSender, type RpcContext, type RpcHandler } from "./server.js";
+export {
+  RpcConnection,
+  RpcError,
+  RpcServer,
+  type FrameSender,
+  type RpcContext,
+  type RpcHandler,
+  type RpcHandlers,
+} from "./server.js";
 export {
   listSessions,
   subscribeToSession,

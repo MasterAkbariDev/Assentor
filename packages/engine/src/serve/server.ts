@@ -43,6 +43,8 @@ export interface ServeOptions {
   maxConnections?: number;
   /** Time a new WebSocket has to send its token. Default 5 s. */
   authTimeoutMs?: number;
+  /** A frame the client has not taken after this long sheds it (`slow_consumer`). Default 30 s; tests use less. */
+  sendTimeoutMs?: number;
   /** Diagnostic lines (stderr by default). Never receives the token. */
   log?: (line: string) => void;
   subscriptions?: SubscriptionOptions;
@@ -109,6 +111,7 @@ export async function startServe(options: ServeOptions): Promise<ServeHandle> {
   const uiDir = options.uiDir ?? defaultUiDir();
   const maxConnections = options.maxConnections ?? 8;
   const authTimeoutMs = options.authTimeoutMs ?? 5_000;
+  const sendTimeoutMs = options.sendTimeoutMs ?? SEND_TIMEOUT_MS;
   const rpc =
     options.rpcServer ??
     createEngineRpcServer({ projectPath: options.projectPath, subscriptions: options.subscriptions });
@@ -298,7 +301,8 @@ export async function startServe(options: ServeOptions): Promise<ServeHandle> {
       authenticated += 1;
       stopIdleTimer();
       failures.delete(address);
-      connection = rpc.connect((frame) => sendFrame(ws, frame));
+      // Read-only until T04-03 adds write auth: write methods get WriteNotAllowed.
+      connection = rpc.connect((frame) => sendFrame(ws, frame), { allowWrite: false });
       ws.send(JSON.stringify({ auth: "ok" }));
     });
 
@@ -325,6 +329,7 @@ export async function startServe(options: ServeOptions): Promise<ServeHandle> {
    * full or whose send stalls: it reconnects and resubscribes from its last seq.
    */
   function shed(ws: WebSocket): void {
+    log("[assentor serve] dropped a client that stopped reading (slow_consumer)");
     // Tell the client why, but free the slot now: the close frame would queue
     // behind data it is already not reading.
     ws.close(1013, "slow_consumer");
@@ -340,7 +345,7 @@ export async function startServe(options: ServeOptions): Promise<ServeHandle> {
       const timer = setTimeout(() => {
         shed(ws);
         reject(new Error("send timed out"));
-      }, SEND_TIMEOUT_MS);
+      }, sendTimeoutMs);
       timer.unref?.();
       ws.send(frame, (error) => {
         clearTimeout(timer);

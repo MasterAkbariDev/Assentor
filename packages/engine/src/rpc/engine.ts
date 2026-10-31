@@ -48,25 +48,20 @@ export function createEngineRpcServer(options: EngineRpcOptions): RpcServer {
     return listing.promise;
   };
 
-  server
-    .register("engine.hello", () => ({
+  server.registerAll({
+    "engine.hello": () => ({
       engineVersion,
       protocolVersion: RPC_PROTOCOL_VERSION,
       capabilities: server.methodNames,
-    }))
-    .register("sessions.list", async () => ({ sessions: await cachedList() }))
-    .register("events.subscribe", ({ sessionId, fromSeq }, { connection }) => ({
-      subscriptionId: subscribeToSession(
-        connection,
-        projectPath,
-        sessionId,
-        fromSeq,
-        options.subscriptions,
-      ),
-    }))
-    .register("events.unsubscribe", ({ subscriptionId }, { connection }) => ({
+    }),
+    "sessions.list": async () => ({ sessions: await cachedList() }),
+    "events.subscribe": ({ sessionId, fromSeq }, { connection }) => ({
+      subscriptionId: subscribeToSession(connection, projectPath, sessionId, fromSeq, options.subscriptions),
+    }),
+    "events.unsubscribe": ({ subscriptionId }, { connection }) => ({
       ok: unsubscribeFromSession(connection, subscriptionId),
-    }));
+    }),
+  });
 
   registerLibraryMethods(server, { projectPath });
   return server;

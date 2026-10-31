@@ -1,4 +1,4 @@
-import type { RpcClientTransport } from "#assentor/engine/rpc/browser.js";
+import type { RpcClientTransport } from "#assentor/protocol/rpc-client.js";
 
 /**
  * `RpcClientTransport` over the `assentor serve` WebSocket (T04-06p). The first

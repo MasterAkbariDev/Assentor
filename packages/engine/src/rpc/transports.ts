@@ -1,12 +1,13 @@
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
-import type { RpcClientTransport } from "./client.js";
+import type { RpcClientTransport } from "#assentor/protocol/rpc-client.js";
 import type { RpcConnection, RpcServer } from "./server.js";
 
 /**
  * Transports for the engine RPC (task T04-02p). Each moves JSON-RPC text
  * frames between a client and an `RpcConnection`; none of them interpret
- * the messages. The WebSocket transport for `assentor serve` is T04-03p.
+ * the messages. Both grant write access; the WebSocket transport for
+ * `assentor serve` (src/serve/) does not.
  */
 
 /**
@@ -21,11 +22,15 @@ export function createInProcessTransport(server: RpcServer): {
   let toClient: ((frame: string) => void) | undefined;
   const closeListeners: Array<(reason?: string) => void> = [];
   let closed = false;
-  const connection = server.connect((frame) => {
-    if (!closed) {
-      queueMicrotask(() => toClient?.(frame));
-    }
-  });
+  // Same process, same trust: write methods are allowed.
+  const connection = server.connect(
+    (frame) => {
+      if (!closed) {
+        queueMicrotask(() => toClient?.(frame));
+      }
+    },
+    { allowWrite: true },
+  );
   const notifyClosed = (reason: string) => {
     if (closed) {
       return;
@@ -81,6 +86,8 @@ export function serveStdio(
           output.once("drain", resolve);
         }
       }),
+    // The peer is the parent process that spawned us (the Tauri shell): writes allowed.
+    { allowWrite: true },
   );
   const lines = createInterface({ input, crlfDelay: Infinity });
   lines.on("line", (line) => {

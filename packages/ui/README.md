@@ -26,7 +26,7 @@ pnpm test              # UI tests run with the rest (jsdom per file)
 ## Engine imports
 
 Import other workspace packages only through `#assentor/…` (aliased to their sources in `vite.config.ts`) and only browser-safe modules:
-`#assentor/protocol/*` (contract), `#assentor/ui-shared/status.js` (`reduceSeatEvents`, `seatLineModel`, `STATUS_META`), and from the engine only `#assentor/engine/rpc/browser.js` (client + contract) and `#assentor/engine/review/ranking.js`. Never `#assentor/engine/rpc/index.js` or anything that imports `node:*`.
+`#assentor/protocol/*` (contract), `#assentor/ui-shared/status.js` (`reduceSeatEvents`, `seatLineModel`, `STATUS_META`), `#assentor/protocol/rpc-client.js` (typed RPC client), and from the engine only `#assentor/engine/review/ranking.js`. Never `#assentor/engine/rpc/index.js` or anything that imports `node:*`.
 
 ## State
 

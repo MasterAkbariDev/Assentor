@@ -1,4 +1,4 @@
-import { RpcClient, type RpcClientTransport } from "#assentor/engine/rpc/browser.js";
+import { RpcClient, type RpcClientTransport } from "#assentor/protocol/rpc-client.js";
 import { createFrameBatcher, type EngineStore } from "../store/engineStore.js";
 import { AuthRejectedError } from "../transport/websocket.js";
 
