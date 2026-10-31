@@ -290,3 +290,15 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 **Tests** — columns from fixture stream; refused-actions filter; approve requires confirm; override sends RPC.
 
 **Status: preview cut T04-17p** (watch-only, branch `claude/card-t04-17p`). Points 1, 2, 3 and the seat-drawer part of 5 are in `packages/ui/src/features/lead-board/` (`LeadBoard`, `LeadOrgChart`, `LeadLog`), shown for a run whose `mode.selected` is `lead`. Shared reducer (`packages/ui-shared/src/lead.ts`) extended, not forked: six web stages (`leadStages`: Backlog, Assigned, In progress, In review, Accepted, Rejected), owner seat id, reassign and escalation counters, and `actions` (every lead action; `log` stays the terminal's last five). The refused-only switch is a native checkbox with `role="switch"`. Not in this cut: point 4 (approve, override, pin, pause/resume; the server has no write RPCs) and the task's reports in point 5.
+
+---
+
+### T04-18 · Usage view
+**Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T04-06, TE-01
+
+**Goal** — See where tokens and money go, per run.
+
+**Deliverables** — a Usage section (sidebar) and a per-session panel: totals, per seat / stage / model table, cached share, estimate vs actual (TE-09), budget bars with the 50/80% warnings, skills loaded and their cost (TE-07 `skill.loaded`). Data from RPC `usage.get` (TE-01). Read-only.
+
+**Tests** — fixture log → table totals match the ledger; budget bar states; empty state.
+

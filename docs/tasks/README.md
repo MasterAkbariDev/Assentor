@@ -160,6 +160,21 @@ Design: [modes.md](../plans/modes.md)
 | T03-05 | `assentor prompts` CLI commands ✅ | 🟢 H | S | S | T03-01 |
 | T03-06 | TUI Agents screen: fork/edit prompts ✅ | 🟢 H | S | M | T03-01, T03-05 |
 
+### Phase 3b — Token economy & skills · [phase-3b-token-economy.md](./phase-3b-token-economy.md)
+Measure first: TE-01 and TE-10 come first; every saving must pass the TE-10 net-tokens gate before it is on by default.
+| ID | Title | Tier | Review | Size | Depends |
+|---|---|---|---|---|---|
+| TE-01 | Usage ledger, report, budget warnings | 🟢 H | S | S | — |
+| TE-10 | Token benchmark, A/B gate, prompt-size guard | 🟡 S | O | M | TE-01 |
+| TE-02 | Output styles (concise / normal / verbose) | 🟢 H | S | S | TE-10 gate |
+| TE-03 | Context packer (budgeted context) | 🟡 S | O | M | TE-01, TE-10 |
+| TE-04 | Rolling summaries for long conversations | 🟡 S | O | M | TE-03 |
+| TE-05 | Prompt caching and session reuse | 🟡 S | O2 | M | TE-01, TE-10 |
+| TE-06 | Run profiles (economy / balanced / max) | 🟢 H | S | S | TE-02, TE-10 |
+| TE-07 | Skills: on-demand instruction packs | 🟡 S | O2 | M | — |
+| TE-08 | Built-in token-saver skills (benchmarked) | 🟢 H | O (quality) | M | TE-07, TE-10 |
+| TE-09 | Pre-run estimate and confirm | 🟢 H | S | S | TE-01, TE-06 |
+
 ### Phase 4 — Engine server & Web UI · [phase-4-serve-web-ui.md](./phase-4-serve-web-ui.md)
 | ID | Title | Tier | Review | Size | Depends |
 |---|---|---|---|---|---|
@@ -180,6 +195,7 @@ Design: [modes.md](../plans/modes.md)
 | T04-15 | `assentor app` launcher ✅ | 🟢 H | S | S | T04-03 |
 | T04-16 | Mode picker (new session) | 🟢 H | S | S | T04-06, T02B-01, T02B-08 |
 | T04-17 | Lead team board view | 🟢 H | S | M | T04-06, T02B-18 |
+| T04-18 | Usage view (tokens, cost, budgets per run) | 🟢 H | S | S | T04-06, TE-01 |
 
 ### Phase 5 — Desktop (Tauri) · [phase-5-desktop-tauri.md](./phase-5-desktop-tauri.md)
 | ID | Title | Tier | Review | Size | Depends |
