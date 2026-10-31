@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { createId } from "#assentor/engine/core/ids.js";
 import { EventLog } from "#assentor/engine/events/log.js";
-import type { RpcClientTransport } from "#assentor/engine/rpc/browser.js";
+import type { RpcClientTransport } from "#assentor/protocol/rpc-client.js";
 import { createEngineRpcServer } from "#assentor/engine/rpc/engine.js";
 import { createInProcessTransport } from "#assentor/engine/rpc/transports.js";
 import { runTransportContract } from "./contract.test-suite.js";

@@ -1,5 +1,6 @@
 import type { EngineEvent } from "#assentor/protocol/events.js";
 import type { RpcMethodName, RpcParams, RpcResult, SessionSummary } from "#assentor/protocol/rpc.js";
+import type { RpcCallArgs } from "#assentor/protocol/rpc-client.js";
 import type { SubscribeHandlers, Transport, TransportStatus } from "./types.js";
 
 export interface MockTransportOptions {
@@ -46,7 +47,8 @@ export function mockTransport(options: MockTransportOptions = {}): MockTransport
 
   return {
     calls,
-    async call(method, params) {
+    async call(method, ...args: RpcCallArgs<RpcMethodName>) {
+      const params = args[0];
       calls.push({ method, params });
       if (status !== "open") throw new Error("Not connected");
       const handler = options.handlers?.[method] as ((p: unknown) => unknown) | undefined;

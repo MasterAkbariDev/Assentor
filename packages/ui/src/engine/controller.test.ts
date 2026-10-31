@@ -6,7 +6,7 @@ import { createId } from "#assentor/engine/core/ids.js";
 import { EventLog } from "#assentor/engine/events/log.js";
 import { createEngineRpcServer } from "#assentor/engine/rpc/engine.js";
 import { createInProcessTransport } from "#assentor/engine/rpc/transports.js";
-import type { RpcClientTransport } from "#assentor/engine/rpc/browser.js";
+import type { RpcClientTransport } from "#assentor/protocol/rpc-client.js";
 import { createEngineStore } from "../store/engineStore.js";
 import { AuthRejectedError } from "../transport/websocket.js";
 import { WebSocketTransport } from "../transport/websocketTransport.js";

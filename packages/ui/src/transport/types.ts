@@ -1,5 +1,6 @@
 import type { EngineEvent } from "#assentor/protocol/events.js";
-import type { ResyncRequiredParams, RpcMethodName, RpcParams, RpcResult } from "#assentor/protocol/rpc.js";
+import type { ResyncRequiredParams, RpcMethodName, RpcResult } from "#assentor/protocol/rpc.js";
+import type { RpcCallArgs } from "#assentor/protocol/rpc-client.js";
 
 /**
  * The one seam between the UI and the engine (T04-06). The WebSocket transport,
@@ -18,7 +19,7 @@ export interface SubscribeHandlers {
 
 export interface Transport {
   /** Call a contract method. Rejects when the link is not `open`, or with the engine's error. */
-  call<M extends RpcMethodName>(method: M, params?: RpcParams<M>): Promise<RpcResult<M>>;
+  call<M extends RpcMethodName>(method: M, ...args: RpcCallArgs<M>): Promise<RpcResult<M>>;
   /** Events with `seq > fromSeq`, in order. A dropped link ends the subscription; resubscribe from the last seq on `open`. */
   subscribe(sessionId: string, fromSeq: number, handlers: SubscribeHandlers): Promise<{ unsubscribe(): Promise<void> }>;
   /** Called at once with the current status, then on every change. Returns the remover. */

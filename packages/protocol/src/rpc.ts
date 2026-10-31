@@ -9,8 +9,10 @@ import type { EngineEvent } from "./events.js";
  * Transport framing is JSON-RPC 2.0 messages, one per frame (an NDJSON line on
  * stdio, one WebSocket message on `serve`). Batches are not supported.
  *
- * This first cut is read-only: it can describe the engine, list sessions and
- * stream a session's events. Nothing here starts, changes or deletes anything.
+ * Every method declares `access`. `read` methods never start, change or
+ * delete anything; any other method is a write and a connection refuses it
+ * (`WriteNotAllowed`) unless its transport grants writes. There are no write
+ * methods yet.
  */
 
 export const RPC_PROTOCOL_VERSION = 1;
@@ -24,6 +26,8 @@ export const RpcErrorCode = {
   InternalError: -32603,
   /** Too many live subscriptions on one connection. */
   SubscriptionLimit: -32001,
+  /** A write method on a connection whose transport only allows reads (e.g. `serve`). */
+  WriteNotAllowed: -32002,
 } as const;
 
 /** Largest inbound frame a connection accepts (characters of JSON text). */
@@ -109,8 +113,18 @@ const TeamSeatSchema = z.object({
   permissions: z.enum(["read-only", "edit"]),
 });
 
+export type RpcAccess = "read" | "write";
+
+/** One registry entry: access level, params schema, result schema. */
+export interface RpcMethodDef {
+  access: RpcAccess;
+  params: z.ZodTypeAny;
+  result: z.ZodTypeAny;
+}
+
 export const RpcMethods = {
   "engine.hello": {
+    access: "read",
     params: z.object({ client: z.string().max(100).optional() }).strict().optional(),
     result: z.object({
       engineVersion: z.string(),
@@ -119,10 +133,12 @@ export const RpcMethods = {
     }),
   },
   "sessions.list": {
+    access: "read",
     params: z.object({}).strict().optional(),
     result: z.object({ sessions: z.array(SessionSummarySchema) }),
   },
   "events.subscribe": {
+    access: "read",
     params: z
       .object({
         sessionId: SessionIdSchema,
@@ -133,11 +149,13 @@ export const RpcMethods = {
     result: z.object({ subscriptionId: z.string() }),
   },
   "events.unsubscribe": {
+    access: "read",
     params: z.object({ subscriptionId: z.string().min(1) }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   // Read-only library methods (src/rpc/library.ts). None of them writes or starts anything.
   "prompt.list": {
+    access: "read",
     params: z.object({}).strict().optional(),
     result: z.object({
       prompts: z.array(PromptSummarySchema),
@@ -145,6 +163,7 @@ export const RpcMethods = {
     }),
   },
   "prompt.get": {
+    access: "read",
     params: z.object({ id: z.string().min(1).max(100) }).strict(),
     result: z.object({
       id: z.string(),
@@ -156,6 +175,7 @@ export const RpcMethods = {
     }),
   },
   "team.list": {
+    access: "read",
     params: z.object({}).strict().optional(),
     result: z.object({
       teams: z.array(
@@ -171,6 +191,7 @@ export const RpcMethods = {
     }),
   },
   "models.catalog": {
+    access: "read",
     params: z.object({ provider: z.enum(SEAT_PROVIDERS) }).strict(),
     result: z.object({
       entries: z.array(
@@ -182,7 +203,7 @@ export const RpcMethods = {
       ),
     }),
   },
-} as const;
+} as const satisfies Record<string, RpcMethodDef>;
 
 export type RpcMethodName = keyof typeof RpcMethods;
 export type RpcParams<M extends RpcMethodName> = z.input<(typeof RpcMethods)[M]["params"]>;

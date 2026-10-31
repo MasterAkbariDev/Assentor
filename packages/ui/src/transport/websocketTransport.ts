@@ -1,5 +1,5 @@
-import { RpcClient, type RpcClientTransport } from "#assentor/engine/rpc/browser.js";
-import type { RpcMethodName, RpcParams, RpcResult } from "#assentor/protocol/rpc.js";
+import type { RpcMethodName, RpcResult } from "#assentor/protocol/rpc.js";
+import { RpcClient, type RpcCallArgs, type RpcClientTransport } from "#assentor/protocol/rpc-client.js";
 import type { SubscribeHandlers, Transport, TransportStatus } from "./types.js";
 import { AuthRejectedError } from "./websocket.js";
 
@@ -22,8 +22,8 @@ export class WebSocketTransport implements Transport {
     void this.connect();
   }
 
-  call<M extends RpcMethodName>(method: M, params?: RpcParams<M>): Promise<RpcResult<M>> {
-    return this.client ? this.client.call(method, params) : Promise.reject(new Error("Not connected"));
+  call<M extends RpcMethodName>(method: M, ...args: RpcCallArgs<M>): Promise<RpcResult<M>> {
+    return this.client ? this.client.call(method, ...args) : Promise.reject(new Error("Not connected"));
   }
 
   async subscribe(sessionId: string, fromSeq: number, handlers: SubscribeHandlers) {

@@ -177,7 +177,8 @@ describe("LeadBoard and SeatDrawer: focus returns to what opened the drawer", ()
   });
 });
 
-describe("LeadBoard: capped web log", () => {
+// Renders 500 log rows in jsdom: ~4 s alone, so the default 5 s limit times out under load.
+describe("LeadBoard: capped web log", { timeout: 20_000 }, () => {
   it("says how many actions it shows when older ones were dropped", () => {
     const { store, getByRole, getByText, queryByText } = renderLeadBoard();
     expect(queryByText(/Showing last/)).toBeNull();

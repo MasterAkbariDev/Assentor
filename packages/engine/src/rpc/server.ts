@@ -3,8 +3,10 @@ import {
   RPC_MAX_FRAME_CHARS,
   RpcErrorCode,
   RpcMethods,
+  type RpcAccess,
   type RpcErrorObject,
   type RpcId,
+  type RpcMethodDef,
   type RpcMethodName,
   type RpcResult,
 } from "#assentor/protocol/rpc.js";
@@ -19,6 +21,9 @@ import {
  * - A handler error becomes -32603 "Internal error" with the message only
  *   (absolute paths replaced by `<path>`), never a stack. Throw `RpcError` for
  *   a specific code. Frames over `RPC_MAX_FRAME_CHARS` are rejected (-32600).
+ * - Write access is default-deny: a method whose contract `access` is not
+ *   `"read"` is refused (-32002) unless `connect(send, { allowWrite: true })`.
+ *   In-process and stdio grant it; the WebSocket `serve` transport does not.
  * - Outbound frames go through one serialized writer per connection; `notify`
  *   resolves when the transport accepted the frame, so a slow client slows
  *   its producers (subscriptions bound their own queues).
@@ -47,7 +52,11 @@ export type RpcHandler<M extends RpcMethodName> = (
   context: RpcContext,
 ) => Promise<RpcResult<M>> | RpcResult<M>;
 
+/** Handlers for any subset of the contract, for `RpcServer.registerAll`. */
+export type RpcHandlers = { [M in RpcMethodName]?: RpcHandler<M> };
+
 interface Registered {
+  access: RpcAccess;
   params: z.ZodTypeAny;
   result: z.ZodTypeAny;
   handler: (params: unknown, context: RpcContext) => unknown;
@@ -59,10 +68,20 @@ export type FrameSender = (frame: string) => void | Promise<void>;
 export class RpcServer {
   private readonly methods = new Map<string, Registered>();
 
-  /** Register the handler for a contract method (`src/protocol/rpc.ts`). */
+  /** `contract` defaults to `RpcMethods`; tests pass an extended one. */
+  constructor(private readonly contract: Readonly<Record<string, RpcMethodDef>> = RpcMethods) {}
+
+  /** Register the handler for a contract method (`packages/protocol/src/rpc.ts`). */
   register<M extends RpcMethodName>(method: M, handler: RpcHandler<M>): this {
-    const def = RpcMethods[method];
+    const def = this.contract[method];
+    if (!def) {
+      throw new Error(`RPC method ${method} is not in the contract`);
+    }
+    if (this.methods.has(method)) {
+      throw new Error(`RPC method ${method} is already registered`);
+    }
     this.methods.set(method, {
+      access: def.access,
       params: def.params,
       result: def.result,
       handler: handler as (params: unknown, context: RpcContext) => unknown,
@@ -70,14 +89,21 @@ export class RpcServer {
     return this;
   }
 
-  /** Method names with a handler, for `engine.hello` capabilities. */
-  get methodNames(): string[] {
-    return [...this.methods.keys()].sort();
+  /** Register several handlers at once (see `README.md`). */
+  registerAll(handlers: RpcHandlers): this {
+    for (const [method, handler] of Object.entries(handlers)) {
+      this.register(method as RpcMethodName, handler as RpcHandler<RpcMethodName>);
+    }
+    return this;
   }
 
-  /** Open a connection whose outbound frames go to `send`. */
-  connect(send: FrameSender): RpcConnection {
-    return new RpcConnection(this.methods, send);
+  /**
+   * Open a connection whose outbound frames go to `send`. Write methods are
+   * refused unless `allowWrite` is true (only for a transport whose peer is
+   * as trusted as this process).
+   */
+  connect(send: FrameSender, options: { allowWrite?: boolean } = {}): RpcConnection {
+    return new RpcConnection(this.methods, send, options.allowWrite === true);
   }
 }
 
@@ -89,10 +115,26 @@ export class RpcConnection {
   constructor(
     private readonly methods: ReadonlyMap<string, Registered>,
     private readonly send: FrameSender,
+    private readonly allowWrite = false,
   ) {}
 
   get closed(): boolean {
     return this.isClosed;
+  }
+
+  /** True when this connection's transport granted write access. */
+  get canWrite(): boolean {
+    return this.allowWrite;
+  }
+
+  /** Registered methods this connection may call, for `engine.hello` capabilities. */
+  get methodNames(): string[] {
+    return [...this.methods].filter(([, method]) => this.permits(method)).map(([name]) => name).sort();
+  }
+
+  /** The one access check: default-deny, anything not exactly "read" needs write access. */
+  private permits(method: Registered): boolean {
+    return method.access === "read" || this.allowWrite;
   }
 
   /** Handle one inbound frame. Never rejects; protocol errors become error responses. */
@@ -134,6 +176,16 @@ export class RpcConnection {
         await this.respondError(id, RpcErrorCode.MethodNotFound, `Method not found: ${message.method}`);
       }
       return; // Unknown notifications are ignored, per JSON-RPC.
+    }
+    if (!this.permits(method)) {
+      if (id !== undefined) {
+        await this.respondError(
+          id,
+          RpcErrorCode.WriteNotAllowed,
+          `Write not allowed: ${message.method} changes state and this connection is read-only`,
+        );
+      }
+      return;
     }
 
     const parsed = method.params.safeParse(message.params);

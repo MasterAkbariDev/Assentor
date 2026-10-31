@@ -18,6 +18,8 @@ import {
   type ResyncRequiredParams,
 } from "../../packages/engine/src/index.js";
 import { runAssentorTask } from "../../packages/cli/src/cli/commands.js";
+import { z } from "zod";
+import { RpcMethods, type RpcMethodName } from "../../packages/protocol/src/rpc.js";
 
 const dirs: string[] = [];
 const cleanups: Array<() => void | Promise<void>> = [];
@@ -577,6 +579,149 @@ describe("RpcConnection limits", () => {
     };
     await visit(path.resolve("packages/engine/src/rpc/browser.ts"));
     expect(nodeImports).toEqual([]);
+  });
+});
+
+/** The real contract plus one write method and one with a bogus access level. */
+function writeServer(calls: number[]) {
+  const params = z.object({ n: z.number() }).strict();
+  const result = z.object({ ok: z.boolean() });
+  const server = new RpcServer({
+    ...RpcMethods,
+    "test.write": { access: "write", params, result },
+    "test.unmarked": { access: "admin" as unknown as "write", params, result },
+  });
+  const handler = (({ n }: { n: number }) => {
+    calls.push(n);
+    return { ok: true };
+  }) as never;
+  return server
+    .register("test.write" as RpcMethodName, handler)
+    .register("test.unmarked" as RpcMethodName, handler)
+    .register("sessions.list", () => ({ sessions: [] }))
+    // Same handler shape as engine.ts.
+    .register("engine.hello", (_params, { connection }) => ({
+      engineVersion: "x",
+      protocolVersion: 1,
+      capabilities: connection.methodNames,
+    }));
+}
+
+describe("write access", () => {
+  it("declares every current contract method as read", () => {
+    expect(Object.values(RpcMethods).map((def) => def.access)).toEqual(Object.keys(RpcMethods).map(() => "read"));
+  });
+
+  it("refuses write methods on a connection without write access, and never runs them", async () => {
+    const calls: number[] = [];
+    const { connection, frames } = rawConnection(writeServer(calls));
+    await connection.receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "test.write", params: { n: 1 } }));
+    await connection.receive(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "test.unmarked", params: { n: 2 } }));
+    // Refused before params are checked, and a notification is dropped silently.
+    await connection.receive(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "test.write", params: { bad: true } }));
+    await connection.receive(JSON.stringify({ jsonrpc: "2.0", method: "test.write", params: { n: 4 } }));
+    await connection.receive(JSON.stringify({ jsonrpc: "2.0", id: 5, method: "sessions.list" }));
+    await connection.receive(JSON.stringify({ jsonrpc: "2.0", id: 6, method: "engine.hello" }));
+
+    expect(calls).toEqual([]);
+    expect(connection.canWrite).toBe(false);
+    expect(frames.map((f) => [f.id, (f.error as { code: number } | undefined)?.code])).toEqual([
+      [1, RpcErrorCode.WriteNotAllowed],
+      [2, RpcErrorCode.WriteNotAllowed],
+      [3, RpcErrorCode.WriteNotAllowed],
+      [5, undefined],
+      [6, undefined],
+    ]);
+    // Capabilities hide what this connection may not call.
+    expect((frames[4]!.result as { capabilities: string[] }).capabilities).toEqual(["engine.hello", "sessions.list"]);
+    expect((frames[0]!.error as { message: string }).message).toMatch(/test\.write.*read-only/);
+  });
+
+  it("allows write methods in process and over stdio", async () => {
+    const calls: number[] = [];
+    const client = new RpcClient(createInProcessTransport(writeServer(calls)).client);
+    cleanups.push(() => client.close());
+    expect(await client.call("test.write" as never, { n: 1 } as never)).toEqual({ ok: true });
+    expect((await client.call("engine.hello")).capabilities).toEqual([
+      "engine.hello",
+      "sessions.list",
+      "test.unmarked",
+      "test.write",
+    ]);
+
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const done = serveStdio(writeServer(calls), { input, output });
+    const reply = new Promise<Record<string, unknown>>((resolve) =>
+      output.once("data", (chunk: Buffer) => resolve(JSON.parse(chunk.toString("utf8")) as Record<string, unknown>)),
+    );
+    input.write(`${JSON.stringify({ jsonrpc: "2.0", id: 7, method: "test.write", params: { n: 2 } })}\n`);
+    expect(await reply).toEqual({ jsonrpc: "2.0", id: 7, result: { ok: true } });
+    input.end();
+    await done;
+    expect(calls).toEqual([1, 2]);
+  });
+});
+
+describe("RpcServer.register", () => {
+  it("refuses a second handler for the same method", () => {
+    const server = new RpcServer().register("sessions.list", () => ({ sessions: [] }));
+    expect(() => server.registerAll({ "sessions.list": () => ({ sessions: [] }) })).toThrow(
+      "RPC method sessions.list is already registered",
+    );
+  });
+});
+
+describe("typed client", () => {
+  it("rejects wrong params at typecheck time", async () => {
+    const client = engineClient(await project());
+    const typeOnly = () => {
+      // @ts-expect-error events.subscribe requires params
+      void client.call("events.subscribe");
+      // @ts-expect-error sessionId must be a string
+      void client.call("events.subscribe", { sessionId: 1 });
+      // @ts-expect-error unknown param
+      void client.call("prompt.get", { id: "x", extra: 1 });
+      // @ts-expect-error unknown method
+      void client.call("nope.nope");
+    };
+    expect(typeof typeOnly).toBe("function");
+    const hello = await client.call("engine.hello");
+    const version: string = hello.engineVersion;
+    expect(version).toBe("9.9.9-test");
+  });
+});
+
+describe("resume after a dropped connection", () => {
+  it("continues gap-free on a new connection from onDisconnect's lastSeq", async () => {
+    const projectPath = await project();
+    const sessionId = createId();
+    const log = await EventLog.open(projectPath, sessionId);
+    cleanups.push(() => log.close());
+    for (let i = 0; i < 3; i += 1) {
+      await log.append(draft(sessionId));
+    }
+    const server = createEngineRpcServer({ projectPath, engineVersion: "x", subscriptions: { pollMs: 5 } });
+    const seen: number[] = [];
+    const first = createInProcessTransport(server);
+    let lastSeq: number | undefined;
+    await new RpcClient(first.client).subscribeEvents(sessionId, 0, {
+      onEvent: (e) => seen.push(e.seq),
+      onDisconnect: (info) => (lastSeq = info.lastSeq),
+    });
+    await until(() => seen.length === 3);
+    first.connection.close(); // e.g. `serve` shedding a slow consumer
+    expect(lastSeq).toBe(3);
+
+    for (let i = 0; i < 3; i += 1) {
+      await log.append(draft(sessionId)); // written while disconnected
+    }
+    const client = new RpcClient(createInProcessTransport(server).client);
+    cleanups.push(() => client.close());
+    await client.subscribeEvents(sessionId, lastSeq!, { onEvent: (e) => seen.push(e.seq) });
+    await log.append(draft(sessionId));
+    await until(() => seen.length === 7);
+    expect(seen).toEqual([1, 2, 3, 4, 5, 6, 7]);
   });
 });
 

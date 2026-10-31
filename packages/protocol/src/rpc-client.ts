@@ -6,13 +6,20 @@ import {
   type RpcMethodName,
   type RpcParams,
   type RpcResult,
-} from "#assentor/protocol/rpc.js";
-import type { EngineEvent } from "#assentor/protocol/events.js";
+} from "./rpc.js";
+import type { EngineEvent } from "./events.js";
 
 /**
- * Typed JSON-RPC client for the engine (task T04-02p). Browser-safe: no Node
- * imports, so the web UI (T04-06p) uses it over a WebSocket transport.
+ * Typed JSON-RPC client for the engine (T04-02). Browser-safe: no Node
+ * imports, so the web UI uses it over a WebSocket transport. Method names,
+ * params and results come from `RpcMethods` in `./rpc.ts`, so a call with
+ * wrong params fails typecheck.
  */
+
+/** `[params]` when the method requires params, `[params?]` when they are optional. */
+export type RpcCallArgs<M extends RpcMethodName> = undefined extends RpcParams<M>
+  ? [params?: RpcParams<M>]
+  : [params: RpcParams<M>];
 
 /** Moves text frames; implemented by the in-process, stdio and WebSocket transports. */
 export interface RpcClientTransport {
@@ -71,7 +78,8 @@ export class RpcClient {
   }
 
   /** Call a contract method. Rejects with `RpcRemoteError` for an error response. */
-  call<M extends RpcMethodName>(method: M, params?: RpcParams<M>): Promise<RpcResult<M>> {
+  call<M extends RpcMethodName>(method: M, ...args: RpcCallArgs<M>): Promise<RpcResult<M>> {
+    const [params] = args;
     if (this.closed) {
       return Promise.reject(new Error("RPC client is closed"));
     }
