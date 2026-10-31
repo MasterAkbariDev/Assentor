@@ -1,11 +1,50 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_TEST_PATTERNS,
   detectTamper,
+  isRunnerFile,
   isTestFile,
   lockTests,
   normalizePath,
+  RUNNER_CONFIG,
 } from "../../packages/engine/src/modes/tdd/tamper.js";
+import { testPathProblem } from "../../packages/engine/src/modes/redteam.js";
+
+describe("the shared runner-file list (TDD and red-team)", () => {
+  // Every file either mode protected before the lists were merged.
+  const tddFiles = ["vitest.config.ts", "a/vite.config.mjs", "jest.config.js", "playwright.config.ts", "cypress.config.ts", "ava.config.js", "my.vitest.config.ts", "vitest.workspace.ts", "karma.conf.js", ".mocharc.json", "setupTests.ts", "package.json", "pytest.ini", ".pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini", "conftest.py", "noxfile.py", "Cargo.toml", "Makefile", "justfile", ".gitignore"];
+  const redteamFiles = ["conftest.py", "pytest.ini", "tox.ini", "setup.cfg", "setup.py", "pyproject.toml", "go.mod", "Cargo.toml", "Makefile", "GNUmakefile", "tsconfig.json", "tsconfig.build.json", "karma.conf.js", "setupTests.ts", "global-setup.ts", "globalSetup.ts", "x.setup.ts", "vitest.config.ts", "vite.config", "jest.setup.js", "playwright.workspace.ts", "karma.config.js", "mocha.config.cjs", "ava.config.js", "cypress.config.ts", "babel.config.js", ".mocharc.yml", ".mocharc", ".babelrc", ".babelrc.json"];
+
+  it.each([...new Set([...tddFiles, ...redteamFiles])])("protects %s at any depth", (file) => {
+    expect(RUNNER_CONFIG.test(file)).toBe(true);
+    expect(RUNNER_CONFIG.test(`packages/x/${file}`)).toBe(true);
+    if (file !== "package.json") expect(isRunnerFile(`packages/x/${file}`)).toBe(true);
+  });
+
+  it("package.json is on the list but isRunnerFile leaves it to red-team's runner-key comparison", () => {
+    expect(RUNNER_CONFIG.test("package.json")).toBe(true);
+    expect(isRunnerFile("pkg/package.json")).toBe(false);
+  });
+
+  it("does not match ordinary source files", () => {
+    for (const file of ["src/index.ts", "src/vitest-helpers.ts", "docs/setup.md", "src/tsconfig/readme.md"]) {
+      expect(RUNNER_CONFIG.test(file)).toBe(false);
+    }
+  });
+
+  it("both modes use this one list: neither keeps a list of its own", () => {
+    const read = (file: string) => readFileSync(new URL(`../../packages/engine/src/modes/${file}`, import.meta.url), "utf8");
+    const executor = read("tdd/executor.ts");
+    const redteam = read("redteam.ts");
+    expect(executor).toMatch(/RUNNER_CONFIG[^;]*\} from "\.\/tamper\.js"/);
+    expect(redteam).toMatch(/isRunnerFile[^;]*from "\.\/tdd\/tamper\.js"/);
+    // No second regex over runner names in either mode.
+    for (const text of [executor, redteam]) expect(text).not.toMatch(/\/[^\n]*(?:vitest|pytest|conftest)[^\n]*\/i/);
+    // Red-team refuses a test path on the list because it consults the same function.
+    expect(testPathProblem("tests/conftest.py")).toBeDefined();
+  });
+});
 
 describe("isTestFile default patterns", () => {
   it.each([

@@ -17,6 +17,7 @@ import {
   ApprovalDeniedError,
   EXISTING_WORK_STRATEGY,
   getMode,
+  STAGE_DENIED_SUMMARY,
   type ControllerWorktrees,
   type ModeControllerInput,
   type ModeDefinition,
@@ -325,7 +326,7 @@ function createQuestions(sessionId: string, signal: AbortSignal, emit: (draft: E
 
 /** `manual`: every stage call waits for approval; a denial ends the stage `blocked` without running it. */
 function gateStages(stages: StageRunners, approve: ModeControllerInput["requestApproval"]): StageRunners {
-  const denied = { outcome: "blocked" as const, summary: "the user did not approve this stage" };
+  const denied = { outcome: "blocked" as const, summary: STAGE_DENIED_SUMMARY };
   return {
     ...stages,
     negotiate: async (input) =>

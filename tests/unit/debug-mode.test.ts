@@ -6,8 +6,10 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   expandSeatSpecs,
+  getMode,
   MockReviewer,
   parseAssentorConfig,
+  prepareModeSession,
   WorktreeManager,
   type EngineEventDraft,
   type Executor,
@@ -99,6 +101,8 @@ interface Setup {
   hypothesisExecutors: Array<ReturnType<typeof executor>>;
   fixExecutor: ReturnType<typeof executor>;
   run(over?: Partial<ModeControllerInput>, extras?: DebugExtras): Promise<ModeControllerResult>;
+  /** Runs through the session floor; `questions` is every approval the user was shown. */
+  runInSession(autonomy: "manual" | "supervised" | "autopilot", answer: "approve" | "deny", extras?: DebugExtras): Promise<{ result: { status: string; reason?: string }; questions: string[] }>;
   manager: WorktreeManager;
 }
 
@@ -159,6 +163,25 @@ async function setup(opts: {
     fixExecutor,
     manager,
     run: (over = {}, extras = {}) => createDebugController({ ...input, ...over }, { runCommand, ...extras }).run(),
+    runInSession: async (autonomy, answer, extras = {}) => {
+      const questions: string[] = [];
+      const session: ReturnType<typeof prepareModeSession> = prepareModeSession({
+        mode: { ...getMode("debug")!, createController: (i: ModeControllerInput) => createDebugController(i, { runCommand, ...extras }) },
+        sessionId: SESSION,
+        goal: input.goal,
+        autonomy,
+        config,
+        deps,
+        worktrees: manager,
+        emit: (e) => {
+          if (e.type !== "user.question") return;
+          const data = e.data as unknown as { questionId: string; question: string };
+          questions.push(data.question);
+          queueMicrotask(() => session.answer(data.questionId, answer));
+        },
+      });
+      return { result: await session.run(), questions };
+    },
   };
 }
 
@@ -293,29 +316,42 @@ describe("debug mode", () => {
     expect(await fs.readFile(path.join(s.repo, "bug.txt"), "utf8")).toBe("bad\n");
   });
 
-  it("supervised and manual fail fast without an approval channel, before any work", async () => {
-    for (const autonomy of ["supervised", "manual"] as const) {
-      const s = await setup({ hypothesis: winnerAt(0), fix: fixesBug });
-      const result = await s.run({ autonomy });
-      expect(result.status).toBe("blocked");
-      expect(result.reason).toContain("approval channel");
-      expect(s.hypothesisExecutors).toHaveLength(0);
-      expect((await s.manager.list(SESSION)).length).toBe(0);
-    }
+  it("manual fails fast, before any work", async () => {
+    const s = await setup({ hypothesis: winnerAt(0), fix: fixesBug });
+    const result = await s.run({ autonomy: "manual" });
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("manual autonomy");
+    expect(s.hypothesisExecutors).toHaveLength(0);
+    expect((await s.manager.list(SESSION)).length).toBe(0);
   });
 
-  it("with an approval channel: applies on yes, keeps the fix (marked failed) on no", async () => {
-    for (const [answer, status] of [[false, "blocked"], [true, "completed"]] as const) {
+  it("supervised: the session asks once before apply (the mode adds none); yes applies, no keeps the fix (marked failed)", async () => {
+    for (const [answer, status] of [["deny", "blocked"], ["approve", "completed"]] as const) {
       const s = await setup({ hypothesis: winnerAt(0), fix: fixesBug });
-      const approve = vi.fn(async (_summary: string) => answer);
-      const result = await s.run({ autonomy: "supervised" }, { approve });
+      const approve = vi.fn(async (_summary: string) => true);
+      const { result, questions } = await s.runInSession("supervised", answer, { approve });
       expect(result.status).toBe(status);
-      expect(approve).toHaveBeenCalledTimes(1);
-      if (!answer) await expectKeptFailed(s, result.reason);
+      expect(questions).toHaveLength(1);
+      expect(questions[0]).toContain("debug: fixed");
+      expect(approve).not.toHaveBeenCalled();
+      if (answer === "deny") {
+        expect(result.reason).toContain("not approved");
+        await expectKeptFailed(s, result.reason);
+        expect(await fs.readFile(path.join(s.repo, "bug.txt"), "utf8")).toBe("bad\n");
+      }
     }
   });
 
-  it("a danger-area fix needs approval even under autopilot; the blocked fix is kept", async () => {
+  it("autopilot asks nothing for an ordinary fix", async () => {
+    const s = await setup({ hypothesis: winnerAt(0), fix: fixesBug });
+    const approve = vi.fn(async (_summary: string) => true);
+    const { result, questions } = await s.runInSession("autopilot", "deny", { approve });
+    expect(result.status).toBe("completed");
+    expect(questions).toEqual([]);
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  it("a danger-area fix needs approval even under autopilot (asked once, by the mode); the blocked fix is kept", async () => {
     const dangerous = async (task: ExecutorTask) => {
       await fs.mkdir(path.join(task.projectPath, ".github/workflows"), { recursive: true });
       await fs.writeFile(path.join(task.projectPath, ".github/workflows/ci.yml"), "on: push\n");
@@ -330,6 +366,24 @@ describe("debug mode", () => {
     const s2 = await setup({ hypothesis: winnerAt(0), fix: dangerous });
     expect((await s2.run({}, { approve })).status).toBe("completed");
     expect(approve.mock.calls[0]![0]).toContain("[danger area");
+
+    // Through the session: the mode's question is the only one; a denial blocks and keeps the fix.
+    const s3 = await setup({ hypothesis: winnerAt(0), fix: dangerous });
+    const denied = vi.fn(async (_summary: string) => false);
+    const out = await s3.runInSession("autopilot", "approve", { approve: denied });
+    expect(out.result.status).toBe("blocked");
+    expect(denied).toHaveBeenCalledOnce();
+    expect(out.questions).toEqual([]);
+    await expectKeptFailed(s3, out.result.reason);
+
+    // Supervised: the session's question carries the danger text; the mode adds none.
+    const s4 = await setup({ hypothesis: winnerAt(0), fix: dangerous });
+    const extra = vi.fn(async (_summary: string) => true);
+    const sup = await s4.runInSession("supervised", "approve", { approve: extra });
+    expect(sup.result.status).toBe("completed");
+    expect(sup.questions).toHaveLength(1);
+    expect(sup.questions[0]).toContain("danger area");
+    expect(extra).not.toHaveBeenCalled();
   });
 
   it("uses the project's extra danger areas (modes.cascade.dangerAreas)", async () => {

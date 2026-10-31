@@ -5,7 +5,7 @@ import { expandSeatSpecs, StageSpecSchema, type Seat, type StageSpec } from "#as
 import type { EngineEventDraft } from "#assentor/protocol/events.js";
 import { DEFAULT_CAPABILITIES } from "./capabilities.js";
 import { classifyRisk, MAX_RISK_DIFF_CHARS, MAX_RISK_PATHS, RISK_UNSCANNED, type RiskAssessment } from "./danger.js";
-import type { ModeController, ModeControllerInput, ModeControllerResult } from "./registry.js";
+import { STAGE_DENIED_SUMMARY, type ModeController, type ModeControllerInput, type ModeControllerResult } from "./registry.js";
 import { costRank } from "./roster.js";
 
 /**
@@ -45,10 +45,11 @@ import { costRank } from "./roster.js";
  * by the seed capability costs (a seat the profiles do not know is not rank-checked).
  *
  * Autonomy: `autopilot` asks nothing. `supervised` asks before a danger start or
- * a danger escalation. `manual` asks before every tier starts. Until the
- * controller contract has an approval channel (T02B-02) the host passes
- * `extras.approve`; without it a step that needs approval ends the session
- * `blocked` (manual refuses before anything runs).
+ * a danger escalation. `manual` asks before every tier starts, but that is the
+ * session's per-stage gate (each tier is one stage), so cascade does not ask
+ * again; the `cascade.escalated` event carries the danger reason. The host
+ * passes `extras.approve` for the supervised asks; without it a step that needs
+ * approval ends the session `blocked`.
  */
 
 const DEFAULT_MAX_ROUNDS = 2;
@@ -238,9 +239,6 @@ async function runCascade(input: ModeControllerInput, extras: CascadeExtras): Pr
   const { sessionId, stages, signal, goal, config, autonomy } = input;
   const problems = cascadeProblems(config);
   if (problems.length > 0) throw new Error(problems.join("; "));
-  if (autonomy === "manual" && !extras.approve) {
-    return { status: "blocked", reason: "manual autonomy needs an approval channel for cascade mode; use supervised or autopilot" };
-  }
   const tiers = resolveTiers(config);
   const top = tiers.length - 1;
   const emit = (draft: EngineEventDraft) => {
@@ -376,9 +374,9 @@ async function runCascade(input: ModeControllerInput, extras: CascadeExtras): Pr
     for (;;) {
       checkAbort();
       const current = tiers[tier]!;
-      // manual asks before every tier; supervised only for a danger start or escalation; autopilot never.
-      if (autonomy === "manual" || (autonomy === "supervised" && pendingApproval)) {
-        const why = pendingApproval ?? `start tier ${tier + 1} of ${tiers.length}`;
+      // supervised asks for a danger start or escalation; manual is asked by the session's stage gate; autopilot never.
+      if (autonomy === "supervised" && pendingApproval) {
+        const why = pendingApproval;
         if (!(await ask(`cascade: ${why}. Run tier ${tier + 1} (${current.team})?`))) {
           throw new Stop({ status: "blocked", reason: `tier ${tier + 1} was not approved${extras.approve ? "" : " (no approval channel)"}: ${why}` });
         }
@@ -430,6 +428,10 @@ async function runCascade(input: ModeControllerInput, extras: CascadeExtras): Pr
         return { status: "completed", reason: `accepted at tier ${tier + 1} of ${tiers.length} (${current.team})${escalations > 0 ? ` after ${escalations} escalation(s)` : ""}` };
       }
 
+      // The session's per-stage gate (manual) was declined: end here, do not escalate into another question.
+      if (result.outcome === "blocked" && result.summary === STAGE_DENIED_SUMMARY) {
+        return { status: "blocked", reason: `tier ${tier + 1} was not approved` };
+      }
       // needs_work or blocked
       const trigger = result.outcome === "needs_work" ? "needs_work" : "blocked";
       if (tier === top) {

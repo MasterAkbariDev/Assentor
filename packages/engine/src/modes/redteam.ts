@@ -14,8 +14,8 @@ import { redactSecrets } from "../security/redact.js";
 import { runShellCommand } from "../process/run-shell.js";
 import type { SeatKey, WorktreeDiff } from "../worktrees/manager.js";
 import { classifyRisk } from "./danger.js";
-import type { ModeController, ModeControllerInput, ModeControllerResult } from "./registry.js";
-import { DEFAULT_TEST_PATTERNS, isTestFile, normalizePath } from "./tdd/tamper.js";
+import { ApprovalDeniedError, type ModeController, type ModeControllerInput, type ModeControllerResult } from "./registry.js";
+import { DEFAULT_TEST_PATTERNS, isRunnerFile, isTestFile, normalizePath } from "./tdd/tamper.js";
 
 /**
  * Red-team mode (T02B-14): rounds of attacker → builder fix → gates, until the
@@ -181,15 +181,6 @@ function parseAttackReport(result: ExecutorResult): z.infer<typeof AttackReportS
   return problems.length > 0 ? problems.join(" | ") : "empty reply";
 }
 
-/**
- * Files that change how the tests are found, built or run (runner hooks, setup,
- * config, build/package manifests). An attacker may not add them, and any
- * builder change to them is tampering. package.json is compared by its runner
- * keys instead (see `runnerTampering`).
- */
-const RUNNER_FILE =
-  /^(?:conftest\.py|pytest\.ini|tox\.ini|setup\.cfg|setup\.py|pyproject\.toml|go\.mod|cargo\.toml|makefile|gnumakefile|tsconfig[^/]*\.json|karma\.conf\..+|setuptests\..+|global-?setup\..+|.+\.setup\.[^.]+|(?:vitest|vite|jest|playwright|karma|mocha|ava|cypress|babel)\.(?:config|workspace|setup)(?:\..+)?|\.mocharc(?:\..+)?|\.babelrc(?:\..+)?)$/i;
-const isRunnerFile = (file: string) => RUNNER_FILE.test(path.posix.basename(normalizePath(file)));
 /** package.json keys that configure a test runner; a builder may not change them. */
 const RUNNER_PACKAGE_KEYS = ["scripts", "jest", "vitest", "mocha", "ava"] as const;
 /**
@@ -325,10 +316,10 @@ export interface RedteamExtras {
   /** Gate command runner (tests); default runs the shell. */
   runCommand?: RunVerificationCommand;
   /**
-   * Asks the user before the passed work is applied to main. Without it only
-   * `autopilot` applies, and only a change the danger classifier rates normal;
-   * otherwise the session ends `blocked` with the branch kept. `manual` does not
-   * start at all (the controller contract has no approval channel yet, T02B-02).
+   * Asks the user before a danger-area change is applied under `autopilot` (the
+   * session asks under supervised, in `applyTo("main")`, so this is never asked
+   * twice). Without it that change ends `blocked` with the branch kept. `manual`
+   * does not start.
    */
   approve?: (summary: string) => Promise<boolean>;
 }
@@ -351,7 +342,7 @@ async function runRedteam(input: ModeControllerInput, extras: RedteamExtras): Pr
   const settings = cfg.value;
   if (!manager) throw new Error("red-team mode needs a worktree manager from the host");
   if (input.autonomy === "manual") {
-    return { status: "blocked", reason: "manual autonomy needs an approval channel for red-team mode; use supervised or autopilot" };
+    return { status: "blocked", reason: "manual autonomy is not supported for red-team mode; use supervised or autopilot" };
   }
 
   const emit = (draft: EngineEventDraft) => {
@@ -682,7 +673,8 @@ async function runRedteam(input: ModeControllerInput, extras: RedteamExtras): Pr
       verified.length > 0 ? `: ${verified.join("; ")}` : "",
       unverified.size > 0 ? `; unverified (exploit text only): ${[...unverified].join("; ")}` : "",
     ].join("");
-    if (input.autonomy !== "autopilot" || danger) {
+    // The session asks before applyTo("main") under supervised (and shows this message); only autopilot, which it does not gate, asks here.
+    if (input.autonomy === "autopilot" && danger) {
       if (!extras.approve) throw new Stop({ status: "blocked", reason: `review passed${danger}; approval needed to apply the builder's work (kept in ${root})` });
       if (!(await guard(extras.approve(`${summary}${danger}`)))) throw new Stop({ status: "blocked", reason: "apply was not approved; the builder's work is kept" });
       await unchangedSinceReview("while waiting for approval");
@@ -690,8 +682,10 @@ async function runRedteam(input: ModeControllerInput, extras: RedteamExtras): Pr
     checkAbort();
     let result: Awaited<ReturnType<typeof manager.applyTo>>;
     try {
-      result = await manager.applyTo("main", key, { strategy: "squash", message: summary.slice(0, 200), allowedPaths: diff.files });
+      // The danger text leads, so the session's apply question still shows it after the cut.
+      result = await manager.applyTo("main", key, { strategy: "squash", message: `${danger.trim()} ${summary}`.trim().slice(0, 200), allowedPaths: diff.files });
     } catch (error) {
+      if (error instanceof ApprovalDeniedError) throw new Stop({ status: "blocked", reason: "apply was not approved; the builder's work is kept" });
       throw new Stop({ status: "blocked", reason: `could not apply to main: ${error instanceof Error ? error.message : String(error)}` });
     }
     if (!result.ok) throw new Stop({ status: "blocked", reason: `could not apply to main: ${result.message}` });

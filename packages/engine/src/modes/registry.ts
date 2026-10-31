@@ -125,6 +125,9 @@ export class ApprovalDeniedError extends Error {
   override name = "ApprovalDeniedError";
 }
 
+/** The stage result the session returns when the user declines a stage (`manual`); a mode that escalates on `blocked` must not treat it as a failure. */
+export const STAGE_DENIED_SUMMARY = "the user did not approve this stage";
+
 /** What a controller may do with worktrees. `applyTo("main")` passes the session's approval floor. */
 export type ControllerWorktrees = Pick<WorktreeManager, "create" | "diff" | "list" | "applyTo" | "discard" | "markFailed" | "cleanup" | "readAtBase">;
 

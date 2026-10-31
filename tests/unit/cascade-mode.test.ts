@@ -106,6 +106,10 @@ interface RunOptions {
   cfg?: typeof config;
   extras?: CascadeExtras;
   signal?: AbortSignal;
+  /** What the user says to the session's own approval questions (default: approve). */
+  sessionAnswer?: "approve" | "deny" | "abort";
+  /** Called instead of answering when `sessionAnswer` is "abort". */
+  abort?: () => void;
   /** Use this directory and the real git reader (no `readChanges` stub). */
   projectPath?: string;
 }
@@ -130,14 +134,17 @@ async function run(script: Script, options: RunOptions = {}) {
       s.events.push(e);
       if (e.type === "user.question") {
         const { questionId } = e.data as unknown as { questionId: string };
-        queueMicrotask(() => session!.answer(questionId, "approve"));
+        if (options.sessionAnswer === "abort") queueMicrotask(() => options.abort?.());
+        else queueMicrotask(() => session!.answer(questionId, options.sessionAnswer ?? "approve"));
       }
     },
     ...(options.signal ? { signal: options.signal } : {}),
   });
   const result = await session.run();
   const escalated = s.events.filter((e) => e.type === "cascade.escalated").map((e) => e.data as Record<string, unknown>);
-  return { ...s, result, escalated };
+  /** Every approval question the user was shown, from the session's gate or from cascade. */
+  const questions = s.events.filter((e) => e.type === "user.question").map((e) => (e.data as { question: string }).question);
+  return { ...s, result, escalated, questions };
 }
 
 describe("cascadeProblems", () => {
@@ -391,26 +398,54 @@ describe("danger", () => {
 });
 
 describe("autonomy, cancel and budget", () => {
-  it("manual refuses to start without an approval channel", async () => {
-    const { result, prompts } = await run({}, { autonomy: "manual" });
-    expect(result.status).toBe("blocked");
-    expect(result.reason).toContain("approval channel");
-    expect(prompts).toEqual([]);
-  });
-
-  it("manual asks before every tier", async () => {
+  it("manual asks once per tier, and the session owns that question", async () => {
     const asked: string[] = [];
-    const { result, prompts } = await run({ review: { r1: needsWork(2) } }, { autonomy: "manual", extras: { approve: async (s) => (asked.push(s), true) } });
+    const { result, prompts, questions } = await run({ review: { r1: needsWork(2) } }, { autonomy: "manual", extras: { approve: async (s) => (asked.push(s), true) } });
     expect(result.status).toBe("completed");
-    expect(asked).toHaveLength(2);
     expect(prompts.at(-1)?.team).toBe("mid");
+    expect(questions).toHaveLength(2); // tier 1, tier 2: one question each
+    expect(questions.every((q) => q.startsWith('Start stage "cascade-t'))).toBe(true);
+    expect(asked).toEqual([]); // cascade adds none under manual
   });
 
-  it("an abort while waiting for approval settles as cancelled", async () => {
+  it("manual without a cascade approval channel still asks, and a denial blocks before any tier runs", async () => {
+    const approved = await run({}, { autonomy: "manual" });
+    expect(approved.result.status).toBe("completed");
+    expect(approved.questions).toHaveLength(1);
+    const denied = await run({}, { autonomy: "manual", sessionAnswer: "deny" });
+    expect(denied.questions).toHaveLength(1);
+    expect(denied.prompts).toEqual([]);
+    expect(denied.result).toMatchObject({ status: "blocked" });
+    expect(denied.result.reason).toContain("not approved");
+  });
+
+  it("a manual danger start is asked once (the tier), not twice", async () => {
+    const asked: string[] = [];
+    const { result, questions, prompts } = await run({}, { autonomy: "manual", goal: "Use the credentials from the secrets vault to rotate the signing key", extras: { approve: async (s) => (asked.push(s), true) } });
+    expect(result.status).toBe("completed");
+    expect(prompts.map((p) => p.team)).toEqual(["top"]);
+    expect(questions).toHaveLength(1);
+    expect(asked).toEqual([]);
+  });
+
+  it("supervised: a danger start is asked exactly once, by cascade; ordinary tiers are not asked", async () => {
+    const asked: string[] = [];
+    const danger = await run({}, { autonomy: "supervised", goal: "Use the credentials from the secrets vault to rotate the signing key", extras: { approve: async (s) => (asked.push(s), true) } });
+    expect(danger.questions).toEqual([]); // the session asks nothing under supervised for stages
+    expect(asked).toHaveLength(1);
+    const plain = await run({ review: { r1: needsWork(2) } }, { autonomy: "supervised", extras: { approve: async (s) => (asked.push(s), true) } });
+    expect(plain.questions).toEqual([]);
+    expect(asked).toHaveLength(1);
+  });
+
+  it("an abort while waiting for the tier approval settles as cancelled", async () => {
     const ctl = new AbortController();
-    const { result, prompts } = await run({}, { autonomy: "manual", signal: ctl.signal, extras: { approve: () => { queueMicrotask(() => ctl.abort()); return new Promise<boolean>(() => undefined); } } });
+    const asked: string[] = [];
+    const { result, prompts, questions } = await run({}, { autonomy: "manual", signal: ctl.signal, sessionAnswer: "abort", abort: () => ctl.abort(), extras: { approve: async (s) => (asked.push(s), true) } });
+    expect(questions).toHaveLength(1);
     expect(result).toMatchObject({ status: "cancelled", reason: "cancelled" });
     expect(prompts).toEqual([]);
+    expect(asked).toEqual([]);
   });
 
   it("a budget stop ends the session and never escalates", async () => {
