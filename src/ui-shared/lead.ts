@@ -8,8 +8,10 @@ import type { EngineEvent } from "../protocol/events.js";
  * UI shows it as text and never as terminal control codes.
  */
 
-/** Lead actions kept in the log view. */
+/** Lead actions kept in the terminal log view. */
 export const LEAD_LOG_LIMIT = 5;
+/** Lead actions kept in the web log view. Older ones are dropped; `actionsTotal` still counts them. */
+export const LEAD_ACTION_LIMIT = 500;
 /** Longest plain text kept for a title, owner, action or reason. */
 const TEXT_LIMIT = 500;
 
@@ -34,12 +36,35 @@ export type LeadTaskState =
   | "integrated"
   | "split";
 
+/** The web board's columns (T04-17), one per stage a task can sit in. */
+export const LEAD_STAGES = ["backlog", "assigned", "in_progress", "in_review", "accepted", "rejected"] as const;
+export type LeadStage = (typeof LEAD_STAGES)[number];
+
+export const LEAD_STAGE_LABELS: Record<LeadStage, string> = {
+  backlog: "Backlog",
+  assigned: "Assigned",
+  in_progress: "In progress",
+  in_review: "In review",
+  accepted: "Accepted",
+  rejected: "Rejected",
+};
+
 export interface LeadTaskView {
   id: string;
   title: string;
   state: LeadTaskState;
   /** Display name of the seat that owns the task, else the seat id. Empty before assignment. */
   owner: string;
+  /** Controller id of the owner seat (e.g. "seat-1"), empty before assignment. A key for the drawer; never rendered. */
+  seatId: string;
+  /**
+   * Times the task was given out again: assigned after a rejection, or moved to a different seat
+   * (the same rule as board.ts reassignCount). A same-seat restart of a task that was not rejected
+   * is not counted, because `task.assigned` does not say which controller op ran.
+   */
+  reassigns: number;
+  /** `task.escalated` events seen for the task. */
+  escalations: number;
 }
 
 export interface LeadLogEntry {
@@ -57,10 +82,14 @@ export interface LeadBoardView {
   seatNames: Record<string, string>;
   /** The last `LEAD_LOG_LIMIT` lead actions, oldest first. */
   log: LeadLogEntry[];
+  /** The last `LEAD_ACTION_LIMIT` lead actions, oldest first (the web log; `log` is the terminal's short view). */
+  actions: LeadLogEntry[];
+  /** Every lead action seen in this run, including those dropped from `actions`. */
+  actionsTotal: number;
 }
 
 export function emptyLeadBoardView(): LeadBoardView {
-  return { turn: 0, tasks: [], seatNames: {}, log: [] };
+  return { turn: 0, tasks: [], seatNames: {}, log: [], actions: [], actionsTotal: 0 };
 }
 
 /** The column a task state sits in. `split` parents have none. */
@@ -80,6 +109,37 @@ export function leadColumnOf(state: LeadTaskState): LeadColumn | undefined {
     case "split":
       return undefined;
   }
+}
+
+/** The web board's stage of a task state. `split` parents have none. */
+export function leadStageOf(state: LeadTaskState): LeadStage | undefined {
+  switch (state) {
+    case "backlog":
+      return "backlog";
+    case "assigned":
+      return "assigned";
+    case "in_progress":
+      return "in_progress";
+    case "in_review":
+      return "in_review";
+    case "accepted":
+    case "integrated":
+      return "accepted";
+    case "rejected":
+      return "rejected";
+    case "split":
+      return undefined;
+  }
+}
+
+/** Tasks per web stage, in board order. */
+export function leadStages(view: LeadBoardView): Record<LeadStage, LeadTaskView[]> {
+  const stages: Record<LeadStage, LeadTaskView[]> = { backlog: [], assigned: [], in_progress: [], in_review: [], accepted: [], rejected: [] };
+  for (const task of view.tasks) {
+    const stage = leadStageOf(task.state);
+    if (stage) stages[stage].push(task);
+  }
+  return stages;
 }
 
 /** Tasks per column, in board order. */
@@ -118,7 +178,12 @@ export function reduceLeadEvents(view: LeadBoardView, event: EngineEvent): LeadB
         accepted: event.data.accepted,
         reason: plainText(event.data.reason),
       };
-      return { ...view, log: [...view.log, entry].slice(-LEAD_LOG_LIMIT) };
+      return {
+        ...view,
+        log: [...view.log, entry].slice(-LEAD_LOG_LIMIT),
+        actions: [...view.actions, entry].slice(-LEAD_ACTION_LIMIT),
+        actionsTotal: view.actionsTotal + 1,
+      };
     }
 
     case "seat.spawned":
@@ -132,14 +197,26 @@ export function reduceLeadEvents(view: LeadBoardView, event: EngineEvent): LeadB
       const title = plainText(data.title);
       const withParent = typeof data.parentId === "string" ? updateTask(view, data.parentId, { state: "split" }) : view;
       if (findTask(withParent, id)) return updateTask(withParent, id, { title });
-      return { ...withParent, tasks: [...withParent.tasks, { id, title, state: "backlog", owner: "" }] };
+      return { ...withParent, tasks: [...withParent.tasks, { id, title, state: "backlog", owner: "", seatId: "", reassigns: 0, escalations: 0 }] };
     }
 
-    case "task.assigned":
-      return updateTask(view, event.data.taskId, {
+    case "task.assigned": {
+      const task = findTask(view, plainText(event.data.taskId));
+      if (!task) return view;
+      const seatId = event.data.seatId;
+      return updateTask(view, task.id, {
         state: "assigned",
-        owner: (Object.hasOwn(view.seatNames, event.data.seatId) && view.seatNames[event.data.seatId]) || plainText(event.data.seatId),
+        owner: (Object.hasOwn(view.seatNames, seatId) && view.seatNames[seatId]) || plainText(seatId),
+        seatId,
+        // A reassign: a rejected task given out again, or a task that moves to another seat.
+        reassigns: task.state === "rejected" || (task.seatId !== "" && task.seatId !== seatId) ? task.reassigns + 1 : task.reassigns,
       });
+    }
+
+    case "task.escalated": {
+      const task = findTask(view, plainText(event.data.taskId));
+      return task ? updateTask(view, task.id, { escalations: task.escalations + 1 }) : view;
+    }
 
     case "task.status": {
       const state = taskStateOf(event.data.status);

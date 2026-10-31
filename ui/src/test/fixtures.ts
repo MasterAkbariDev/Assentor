@@ -1,4 +1,4 @@
-import type { EngineEvent } from "@engine/protocol/events.js";
+import { parseEngineEvent, type EngineEvent } from "@engine/protocol/events.js";
 
 /**
  * A realistic event stream for one run (executor + two reviewers + panel),
@@ -91,6 +91,59 @@ function negotiationStream(sessionId: string): EngineEvent[] {
 }
 
 export const negotiationFixture = { id: NEGOTIATION_ID, events: negotiationStream(NEGOTIATION_ID) };
+const LEAD_SESSION_ID = "1c2d3e4f-5a6b-4c7d-8e9f-a0b1c2d3e4f5";
+
+/**
+ * A lead-mode run: six tasks, two seats, one refused action, one rejected task that stays
+ * rejected, and one reassigned, escalated task. Validated against the event schema as it is built.
+ */
+function leadStream(sessionId: string): EngineEvent[] {
+  let seq = 0;
+  const at = (s: number) => new Date(Date.UTC(2026, 9, 30, 9, 0, s)).toISOString();
+  const e = (type: string, data: object, seatId?: string): EngineEvent =>
+    parseEngineEvent({ seq: ++seq, sessionId, ...(seatId ? { seatId } : {}), type, data, at: at(seq) });
+  const spawn = (seatId: string, displayName: string, model: string) =>
+    e("seat.spawned", { displayName, provider: "claude-code", transport: "cli", model, role: "engineer", permissions: "edit" }, seatId);
+  const task = (taskId: string, title: string) => e("task.created", { taskId, title, replaced: false });
+
+  return [
+    e("mode.selected", { mode: "lead", kind: "dynamic", autonomy: "supervised" }),
+    e("session.created", { title: "Login feature" }),
+    spawn("seat-1", "Opus#1", "opus"),
+    spawn("seat-2", "Sonnet#2", "sonnet"),
+    e("session.state", { to: "EXECUTING" }),
+    e("lead.turn", { turn: 1 }),
+    task("T1", "Login form"),
+    task("T2", "Login API"),
+    task("T3", "Session docs"),
+    task("T4", "Refactor auth"),
+    task("T5", "Token refresh"),
+    task("T6", "Release notes"),
+    e("lead.action", { action: "plan_tasks", accepted: true, reason: "6 task(s) planned" }),
+    e("task.assigned", { taskId: "T1", seatId: "seat-1" }),
+    e("task.status", { taskId: "T1", status: "in_progress" }),
+    e("seat.status", { status: "writing" }, "seat-1"),
+    e("task.assigned", { taskId: "T2", seatId: "seat-2" }),
+    e("task.status", { taskId: "T2", status: "in_progress" }),
+    e("task.status", { taskId: "T2", status: "in_review" }),
+    e("task.assigned", { taskId: "T3", seatId: "seat-2" }),
+    e("task.status", { taskId: "T3", status: "in_progress" }),
+    e("task.accepted", { taskId: "T3" }),
+    e("task.assigned", { taskId: "T4", seatId: "seat-1" }),
+    e("task.status", { taskId: "T4", status: "in_progress" }),
+    e("task.rejected", { taskId: "T4", reason: "tests are missing" }),
+    e("lead.action", { action: "reject", accepted: true, reason: "T4 rejected" }),
+    e("task.assigned", { taskId: "T5", seatId: "seat-1" }),
+    e("task.status", { taskId: "T5", status: "in_progress" }),
+    e("task.rejected", { taskId: "T5", reason: "edge case untested" }),
+    e("lead.action", { action: "assign", accepted: false, reason: "seat-1 is busy with another task" }),
+    e("task.escalated", { taskId: "T5", from: "claude-code/opus", to: "claude-code/sonnet" }),
+    e("task.assigned", { taskId: "T5", seatId: "seat-2" }),
+    e("lead.action", { action: "escalate", accepted: true, reason: "T5 escalated to seat-2" }),
+  ];
+}
+
+export const leadFixture = { id: LEAD_SESSION_ID, events: leadStream(LEAD_SESSION_ID) };
 
 /** `seats` × `perSeat` output deltas, for throughput tests. */
 export function burstFixture(seats: number, perSeat: number): { id: string; events: EngineEvent[] } {

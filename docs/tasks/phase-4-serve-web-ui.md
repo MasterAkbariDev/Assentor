@@ -274,3 +274,5 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 5. Clicking a card opens that task's reports and the owner's Seat drawer.
 
 **Tests** — columns from fixture stream; refused-actions filter; approve requires confirm; override sends RPC.
+
+**Status: preview cut T04-17p** (watch-only, branch `claude/card-t04-17p`). Points 1, 2, 3 and the seat-drawer part of 5 are in `ui/src/features/lead-board/` (`LeadBoard`, `LeadOrgChart`, `LeadLog`), shown for a run whose `mode.selected` is `lead`. Shared reducer (`src/ui-shared/lead.ts`) extended, not forked: six web stages (`leadStages`: Backlog, Assigned, In progress, In review, Accepted, Rejected), owner seat id, reassign and escalation counters, and `actions` (every lead action; `log` stays the terminal's last five). The refused-only switch is a native checkbox with `role="switch"`. Not in this cut: point 4 (approve, override, pin, pause/resume; the server has no write RPCs) and the task's reports in point 5.

@@ -366,3 +366,81 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .dissent { color: var(--warn); overflow-wrap: anywhere; }
 .dissent-flag { font-weight: 700; }
 .negotiation-gaps { margin: 12px 0 0; color: var(--muted); font-size: 12px; }
+/* Lead team board (T04-17, watch-only): stage columns, org chart, lead log. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.lead-board { display: grid; gap: 18px; margin-bottom: 18px; }
+.lead-title { font-size: 12px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); margin: 0; }
+.lead-turn { font-variant-numeric: tabular-nums; }
+.lead-stages { display: grid; gap: 10px; grid-template-columns: repeat(6, minmax(0, 1fr)); }
+@media (max-width: 1100px) {
+  .lead-stages { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .lead-stages { grid-template-columns: minmax(0, 1fr); }
+}
+.lead-stage { min-width: 0; }
+.lead-stage-title {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.lead-stage-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+.lead-stage-empty { margin: 0; font-size: 12px; color: var(--muted); }
+.lead-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.lead-task {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+button.lead-task-open { cursor: pointer; }
+button.lead-task-open:hover { border-color: var(--accent); }
+button.lead-task-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lead-task-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
+.lead-task-title { font-weight: 500; }
+.lead-task-owner { font-size: 12px; color: var(--muted); }
+.lead-task-counters { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.lead-panels { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); }
+@media (max-width: 800px) {
+  .lead-panels { grid-template-columns: minmax(0, 1fr); }
+}
+.lead-panel-title { margin: 0 0 8px; font-size: 13px; font-weight: 500; }
+.lead-log-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.lead-log-head .lead-panel-title { margin: 0; }
+.lead-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.lead-switch input { accent-color: var(--accent); }
+.lead-entries { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 13px; }
+.lead-entry { display: grid; grid-template-columns: 1.2em minmax(0, auto) 1fr; gap: 4px; align-items: baseline; overflow-wrap: anywhere; }
+.lead-entry-mark { color: var(--ok); text-align: center; }
+.lead-entry.is-refused .lead-entry-mark, .lead-entry.is-refused .lead-entry-action { color: var(--error); }
+.lead-entry-action { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.lead-entry-reason { color: var(--muted); }
+
+.org-tree, .org-children { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.org-children { margin-left: 18px; padding-left: 12px; border-left: 1px solid var(--border); display: grid; gap: 6px; margin-top: 6px; }
+.org-label { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px; }
+.org-status { display: inline-block; width: 1.2em; text-align: center; }
+.org-meta { color: var(--muted); font-size: 12px; }
+.org-node.tone-ok > .org-label { color: var(--ok); }
+.org-node.tone-error > .org-label { color: var(--error); }
+.org-node.tone-warn > .org-label { color: var(--warn); }
+.org-node.tone-active > .org-label, .org-node.tone-info > .org-label { color: var(--active); }

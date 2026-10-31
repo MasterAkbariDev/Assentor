@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EngineEvent } from "@engine/protocol/events.js";
 import { burstFixture, sessionFixture } from "../test/fixtures.js";
+import { emptyLeadBoardView } from "@engine/ui-shared/lead.js";
 import { ACTIVITY_EVENT_TYPES, createEngineStore, createFrameBatcher } from "./engineStore.js";
 
 describe("engine store", () => {
@@ -40,6 +41,7 @@ describe("engine store", () => {
       seatInfo: {},
       seatEvents: {},
       negotiationEvents: [],
+      lead: emptyLeadBoardView(),
       lastSeq: 0,
       eventCount: 0,
     });
