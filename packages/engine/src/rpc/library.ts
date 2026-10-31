@@ -154,7 +154,7 @@ function relativeFile(root: string, file: string): string {
  * Hides absolute paths in a message: each known root becomes its label, and
  * any other absolute path becomes `<path>`.
  */
-function scrubMessage(message: string, roots: Array<[string, string]>): string {
+export function scrubMessage(message: string, roots: Array<[string, string]>): string {
   let out = message;
   for (const [root, label] of roots) {
     out = out.split(root).join(label);

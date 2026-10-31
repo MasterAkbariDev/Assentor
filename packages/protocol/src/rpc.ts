@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { SEAT_PROVIDERS } from "./seats.js";
+import { AUTONOMY_LEVELS } from "./events.js";
+import { SEAT_PROVIDERS, STAGE_KINDS, TeamSchema } from "./seats.js";
 import type { EngineEvent } from "./events.js";
 
 /**
@@ -11,8 +12,9 @@ import type { EngineEvent } from "./events.js";
  *
  * Every method declares `access`. `read` methods never start, change or
  * delete anything; any other method is a write and a connection refuses it
- * (`WriteNotAllowed`) unless its transport grants writes. There are no write
- * methods yet.
+ * (`WriteNotAllowed`) unless its transport grants writes. Write methods:
+ * `prompt.save/fork`, `team.save/delete`, `settings.save`, and the ones that
+ * start a process (`env.doctor`, `env.detectClis`, `models.discover`).
  */
 
 export const RPC_PROTOCOL_VERSION = 1;
@@ -113,6 +115,63 @@ const TeamSeatSchema = z.object({
   permissions: z.enum(["read-only", "edit"]),
 });
 
+const PromptSourceSchema = z.enum(["builtin", "user", "project"]);
+/** Where a client may write: never `builtin`. */
+const WritableScopeSchema = z.enum(["user", "project"]);
+/** Kebab-case id (prompt ids, team names). Rejects `/`, `.`, `_` and everything else a path needs. */
+const KebabIdSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "must be a kebab-case id");
+const ValidationSchema = z.object({ ok: z.boolean(), problems: z.array(z.string()) });
+
+const PlaybookSummarySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  description: z.string(),
+  readOnly: z.boolean(),
+  source: PromptSourceSchema,
+  overridden: z.boolean(),
+});
+
+const KeySummarySchema = z.object({ id: z.string(), provider: z.string(), name: z.string(), healthy: z.boolean() });
+
+/** The non-secret settings `settings.get` returns and `settings.save` can change (each key optional on save). */
+const SettingsShape = {
+  executor: z.object({ provider: z.string().min(1).max(40), model: z.string().min(1).max(128).optional() }).strict(),
+  run: z.object({ autonomy: z.enum(AUTONOMY_LEVELS) }).strict(),
+  routing: z
+    .object({
+      strategy: z.enum(["FREE_FIRST", "CHEAPEST", "BALANCED", "BEST", "CUSTOM"]),
+      reviewStrategy: z.enum(["SINGLE", "ADAPTIVE", "PANEL", "FULL"]),
+    })
+    .strict(),
+  limits: z
+    .object({
+      maxRounds: z.number().int().positive(),
+      maxMessages: z.number().int().positive(),
+      maxRuntimeMinutes: z.number().int().positive(),
+      maxToolCalls: z.number().int().positive(),
+    })
+    .strict(),
+  git: z.object({ checkpoints: z.boolean(), autoCommit: z.boolean() }).strict(),
+  artifacts: z
+    .object({ diff: z.boolean(), tests: z.boolean(), logs: z.boolean(), screenshots: z.boolean() })
+    .strict(),
+};
+const SettingsSchema = z.object(SettingsShape).strict();
+const SettingsPatchSchema = z
+  .object({
+    executor: SettingsShape.executor.partial().strict().optional(),
+    run: SettingsShape.run.optional(),
+    routing: SettingsShape.routing.partial().strict().optional(),
+    limits: SettingsShape.limits.partial().strict().optional(),
+    git: SettingsShape.git.partial().strict().optional(),
+    artifacts: SettingsShape.artifacts.partial().strict().optional(),
+  })
+  .strict();
+
 export type RpcAccess = "read" | "write";
 
 /** One registry entry: access level, params schema, result schema. */
@@ -201,6 +260,162 @@ export const RpcMethods = {
           source: z.enum(["seed", "discovered", "user"]),
         }),
       ),
+    }),
+  },
+  // Writes and process starts (src/rpc/handlers/*). Refused on connections without write access.
+  "prompt.save": {
+    access: "write",
+    params: z
+      .object({
+        scope: WritableScopeSchema,
+        /** Complete front-matter including `id` (kebab-case; the file is `<id>.md` in the scope). */
+        frontMatter: z.record(z.unknown()),
+        body: z.string().max(256 * 1024),
+      })
+      .strict(),
+    result: z.object({ id: z.string(), scope: WritableScopeSchema }),
+  },
+  "prompt.fork": {
+    access: "write",
+    params: z
+      .object({
+        id: KebabIdSchema,
+        scope: WritableScopeSchema,
+        /** Default: the same id, which overrides the original in `scope`. */
+        newId: KebabIdSchema.optional(),
+      })
+      .strict(),
+    result: z.object({ id: z.string(), scope: WritableScopeSchema }),
+  },
+  "prompt.preview": {
+    access: "read",
+    params: z
+      .object({
+        id: KebabIdSchema,
+        variables: z.record(z.unknown()).default({}),
+        /** Render this text instead of the saved body (an unsaved edit). */
+        body: z.string().max(256 * 1024).optional(),
+      })
+      .strict(),
+    result: z.object({
+      ok: z.boolean(),
+      text: z.string().optional(),
+      /** Variables the template needs that were not given. */
+      missing: z.array(z.string()),
+      message: z.string().optional(),
+    }),
+  },
+  "prompt.validate": {
+    access: "read",
+    params: z
+      .object({ frontMatter: z.record(z.unknown()), body: z.string().max(256 * 1024) })
+      .strict(),
+    result: ValidationSchema.extend({
+      /** Variables the body reads. */
+      variables: z.array(z.string()),
+      /** Used in the body but not declared in front-matter `variables`. */
+      undeclared: z.array(z.string()),
+    }),
+  },
+  "team.save": {
+    access: "write",
+    params: z.object({ name: KebabIdSchema, team: TeamSchema }).strict(),
+    result: z.object({ name: z.string() }),
+  },
+  "team.delete": {
+    access: "write",
+    params: z.object({ name: KebabIdSchema }).strict(),
+    result: z.object({ name: z.string() }),
+  },
+  "team.validate": {
+    access: "read",
+    params: z.object({ team: z.unknown() }).strict(),
+    result: ValidationSchema,
+  },
+  "playbook.list": {
+    access: "read",
+    params: z.object({}).strict().optional(),
+    result: z.object({
+      playbooks: z.array(PlaybookSummarySchema),
+      errors: z.array(PromptLoadErrorSchema),
+    }),
+  },
+  "playbook.get": {
+    access: "read",
+    params: z.object({ id: z.string().min(1).max(100) }).strict(),
+    result: PlaybookSummarySchema.extend({
+      teams: z.record(
+        z.object({
+          description: z.string(),
+          seats: z.array(
+            z.object({
+              provider: z.string(),
+              model: z.string(),
+              role: z.string(),
+              count: z.number(),
+              permissions: z.enum(["read-only", "edit"]),
+            }),
+          ),
+        }),
+      ),
+      stages: z.array(
+        z.object({
+          id: z.string(),
+          kind: z.enum(STAGE_KINDS),
+          team: z.string().optional(),
+          strategy: z.string().optional(),
+          options: z.record(z.unknown()),
+          requireApproval: z.boolean(),
+          next: z.string().optional(),
+          onNeedsWork: z.string().optional(),
+        }),
+      ),
+    }),
+  },
+  "settings.get": {
+    access: "read",
+    params: z.object({}).strict().optional(),
+    result: z.object({
+      /** The effective (user + project) values. */
+      settings: SettingsSchema,
+      /** Secrets never appear: no key value, mask or ciphertext. */
+      keys: z.array(KeySummarySchema),
+    }),
+  },
+  "settings.save": {
+    access: "write",
+    /** Written to the user config (`~/.assentor/config.yaml`); only the given fields change. */
+    params: z.object({ settings: SettingsPatchSchema }).strict(),
+    result: z.object({ settings: SettingsSchema }),
+  },
+  "env.doctor": {
+    access: "write",
+    params: z.object({}).strict().optional(),
+    result: z.object({ items: z.array(z.object({ name: z.string(), ok: z.boolean(), detail: z.string() })) }),
+  },
+  "env.detectClis": {
+    access: "write",
+    params: z.object({}).strict().optional(),
+    result: z.object({
+      clis: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          installed: z.boolean(),
+          available: z.boolean(),
+          version: z.string().optional(),
+          authenticated: z.boolean().optional(),
+          error: z.string().optional(),
+        }),
+      ),
+    }),
+  },
+  "models.discover": {
+    access: "write",
+    params: z.object({ provider: z.enum(SEAT_PROVIDERS) }).strict(),
+    result: z.object({
+      entries: z.array(z.object({ id: z.string(), label: z.string(), source: z.enum(["seed", "discovered", "user"]) })),
+      error: z.string().optional(),
     }),
   },
 } as const satisfies Record<string, RpcMethodDef>;

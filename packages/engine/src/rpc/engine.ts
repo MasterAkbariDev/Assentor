@@ -1,6 +1,7 @@
 import path from "node:path";
 import { RPC_PROTOCOL_VERSION, type SessionSummary } from "#assentor/protocol/rpc.js";
 import { getLocalVersionSync } from "../self/version.js";
+import { registerHandlerMethods } from "./handlers/index.js";
 import { registerLibraryMethods } from "./library.js";
 import { RpcServer } from "./server.js";
 import {
@@ -24,7 +25,9 @@ export interface EngineRpcOptions {
 /**
  * The engine's RPC server with every read-only method registered: the
  * handshake, `sessions.list`, `events.subscribe` / `events.unsubscribe`, and
- * the prompt, team and model-catalog reads from `library.ts`.
+ * the prompt, team and model-catalog reads from `library.ts`, and the
+ * prompt / team / playbook / settings / env methods from `handlers/` (the
+ * writes among them need a connection with write access).
  */
 export function createEngineRpcServer(options: EngineRpcOptions): RpcServer {
   const projectPath = path.resolve(options.projectPath);
@@ -64,5 +67,6 @@ export function createEngineRpcServer(options: EngineRpcOptions): RpcServer {
   });
 
   registerLibraryMethods(server, { projectPath });
+  registerHandlerMethods(server, { projectPath });
   return server;
 }

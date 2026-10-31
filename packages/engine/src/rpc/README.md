@@ -1,6 +1,6 @@
 # Engine RPC (`packages/engine/src/rpc/`)
 
-JSON-RPC 2.0 between the engine and its clients (CLI/TUI in process, the Tauri sidecar over stdio, the web UI over `assentor serve`). Every method is `read` today; the plumbing for `write` methods exists (see **Write access**).
+JSON-RPC 2.0 between the engine and its clients (CLI/TUI in process, the Tauri sidecar over stdio, the web UI over `assentor serve`). Reads, plus the `write` methods listed under **Handlers** (see **Write access**).
 
 | File | What it is |
 |---|---|
@@ -8,6 +8,7 @@ JSON-RPC 2.0 between the engine and its clients (CLI/TUI in process, the Tauri s
 | `packages/protocol/src/rpc-client.ts` (`#assentor/protocol/rpc-client.js`) | `RpcClient` — typed `call` (method, params and result from the contract), notifications, `subscribeEvents`, `onClose`. Browser-safe; **the web UI imports this**. |
 | `server.ts` | `RpcServer` (method registry, `register` / `registerAll`) and `RpcConnection` (one per client: write gate, validation, error mapping, serialized writer). |
 | `engine.ts` | `createEngineRpcServer({ projectPath })` — registers every engine method (the core ones with `registerAll`: the example to copy). |
+| `handlers/` | `registerHandlerMethods` (T04-04): `prompts.ts`, `teams.ts`, `playbooks.ts`, `settings.ts`, `env.ts`. |
 | `library.ts` | `registerLibraryMethods` — read-only `prompt.list`, `prompt.get`, `team.list`, `models.catalog`. |
 | `sessions.ts` | `sessions.list`, `events.subscribe` / `events.unsubscribe` (read-only; never locks or repairs the log). |
 | `transports.ts` | `createInProcessTransport(server)`, `serveStdio(server, { input, output })` (NDJSON). |
@@ -51,6 +52,20 @@ Default-deny. A connection runs a method whose `access` is not exactly `"read"` 
 | `models.catalog` | `{ provider }` | `entries` (id, label, source) from the model cache only; never runs discovery |
 
 Results never contain absolute paths, key ids or vault data.
+
+## Handlers (`handlers/`)
+
+| Method | Access | Notes |
+|---|---|---|
+| `prompt.save` | write | `scope` is `user` or `project` (never `builtin`); front-matter `id` is kebab-case, the file is `<id>.md`; a file the library rejects is rolled back |
+| `prompt.fork` | write | full copy into `scope` as `newId` (default same id = override); refuses to overwrite |
+| `prompt.preview` / `prompt.validate` | read | render with variables (`ok:false` + `missing`), problems + variables read |
+| `team.save` / `team.delete` | write | user config only (`saveAssentorConfig`); delete refuses a team used by any `modes.*` `*team` key, `error.data.references` lists them |
+| `team.validate` | read | |
+| `playbook.list` / `playbook.get` | read | |
+| `settings.get` | read | executor, run autonomy, routing, limits, git, artifacts; `keys` are `{ id, provider, name, healthy }` only |
+| `settings.save` | write | patch of those fields into the user config. Not settable: reviewers, `binaries`, `verification.commands`, `security`, teams, modes |
+| `env.doctor`, `env.detectClis`, `models.discover` | write | call providers / start CLIs; absolute paths replaced by `<path>` |
 
 ## Rules
 
