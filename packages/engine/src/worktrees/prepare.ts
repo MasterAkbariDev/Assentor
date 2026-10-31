@@ -30,8 +30,8 @@ import { redactSecrets } from "../security/redact.js";
  *   seat-written code anyway, so this adds no new trust boundary.
  * - `CI=1` keeps package managers non-interactive (and skips husky-style git
  *   hook installers that would write the shared git config).
- * - Afterwards the worktree must still be clean in git: an install that writes
- *   tracked or unignored files would be blamed on the seat later.
+ * - Afterwards git must show nothing new: an install that writes tracked or
+ *   unignored files would be blamed on the seat later.
  */
 
 export type WorktreeInstallSetting = string;
@@ -76,6 +76,8 @@ export async function prepareWorktree(
   if (options.signal?.aborted) return { ok: false, reason: "cancelled" };
   const timeoutMs = options.timeoutMs ?? INSTALL_TIMEOUT_MS;
   const run = options.run ?? runShellCommand;
+  // A reused worktree (lead after a resume) may hold work already; only what the install adds counts.
+  const before = new Set((await gitStatus(worktreePath)) ?? []);
   const result = await run(command, worktreePath, {
     timeoutMs,
     env: { CI: "1" },
@@ -88,7 +90,7 @@ export async function prepareWorktree(
     const tail = redactSecrets([result.stdout, result.stderr].filter(Boolean).join("\n").slice(-OUTPUT_TAIL_CHARS)).text;
     return { ok: false, reason: `installing dependencies in the worktree failed: \`${command}\` ${why} ${where}\n${tail}` };
   }
-  const changed = await gitStatus(worktreePath);
+  const changed = (await gitStatus(worktreePath))?.filter((entry) => !before.has(entry));
   if (changed === undefined || changed.length > 0) {
     const files = changed?.slice(0, 10).join(", ") ?? "git status failed";
     return {

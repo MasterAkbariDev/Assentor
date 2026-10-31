@@ -25,6 +25,8 @@ import {
 } from "../../packages/engine/src/index.js";
 import { builtinPromptDir, PromptLibrary } from "../../packages/engine/src/prompts/index.js";
 import { SeatScheduler, type SchedulerOptions } from "../../packages/engine/src/seats/index.js";
+import { runShellCommand } from "../../packages/engine/src/process/run-shell.js";
+import { addYarnLock, fakePackageManagers } from "./fake-package-managers.js";
 
 const exec = promisify(execFile);
 // Real git in temp repos, like strategy-best-of-n.test.ts.
@@ -726,6 +728,63 @@ describe("Lead controller", () => {
       expect.stringContaining("tasks still open: T2 (backlog), T3 (backlog)"),
     ]);
     expect(s.runs).toHaveLength(1);
+  });
+});
+
+describe.skipIf(process.platform === "win32")("lead mode: dependency install (fake package managers on PATH)", () => {
+  let pm: Awaited<ReturnType<typeof fakePackageManagers>> | undefined;
+  afterEach(async () => {
+    await pm?.restore();
+    pm = undefined;
+  });
+
+  async function installSetup(yarnBody?: string) {
+    pm = await fakePackageManagers(yarnBody ? { yarn: yarnBody } : {});
+    const repo = await makeRepo();
+    await addYarnLock(repo, git);
+    const config = parseAssentorConfig({ verification: { commands: { test: "pnpm test" } } });
+    const gates: string[] = [];
+    let sawModules = false;
+    const s = await setup({
+      repo,
+      lead: { policy: { reviewBeforeAccept: false } },
+      supervisor: {
+        verification: config.verification,
+        // Installs go to the real shell (the fake yarn on PATH); gates are counted.
+        runVerificationCommand: async (command, cwd, options) => {
+          if (command.startsWith("yarn ")) return runShellCommand(command, cwd, options);
+          gates.push(command);
+          return { stdout: "", stderr: "", code: 0 };
+        },
+      },
+      script: [turn(plan(T1), assign("T1")), turn({ action: "accept", taskId: "T1" }), turn({ action: "reject", taskId: "T1", reason: "x" }, { action: "finish", summary: "x" })],
+      agents: {
+        cheap: async (task, seat) => {
+          sawModules = await fs.stat(path.join(task.projectPath, "node_modules")).then(() => true, () => false);
+          return writes("a/x.ts")(task, seat);
+        },
+      },
+    });
+    return { s, gates, sawModules: () => sawModules };
+  }
+
+  it("installs in the agent worktree before the agent and the gates", async () => {
+    const { s, gates, sawModules } = await installSetup();
+    await s.run();
+    expect(await pm!.logged()).toEqual(["yarn install --frozen-lockfile"]);
+    expect(sawModules()).toBe(true);
+    expect(gates).toEqual(["pnpm test"]);
+    expect(refusals(s.events).filter((r) => r.action === "accept")).toEqual([]);
+  });
+
+  it("a failed install is a gate problem of the task: gates not run, accept refused, session goes on", async () => {
+    const { s, gates } = await installSetup('echo "registry unreachable" >&2; exit 1');
+    const result = await s.run();
+    expect(result.status).toBe("completed");
+    expect(gates).toEqual([]);
+    const reason = String(refusals(s.events).find((r) => r.action === "accept")?.reason);
+    expect(reason).toContain("gates not run: installing dependencies in the worktree failed: `yarn install --frozen-lockfile` exited 1");
+    expect(reason).toContain("registry unreachable");
   });
 });
 

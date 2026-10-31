@@ -25,6 +25,8 @@ import type { MockReviewerStep } from "../../packages/engine/src/providers/revie
 import { buildAutonomousContinuationPrompt, buildSupervisedContinuationPrompt } from "../../packages/engine/src/orchestrator/phase-steering.js";
 import { createPairController, isNoComment, pairProblems, type PairExtras } from "../../packages/engine/src/modes/pair.js";
 import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
+import { runShellCommand } from "../../packages/engine/src/process/run-shell.js";
+import { addYarnLock, fakePackageManagers } from "./fake-package-managers.js";
 
 const exec = promisify(execFile);
 // Real git in temp repos, like debug-mode.test.ts.
@@ -690,6 +692,54 @@ describe("pair mode", () => {
     it("isNoComment accepts only a bare NO_COMMENT", () => {
       for (const ok of ["NO_COMMENT", " no_comment ", "`NO_COMMENT`", "NO_COMMENT."]) expect(isNoComment(ok)).toBe(true);
       for (const no of ["", "NO_COMMENT but check line 3", "fine.", "No comment from me"]) expect(isNoComment(no)).toBe(false);
+    });
+  });
+
+  describe.skipIf(process.platform === "win32")("dependency install (fake package managers on PATH)", () => {
+    let pm: Awaited<ReturnType<typeof fakePackageManagers>> | undefined;
+    afterEach(async () => {
+      await pm?.restore();
+      pm = undefined;
+    });
+    // Installs go to the real shell (the fake yarn on PATH); gates stay stubbed.
+    const runCommand: PairExtras["runCommand"] = (command, cwd, options) =>
+      command.startsWith("yarn ") ? runShellCommand(command, cwd, options) : Promise.resolve({ stdout: "", stderr: "", code: 0 });
+
+    it("installs in the pair worktree before the driver and the gates", async () => {
+      pm = await fakePackageManagers();
+      let sawModules = false;
+      const d = driver(async (task) => {
+        sawModules = await fs.stat(path.join(task.cwd, "node_modules")).then(() => true, () => false);
+        return writes("feature.txt")(task);
+      });
+      const s = await setup({ drivers: { drivers: [d] } });
+      await addYarnLock(s.repo, git);
+      const result = await s.run({}, { runCommand });
+      expect(result.status).toBe("completed");
+      expect(sawModules).toBe(true);
+      expect(await pm.logged()).toEqual(["yarn install --frozen-lockfile"]);
+    });
+
+    it("a failed install ends blocked before the driver runs, worktree kept", async () => {
+      pm = await fakePackageManagers({ yarn: 'echo "network down" >&2; exit 1' });
+      const d = driver(writes("feature.txt"));
+      const s = await setup({ drivers: { drivers: [d] } });
+      await addYarnLock(s.repo, git);
+      const result = await s.run({}, { runCommand });
+      expect(result.status).toBe("blocked");
+      expect(result.reason).toContain("`yarn install --frozen-lockfile` exited 1");
+      expect(result.reason).toContain("network down");
+      expect(d.prompts).toHaveLength(0);
+      await expectKeptFailed(s);
+    });
+
+    it("worktrees.install off runs nothing", async () => {
+      pm = await fakePackageManagers();
+      const d = driver(writes("feature.txt"));
+      const s = await setup({ drivers: { drivers: [d] }, config: baseConfig({}, { worktrees: { install: "off" } }) });
+      await addYarnLock(s.repo, git);
+      expect((await s.run({}, { runCommand })).status).toBe("completed");
+      expect(await pm.logged()).toEqual([]);
     });
   });
 });

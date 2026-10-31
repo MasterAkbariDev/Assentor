@@ -12,6 +12,7 @@ import { PromptLibrary } from "../prompts/index.js";
 import type { Executor, ExecutorResult } from "../providers/executors/types.js";
 import { runVerificationGates, type RunVerificationCommand } from "../review/verification-gates.js";
 import { runShellCommand } from "../process/run-shell.js";
+import { prepareWorktree } from "../worktrees/prepare.js";
 import { redactSecrets } from "../security/redact.js";
 import { WorktreeError, type SeatKey } from "../worktrees/manager.js";
 import { classifyRisk } from "./danger.js";
@@ -261,6 +262,9 @@ async function runPair(input: ModeControllerInput, extras: PairExtras): Promise<
   try {
     const root = (await mgr.create(key)).path;
     created = true;
+    // Dependencies (`worktrees.install`) before the driver or any gate; a failed install ends `blocked`, worktree kept.
+    const prepared = await prepareWorktree(root, input.config.worktrees?.install, { signal, run: runCommand });
+    if (!prepared.ok) throw new Stop({ status: "blocked", reason: prepared.reason });
     let driverSeat = first;
     let navigatorSeat = second;
 

@@ -19,6 +19,7 @@ import { PromptLibrary, renderPrompt, type TemplateVariables } from "../../promp
 import { extractJsonCandidate } from "#assentor/protocol/parse.js";
 import type { ExecutorResult } from "../../providers/executors/types.js";
 import { runVerificationGates } from "../../review/verification-gates.js";
+import { prepareWorktree } from "../../worktrees/prepare.js";
 import type { JobOutcome } from "../../seats/scheduler.js";
 import { ControllerActionSchema, type ControllerAction } from "../controller.js";
 import { ApprovalDeniedError, type ModeController, type ModeControllerInput, type ModeControllerResult } from "../registry.js";
@@ -179,6 +180,8 @@ class LeadController implements ModeController {
   /** Agent runs going on, by lower-cased task id. */
   private readonly running = new Map<string, { seatId: string; done: Promise<void> }>();
   private readonly finished: RunOutcome[] = [];
+  /** Worktree keys whose dependency install succeeded in this process (a resume installs once more). */
+  private readonly prepared = new Set<string>();
   private roster: readonly RosterEntry[] = [];
   /** `lead` prompt from the prompt library (built-in, user, project layers), when one exists. */
   private library: PromptLibrary | undefined;
@@ -613,6 +616,18 @@ class LeadController implements ModeController {
       return { ...base, failure, ...(sessionStop ? { sessionStop } : {}) };
     };
     try {
+      // Dependencies (`worktrees.install`) before the agent and the gates; a failure is a gate problem of this task, not the session's.
+      let installProblem: string | undefined;
+      if (!this.prepared.has(worktree.key)) {
+        const sup = this.input.deps.supervisor;
+        const prepared = await prepareWorktree(worktree.path, this.input.config.worktrees?.install, {
+          signal: this.stop.signal,
+          ...(sup?.runVerificationCommand ? { run: sup.runVerificationCommand } : {}),
+        });
+        if (this.stop.signal.aborted) return fail("cancelled");
+        if (prepared.ok) this.prepared.add(worktree.key);
+        else installProblem = clip(prepared.reason, 2000);
+      }
       this.seatEvent(seat, "seat.status", { status: "editing", detail: task.id });
       const stage: StageSpec = { id: stageId, kind: "execute", strategy: LEAD_AGENT_STRATEGY, options: { seat }, requireApproval: false };
       const executor = this.input.deps.createExecutor(stage);
@@ -657,7 +672,9 @@ class LeadController implements ModeController {
       let gates: Awaited<ReturnType<LeadController["gates"]>>;
       let gateFiles: string[] = [];
       const gateProblems: string[] = [];
-      if (outside.length > 0 && this.gatesEnabled()) {
+      if (installProblem && this.gatesEnabled()) {
+        gateProblems.push(`gates not run: ${installProblem}`);
+      } else if (outside.length > 0 && this.gatesEnabled()) {
         // Do not run commands from a worktree that changed files it does not own.
         gateProblems.push("gates not run: the run changed files outside the task's owned paths");
       } else {
@@ -678,6 +695,7 @@ class LeadController implements ModeController {
       const problems = checks.filter((c) => c.kind !== "test_claim_unverified").map((c) => c.detail);
       const warnings = checks.filter((c) => c.kind === "test_claim_unverified").map((c) => c.detail);
       warnings.push(...gateFiles.filter((file) => !outside.includes(file)).map((file) => `${file} was created by the gate run`));
+      if (installProblem && !this.gatesEnabled()) warnings.push(installProblem);
       problems.push(
         ...outside.map((file) => (byGate.has(file) ? `${file} was created by the gate run, outside the task's owned paths` : `changes ${file}, outside the task's owned paths`)),
         ...gateProblems,
