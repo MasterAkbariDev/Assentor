@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
+import { useEffect, useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { act, cleanup } from "@testing-library/react";
 import { App } from "./App.js";
 import { renderWithStore } from "./test/render.js";
 import { sessionFixture } from "./test/fixtures.js";
+import { useRpc } from "./transport/context.js";
+import { mockTransport } from "./transport/mock.js";
 import { takeToken } from "./transport/token.js";
 
 afterEach(() => cleanup());
@@ -52,5 +55,60 @@ describe("takeToken", () => {
     expect(takeToken()).toBe("c".repeat(64));
     expect(window.location.hash).toBe("");
     expect(takeToken()).toBe("c".repeat(64)); // from sessionStorage after the strip
+  });
+});
+
+describe("sections and useRpc", () => {
+  afterEach(() => {
+    window.location.hash = "";
+  });
+
+  it("lists every section, shows an empty state for the unbuilt ones, and keeps Sessions the default", async () => {
+    const { getByRole, getByText, queryByText, findByText } = renderWithStore(<App />);
+    const nav = getByRole("navigation", { name: "Sections" });
+    expect(Array.from(nav.querySelectorAll("a")).map((a) => a.textContent)).toEqual(["Sessions", "Prompts", "Teams", "Playbooks", "Settings"]);
+    expect(queryByText(/Not built yet/)).toBeNull();
+    expect(getByText("Select a run to watch it live.")).toBeTruthy();
+
+    act(() => {
+      window.location.hash = "#/teams";
+    });
+    expect(await findByText(/Teams: saved seat line-ups/)).toBeTruthy();
+    expect(getByRole("link", { name: "Teams" }).getAttribute("aria-current")).toBe("page");
+    expect(queryByText("Select a run to watch it live.")).toBeNull();
+  });
+
+  it("keeps the dev fixtures page out of the nav", () => {
+    const { getByRole } = renderWithStore(<App />);
+    expect(getByRole("navigation", { name: "Sections" }).textContent).not.toMatch(/fixtures/i);
+  });
+
+  it("toasts when the connection drops and comes back", () => {
+    const { store, getByText, getByRole } = renderWithStore(<App />);
+    expect(getByRole("log", { name: "Notifications" })).toBeTruthy(); // always in the page, so announcements are heard
+    act(() => store.getState().setConnection("connected"));
+    act(() => store.getState().setConnection("reconnecting"));
+    expect(getByRole("alert").textContent).toContain("Connection lost. Reconnecting…");
+    act(() => store.getState().setConnection("connected"));
+    expect(getByText("Reconnected.")).toBeTruthy();
+  });
+
+  it("useRpc gives components the transport", async () => {
+    const transport = mockTransport({ engineVersion: "9.9" });
+    function Version() {
+      const rpc = useRpc();
+      const [v, setV] = useState("");
+      useEffect(() => void rpc.call("engine.hello").then((h) => setV(h.engineVersion)), [rpc]);
+      return <p>{v}</p>;
+    }
+    const { findByText } = renderWithStore(<Version />, undefined, transport);
+    expect(await findByText("9.9")).toBeTruthy();
+  });
+
+  it("renders the dev fixtures page and a mid-stream position", async () => {
+    window.location.hash = "#/dev/fixtures";
+    const { findByRole, findAllByText } = renderWithStore(<App />);
+    expect(await findByRole("heading", { name: /Fixtures/ })).toBeTruthy();
+    expect((await findAllByText("Opus#2")).length).toBeGreaterThan(0);
   });
 });

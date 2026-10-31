@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EngineEvent } from "#assentor/protocol/events.js";
-import { burstFixture, sessionFixture } from "../test/fixtures.js";
+import { burstFixture, negotiateReviewFixture, sessionFixture } from "../test/fixtures.js";
 import { emptyLeadBoardView } from "#assentor/ui-shared/lead.js";
 import { ACTIVITY_EVENT_TYPES, createEngineStore, createFrameBatcher } from "./engineStore.js";
 
@@ -26,6 +26,26 @@ describe("engine store", () => {
     expect(seats.executor!.status).toBe("done");
     expect(seats["reviewer-2"]!.status).toBe("failed");
     expect(whole.getState().session!.state).toBe("REVIEWING");
+  });
+
+  it("rebuilds identical state when the negotiate+review stream is reloaded at any point", () => {
+    const { id, events } = negotiateReviewFixture;
+    const whole = createEngineStore();
+    whole.getState().select(id);
+    whole.getState().applyEvents(id, events);
+    const view = whole.getState().session!;
+    expect(view.negotiationEvents.length).toBeGreaterThan(0);
+    expect(view.reviewFindings).toHaveLength(2);
+    expect(view.state).toBe("DONE");
+
+    for (let cut = 1; cut < events.length; cut += 1) {
+      // A reload: a new store gets the first `cut` events, then the server resends from lastSeq.
+      const reloaded = createEngineStore();
+      reloaded.getState().select(id);
+      reloaded.getState().applyEvents(id, events.slice(0, cut));
+      reloaded.getState().applyEvents(id, events.filter((e) => e.seq > reloaded.getState().session!.lastSeq));
+      expect(reloaded.getState().session).toEqual(view);
+    }
   });
 
   it("ignores events for another session and resets when the selection changes", () => {
