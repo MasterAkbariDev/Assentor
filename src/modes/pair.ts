@@ -3,9 +3,11 @@ import { resolveVerificationCommands } from "../config/detect-commands.js";
 import type { AssentorConfig } from "../config/schema.js";
 import { createDeltaCoalescer } from "../events/coalescer.js";
 import { expandSeatSpecs, StageSpecSchema, type Seat, type StageSpec } from "../core/seats.js";
+import { runModeForAutonomy } from "../core/run-mode.js";
 import { createEmptyContract } from "../core/task-contract.js";
 import { ReviewStatus } from "../core/types.js";
 import type { EngineEventDraft } from "../protocol/events.js";
+import { createProtocolMessage, MessageType } from "../protocol/index.js";
 import { PromptLibrary } from "../prompts/index.js";
 import type { Executor, ExecutorResult } from "../providers/executors/types.js";
 import { runVerificationGates, type RunVerificationCommand } from "../review/verification-gates.js";
@@ -38,8 +40,9 @@ import { ApprovalDeniedError, type ModeController, type ModeControllerInput, typ
  *   the session's `worktrees.applyTo` (approval floor) with `allowedPaths` set to
  *   the reviewed files. `autopilot` still asks for a danger-area change.
  *
- * Known limits: a session resume starts over (no state is saved); with `swapRoles`
- * the new driver starts a fresh executor on the same worktree.
+ * Known limits: a session cannot resume (no state is saved; a resume ends `blocked`
+ * and the earlier work stays in its worktree); with `swapRoles` the new driver
+ * starts a fresh executor on the same worktree.
  */
 
 const DRIVER_STAGE = "pair-driver";
@@ -179,6 +182,9 @@ export function createPairController(input: ModeControllerInput, extras: PairExt
 
 async function runPair(input: ModeControllerInput, extras: PairExtras): Promise<ModeControllerResult> {
   const { sessionId, deps, host, signal, worktrees: manager, goal } = input;
+  if (input.resume) {
+    return { status: "blocked", reason: "pair mode cannot resume; start a new session (earlier work is kept in its worktree)" };
+  }
   const problems = pairProblems(input.config);
   if (problems.length > 0) throw new Error(problems.join("; "));
   const cfg = (parseConfig(input.config) as { ok: true; value: PairConfig }).value;
@@ -270,7 +276,7 @@ async function runPair(input: ModeControllerInput, extras: PairExtras): Promise<
         intervalMs: cfg.intervalSec * 1000,
         emit: ({ text }) => {
           if (closed) return;
-          queue += text;
+          queue = (queue + text).slice(-OUTPUT_CHARS);
           kick();
         },
         onError: () => undefined,
@@ -283,6 +289,7 @@ async function runPair(input: ModeControllerInput, extras: PairExtras): Promise<
         });
       };
       const deliver = (text: string) => {
+        if (closed) return;
         notes.push(text);
         nav.interjections += 1;
         if (!turnEnded && !interrupted && driver.executor.interrupt) {
@@ -337,6 +344,7 @@ async function runPair(input: ModeControllerInput, extras: PairExtras): Promise<
           if (signal.aborted || outcome.reason === "cancelled") return;
           if (outcome.scope === "session") {
             nav.stop = new Stop({ status: "budget_exceeded", reason: outcome.error });
+            void Promise.resolve().then(() => driver.executor.cancel(driver.taskId)).catch(() => undefined); // the session is over: stop the turn
             return;
           }
           seatEvent(seat, "seat.error", { message: `${outcome.reason}: ${outcome.error}` });
@@ -349,16 +357,21 @@ async function runPair(input: ModeControllerInput, extras: PairExtras): Promise<
         if (note && !isNoComment(outcome.value)) deliver(note.slice(0, INTERJECTION_CHARS));
       };
 
-      const unsubscribe = host.watchExecutorOutput?.(driver.executor, (chunk) => {
-        if (closed || (!chunk.text && !chunk.toolCall)) return;
-        streamed = true;
-        try {
-          coalescer.push(driver.seat.id, chunk.text);
-          if (chunk.toolCall) coalescer.flush(driver.seat.id);
-        } catch {
-          // A watcher failure must not stop the driver.
-        }
-      });
+      let unsubscribe: (() => void) | undefined;
+      try {
+        unsubscribe = host.watchExecutorOutput?.(driver.executor, (chunk) => {
+          if (closed || (!chunk.text && !chunk.toolCall)) return;
+          streamed = true;
+          try {
+            coalescer.push(driver.seat.id, chunk.text);
+            if (chunk.toolCall) coalescer.flush(driver.seat.id);
+          } catch {
+            // A watcher failure must not stop the driver.
+          }
+        });
+      } catch {
+        // A watch that throws counts as no stream: the navigator sees the output when the turn ends.
+      }
       return {
         get interrupted() {
           return interrupted;
@@ -368,7 +381,7 @@ async function runPair(input: ModeControllerInput, extras: PairExtras): Promise<
           turnEnded = true;
           if (!streamed) coalescer.push(driver.seat.id, result.rawOutput || result.summary || "");
           coalescer.flush();
-          while (busy || queue) {
+          while (!closed && !signal.aborted && (busy || queue)) {
             kick();
             await busy;
           }
@@ -376,6 +389,7 @@ async function runPair(input: ModeControllerInput, extras: PairExtras): Promise<
         close() {
           closed = true;
           turnEnded = true;
+          queue = "";
           try {
             unsubscribe?.();
             coalescer.dispose();
@@ -402,9 +416,18 @@ async function runPair(input: ModeControllerInput, extras: PairExtras): Promise<
                 taskId: driver.taskId,
                 projectPath: root,
                 contract,
-                messages: [],
-                mode: "autopilot",
-                nextPhaseDirective: followUp,
+                // The note travels as quoted data (like the Supervisor's restart note), never as a supervisor directive.
+                messages: [
+                  createProtocolMessage({
+                    conversationId: driver.taskId,
+                    round: 1,
+                    from: "navigator",
+                    to: "executor",
+                    type: MessageType.Warning,
+                    content: { message: followUp ?? "", code: "navigator_note" },
+                  }),
+                ],
+                mode: runModeForAutonomy(input.autonomy),
                 ...(driver.sessionId ? { sessionId: driver.sessionId } : {}),
               });
             }
@@ -432,15 +455,16 @@ async function runPair(input: ModeControllerInput, extras: PairExtras): Promise<
       for (;;) {
         checkAbort();
         const notes: string[] = [];
-        const watch = watchTurn(driver, subtask, notes);
+        let watch: ReturnType<typeof watchTurn> | undefined;
         try {
+          const turnWatch = (watch = watchTurn(driver, subtask, notes));
           const result = await runTurn(driver, base, followUp, label);
           driver.started = true;
           if (result.sessionId) driver.sessionId = result.sessionId;
-          await guard(watch.drain(result));
+          await guard(turnWatch.drain(result));
           checkAbort();
           if (nav.stop) throw nav.stop;
-          const byUs = watch.interrupted && result.status === "cancelled" && result.interrupted === true;
+          const byUs = turnWatch.interrupted && result.status === "cancelled" && result.interrupted === true;
           if (!byUs && result.status !== "completed") {
             seatEvent(driver.seat, "seat.error", { message: `${result.status}: ${result.error ?? result.summary}` });
             throw new Error(`${driver.seat.id} ended ${result.status}: ${result.error ?? result.summary}`);
@@ -449,7 +473,7 @@ async function runPair(input: ModeControllerInput, extras: PairExtras): Promise<
           if (notes.length === 0 && !byUs) return;
           followUp = notes.length > 0 ? notesPrompt(notes, subtask) : `Your turn was interrupted. Carry on with: ${subtask}`;
         } finally {
-          watch.close();
+          watch?.close();
         }
       }
     }

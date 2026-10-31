@@ -226,6 +226,10 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
       if (signal.aborted) return finish("cancelled", "cancelled");
       try {
         const manual = autonomy === "manual";
+        // Under manual the controller sees gated executors; the host knows the inner ones (output watching).
+        const inner = new WeakMap<Executor, Executor>();
+        const host: ModeHostServices = input.host ?? {};
+        const watch = host.watchExecutorOutput?.bind(host);
         const controller = mode.createController!({
           ...buildInput,
           sessionId,
@@ -233,11 +237,15 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
           deps: manual
             ? {
                 ...deps,
-                createExecutor: (stage) =>
-                  gateExecutor(deps.createExecutor(stage), stage.id, () => approvedStages.has(stage.id), requestApproval),
+                createExecutor: (stage) => {
+                  const executor = deps.createExecutor(stage);
+                  const gated = gateExecutor(executor, stage.id, () => approvedStages.has(stage.id), requestApproval);
+                  inner.set(gated, executor);
+                  return gated;
+                },
               }
             : deps,
-          host: input.host ?? {},
+          host: watch ? { ...host, watchExecutorOutput: (executor, onChunk) => watch(inner.get(executor) ?? executor, onChunk) } : host,
           requestApproval,
           ask: ({ question, options }) => questions.ask(question, options, false),
           resume: input.resume ?? false,

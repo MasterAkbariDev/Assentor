@@ -22,6 +22,7 @@ import {
   type StageSpec,
 } from "../../src/index.js";
 import type { MockReviewerStep } from "../../src/providers/reviewers/mock/index.js";
+import { buildAutonomousContinuationPrompt, buildSupervisedContinuationPrompt } from "../../src/orchestrator/phase-steering.js";
 import { createPairController, isNoComment, pairProblems, type PairExtras } from "../../src/modes/pair.js";
 import { SeatScheduler } from "../../src/seats/index.js";
 
@@ -272,7 +273,7 @@ describe("pair mode", () => {
       async (task, ctl) => {
         if (task.turn === 1) {
           ctl.say("writing the file with a typo", true);
-          await ctl.wait(2_000);
+          await ctl.wait(30_000); // ends when the navigator's note interrupts the turn
           return done("should have been interrupted");
         }
         return writes("feature.txt", "fixed\n")(task);
@@ -286,8 +287,14 @@ describe("pair mode", () => {
     expect(d.interrupts).toBe(1);
     expect(d.continues).toHaveLength(1);
     expect(d.continues[0]).toMatchObject({ sessionId: "sess-1", mode: "autopilot" });
-    expect(d.continues[0]!.nextPhaseDirective).toContain("advice from another seat");
-    expect(d.continues[0]!.nextPhaseDirective).toContain("<navigator-note>\nIn `feature.txt` the name is misspelled");
+    expect(d.continues[0]!.nextPhaseDirective).toBeUndefined();
+    // The real continuation prompt shows the note as quoted data, not as a supervisor directive.
+    for (const prompt of [buildSupervisedContinuationPrompt(d.continues[0]!.messages), buildAutonomousContinuationPrompt(d.continues[0]!.messages, d.continues[0]!.nextPhaseDirective)]) {
+      expect(prompt).toContain("[WARNING from navigator]");
+      expect(prompt).toContain("advice from another seat");
+      expect(prompt).toContain("<navigator-note>\\nIn `feature.txt` the name is misspelled");
+      expect(prompt).not.toContain("ACTIVE DIRECTIVE");
+    }
     expect(interjections(s)).toEqual([expect.objectContaining({ text: expect.stringContaining("misspelled"), delivery: "interrupted" })]);
     expect(await fs.readFile(path.join(s.repo, "feature.txt"), "utf8")).toBe("fixed\n");
   });
@@ -310,7 +317,7 @@ describe("pair mode", () => {
     expect(interjections(s)).toEqual([expect.objectContaining({ delivery: "next-turn" })]);
     // No session id and a driver that can continue: the follow-up is a continue turn carrying the note.
     expect(d.continues).toHaveLength(1);
-    expect(d.continues[0]!.nextPhaseDirective).toContain("Check the edge case");
+    expect(JSON.stringify(d.continues[0]!.messages)).toContain("Check the edge case");
     expect(await fs.readFile(path.join(s.repo, "feature.txt"), "utf8")).toBe("v2\n");
   });
 
@@ -465,6 +472,52 @@ describe("pair mode", () => {
       await expectKeptFailed(s);
     });
 
+    it("cancel while a final look is in flight with output queued ends the session instead of spinning", async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      const d = driver(async (_task, ctl) => {
+        ctl.say("first", true);
+        ctl.say("queued behind the look", true);
+        await sleep(200);
+        return done("finished", { rawOutput: "more" });
+      });
+      const s = await setup({ drivers: { drivers: [d] }, navigator: async () => (await gate, "NO_COMMENT") });
+      const running = s.run();
+      await until(() => s.navigatorPrompts.length === 1);
+      await sleep(500); // the driver has finished and drain waits on the look
+      s.controller.abort();
+      expect(await running).toEqual({ status: "blocked", reason: "cancelled" });
+      release(); // the look settles after the session ended; a spin here would starve the timer below
+      await sleep(100);
+    });
+
+    it("a resume is refused and nothing starts", async () => {
+      const d = driver(writes("feature.txt"));
+      const s = await setup({ drivers: { drivers: [d] } });
+      const result = await s.run({ resume: true });
+      expect(result.status).toBe("blocked");
+      expect(result.reason).toContain("cannot resume");
+      expect(await s.manager.list(SESSION)).toHaveLength(0);
+    });
+
+    it("a watcher that throws counts as no stream; the navigator still sees the turn's output", async () => {
+      const d = driver(async (task) => {
+        await fs.writeFile(path.join(task.cwd, "feature.txt"), "x\n");
+        return done("wrote", { rawOutput: "END-OF-TURN-OUTPUT" });
+      });
+      const s = await setup({ drivers: { drivers: [d] } });
+      const result = await s.run({
+        host: {
+          askSeat: async ({ prompt }) => (s.navigatorPrompts.push(prompt), "NO_COMMENT"),
+          watchExecutorOutput: () => {
+            throw new Error("no such executor");
+          },
+        },
+      });
+      expect(result.status).toBe("completed");
+      expect(s.navigatorPrompts[0]).toContain("END-OF-TURN-OUTPUT");
+    });
+
     it("cancel during a gate command passes the signal to it", async () => {
       const d = driver(writes("feature.txt"));
       let received: AbortSignal | undefined;
@@ -497,8 +550,8 @@ describe("pair mode", () => {
       });
       expect(result.status).toBe("completed");
       expect(d.continues).toHaveLength(1);
-      expect(d.continues[0]!.nextPhaseDirective).toContain("<gate-output>");
-      expect(d.continues[0]!.nextPhaseDirective).toContain("TEST FAILED: broken");
+      expect(JSON.stringify(d.continues[0]!.messages)).toContain("<gate-output>");
+      expect(JSON.stringify(d.continues[0]!.messages)).toContain("TEST FAILED: broken");
       expect(await fs.readFile(path.join(s.repo, "feature.txt"), "utf8")).toBe("fine\n");
     });
 
