@@ -196,11 +196,11 @@ describe("cascade config schema", () => {
 });
 
 describe("cascade mode, end to end (mock seats)", () => {
-  it("is registered as a dynamic, runnable mode that is not CLI-available", () => {
+  it("is registered as a dynamic, runnable, CLI-available mode", () => {
     const mode = getMode("cascade")!;
     expect(mode.kind).toBe("dynamic");
     expect(mode.createController).toBeTypeOf("function");
-    expect(mode.available).toBe(false);
+    expect(mode.available).toBe(true);
   });
 
   it("is refused before anything starts when the tiers are missing", async () => {

@@ -205,8 +205,8 @@ function expectTerminalSeatEvents(events: EngineEventDraft[]) {
 }
 
 describe("red-team mode", () => {
-  it("is a dynamic, CLI-unavailable mode", () => {
-    expect(getMode("redteam")).toMatchObject({ kind: "dynamic", available: false, editsCode: true });
+  it("is a dynamic, CLI-available mode", () => {
+    expect(getMode("redteam")).toMatchObject({ kind: "dynamic", available: true, editsCode: true });
   });
 
   it("happy path: attack, fix, attacker yields, review passes, tests and fix land in main together", async () => {
