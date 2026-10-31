@@ -28,6 +28,8 @@ export const RpcErrorCode = {
   SubscriptionLimit: -32001,
   /** A write method on a connection whose transport only allows reads (e.g. `serve`). */
   WriteNotAllowed: -32002,
+  /** Too many write calls; `serve` limits them. Retry later. */
+  RateLimited: -32003,
 } as const;
 
 /** Largest inbound frame a connection accepts (characters of JSON text). */

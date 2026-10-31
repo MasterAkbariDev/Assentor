@@ -23,7 +23,8 @@ import {
  *   a specific code. Frames over `RPC_MAX_FRAME_CHARS` are rejected (-32600).
  * - Write access is default-deny: a method whose contract `access` is not
  *   `"read"` is refused (-32002) unless `connect(send, { allowWrite: true })`.
- *   In-process and stdio grant it; the WebSocket `serve` transport does not.
+ *   In-process and stdio grant it; `serve` only with `--allow-write` and a
+ *   per-connection opt-in (see `serve/server.ts`).
  * - Outbound frames go through one serialized writer per connection; `notify`
  *   resolves when the transport accepted the frame, so a slow client slows
  *   its producers (subscriptions bound their own queues).
@@ -65,6 +66,15 @@ interface Registered {
 /** Sends one text frame. A returned promise means "accepted by the transport". */
 export type FrameSender = (frame: string) => void | Promise<void>;
 
+export interface ConnectOptions {
+  allowWrite?: boolean;
+  /**
+   * Runs before every write handler (after params are validated). Throw
+   * `RpcError` to refuse (rate limit); a rejected promise refuses too (audit failed).
+   */
+  beforeWrite?: (method: string) => void | Promise<void>;
+}
+
 export class RpcServer {
   private readonly methods = new Map<string, Registered>();
 
@@ -102,8 +112,8 @@ export class RpcServer {
    * refused unless `allowWrite` is true (only for a transport whose peer is
    * as trusted as this process).
    */
-  connect(send: FrameSender, options: { allowWrite?: boolean } = {}): RpcConnection {
-    return new RpcConnection(this.methods, send, options.allowWrite === true);
+  connect(send: FrameSender, options: ConnectOptions = {}): RpcConnection {
+    return new RpcConnection(this.methods, send, options.allowWrite === true, options.beforeWrite);
   }
 }
 
@@ -116,6 +126,7 @@ export class RpcConnection {
     private readonly methods: ReadonlyMap<string, Registered>,
     private readonly send: FrameSender,
     private readonly allowWrite = false,
+    private readonly beforeWrite?: (method: string) => void | Promise<void>,
   ) {}
 
   get closed(): boolean {
@@ -203,6 +214,9 @@ export class RpcConnection {
 
     let result: unknown;
     try {
+      if (method.access !== "read") {
+        await this.beforeWrite?.(message.method);
+      }
       result = await method.handler(parsed.data, { connection: this });
     } catch (error) {
       if (id !== undefined) {

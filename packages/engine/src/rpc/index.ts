@@ -4,6 +4,7 @@ export {
   RpcConnection,
   RpcError,
   RpcServer,
+  type ConnectOptions,
   type FrameSender,
   type RpcContext,
   type RpcHandler,
