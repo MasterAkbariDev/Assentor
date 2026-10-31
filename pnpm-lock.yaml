@@ -67,6 +67,78 @@ importers:
         specifier: ^5.0.16
         version: 5.0.16(@types/react@18.3.31)(react@18.3.1)
 
+  packages/cli:
+    dependencies:
+      '@assentor/engine':
+        specifier: workspace:*
+        version: link:../engine
+      '@assentor/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@assentor/ui-shared':
+        specifier: workspace:*
+        version: link:../ui-shared
+      commander:
+        specifier: ^13.1.0
+        version: 13.1.0
+      ink:
+        specifier: ^5.2.1
+        version: 5.2.1(@types/react@18.3.31)(react@18.3.1)
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+
+  packages/engine:
+    dependencies:
+      '@assentor/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@assentor/ui-shared':
+        specifier: workspace:*
+        version: link:../ui-shared
+      ws:
+        specifier: ^8.21.3
+        version: 8.21.3
+      yaml:
+        specifier: ^2.7.0
+        version: 2.9.0
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+
+  packages/protocol:
+    dependencies:
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+
+  packages/ui:
+    dependencies:
+      '@assentor/engine':
+        specifier: workspace:*
+        version: link:../engine
+      '@assentor/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@assentor/ui-shared':
+        specifier: workspace:*
+        version: link:../ui-shared
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.3.1
+        version: 18.3.1(react@18.3.1)
+      zustand:
+        specifier: ^5.0.16
+        version: 5.0.16(@types/react@18.3.31)(react@18.3.1)
+
+  packages/ui-shared:
+    dependencies:
+      '@assentor/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+
 packages:
 
   '@alcalzone/ansi-tokenize@0.1.3':

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { createAssentorServices } from "../../src/services/app.js";
-import { redactSecrets } from "../../src/security/redact.js";
+import { createAssentorServices } from "../../packages/engine/src/services/app.js";
+import { redactSecrets } from "../../packages/engine/src/security/redact.js";
 
 const TEMP = path.join(process.cwd(), ".tmp", "services-tests");
 
@@ -51,7 +51,7 @@ describe("Assentor services", () => {
       message: "401 Unauthorized",
       category: "AUTHENTICATION",
     });
-    const { runFullDiagnostics } = await import("../../src/services/app.js");
+    const { runFullDiagnostics } = await import("../../packages/engine/src/services/app.js");
     const items = await runFullDiagnostics(services);
     expect(items.some((i) => i.name.startsWith("key:"))).toBe(true);
   });

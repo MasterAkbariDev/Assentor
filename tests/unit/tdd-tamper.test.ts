@@ -5,7 +5,7 @@ import {
   isTestFile,
   lockTests,
   normalizePath,
-} from "../../src/modes/tdd/tamper.js";
+} from "../../packages/engine/src/modes/tdd/tamper.js";
 
 describe("isTestFile default patterns", () => {
   it.each([

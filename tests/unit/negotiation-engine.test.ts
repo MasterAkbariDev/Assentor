@@ -9,10 +9,10 @@ import {
   createId,
   expandSeatSpecs,
   type EngineEventDraft,
-} from "../../src/index.js";
-import { createNegotiationContext, runNegotiation, type SeatStepRunner } from "../../src/negotiation/engine.js";
-import { voteStrategy } from "../../src/negotiation/strategies/vote.js";
-import { SeatScheduler } from "../../src/seats/index.js";
+} from "../../packages/engine/src/index.js";
+import { createNegotiationContext, runNegotiation, type SeatStepRunner } from "../../packages/engine/src/negotiation/engine.js";
+import { voteStrategy } from "../../packages/engine/src/negotiation/strategies/vote.js";
+import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
 
 const dirs: string[] = [];
 afterEach(async () => {

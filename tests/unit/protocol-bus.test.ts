@@ -3,7 +3,7 @@ import {
   createProtocolMessage,
   MessageType,
   ProtocolBus,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 describe("protocol bus", () => {
   it("routes messages to recipient inboxes", async () => {

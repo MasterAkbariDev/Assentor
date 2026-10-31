@@ -163,7 +163,7 @@ Design: [modes.md](../plans/modes.md)
 ### Phase 4 — Engine server & Web UI · [phase-4-serve-web-ui.md](./phase-4-serve-web-ui.md)
 | ID | Title | Tier | Review | Size | Depends |
 |---|---|---|---|---|---|
-| T04-01 | Monorepo split (engine / protocol / cli / ui) | 🔴 O | O2 | L | Phase 0–3 merged |
+| T04-01 | Monorepo split (engine / protocol / cli / ui) | 🔴 O | O2 | L | Phase 0–3 merged ✅ |
 | T04-02 | JSON-RPC core + stdio & in-process transports | 🔴 O | O2 | M | T04-01 |
 | T04-03 | WebSocket transport (`serve`) security | 🔴 O | O2 + human | M | T04-02 |
 | T04-04 | RPC handlers: prompts/teams/playbooks/settings | 🟢 H | S | M | T04-02 |

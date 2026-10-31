@@ -11,8 +11,8 @@ import {
   ReviewStatus,
   createEmptyContract,
   parseAssentorConfig,
-} from "../../src/index.js";
-import { createReviewer, runAssentorTask } from "../../src/cli/commands.js";
+} from "../../packages/engine/src/index.js";
+import { createReviewer, runAssentorTask } from "../../packages/cli/src/cli/commands.js";
 
 // Records the args of every CLI process that a reviewer spawns. `fail` decides
 // per call whether that process exits non-zero (tests use it to force a fallback).
@@ -21,8 +21,8 @@ const cliControl = vi.hoisted(() => ({
   fail: (_args: string[]): boolean => false,
 }));
 
-vi.mock("../../src/executors/cli-locator.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/executors/cli-locator.js")>();
+vi.mock("../../packages/engine/src/executors/cli-locator.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../packages/engine/src/executors/cli-locator.js")>();
   return {
     ...actual,
     spawnCliProcess: (_command: string, args: string[]) => {
@@ -253,7 +253,7 @@ describe("config schema transport + fallback", () => {
 
 describe("Google CLI reviewer", () => {
   it("maps Gemini CLI aliases to Antigravity", async () => {
-    const { resolveCliAdapter } = await import("../../src/index.js");
+    const { resolveCliAdapter } = await import("../../packages/engine/src/index.js");
     expect(resolveCliAdapter("antigravity")).toBe("antigravity");
     expect(resolveCliAdapter("agy")).toBe("antigravity");
     expect(resolveCliAdapter("gemini-cli")).toBe("antigravity");

@@ -15,7 +15,7 @@ import {
   transportsForSeatProvider,
   type EngineEvent,
   type SupervisorEventType,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 describe("seat providers", () => {
   it("normalizes config aliases; gemini stays the API provider", () => {

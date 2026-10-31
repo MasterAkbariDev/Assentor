@@ -9,7 +9,7 @@ import {
   loadEvidencePack,
   buildReviewPrompt,
   createEmptyContract,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 async function tempProject(): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "assentor-pack-"));

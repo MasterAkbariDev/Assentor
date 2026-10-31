@@ -10,14 +10,14 @@ import {
   listModes,
   loadAssentorConfig,
   parseAssentorConfig,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 import {
   parseModeFlags,
   runAssentorTask,
   type RunAssentorInput,
-} from "../../src/cli/commands.js";
-import { MockExecutor } from "../../src/providers/executors/mock/index.js";
-import { cycleRunMode } from "../../src/tui/screens/settings.js";
+} from "../../packages/cli/src/cli/commands.js";
+import { MockExecutor } from "../../packages/engine/src/providers/executors/mock/index.js";
+import { cycleRunMode } from "../../packages/cli/src/tui/screens/settings.js";
 
 describe("mode registry", () => {
   it("lists every modes.md §3 mode in catalog order with complete metadata", () => {

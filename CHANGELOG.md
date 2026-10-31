@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Monorepo split (T04-01)** — Source moved (with history) into pnpm workspace packages `packages/{protocol,ui-shared,engine,cli,ui}`. `protocol` now owns the seat/team/session schemas (`core/seats.ts`) and `Severity`, `ReviewStatus`, `PhaseItemSchema` and `AUTONOMY_LEVELS` (still re-exported from their old engine modules); `ui-shared` is Node-free; `engine` has no Ink/React. Packages import each other as `#assentor/<package>/…`, resolved by the root `package.json` `imports` into one `dist/` with the same layout as before, so `bin/assentor`, the installers and the published `assentor` package behave the same. The built web UI moved from `ui/dist` to `packages/ui/dist`. `pnpm build` now runs `tsc -b` over project references.
+- **Leftover build files after upgrading** — An existing checkout keeps its old `ui/dist/`, `dist/core/seats.*` and `dist/cli/terminal.*` after this update. Nothing reads them any more, so they are harmless; delete them if you like.
+
 ## [0.3.19] — 2026-08-29
 
 ### Added

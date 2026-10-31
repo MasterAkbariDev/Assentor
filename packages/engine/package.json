@@ -1,0 +1,14 @@
+{
+  "name": "@assentor/engine",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Supervisor engine: orchestration, providers, modes, persistence, RPC and serve (no Ink/React)",
+  "type": "module",
+  "dependencies": {
+    "@assentor/protocol": "workspace:*",
+    "@assentor/ui-shared": "workspace:*",
+    "ws": "^8.21.3",
+    "yaml": "^2.7.0",
+    "zod": "^3.24.2"
+  }
+}

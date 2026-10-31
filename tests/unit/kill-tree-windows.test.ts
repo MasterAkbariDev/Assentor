@@ -17,7 +17,7 @@ describe("killProcessTree on Windows", () => {
   it("runs taskkill /T /F on the pid, without a shell, and kills the handle", async () => {
     Object.defineProperty(process, "platform", { value: "win32" });
     const processKill = vi.spyOn(process, "kill");
-    const { killProcessTree } = await import("../../src/process/kill-tree.js");
+    const { killProcessTree } = await import("../../packages/engine/src/process/kill-tree.js");
     const kill = vi.fn(() => true);
 
     killProcessTree({ pid: 4242, kill });
@@ -39,7 +39,7 @@ describe("descendantPids ps fallback", () => {
 
   it("does not run a second ps after /bin/ps timed out", async () => {
     Object.defineProperty(process, "platform", { value: "darwin" });
-    const { descendantPids } = await import("../../src/process/kill-tree.js");
+    const { descendantPids } = await import("../../packages/engine/src/process/kill-tree.js");
     await Promise.resolve(); // new burst
     spawnSyncMock.mockReset().mockReturnValue(fail("ETIMEDOUT"));
     expect(descendantPids(4242)).toEqual([]);
@@ -48,7 +48,7 @@ describe("descendantPids ps fallback", () => {
   });
 
   it("falls back to ps on PATH only when /bin/ps does not exist", async () => {
-    const { descendantPids } = await import("../../src/process/kill-tree.js");
+    const { descendantPids } = await import("../../packages/engine/src/process/kill-tree.js");
     await Promise.resolve();
     spawnSyncMock
       .mockReset()

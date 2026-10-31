@@ -3,9 +3,9 @@ import {
   isRetryableExecutorResult,
   isRetryableReviewFailure,
   retryDelayMs,
-} from "../../src/core/retry.js";
-import { ReviewStatus } from "../../src/core/types.js";
-import { makeReviewResult } from "../../src/protocol/review-result.js";
+} from "../../packages/engine/src/core/retry.js";
+import { ReviewStatus } from "../../packages/engine/src/core/types.js";
+import { makeReviewResult } from "../../packages/protocol/src/review-result.js";
 
 describe("retry helpers", () => {
   it("debounces retries linearly", () => {

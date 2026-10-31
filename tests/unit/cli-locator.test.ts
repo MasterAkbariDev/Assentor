@@ -8,8 +8,8 @@ import {
   locateBinary,
   rememberBinary,
   wellKnownBinaryPaths,
-} from "../../src/executors/cli-locator.js";
-import { isCursorAppBinary } from "../../src/index.js";
+} from "../../packages/engine/src/executors/cli-locator.js";
+import { isCursorAppBinary } from "../../packages/engine/src/index.js";
 
 const tempDirs: string[] = [];
 

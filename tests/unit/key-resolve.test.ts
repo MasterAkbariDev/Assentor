@@ -1,8 +1,8 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { KeyVault, resolveProviderApiKey } from "../../src/keys/index.js";
-import { runPreflight } from "../../src/cli/preflight.js";
+import { KeyVault, resolveProviderApiKey } from "../../packages/engine/src/keys/index.js";
+import { runPreflight } from "../../packages/cli/src/cli/preflight.js";
 
 const TEMP_ROOT = path.join(process.cwd(), ".tmp", "key-resolve-tests");
 const tempDirs: string[] = [];

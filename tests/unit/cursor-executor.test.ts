@@ -6,7 +6,7 @@ import {
   EvidenceKind,
   MessageType,
   type CursorSpawnRequest,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 describe("CursorExecutor", () => {
   it("invokes cursor agent CLI in print/force mode", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatChangedFilesList } from "../../src/review/evidence-pack.js";
+import { formatChangedFilesList } from "../../packages/engine/src/review/evidence-pack.js";
 
 describe("formatChangedFilesList", () => {
   it("lists all paths when under the cap", () => {

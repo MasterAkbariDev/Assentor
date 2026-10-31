@@ -16,7 +16,7 @@ import {
   TaskState,
   TaskStore,
   writeProjectFiles,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 const execFileAsync = promisify(execFile);
 const TEMP_ROOT = path.join(process.cwd(), ".tmp", "e2e-average");

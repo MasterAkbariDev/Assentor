@@ -4,10 +4,10 @@ import {
   NegotiationCancelledError,
   NegotiationResultSchema,
   proposalLabel,
-} from "../../src/index.js";
-import { getStrategy, listStrategies, registerBuiltinStrategies } from "../../src/negotiation/strategies/index.js";
-import { voteStrategy } from "../../src/negotiation/strategies/vote.js";
-import { createMockNegotiationContext, type MockAsk } from "../../src/negotiation/testing/mock-context.js";
+} from "../../packages/engine/src/index.js";
+import { getStrategy, listStrategies, registerBuiltinStrategies } from "../../packages/engine/src/negotiation/strategies/index.js";
+import { voteStrategy } from "../../packages/engine/src/negotiation/strategies/vote.js";
+import { createMockNegotiationContext, type MockAsk } from "../../packages/engine/src/negotiation/testing/mock-context.js";
 
 // Labels follow seat order: opus-1 is A, opus-2 is B, sol-1 is C.
 const seats = expandSeatSpecs([

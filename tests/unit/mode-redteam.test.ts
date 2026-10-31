@@ -19,10 +19,10 @@ import {
   type ExecutorTask,
   type StageRunnerDeps,
   type StageSpec,
-} from "../../src/index.js";
-import { createRedteamController, redteamProblems, testPathProblem, type RedteamExtras } from "../../src/modes/redteam.js";
-import { SeatScheduler } from "../../src/seats/index.js";
-import { DEFAULT_TEST_PATTERNS } from "../../src/modes/tdd/tamper.js";
+} from "../../packages/engine/src/index.js";
+import { createRedteamController, redteamProblems, testPathProblem, type RedteamExtras } from "../../packages/engine/src/modes/redteam.js";
+import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
+import { DEFAULT_TEST_PATTERNS } from "../../packages/engine/src/modes/tdd/tamper.js";
 
 const exec = promisify(execFile);
 // Real git in temp repos, like worktree-manager.test.ts.

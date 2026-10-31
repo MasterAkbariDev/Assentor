@@ -10,7 +10,7 @@ import {
   TaskBoardSchema,
   costRank,
   emptyTaskBoard,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 describe("Lead task board contract", () => {
   it("fills runtime defaults on a planned task", () => {
@@ -133,7 +133,7 @@ describe("controller action contract", () => {
 
 describe("contract hardening (O2 review)", () => {
   it("owned paths are repo-relative, '/'-separated and can't claim or escape the repo", async () => {
-    const { OwnedPathSchema } = await import("../../src/index.js");
+    const { OwnedPathSchema } = await import("../../packages/engine/src/index.js");
     for (const ok of ["src/auth", "src/auth/login.ts", "README.md", "a-b/c_d.e"]) {
       expect(OwnedPathSchema.safeParse(ok).success).toBe(true);
     }

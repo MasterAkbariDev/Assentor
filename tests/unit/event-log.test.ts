@@ -2,8 +2,8 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createId, EventLog, parseEngineEvent, sessionPaths } from "../../src/index.js";
-import type { EngineEventDraft } from "../../src/index.js";
+import { createId, EventLog, parseEngineEvent, sessionPaths } from "../../packages/engine/src/index.js";
+import type { EngineEventDraft } from "../../packages/engine/src/index.js";
 
 const tempDirs: string[] = [];
 

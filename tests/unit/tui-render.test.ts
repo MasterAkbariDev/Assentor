@@ -2,11 +2,11 @@ import React from "react";
 import { describe, expect, it } from "vitest";
 import { render } from "ink";
 import { PassThrough } from "node:stream";
-import { Shell } from "../../src/tui/layout/shell.js";
-import { HelpScreen } from "../../src/tui/screens/help.js";
-import { ConfigurationScreen } from "../../src/tui/screens/configuration.js";
-import { WorkspaceScreen } from "../../src/tui/screens/workspace.js";
-import { parseAssentorConfig } from "../../src/config/load.js";
+import { Shell } from "../../packages/cli/src/tui/layout/shell.js";
+import { HelpScreen } from "../../packages/cli/src/tui/screens/help.js";
+import { ConfigurationScreen } from "../../packages/cli/src/tui/screens/configuration.js";
+import { WorkspaceScreen } from "../../packages/cli/src/tui/screens/workspace.js";
+import { parseAssentorConfig } from "../../packages/engine/src/config/load.js";
 
 function stripAnsi(str: string): string {
   return str

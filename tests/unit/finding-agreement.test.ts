@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
-import * as engine from "../../src/index.js";
+import * as engine from "../../packages/engine/src/index.js";
 import {
   IssueCategory,
   ReviewStatus,
   Severity,
   makeReviewResult,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 import {
   correlateFindings,
   rankCorrelatedFindings,
   type CorrelatedFinding,
-} from "../../src/review/coordinator.js";
+} from "../../packages/engine/src/review/coordinator.js";
 
 function reviewWith(issues: Array<{ id: string; severity: string; category: string; file: string; description: string }>) {
   return makeReviewResult({

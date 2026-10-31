@@ -5,7 +5,7 @@ import {
   MessageType,
   MockReviewer,
   ReviewStatus,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 describe("MockReviewer", () => {
   it("defaults to PASS when steps are exhausted", async () => {

@@ -1,25 +1,25 @@
 import { describe, expect, it, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { GeminiProvider } from "../../src/providers/ai/gemini.js";
+import { GeminiProvider } from "../../packages/engine/src/providers/ai/gemini.js";
 import {
   createOpenAIProvider,
   createOpenRouterProvider,
   createQwenProvider,
-} from "../../src/providers/ai/openai-compatible.js";
-import { ProviderRequestError } from "../../src/providers/ai/types.js";
-import { createSeededModelRegistry } from "../../src/models/index.js";
-import { KeyVault, maskSecret } from "../../src/keys/index.js";
-import { RoutingEngine } from "../../src/routing/index.js";
-import { buildExecutorRegistry } from "../../src/executors/index.js";
+} from "../../packages/engine/src/providers/ai/openai-compatible.js";
+import { ProviderRequestError } from "../../packages/engine/src/providers/ai/types.js";
+import { createSeededModelRegistry } from "../../packages/engine/src/models/index.js";
+import { KeyVault, maskSecret } from "../../packages/engine/src/keys/index.js";
+import { RoutingEngine } from "../../packages/engine/src/routing/index.js";
+import { buildExecutorRegistry } from "../../packages/engine/src/executors/index.js";
 import {
   AgentMemoryStore,
   AgentRegistry,
   selectReviewers,
   reviewersDisagree,
-} from "../../src/agents/index.js";
-import { ReviewStatus } from "../../src/core/types.js";
-import type { ReviewResult } from "../../src/protocol/review-result.js";
+} from "../../packages/engine/src/agents/index.js";
+import { ReviewStatus } from "../../packages/engine/src/core/types.js";
+import type { ReviewResult } from "../../packages/protocol/src/review-result.js";
 
 const TEMP = path.join(process.cwd(), ".tmp", "multi-agent-tests");
 

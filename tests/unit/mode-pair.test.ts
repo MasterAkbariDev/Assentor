@@ -20,11 +20,11 @@ import {
   type ModeControllerInput,
   type ModeControllerResult,
   type StageSpec,
-} from "../../src/index.js";
-import type { MockReviewerStep } from "../../src/providers/reviewers/mock/index.js";
-import { buildAutonomousContinuationPrompt, buildSupervisedContinuationPrompt } from "../../src/orchestrator/phase-steering.js";
-import { createPairController, isNoComment, pairProblems, type PairExtras } from "../../src/modes/pair.js";
-import { SeatScheduler } from "../../src/seats/index.js";
+} from "../../packages/engine/src/index.js";
+import type { MockReviewerStep } from "../../packages/engine/src/providers/reviewers/mock/index.js";
+import { buildAutonomousContinuationPrompt, buildSupervisedContinuationPrompt } from "../../packages/engine/src/orchestrator/phase-steering.js";
+import { createPairController, isNoComment, pairProblems, type PairExtras } from "../../packages/engine/src/modes/pair.js";
+import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
 
 const exec = promisify(execFile);
 // Real git in temp repos, like debug-mode.test.ts.

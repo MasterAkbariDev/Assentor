@@ -6,7 +6,7 @@ import {
   isSecretPath,
   PathSecurityError,
   redactSecrets,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 describe("security", () => {
   describe("paths", () => {

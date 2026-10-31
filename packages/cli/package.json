@@ -1,0 +1,15 @@
+{
+  "name": "@assentor/cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The assentor command line and Ink terminal UI",
+  "type": "module",
+  "dependencies": {
+    "@assentor/engine": "workspace:*",
+    "@assentor/protocol": "workspace:*",
+    "@assentor/ui-shared": "workspace:*",
+    "commander": "^13.1.0",
+    "ink": "^5.2.1",
+    "react": "^18.3.1"
+  }
+}

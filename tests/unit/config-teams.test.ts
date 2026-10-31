@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
-import { parseAssentorConfig } from "../../src/config/schema.js";
-import { mergeConfigLayers } from "../../src/config/load.js";
-import { resolveTeams } from "../../src/config/teams.js";
-import { expandSeatSpecs } from "../../src/core/seats.js";
+import { parseAssentorConfig } from "../../packages/engine/src/config/schema.js";
+import { mergeConfigLayers } from "../../packages/engine/src/config/load.js";
+import { resolveTeams } from "../../packages/engine/src/config/teams.js";
+import { expandSeatSpecs } from "../../packages/protocol/src/seats.js";
 
 describe("config teams and modes", () => {
   it("default config shape is unchanged apart from teams and modes", () => {

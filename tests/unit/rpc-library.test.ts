@@ -11,8 +11,8 @@ import {
   RpcErrorCode,
   RpcRemoteError,
   RpcServer,
-} from "../../src/index.js";
-import { registerLibraryMethods } from "../../src/rpc/library.js";
+} from "../../packages/engine/src/index.js";
+import { registerLibraryMethods } from "../../packages/engine/src/rpc/library.js";
 
 const dirs: string[] = [];
 const cleanups: Array<() => void | Promise<void>> = [];

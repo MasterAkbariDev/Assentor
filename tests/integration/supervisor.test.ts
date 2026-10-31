@@ -16,7 +16,7 @@ import {
   type Reviewer,
   type ReviewInput,
   type ReviewerTurnResult,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 function mockExecutor(
   handler: (input: {

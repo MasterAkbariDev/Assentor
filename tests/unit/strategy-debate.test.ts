@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { expandSeatSpecs, NegotiationCancelledError, NegotiationResultSchema } from "../../src/index.js";
-import { getStrategy, listStrategies, registerBuiltinStrategies } from "../../src/negotiation/strategies/index.js";
-import { debateStrategy } from "../../src/negotiation/strategies/debate.js";
-import { createMockNegotiationContext, type MockAsk } from "../../src/negotiation/testing/mock-context.js";
+import { expandSeatSpecs, NegotiationCancelledError, NegotiationResultSchema } from "../../packages/engine/src/index.js";
+import { getStrategy, listStrategies, registerBuiltinStrategies } from "../../packages/engine/src/negotiation/strategies/index.js";
+import { debateStrategy } from "../../packages/engine/src/negotiation/strategies/debate.js";
+import { createMockNegotiationContext, type MockAsk } from "../../packages/engine/src/negotiation/testing/mock-context.js";
 
 // Labels follow seat order: opus-1 is A, opus-2 is B, sol-1 is C.
 const seats = expandSeatSpecs([

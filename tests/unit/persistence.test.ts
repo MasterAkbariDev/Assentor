@@ -11,7 +11,7 @@ import {
   Supervisor,
   TaskState,
   TaskStore,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 const TEMP_ROOT = path.join(process.cwd(), ".tmp", "persist-tests");
 const tempDirs: string[] = [];

@@ -5,7 +5,7 @@ import {
   mergeAcceptanceCriteria,
   parseTaskContract,
   ValidationError,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 describe("task contract", () => {
   it("creates an empty contract from a goal", () => {

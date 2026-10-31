@@ -17,12 +17,12 @@ import {
   type Reviewer,
   type ReviewerTurnResult,
   type ReviewResult,
-} from "../../src/index.js";
-import { IssueCategory } from "../../src/protocol/review-result.js";
-import { MessageType } from "../../src/protocol/messages.js";
-import { createProtocolMessage } from "../../src/protocol/parse.js";
-import type { LogicalAgentProfile } from "../../src/agents/index.js";
-import type { RoutingEngine } from "../../src/routing/engine.js";
+} from "../../packages/engine/src/index.js";
+import { IssueCategory } from "../../packages/protocol/src/review-result.js";
+import { MessageType } from "../../packages/protocol/src/messages.js";
+import { createProtocolMessage } from "../../packages/protocol/src/parse.js";
+import type { LogicalAgentProfile } from "../../packages/engine/src/agents/index.js";
+import type { RoutingEngine } from "../../packages/engine/src/routing/engine.js";
 
 /** An adjudicator that always rules PASS — the path that used to clear a lone security dissent. */
 function passingAdjudicator(): { routing: RoutingEngine; adjudicatorProfile: LogicalAgentProfile } {

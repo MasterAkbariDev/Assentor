@@ -1,19 +1,19 @@
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { STALL_PATTERNS } from "../../src/orchestrator/phase-steering.js";
-import { expandSeatSpecs } from "../../src/core/seats.js";
+import { STALL_PATTERNS } from "../../packages/engine/src/orchestrator/phase-steering.js";
+import { expandSeatSpecs } from "../../packages/protocol/src/seats.js";
 import {
   NEGOTIATION_STEPS,
   STEP_REPLY_SCHEMAS,
   type NegotiationStep,
   type NegotiationStrategy,
-} from "../../src/negotiation/strategy.js";
-import { createMockNegotiationContext, type MockAsk } from "../../src/negotiation/testing/mock-context.js";
-import { debateStrategy } from "../../src/negotiation/strategies/debate.js";
-import { createPlanStrategy } from "../../src/negotiation/strategies/divide.js";
-import { synthesizeStrategy } from "../../src/negotiation/strategies/synthesize.js";
-import { voteStrategy } from "../../src/negotiation/strategies/vote.js";
+} from "../../packages/engine/src/negotiation/strategy.js";
+import { createMockNegotiationContext, type MockAsk } from "../../packages/engine/src/negotiation/testing/mock-context.js";
+import { debateStrategy } from "../../packages/engine/src/negotiation/strategies/debate.js";
+import { createPlanStrategy } from "../../packages/engine/src/negotiation/strategies/divide.js";
+import { synthesizeStrategy } from "../../packages/engine/src/negotiation/strategies/synthesize.js";
+import { voteStrategy } from "../../packages/engine/src/negotiation/strategies/vote.js";
 import {
   PromptLibrary,
   renderPrompt,
@@ -21,7 +21,7 @@ import {
   type PromptDefinition,
   type PromptFrontMatter,
   type TemplateVariables,
-} from "../../src/prompts/index.js";
+} from "../../packages/engine/src/prompts/index.js";
 
 /**
  * Negotiation step prompts and the moderator and judge (T03-03b). Each prompt

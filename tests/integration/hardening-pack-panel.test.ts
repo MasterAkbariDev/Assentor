@@ -15,9 +15,9 @@ import {
   makeReviewResult,
   selectReviewers,
   DEFAULT_AGENT_PROFILES,
-} from "../../src/index.js";
-import { MockReviewer } from "../../src/providers/reviewers/mock/index.js";
-import type { Executor, ExecutorResult } from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
+import { MockReviewer } from "../../packages/engine/src/providers/reviewers/mock/index.js";
+import type { Executor, ExecutorResult } from "../../packages/engine/src/index.js";
 
 describe("pack → multi-review → PASS hardening (§14)", () => {
   it("builds a pack, analyzes complexity, and panel-passes", async () => {

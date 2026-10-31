@@ -4,7 +4,7 @@ import {
   parseReviewResult,
   ReviewStatus,
   Severity,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 describe("review result", () => {
   it("parses a valid NEEDS_WORK result", () => {

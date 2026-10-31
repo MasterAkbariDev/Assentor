@@ -11,7 +11,7 @@ import {
   splitPromptFile,
   TemplateError,
   templateVariables,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 const repoRoot = path.resolve(__dirname, "../..");
 

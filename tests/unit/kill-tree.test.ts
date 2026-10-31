@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { spawn } from "node:child_process";
-import { descendantPids, killProcessTree, setPsTimeoutMsForTests } from "../../src/process/kill-tree.js";
-import { trackedProcessCount } from "../../src/process/tracker.js";
-import { createEmptyContract, PrintCliExecutor } from "../../src/index.js";
+import { descendantPids, killProcessTree, setPsTimeoutMsForTests } from "../../packages/engine/src/process/kill-tree.js";
+import { trackedProcessCount } from "../../packages/engine/src/process/tracker.js";
+import { createEmptyContract, PrintCliExecutor } from "../../packages/engine/src/index.js";
 
 const posix = process.platform !== "win32";
 // A loaded machine must not make `ps` time out here; the 500 ms cap is production's.

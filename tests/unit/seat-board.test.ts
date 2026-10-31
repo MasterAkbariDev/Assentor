@@ -2,8 +2,8 @@ import React from "react";
 import { describe, expect, it } from "vitest";
 import { render } from "ink";
 import { PassThrough } from "node:stream";
-import { SEAT_STATUSES, type SeatStatus } from "../../src/core/seats.js";
-import { parseEngineEvent, type EngineEvent } from "../../src/protocol/events.js";
+import { SEAT_STATUSES, type SeatStatus } from "../../packages/protocol/src/seats.js";
+import { parseEngineEvent, type EngineEvent } from "../../packages/protocol/src/events.js";
 import {
   LAST_LINE_CHARS,
   OUTPUT_TAIL_CHARS,
@@ -11,8 +11,8 @@ import {
   seatLineModel,
   STATUS_META,
   type SeatState,
-} from "../../src/ui-shared/status.js";
-import { SeatBoard } from "../../src/tui/components/seat-board.js";
+} from "../../packages/ui-shared/src/status.js";
+import { SeatBoard } from "../../packages/cli/src/tui/components/seat-board.js";
 
 const T0 = Date.parse("2026-10-24T10:00:00.000Z");
 const at = (offsetMs: number) => new Date(T0 + offsetMs).toISOString();

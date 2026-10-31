@@ -3,8 +3,8 @@ import {
   GeminiReviewer,
   OpenAICompatibleReviewer,
   ReviewStatus,
-} from "../../src/index.js";
-import { createEmptyContract } from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
+import { createEmptyContract } from "../../packages/engine/src/index.js";
 
 const passJson = JSON.stringify({
   status: "PASS",

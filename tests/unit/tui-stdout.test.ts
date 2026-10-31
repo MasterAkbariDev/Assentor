@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { render } from "ink";
 import { PassThrough } from "node:stream";
 import type { WriteStream } from "node:tty";
-import { Shell } from "../../src/tui/layout/shell.js";
-import { createInkStdout } from "../../src/tui/stdout.js";
+import { Shell } from "../../packages/cli/src/tui/layout/shell.js";
+import { createInkStdout } from "../../packages/cli/src/tui/stdout.js";
 
 function createMockStdout(rows = 40): WriteStream {
   const stream = new PassThrough() as unknown as WriteStream & {

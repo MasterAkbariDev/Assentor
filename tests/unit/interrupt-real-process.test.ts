@@ -19,7 +19,7 @@ vi.mock("node:child_process", async (importOriginal) => {
   };
 });
 
-const { setPsTimeoutMsForTests } = await import("../../src/process/kill-tree.js");
+const { setPsTimeoutMsForTests } = await import("../../packages/engine/src/process/kill-tree.js");
 const {
   CursorExecutor,
   PrintCliExecutor,
@@ -27,7 +27,7 @@ const {
   killAllTrackedProcesses,
   trackChildProcess,
   trackedProcessCount,
-} = await import("../../src/index.js");
+} = await import("../../packages/engine/src/index.js");
 
 const posix = process.platform !== "win32";
 

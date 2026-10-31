@@ -12,20 +12,25 @@
       "import": "./dist/index.js"
     }
   },
+  "imports": {
+    "#assentor/protocol/*": "./dist/protocol/*",
+    "#assentor/ui-shared/*": "./dist/ui-shared/*",
+    "#assentor/engine/*": "./dist/*"
+  },
   "files": [
     "dist",
     "bin",
     "prompts",
     "playbooks",
-    "ui/dist"
+    "packages/ui/dist"
   ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && vite build --config ui/vite.config.ts",
-    "build:ui": "vite build --config ui/vite.config.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p ui/tsconfig.json && tsc -p ui/tsconfig.test.json",
+    "build": "tsc -b tsconfig.build.json --force && vite build --config packages/ui/vite.config.ts",
+    "build:ui": "vite build --config packages/ui/vite.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p packages/ui/tsconfig.json && tsc -p packages/ui/tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "install-cli": "./scripts/install-cli.sh",

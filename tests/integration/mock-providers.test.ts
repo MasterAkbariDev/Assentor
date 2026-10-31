@@ -6,7 +6,7 @@ import {
   MockReviewer,
   Supervisor,
   TaskState,
-} from "../../src/index.js";
+} from "../../packages/engine/src/index.js";
 
 describe("supervisor with MockExecutor + MockReviewer", () => {
   it("passes on first round with default mocks", async () => {

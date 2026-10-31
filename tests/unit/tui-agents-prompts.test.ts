@@ -5,20 +5,20 @@ import { PassThrough } from "node:stream";
 import { existsSync, promises as fs, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseAssentorConfig } from "../../src/config/schema.js";
-import { PromptLibrary, type PromptLibraryLoadOptions } from "../../src/prompts/index.js";
-import { createAssentorServices, type AssentorServices } from "../../src/services/app.js";
-import { App, startTui, type TuiHandoff } from "../../src/tui/app.js";
+import { parseAssentorConfig } from "../../packages/engine/src/config/schema.js";
+import { PromptLibrary, type PromptLibraryLoadOptions } from "../../packages/engine/src/prompts/index.js";
+import { createAssentorServices, type AssentorServices } from "../../packages/engine/src/services/app.js";
+import { App, startTui, type TuiHandoff } from "../../packages/cli/src/tui/app.js";
 
 type LoadPrompts = (options: PromptLibraryLoadOptions) => Promise<PromptLibrary>;
-import { createInitialUiState, mapKeyToAction } from "../../src/tui/keymap.js";
+import { createInitialUiState, mapKeyToAction } from "../../packages/cli/src/tui/keymap.js";
 import {
   AgentsScreen,
   orderedPrompts,
   validateSummary,
   warningLines,
-} from "../../src/tui/screens/agents.js";
-import { HelpScreen } from "../../src/tui/screens/help.js";
+} from "../../packages/cli/src/tui/screens/agents.js";
+import { HelpScreen } from "../../packages/cli/src/tui/screens/help.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

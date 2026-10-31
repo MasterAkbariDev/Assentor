@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { KeyVault } from "../../src/keys/vault.js";
+import { KeyVault } from "../../packages/engine/src/keys/vault.js";
 
 describe("KeyVault", () => {
   it("dedupes identical keys on load", async () => {

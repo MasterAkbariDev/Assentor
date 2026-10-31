@@ -8,15 +8,15 @@ import {
   loadProjectArchitectureDoc,
   parseArchitectureSummary,
   parseExecutorExplanation,
-} from "../../src/review/pack-builder.js";
-import { emptyEvidencePack } from "../../src/review/evidence-pack.js";
+} from "../../packages/engine/src/review/pack-builder.js";
+import { emptyEvidencePack } from "../../packages/engine/src/review/evidence-pack.js";
 import {
   ArtifactCollector,
   EvidenceKind,
   EvidencePackBuilder,
   fulfillEvidenceRequests,
-} from "../../src/index.js";
-import { formatEvidencePackForPrompt } from "../../src/providers/reviewers/shared/prompt.js";
+} from "../../packages/engine/src/index.js";
+import { formatEvidencePackForPrompt } from "../../packages/engine/src/providers/reviewers/shared/prompt.js";
 
 describe("local evidence parsing", () => {
   it("extracts architecture summary from executor JSON output", () => {

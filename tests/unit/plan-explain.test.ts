@@ -3,8 +3,8 @@ import {
   explainSignals,
   explainStrategy,
   formatReviewPlanExplanation,
-} from "../../src/review/plan-explain.js";
-import type { ComplexityAnalysis } from "../../src/review/complexity.js";
+} from "../../packages/engine/src/review/plan-explain.js";
+import type { ComplexityAnalysis } from "../../packages/engine/src/review/complexity.js";
 
 describe("review plan explanations", () => {
   it("translates raw signals into plain language", () => {

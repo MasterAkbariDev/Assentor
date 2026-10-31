@@ -3,13 +3,13 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createId, EventLog,
-  readSessionEvents, type EngineEvent } from "../../src/index.js";
+  readSessionEvents, type EngineEvent } from "../../packages/engine/src/index.js";
 import {
   executorEmitsPlainText,
   resumeAssentorTask,
   RunSeatEvents,
   runAssentorTask,
-} from "../../src/cli/commands.js";
+} from "../../packages/cli/src/cli/commands.js";
 
 describe("assentor run writes a seat event log", () => {
   let projectDir: string;

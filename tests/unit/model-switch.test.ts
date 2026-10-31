@@ -26,9 +26,9 @@ import {
   type PrintCliSpawnRequest,
   type Reviewer,
   type ReviewerTurnResult,
-} from "../../src/index.js";
-import type { CliSpawnRequest } from "../../src/providers/reviewers/cli/index.js";
-import { reduceSeatEvents } from "../../src/ui-shared/status.js";
+} from "../../packages/engine/src/index.js";
+import type { CliSpawnRequest } from "../../packages/engine/src/providers/reviewers/cli/index.js";
+import { reduceSeatEvents } from "../../packages/ui-shared/src/status.js";
 
 const tempDirs: string[] = [];
 

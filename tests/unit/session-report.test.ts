@@ -2,12 +2,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { EngineEvent } from "../../src/protocol/events.js";
+import type { EngineEvent } from "../../packages/protocol/src/events.js";
 import {
   renderSessionReport,
   ReportExistsError,
   saveSessionReport,
-} from "../../src/export/index.js";
+} from "../../packages/engine/src/export/index.js";
 
 const SESSION = "s-report-1";
 const dirs: string[] = [];

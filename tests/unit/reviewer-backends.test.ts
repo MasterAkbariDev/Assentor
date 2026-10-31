@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { parseAssentorConfig } from "../../src/config/load.js";
+import { parseAssentorConfig } from "../../packages/engine/src/config/load.js";
 import {
   selectReviewerBackends,
   transportsForProvider,
   formatReviewerBackend,
   getAvailableReviewerProviders,
-} from "../../src/review/backends.js";
-import { explainReviewPlan, TaskComplexityAnalyzer } from "../../src/review/complexity.js";
+} from "../../packages/engine/src/review/backends.js";
+import { explainReviewPlan, TaskComplexityAnalyzer } from "../../packages/engine/src/review/complexity.js";
 
 describe("reviewer backends", () => {
   it("lists API and CLI transports per provider", () => {

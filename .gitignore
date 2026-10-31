@@ -12,3 +12,4 @@ coverage/
 .assentor/
 # User prompts live in ~/.assentor/prompts, which is this checkout when installed.
 /prompts/*.md
+*.tsbuildinfo

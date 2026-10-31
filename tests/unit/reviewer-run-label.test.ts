@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatReviewerRunLabel } from "../../src/review/backends.js";
+import { formatReviewerRunLabel } from "../../packages/engine/src/review/backends.js";
 
 describe("formatReviewerRunLabel", () => {
   it("shows provider and logical role when they differ", () => {
