@@ -1,4 +1,5 @@
 import { useEffect, type KeyboardEvent } from "react";
+import { isComposing } from "../../keymap.js";
 
 /** Put focus back on what opened a dialog, if it is still on screen. */
 export function restoreFocus(opener: Element | null): void {
@@ -9,12 +10,12 @@ export function restoreFocus(opener: Element | null): void {
 
 /**
  * Escape closes the dialog. Listens in the capture phase and stops the event, so an
- * open seat drawer underneath does not close too.
+ * open seat drawer underneath does not close too. Ignored during IME composition.
  */
 export function useEscapeKey(onClose: () => void): void {
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !isComposing(event)) {
         event.preventDefault();
         event.stopPropagation();
         onClose();

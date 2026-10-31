@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from "react";
 import { detectPlatform, keymapEntries } from "../../keymap.js";
 import { holdTab, restoreFocus, useEscapeKey } from "./dialog.js";
 
@@ -15,8 +15,17 @@ export function KeyboardHelp({ onClose }: { onClose: () => void }) {
   }, [opener]);
   useEscapeKey(onClose);
 
+  // Close on a click on the backdrop itself. Other mousedowns keep focus on the Close button.
+  const onBackdropMouseDown = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) {
+      onClose();
+      return;
+    }
+    if (event.target !== closeRef.current) event.preventDefault();
+  };
+
   return (
-    <div className="palette-backdrop" onClick={(event) => event.target === event.currentTarget && onClose()}>
+    <div className="palette-backdrop" onMouseDown={onBackdropMouseDown}>
       <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="help" onKeyDown={holdTab}>
         <div className="help-head">
           <h2 id={titleId} className="help-title">

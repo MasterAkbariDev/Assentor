@@ -11,8 +11,9 @@ export type PaletteAction =
 export interface PaletteItem {
   id: string;
   group: "Recent" | "Session" | "View" | "Action";
+  /** What the palette matches against: a run's title, a view's name, or a command such as `/pause`. */
   label: string;
-  /** Short text after the label: a run's status, or what the action does. */
+  /** Short text after the label: a run's status, or what an action does. */
   detail?: string;
   action: PaletteAction;
 }
@@ -44,17 +45,21 @@ export const VIEW_TARGETS: ReadonlyArray<{ label: string; selector: string; show
   { label: "Team board", selector: ".lead-board", shown: "hasLeadBoard" },
 ];
 
-/** Every palette entry, in display order: recent runs, all runs, views, then actions. */
+/**
+ * Every palette entry, in display order: recent runs, the other runs, views, then
+ * actions. A run in Recent is not repeated under Session.
+ */
 export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
   const byId = new Map(input.sessions.map((s) => [s.id, s]));
+  const recent = input.recentIds.filter((id) => byId.has(id));
+  const recentSet = new Set(recent);
   const items: PaletteItem[] = [];
-  for (const id of input.recentIds) {
-    const session = byId.get(id);
-    if (session) {
-      items.push({ id: `recent:${id}`, group: "Recent", label: session.title, detail: session.status, action: { kind: "session", sessionId: id } });
-    }
+  for (const id of recent) {
+    const session = byId.get(id)!;
+    items.push({ id: `recent:${id}`, group: "Recent", label: session.title, detail: session.status, action: { kind: "session", sessionId: id } });
   }
   for (const session of input.sessions) {
+    if (recentSet.has(session.id)) continue;
     items.push({ id: `session:${session.id}`, group: "Session", label: session.title, detail: session.status, action: { kind: "session", sessionId: session.id } });
   }
   for (const view of VIEW_TARGETS) {
@@ -63,7 +68,7 @@ export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
     }
   }
   for (const write of WRITE_ACTIONS) {
-    items.push({ id: `write:${write.id}`, group: "Action", label: `${write.label}  ${write.detail}`, detail: WRITE_REASON, action: { kind: "blocked", reason: WRITE_REASON } });
+    items.push({ id: `write:${write.id}`, group: "Action", label: write.label, detail: write.detail, action: { kind: "blocked", reason: WRITE_REASON } });
   }
   return items;
 }

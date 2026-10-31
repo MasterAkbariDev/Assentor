@@ -1,18 +1,36 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { detectPlatform, shortcutLabel } from "../../keymap.js";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { detectPlatform, isComposing, shortcutLabel } from "../../keymap.js";
 import { useEngine } from "../../store/context.js";
 import { selectHasNegotiation, selectLeadBoard } from "../../store/selectors.js";
 import { holdTab, restoreFocus, useEscapeKey } from "./dialog.js";
 import { rankItems } from "./fuzzy.js";
 import { buildPaletteItems, type PaletteItem } from "./items.js";
 
-/** Move focus to a view's root and scroll it into view. */
-function focusView(selector: string): void {
+/** Most results drawn at once; the status line says how many more there are. */
+export const MAX_RESULTS = 50;
+
+/** Move focus to a view's root and scroll it into view. False when the view is not on screen. */
+function focusView(selector: string): boolean {
   const el = document.querySelector<HTMLElement>(selector);
-  if (!el) return;
+  if (!el) return false;
   if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1");
   el.focus({ preventScroll: true });
   el.scrollIntoView?.({ block: "start" });
+  return true;
+}
+
+/** Move focus to the main panel after a run is picked, so focus does not fall back to the opener. */
+function focusMain(): boolean {
+  const main = document.querySelector<HTMLElement>(".main");
+  if (!main) return false;
+  if (!main.hasAttribute("tabindex")) main.setAttribute("tabindex", "-1");
+  main.focus({ preventScroll: true });
+  return true;
+}
+
+/** An HTML id for a result: the item id with anything but word characters replaced. */
+function domId(listId: string, item: PaletteItem): string {
+  return `${listId}-${item.id.replace(/[^\w-]/g, "_")}`;
 }
 
 /**
@@ -33,7 +51,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const [notice, setNotice] = useState("");
   const listId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
-  // A view run moves focus itself, so closing must not send it back to the opener.
+  // Set when a run moved focus itself, so closing must not send focus back to the opener.
   const handledRef = useRef(false);
   const [opener] = useState<Element | null>(() => document.activeElement);
   const platform = useMemo(() => detectPlatform(), []);
@@ -42,9 +60,13 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     () => buildPaletteItems({ sessions, recentIds, hasSeats, hasNegotiation, hasLeadBoard }),
     [sessions, recentIds, hasSeats, hasNegotiation, hasLeadBoard],
   );
-  const shown = useMemo(() => rankItems(items, query), [items, query]);
+  const ranked = useMemo(() => rankItems(items, query), [items, query]);
+  const shown = ranked.slice(0, MAX_RESULTS);
+  const more = ranked.length - shown.length;
   const index = shown.length === 0 ? 0 : Math.min(active, shown.length - 1);
-  const optionId = (i: number) => `${listId}-opt-${i}`;
+  const activeItem = shown[index];
+  const activeId = activeItem ? domId(listId, activeItem) : undefined;
+  const status = notice || (more > 0 ? `${more} more — keep typing to narrow the results` : "");
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -55,8 +77,8 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   useEscapeKey(onClose);
 
   useEffect(() => {
-    document.getElementById(optionId(index))?.scrollIntoView?.({ block: "nearest" });
-  }, [index, listId]);
+    if (activeId) document.getElementById(activeId)?.scrollIntoView?.({ block: "nearest" });
+  }, [activeId]);
 
   const run = (item: PaletteItem) => {
     const { action } = item;
@@ -67,14 +89,20 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     }
     if (action.kind === "session") {
       select(action.sessionId);
+      handledRef.current = focusMain();
     } else {
-      handledRef.current = true;
-      focusView(action.selector);
+      handledRef.current = focusView(action.selector);
+      if (!handledRef.current) {
+        setNotice(`${item.label} is not on screen`);
+        return;
+      }
     }
     onClose();
   };
 
   const onInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    // React's synthetic event has no isComposing; the native event does.
+    if (isComposing(event.nativeEvent)) return;
     const count = shown.length;
     if (event.key === "ArrowDown" && count > 0) {
       event.preventDefault();
@@ -82,17 +110,23 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
     } else if (event.key === "ArrowUp" && count > 0) {
       event.preventDefault();
       setActive((index - 1 + count) % count);
-    } else if (event.key === "Enter") {
-      const item = shown[index];
-      if (item) {
-        event.preventDefault();
-        run(item);
-      }
+    } else if (event.key === "Enter" && activeItem) {
+      event.preventDefault();
+      run(activeItem);
     }
   };
 
+  // Close on a click on the backdrop itself. Other mousedowns keep focus on the input.
+  const onBackdropMouseDown = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) {
+      onClose();
+      return;
+    }
+    if (event.target !== inputRef.current) event.preventDefault();
+  };
+
   return (
-    <div className="palette-backdrop" onClick={(event) => event.target === event.currentTarget && onClose()}>
+    <div className="palette-backdrop" onMouseDown={onBackdropMouseDown}>
       <div role="dialog" aria-modal="true" aria-label="Command palette" className="palette" onKeyDown={holdTab}>
         <input
           ref={inputRef}
@@ -102,7 +136,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
           aria-autocomplete="list"
           aria-expanded="true"
           aria-controls={listId}
-          aria-activedescendant={shown.length > 0 ? optionId(index) : undefined}
+          aria-activedescendant={activeId}
           className="palette-input"
           placeholder="Search sessions, views and commands"
           autoComplete="off"
@@ -117,22 +151,32 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         />
         <ul id={listId} role="listbox" aria-label="Results" className="palette-list">
           {shown.map((item, i) => {
-            const blocked = item.action.kind === "blocked";
+            const reason = item.action.kind === "blocked" ? item.action.reason : undefined;
+            const id = domId(listId, item);
+            const reasonId = `${id}-reason`;
             return (
               <li
                 key={item.id}
-                id={optionId(i)}
+                id={id}
                 role="option"
                 aria-selected={i === index}
-                aria-disabled={blocked ? "true" : undefined}
-                className={`palette-option${i === index ? " is-active" : ""}${blocked ? " is-disabled" : ""}`}
-                onMouseMove={() => setActive(i)}
+                aria-disabled={reason ? "true" : undefined}
+                aria-describedby={reason ? reasonId : undefined}
+                className={`palette-option${i === index ? " is-active" : ""}${reason ? " is-disabled" : ""}`}
+                onMouseEnter={() => setActive(i)}
                 onClick={() => run(item)}
               >
-                <span className="palette-label">{item.label}</span>
-                <span className="palette-meta">
-                  {item.group}
-                  {item.detail ? ` · ${item.detail}` : ""}
+                <span className="palette-main">
+                  <span className="palette-label">{item.label}</span>
+                  {item.detail ? <span className="palette-detail">{item.detail}</span> : null}
+                </span>
+                <span className="palette-side">
+                  <span className="palette-meta">{item.group}</span>
+                  {reason ? (
+                    <span id={reasonId} className="palette-reason">
+                      {reason}
+                    </span>
+                  ) : null}
                 </span>
               </li>
             );
@@ -140,7 +184,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         </ul>
         {shown.length === 0 ? <p className="palette-empty">No matches for “{query}”.</p> : null}
         <p role="status" className="palette-notice">
-          {notice}
+          {status}
         </p>
         <p className="palette-hint">
           {shortcutLabel(platform, "K")} opens · ↑ ↓ move · Enter runs · Esc closes

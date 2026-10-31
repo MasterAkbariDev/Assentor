@@ -19,15 +19,17 @@ export function shortcutLabel(platform: Platform, key: string): string {
 /** The keyboard event fields the matchers read. */
 export interface KeyLike {
   key: string;
+  code?: string;
   ctrlKey: boolean;
   metaKey: boolean;
   altKey: boolean;
   shiftKey: boolean;
 }
 
-/** Ctrl+K or ⌘K (either modifier, so the shortcut works on every platform). */
+/** Ctrl+K or ⌘K (either modifier, so the shortcut works on every platform). `code` covers non-Latin layouts. */
 export function isPaletteKey(event: KeyLike): boolean {
-  return event.key.toLowerCase() === "k" && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey;
+  const isK = event.key.toLowerCase() === "k" || event.code === "KeyK";
+  return isK && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey;
 }
 
 /** `?` typed on its own (Shift is part of typing it on most layouts). */
@@ -35,10 +37,20 @@ export function isHelpKey(event: KeyLike): boolean {
   return event.key === "?" && !event.ctrlKey && !event.metaKey && !event.altKey;
 }
 
-/** Shortcuts stay off while the user types: text fields, text areas and selects. */
-export function isTypingTarget(target: EventTarget | null): boolean {
+/** Keys that finish an input-method composition (Japanese, Chinese, Korean) must not act as shortcuts. */
+export function isComposing(event: { isComposing?: boolean; keyCode?: number }): boolean {
+  return event.isComposing === true || event.keyCode === 229;
+}
+
+/** Text entry: fields and text areas where the user types. Ctrl/⌘+K is still ignored here. */
+export function isTextEntry(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || target.matches("input, textarea, select");
+  return target.isContentEditable || target.matches("input, textarea");
+}
+
+/** Typing targets for `?`: text entry, and selects (where a letter is a type-ahead search). */
+export function isTypingTarget(target: EventTarget | null): boolean {
+  return isTextEntry(target) || (target instanceof HTMLElement && target.matches("select"));
 }
 
 export interface KeymapEntry {

@@ -10,12 +10,11 @@ const sessions: SessionSummary[] = [
 const none = { hasSeats: false, hasNegotiation: false, hasLeadBoard: false };
 
 describe("buildPaletteItems", () => {
-  it("lists recent runs first, then every run, and only the views that are on screen", () => {
+  it("lists recent runs first, then the other runs, then the views on screen", () => {
     const items = buildPaletteItems({ sessions, recentIds: ["b", "gone"], ...none, hasSeats: true, hasLeadBoard: true });
     expect(items.map((i) => i.id)).toEqual([
       "recent:b",
       "session:a",
-      "session:b",
       "view:.seat-board",
       "view:.lead-board",
       "write:model",
@@ -25,12 +24,12 @@ describe("buildPaletteItems", () => {
     ]);
   });
 
-  it("lists the write actions disabled, with the reason, and never as runnable sessions", () => {
+  it("lists the write actions disabled: the command is the label, the reason is the action", () => {
     const writes = buildPaletteItems({ sessions, recentIds: [], ...none }).filter((i) => i.group === "Action");
-    expect(writes).toHaveLength(4);
+    expect(writes.map((i) => i.label)).toEqual(["/model <seat> <model>", "/pause", "/inject <seat> …", "/approve"]);
+    expect(writes.map((i) => i.detail)).toEqual(["Change a seat's model", "Pause the run", "Send a message to a seat", "Approve the integration"]);
     for (const item of writes) {
       expect(item.action).toEqual({ kind: "blocked", reason: WRITE_REASON });
-      expect(item.detail).toBe(WRITE_REASON);
     }
     expect(WRITE_REASON).toBe("needs write access (not in the watch-only preview)");
   });
