@@ -3,6 +3,7 @@ import type { AssentorConfig } from "../config/schema.js";
 import { resolveTeams } from "../config/teams.js";
 import type { Autonomy } from "../core/run-mode.js";
 import type { Seat, SessionSpecSchema } from "../core/seats.js";
+import type { Executor } from "../providers/executors/types.js";
 import type { StageRunnerDeps } from "../orchestrator/session-stages.js";
 import type { StageRunners } from "../orchestrator/session-runner.js";
 import type { EngineEventDraft } from "../protocol/events.js";
@@ -16,6 +17,7 @@ import { createDebugController, debugProblems } from "./debug.js";
 import { tddRuntime } from "./tdd/mode.js";
 import { cascadeProblems, createCascadeController } from "./cascade.js";
 import { createRedteamController, redteamProblems } from "./redteam.js";
+import { createPairController, pairProblems } from "./pair.js";
 
 /**
  * Mode registry and mode contract (T02B-01b metadata, T02B-01 contract). A mode
@@ -80,6 +82,13 @@ export interface ModeBuildInput {
   config: AssentorConfig;
 }
 
+/** A piece of a running executor's live output (Pair mode, T02B-13). */
+export interface ExecutorOutputChunk {
+  text: string;
+  /** The executor started or finished a tool call; a watcher may look at once. */
+  toolCall?: boolean;
+}
+
 /**
  * Host services a dynamic controller needs beyond the stage runners (T02B-02).
  * Optional on the session; a controller that needs one it did not get throws
@@ -101,6 +110,13 @@ export interface ModeHostServices {
   roster?(): readonly RosterEntry[] | Promise<readonly RosterEntry[]>;
   /** The prompt library the host loaded (layers it chose). Without it a controller loads the default layers. */
   prompts?: PromptLibrary;
+  /**
+   * Live output of an executor made by `deps.createExecutor` (its `onOutput`, in
+   * the host's wiring); returns the unsubscribe function. Pair mode's navigator
+   * watches through it. Without it the navigator sees the driver's output at the
+   * end of each turn only.
+   */
+  watchExecutorOutput?(executor: Executor, onChunk: (chunk: ExecutorOutputChunk) => void): () => void;
 }
 
 /** Thrown by a gated action the user did not approve (e.g. `worktrees.applyTo("main")`); nothing changed. */
@@ -323,7 +339,11 @@ const MODES: readonly ModeDefinition[] = [
     createController: (input) => createCascadeController(input, { approve: (question) => input.requestApproval({ question }) }),
   }),
   mode("pipeline", "Pipeline", "Requirements, architect, coder, tester, reviewer and docs stages in order.", "static", true, false, pipeline),
-  mode("pair", "Pair", "A driver codes while a navigator watches the stream and interjects.", "static", true),
+  // A controller loop (driver turns, live navigator, gates, review), not a stage graph: an interjection restarts a turn.
+  mode("pair", "Pair", "A driver codes while a navigator watches the stream and interjects.", "dynamic", true, false, {
+    validate: (config) => [...teamProblems(config), ...pairProblems(config)],
+    createController: (input) => createPairController(input, { approve: (question) => input.requestApproval({ question }) }),
+  }),
   mode("race", "Race", "Several seats implement in parallel worktrees; a judge picks one.", "static", true),
   // A controller loop (attacker round, builder fix, gates), not a stage graph: the number of rounds depends on the attacker.
   mode("redteam", "Red team", "An attacker writes failing tests or exploits; a builder fixes; repeat.", "dynamic", true, false, {
