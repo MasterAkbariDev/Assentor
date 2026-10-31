@@ -12,16 +12,41 @@ pnpm test              # UI tests run with the rest (jsdom per file)
 | Path | What |
 |---|---|
 | `src/main.tsx` | Entry: reads the token, starts the controller, renders `<App>`. |
-| `src/App.tsx` | Shell: header (connection status, theme), session list, `SessionPanel` (heading, error and empty states; renders `features/session-board/` and `features/seat-drawer/`). |
-| `src/engine/controller.ts` | `EngineController`: handshake, `sessions.list` refresh, one live subscription for the selected session, reconnect with backoff and resubscribe from `lastSeq`. |
+| `src/App.tsx` | Shell: header (connection status, theme), sidebar (section nav + session list), `SessionPanel` (heading, error and empty states; renders `features/session-board/` and `features/seat-drawer/`). |
+| `src/shell/` | `route.ts` (hash router, `SECTIONS`), `Sidebar.tsx` (`SectionNav`, `EmptySection`), `Toasts.tsx` (`ToastProvider`, `useToast`, connection toasts). |
+| `src/features/dev/` | `FixturesPage`: `#/dev/fixtures`, dev builds only (not in the nav or the production bundle). |
+| `src/engine/controller.ts` | `EngineController`: on each transport `open`: hello, `sessions.list` refresh, one live subscription for the selected session, resubscribe from `lastSeq`. |
 | `src/store/engineStore.ts` | Zustand vanilla store (`createEngineStore`) + `createFrameBatcher` (applies events once per animation frame). |
 | `src/store/context.tsx` | `<EngineStoreProvider>` and `useEngine(selector)`. |
 | `src/store/selectors.ts` | Named selectors (`selectSeats`, `isLiveSeat`) and `groupSeats` (executor, reviewers, other). |
 | `src/features/session-board/` | Session board: `SessionBoard` (grid and the one elapsed ticker, `useNow`), `SeatCard` (opens the drawer). |
 | `src/features/seat-drawer/` | Read-only seat drawer: `SeatDrawer` (panel, tabs, focus), `SeatActivity`, `SeatOutput`, `SeatInfo`, `activity.ts` (row text). |
+| `src/transport/types.ts` | `Transport` (`call`, `subscribe`, `onStatus`, `close`): the single seam to the engine. |
+| `src/transport/websocketTransport.ts` | `WebSocketTransport`: connects, reconnects with backoff, wraps the typed RPC client. |
+| `src/transport/mock.ts` | `mockTransport()` for tests and the fixtures page. |
+| `src/transport/context.tsx` | `<TransportProvider>` and `useRpc()`. |
+| `src/transport/contract.test-suite.ts` | `runTransportContract(name, make)`: what every `Transport` must do. |
 | `src/transport/websocket.ts` | `connectWebSocket(url, token)` → `RpcClientTransport` (auth handshake first). |
 | `src/transport/token.ts` | Takes `#token=…` from the URL, keeps it in sessionStorage, strips it from the address bar. |
-| `src/test/` | Test helpers: `fixtures.ts` (realistic event stream), `renderWithStore`, in-process engine. |
+| `src/test/` | Test helpers: `fixtures.ts` (event streams), `render.tsx` (`renderWithStore`). |
+| `fixtures/` | `session-negotiate-review.ndjson`: the generated negotiate + review stream (see Fixtures). |
+
+## Transport and `useRpc()`
+
+Components never touch a WebSocket. `useRpc()` returns the `Transport`:
+
+```tsx
+const rpc = useRpc();
+const { sessions } = await rpc.call("sessions.list");      // typed by the protocol
+const sub = await rpc.subscribe(id, lastSeq, { onEvent });  // seq > lastSeq, in order
+const off = rpc.onStatus((s) => …);                         // called at once, then on change
+```
+
+Status: `connecting` → `open`; a lost link goes `reconnecting` → `open`; `unauthorized` and `closed` are final. Calls and subscribes reject while not `open`; a dropped link ends subscriptions, so resubscribe from the last `seq` on `open` (the `EngineController` does this for the store). A new transport (Tauri) implements `Transport` and calls `runTransportContract` from its own test file. Depend on `Transport`, not on a client class.
+
+## Routing and shell
+
+A tiny hash router (`shell/route.ts`): `#/sessions` (default), `#/prompts`, `#/teams`, `#/playbooks`, `#/settings`. Prompts, Teams, Playbooks and Settings show an empty state until built. TanStack Router, Query and Virtual, Radix and Tailwind are not in the approved dependency set (STATUS §6), so none are used. `useToast()` shows a toast; the shell toasts when the connection drops and returns.
 
 ## Engine imports
 
@@ -63,9 +88,17 @@ import { renderWithStore } from "../test/render.js";
 import { sessionFixture } from "../test/fixtures.js";
 
 const { store, getByText } = renderWithStore(<SessionPanel />);
-store.getState().select(sessionFixture.id);
-store.getState().applyEvents(sessionFixture.id, sessionFixture.events);
+act(() => {
+  store.getState().select(sessionFixture.id);
+  store.getState().applyEvents(sessionFixture.id, sessionFixture.events);
+});
 ```
+
+`renderWithStore(ui, store?, transport?)` wraps `ui` in a fresh engine store, a `mockTransport()` and toasts, and returns the store and transport. `mockTransport({ sessions, handlers, engineVersion })` serves recorded events, records `calls`, and has `emit(event)` (live event) and `drop()` (link lost, then back). Selectors: read named ones from `store/selectors.ts` (`useEngine(selectSeats)`); select narrowly.
+
+## Fixtures
+
+`test/fixtures.ts` exports `sessionFixture`, `negotiationFixture`, `leadFixture`, `negotiateReviewFixture` and `burstFixture(seats, perSeat)`. `fixtures/session-negotiate-review.ndjson` is `negotiateReviewFixture` as one JSON event per line; `test/fixtures.test.ts` fails if they differ. Regenerate with `UPDATE_FIXTURES=1 npx vitest run packages/ui/src/test`. In a dev build, `#/dev/fixtures` replays any fixture into a private store with a slider for "reload at event N".
 
 ## Rules
 
