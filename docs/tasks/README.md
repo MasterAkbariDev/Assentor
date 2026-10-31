@@ -182,7 +182,7 @@ Measure first: TE-01 and TE-10 come first; every saving must pass the TE-10 net-
 | T04-02 | JSON-RPC core + stdio & in-process transports | 🔴 O | O2 | M | T04-01 ✅ |
 | T04-03 | WebSocket transport (`serve`) security | 🔴 O | O2 + human | M | T04-02 ✅ |
 | T04-04 | RPC handlers: prompts/teams/playbooks/settings | 🟢 H | S | M | T04-02 ✅ |
-| T04-05 | RPC handlers: sessions/seats/worktrees | 🟡 S | O | M | T04-02, T02-09 |
+| T04-05 | RPC handlers: sessions/seats/worktrees | 🟡 S | O | M | T04-02, T02-09 ✅ |
 | T04-06 | UI scaffold, Transport interface, event store | 🟡 S | O | M | T04-02 ✅ |
 | T04-07 | Session board + SeatCard | 🟢 H | S | M | T04-06 |
 | T04-08 | Seat drawer (transcript, xterm, actions) | 🟢 H | S | M | T04-06 |

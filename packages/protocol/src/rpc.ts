@@ -1,7 +1,6 @@
 import { z } from "zod";
-import { AUTONOMY_LEVELS } from "./events.js";
+import { AUTONOMY_LEVELS, type EngineEvent } from "./events.js";
 import { ModelIdSchema, SEAT_PROVIDERS, STAGE_KINDS, TeamSchema } from "./seats.js";
-import type { EngineEvent } from "./events.js";
 
 /**
  * Engine JSON-RPC contract (task T04-02p). Browser-safe: zod and types only,
@@ -15,6 +14,7 @@ import type { EngineEvent } from "./events.js";
  * (`WriteNotAllowed`) unless its transport grants writes. Write methods:
  * `prompt.save/fork`, `team.save/delete`, `settings.save`, and the ones that
  * start a process (`env.doctor`, `env.detectClis`, `models.discover`).
+ * The session / seat / worktree mutations (T04-05) are write too.
  */
 
 export const RPC_PROTOCOL_VERSION = 1;
@@ -32,6 +32,10 @@ export const RpcErrorCode = {
   WriteNotAllowed: -32002,
   /** Too many write calls; `serve` limits them. Retry later. */
   RateLimited: -32003,
+  /** A valid method the engine has no implementation for yet (e.g. `seat.inject`). */
+  NotSupported: -32004,
+  /** The engine understood the request and refused it (unknown session, wrong state, git refused). */
+  Rejected: -32005,
 } as const;
 
 /** Largest inbound frame a connection accepts (characters of JSON text). */
@@ -179,6 +183,15 @@ const SettingsPatchSchema = z
     artifacts: SettingsShape.artifacts.partial().strict().optional(),
   })
   .strict();
+
+/** Live state of a session this engine process hosts; absent for sessions it does not run. */
+const LiveStateSchema = z.enum(["created", "running", "cancelling"]);
+const SessionSummaryLiveSchema = SessionSummarySchema.extend({ live: LiveStateSchema.optional() });
+const SeatIdSchema = z.string().min(1).max(100);
+const SessionSeatSchema = z.object({ sessionId: SessionIdSchema, seatId: SeatIdSchema });
+const OkSchema = z.object({ ok: z.literal(true) });
+/** Destructive worktree calls must carry an explicit `confirm: true`. */
+const ConfirmSchema = z.literal(true);
 
 export type RpcAccess = "read" | "write";
 
@@ -425,6 +438,127 @@ export const RpcMethods = {
       entries: z.array(z.object({ id: z.string(), label: z.string(), source: z.enum(["seed", "discovered", "user"]) })),
       error: z.string().optional(),
     }),
+  },
+  // Session control (src/rpc/session-control.ts). Every method that starts, stops, answers or
+  // deletes something is "write". Methods marked "not supported yet" answer NotSupported.
+  "session.create": {
+    access: "write",
+    params: z
+      .object({
+        mode: z.string().min(1).max(50),
+        goal: z.string().min(1).max(20_000),
+        title: z.string().max(200).optional(),
+        /** The host may lower this; a session never runs with more autonomy than it is configured for. */
+        autonomy: z.enum(AUTONOMY_LEVELS).optional(),
+      })
+      .strict(),
+    result: z.object({ sessionId: z.string(), mode: z.string(), autonomy: z.enum(AUTONOMY_LEVELS) }),
+  },
+  "session.start": {
+    access: "write",
+    params: z.object({ sessionId: SessionIdSchema }).strict(),
+    result: z.object({ sessionId: z.string(), live: LiveStateSchema }),
+  },
+  // Not supported yet: no engine pause, and a static session has no prepared resume path.
+  "session.pause": { access: "write", params: z.object({ sessionId: SessionIdSchema }).strict(), result: OkSchema },
+  "session.resume": { access: "write", params: z.object({ sessionId: SessionIdSchema }).strict(), result: OkSchema },
+  "session.cancel": {
+    access: "write",
+    params: z.object({ sessionId: SessionIdSchema }).strict(),
+    result: z.object({ ok: z.literal(true), live: LiveStateSchema }),
+  },
+  "session.list": {
+    access: "read",
+    params: z.object({}).strict().optional(),
+    result: z.object({ sessions: z.array(SessionSummaryLiveSchema) }),
+  },
+  "session.get": {
+    access: "read",
+    params: z.object({ sessionId: SessionIdSchema }).strict(),
+    result: z.object({
+      session: SessionSummaryLiveSchema,
+      /** Pending approval question ids (dynamic modes) or stage ids (static) of a live session. */
+      pendingApprovals: z.array(z.string()),
+    }),
+  },
+  "session.approve": {
+    access: "write",
+    params: z
+      .object({
+        sessionId: SessionIdSchema,
+        /** `questionId` of the `user.question` event (dynamic modes) or the stage id (static modes). */
+        id: z.string().min(1).max(200),
+        /** Static stage gates can only be approved; to refuse one, cancel the session. */
+        decision: z.enum(["approve", "deny"]),
+      })
+      .strict(),
+    result: OkSchema,
+  },
+  "session.export": {
+    access: "read",
+    params: z.object({ sessionId: SessionIdSchema, fromSeq: z.number().int().nonnegative().default(0) }).strict(),
+    result: z.object({ events: z.array(z.record(z.unknown())), truncated: z.boolean() }),
+  },
+  // Not supported yet: no registry reaches a live Supervisor/executor from a session id.
+  "seat.setModel": {
+    access: "write",
+    params: SessionSeatSchema.extend({ model: z.string().min(1).max(200), immediate: z.boolean().optional() }).strict(),
+    result: OkSchema,
+  },
+  "seat.inject": {
+    access: "write",
+    params: SessionSeatSchema.extend({ text: z.string().min(1).max(20_000) }).strict(),
+    result: OkSchema,
+  },
+  "seat.stop": { access: "write", params: SessionSeatSchema.strict(), result: OkSchema },
+  "seat.restart": { access: "write", params: SessionSeatSchema.strict(), result: OkSchema },
+  // Worktrees are addressed by (sessionId, seatId) and checked against the manager's manifest; never by path.
+  "worktree.diff": {
+    access: "read",
+    params: SessionSeatSchema.strict(),
+    result: z.object({
+      baseSha: z.string(),
+      head: z.string(),
+      dirty: z.boolean(),
+      files: z.array(z.string()),
+      diff: z.string(),
+      /** True when `diff` was cut at 512 KiB; `files` is always complete. */
+      truncated: z.boolean(),
+    }),
+  },
+  "worktree.apply": {
+    access: "write",
+    params: SessionSeatSchema.extend({
+      confirm: ConfirmSchema,
+      strategy: z.enum(["merge", "squash", "patch"]).default("squash"),
+      message: z.string().max(500).optional(),
+      /** Repo-relative files or directories the seat may change; anything else aborts the apply. */
+      allowedPaths: z.array(z.string().min(1).max(500)).max(500).optional(),
+    }).strict(),
+    result: z.discriminatedUnion("ok", [
+      z.object({
+        ok: z.literal(true),
+        strategy: z.enum(["merge", "squash", "patch"]),
+        changed: z.boolean(),
+        commit: z.string().optional(),
+        warning: z.string().optional(),
+      }),
+      z.object({
+        ok: z.literal(false),
+        strategy: z.enum(["merge", "squash", "patch"]),
+        conflicts: z.array(z.string()),
+        message: z.string(),
+      }),
+    ]),
+  },
+  "worktree.discard": {
+    access: "write",
+    params: SessionSeatSchema.extend({
+      confirm: ConfirmSchema,
+      /** Also throw away uncommitted changes in the worktree. */
+      force: z.boolean().optional(),
+    }).strict(),
+    result: OkSchema,
   },
 } as const satisfies Record<string, RpcMethodDef>;
 

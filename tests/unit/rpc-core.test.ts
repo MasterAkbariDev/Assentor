@@ -146,6 +146,19 @@ describe("JSON-RPC conformance", () => {
         "prompt.preview",
         "prompt.save",
         "prompt.validate",
+        "seat.inject",
+        "seat.restart",
+        "seat.setModel",
+        "seat.stop",
+        "session.approve",
+        "session.cancel",
+        "session.create",
+        "session.export",
+        "session.get",
+        "session.list",
+        "session.pause",
+        "session.resume",
+        "session.start",
         "sessions.list",
         "settings.get",
         "settings.save",
@@ -153,6 +166,9 @@ describe("JSON-RPC conformance", () => {
         "team.list",
         "team.save",
         "team.validate",
+        "worktree.apply",
+        "worktree.diff",
+        "worktree.discard",
       ],
     });
     await expect(client.call("events.subscribe", { sessionId: "bad" })).rejects.toBeInstanceOf(RpcRemoteError);
@@ -624,9 +640,14 @@ function writeServer(calls: number[]) {
 describe("write access", () => {
   it("declares only the mutating or process-starting methods as write", () => {
     const writes = Object.entries(RpcMethods).filter(([, def]) => def.access === "write").map(([name]) => name);
-    expect(writes.sort()).toEqual(
-      ["env.detectClis", "env.doctor", "models.discover", "prompt.fork", "prompt.save", "settings.save", "team.delete", "team.save"],
-    );
+    expect(writes.sort()).toEqual([
+      "env.detectClis", "env.doctor", "models.discover", "prompt.fork", "prompt.save",
+      "seat.inject", "seat.restart", "seat.setModel", "seat.stop",
+      "session.approve", "session.cancel", "session.create", "session.pause", "session.resume", "session.start",
+      "settings.save", "team.delete", "team.save",
+      "worktree.apply", "worktree.discard",
+    ]);
+    expect(Object.values(RpcMethods).every((def) => def.access === "read" || def.access === "write")).toBe(true);
   });
 
   it("refuses write methods on a connection without write access, and never runs them", async () => {

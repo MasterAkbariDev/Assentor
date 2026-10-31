@@ -92,6 +92,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-05 · RPC handlers: sessions / seats / worktrees
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** T04-02, T02-09
 
+**Merged 2026-10-31 (planner, under the owner's standing merge direction):** `401f97f` + O2 fixes `92a7eab`; re-review PASS with nits. `session.create/start/cancel/approve/list/get/export`, `worktree.diff/apply/discard` (apply/discard need `confirm: true`, address worktrees by session + seat via the manifest, refused while the session is live in this or another process). Autonomy = min(host, client, `maxAutonomy`); `serve` caps at supervised (no autopilot from a browser). Created sessions expire after 10 min; export is bounded (5,000 events / ~1 MiB). Not supported yet (NotSupported -32004): session.pause/resume, seat.setModel/inject/stop/restart. Error codes: RateLimited -32003, NotSupported -32004, Rejected -32005. Process note: merge commit `c68ae9e` on the card branch was made with plain `git commit` (no content).
+
 **Deliverables** — `session.create/start/pause/resume/cancel/list/get/approve/export`, `seat.setModel/inject/stop/restart`, `worktree.diff/apply/discard` delegating to `SessionRunner`, `WorktreeManager`; `apply`/`discard` require an explicit `confirm: true` param; all path params validated against project root.
 
 **Reviewer focus** — no path traversal; destructive ops gated; cancellation semantics.
