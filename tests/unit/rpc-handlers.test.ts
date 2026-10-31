@@ -163,7 +163,7 @@ describe("prompt.save symlinks", () => {
     expect(await fs.readdir(outside)).toEqual([]);
   });
 
-  it("refuses when .assentor itself is a symlink out of the project, and for the user layer", async () => {
+  it("refuses when .assentor itself is a symlink out of the project", async () => {
     const outside = await fs.mkdtemp(path.join(os.tmpdir(), "rpc-handlers-outside-"));
     dirs.push(outside);
     await fs.symlink(outside, path.join(projectPath, ".assentor"));
@@ -172,11 +172,17 @@ describe("prompt.save symlinks", () => {
       RpcErrorCode.InvalidParams,
     );
 
-    await fs.symlink(outside, path.join(userDir, "prompts"));
-    expect((await rejection(client.call("prompt.save", { scope: "user", frontMatter: frontMatter("sneaky"), body: "x" }))).code).toBe(
-      RpcErrorCode.InvalidParams,
-    );
     expect(await fs.readdir(outside)).toEqual([]);
+  });
+
+  it("allows the user's own symlinked prompt directory", async () => {
+    const mine = await fs.mkdtemp(path.join(os.tmpdir(), "rpc-handlers-dotfiles-"));
+    dirs.push(mine);
+    await fs.symlink(mine, path.join(userDir, "prompts"));
+
+    await engineClient().call("prompt.save", { scope: "user", frontMatter: frontMatter("mine"), body: "x" });
+
+    expect(await fs.readdir(mine)).toEqual(["mine.md"]);
   });
 
   it("leaves no temp file behind when the write fails", async () => {

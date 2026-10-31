@@ -256,11 +256,15 @@ export async function saveAssentorConfig(
   }
 
   await fs.mkdir(path.dirname(configPath), { recursive: true });
-  // Temp file in the same directory + rename: a crash or a concurrent reader never sees a half-written config.
-  const tmp = `${configPath}.${process.pid}.${Date.now()}.tmp`;
+  // Temp file next to the real file + rename: a crash or a concurrent reader never sees a half-written
+  // config. A symlinked config (e.g. into a dotfiles repo) is written through, and stays a symlink.
+  const target = await fs.realpath(configPath).catch(() => configPath);
+  const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
   try {
+    const mode = await fs.stat(target).then((stat) => stat.mode & 0o777, () => undefined);
     await fs.writeFile(tmp, stringifyYaml(output, { lineWidth: 100 }), "utf8");
-    await fs.rename(tmp, configPath);
+    if (mode !== undefined) await fs.chmod(tmp, mode);
+    await fs.rename(tmp, target);
   } catch (error) {
     await fs.rm(tmp, { force: true });
     throw error;

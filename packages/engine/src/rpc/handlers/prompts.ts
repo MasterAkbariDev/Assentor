@@ -12,7 +12,6 @@ import {
   validateFrontMatter,
   type TemplateVariables,
 } from "../../prompts/index.js";
-import { userAssentorDir } from "../../config/paths.js";
 import { scrubMessage } from "../library.js";
 import { RpcError, type RpcServer } from "../server.js";
 
@@ -43,7 +42,7 @@ async function realpathAllowingMissing(target: string): Promise<string> {
   }
 }
 
-/** A layer directory that is (or sits behind) a symlink out of its root must not be written through. */
+/** A project layer directory that is (or sits behind) a symlink out of the project must not be written through. */
 async function assertInsideRoot(dir: string, root: string): Promise<void> {
   const real = await realpathAllowingMissing(dir);
   const relative = path.relative(await realpathAllowingMissing(root), real);
@@ -86,7 +85,8 @@ export function registerPromptMethods(server: RpcServer, options: PromptMethodsO
     if (Buffer.byteLength(text) > MAX_PROMPT_FILE_BYTES) {
       throw new RpcError(RpcErrorCode.InvalidParams, `Prompt is larger than ${MAX_PROMPT_FILE_BYTES} bytes`);
     }
-    await assertInsideRoot(dir, scope === "project" ? projectPath : userAssentorDir());
+    // Only the project layer is untrusted; a symlinked ~/.assentor/prompts is the user's own choice.
+    if (scope === "project") await assertInsideRoot(dir, projectPath);
     const previous = await fs.readFile(file, "utf8").catch(() => undefined);
     await fs.mkdir(dir, { recursive: true });
     // Temp file + rename: a crash never leaves a half-written prompt, and a symlink at `file` is replaced, not followed.
