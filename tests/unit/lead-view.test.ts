@@ -4,7 +4,10 @@ import { RunReporter } from "../../src/cli/ui/reporter.js";
 import {
   emptyLeadBoardView,
   LEAD_LOG_LIMIT,
+  LEAD_STAGE_LABELS,
   leadColumns,
+  leadStageOf,
+  leadStages,
   plainText,
   reduceLeadEvents,
   type LeadBoardView,
@@ -87,6 +90,73 @@ describe("reduceLeadEvents over a scripted run", () => {
   });
 });
 
+describe("reduceLeadEvents for the web board (T04-17)", () => {
+  const view = fold([
+    ev("task.created", { taskId: "T1", title: "one" }),
+    ev("task.created", { taskId: "T2", title: "two" }),
+    ev("task.created", { taskId: "T3", title: "three" }),
+    ev("task.created", { taskId: "T4", title: "four" }),
+    ev("task.created", { taskId: "T5", title: "five" }),
+    ev("task.created", { taskId: "T6", title: "six" }),
+    ev("task.assigned", { taskId: "T1", seatId: "seat-1" }),
+    ev("task.assigned", { taskId: "T2", seatId: "seat-1" }),
+    ev("task.status", { taskId: "T2", status: "in_progress" }),
+    ev("task.status", { taskId: "T2", status: "in_review" }),
+    ev("task.accepted", { taskId: "T3" }),
+    ev("task.status", { taskId: "T3", status: "integrated" }),
+    ev("task.rejected", { taskId: "T4", reason: "tests fail" }),
+  ]);
+
+  it("sorts tasks into the six web stages: assigned, accepted and rejected have their own", () => {
+    const stages = leadStages(view);
+    expect(stages.backlog.map((t) => t.id)).toEqual(["T5", "T6"]);
+    expect(stages.assigned.map((t) => t.id)).toEqual(["T1"]);
+    expect(stages.in_progress).toEqual([]);
+    expect(stages.in_review.map((t) => t.id)).toEqual(["T2"]);
+    expect(stages.accepted.map((t) => t.id)).toEqual(["T3"]);
+    expect(stages.rejected.map((t) => t.id)).toEqual(["T4"]);
+    expect(leadStageOf("split")).toBeUndefined();
+    expect(LEAD_STAGE_LABELS.in_review).toBe("In review");
+  });
+
+  it("gives each task its owner seat id, empty before assignment", () => {
+    expect(view.tasks.find((t) => t.id === "T1")!.seatId).toBe("seat-1");
+    expect(view.tasks.find((t) => t.id === "T5")!.seatId).toBe("");
+  });
+
+  it("counts reassignments to a different seat, not repeats on the same seat", () => {
+    const moved = fold([
+      ev("task.created", { taskId: "T1", title: "one" }),
+      ev("task.assigned", { taskId: "T1", seatId: "seat-1" }),
+      ev("task.assigned", { taskId: "T1", seatId: "seat-1" }),
+      ev("task.assigned", { taskId: "T1", seatId: "seat-2" }),
+    ]);
+    expect(moved.tasks[0]).toMatchObject({ seatId: "seat-2", owner: "seat-2", reassigns: 1 });
+  });
+
+  it("counts escalations and ignores them for unknown tasks", () => {
+    const escalated = fold([
+      ev("task.created", { taskId: "T1", title: "one" }),
+      ev("task.escalated", { taskId: "T1", to: "codex/gpt-5" }),
+      ev("task.escalated", { taskId: "T1", to: "claude/opus" }),
+      ev("task.escalated", { taskId: "T9", to: "claude/opus" }),
+    ]);
+    expect(escalated.tasks[0]!.escalations).toBe(2);
+    expect(escalated.tasks).toHaveLength(1);
+  });
+
+  it("keeps every lead action in actions, while log stays the short view", () => {
+    const events = Array.from({ length: LEAD_LOG_LIMIT + 2 }, (_, i) =>
+      ev("lead.action", { action: `act${i}`, accepted: i % 2 === 0, reason: `r${i}` }),
+    );
+    const all = fold(events);
+    expect(all.actions).toHaveLength(LEAD_LOG_LIMIT + 2);
+    expect(all.actions[0]!.action).toBe("act0");
+    expect(all.actions.at(-1)!.action).toBe(`act${LEAD_LOG_LIMIT + 1}`);
+    expect(all.log).toHaveLength(LEAD_LOG_LIMIT);
+  });
+});
+
 describe("reduceLeadEvents details", () => {
   it("task ids compare case-insensitively", () => {
     const view = fold([
@@ -103,7 +173,7 @@ describe("reduceLeadEvents details", () => {
       ev("task.assigned", { taskId: "T1", seatId: "s" }),
       ev("task.created", { taskId: "T1", title: "new", replaced: true }),
     ]);
-    expect(view.tasks).toEqual([{ id: "T1", title: "new", state: "assigned", owner: "s" }]);
+    expect(view.tasks).toEqual([{ id: "T1", title: "new", state: "assigned", owner: "s", seatId: "s", reassigns: 0, escalations: 0 }]);
   });
 
   it("an integrated task is in done; an unknown task status is ignored", () => {

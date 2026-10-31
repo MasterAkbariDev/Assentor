@@ -1,6 +1,7 @@
 import { createStore, type StoreApi } from "zustand/vanilla";
 import type { EngineEvent, EngineEventType } from "@engine/protocol/events.js";
 import type { SessionSummary } from "@engine/protocol/rpc.js";
+import { emptyLeadBoardView, reduceLeadEvents, type LeadBoardView } from "@engine/ui-shared/lead.js";
 import { reduceSeatEvents, type SeatState } from "@engine/ui-shared/status.js";
 
 /**
@@ -38,6 +39,8 @@ export const SEAT_EVENT_CAP = 200;
 
 export interface SessionView {
   id: string;
+  /** From `mode.selected`, e.g. "lead". Undefined until that event arrives. */
+  mode?: string;
   seats: Record<string, SeatState>;
   /** From `seat.spawned`, keyed by seat id. */
   seatInfo: Record<string, SeatInfo>;
@@ -46,6 +49,8 @@ export interface SessionView {
   /** Last applied `seq`; resubscribe from here. */
   lastSeq: number;
   eventCount: number;
+  /** The lead team board, folded by the shared `reduceLeadEvents` (T02B-18). Empty outside lead mode. */
+  lead: LeadBoardView;
   /** Latest `session.state` value, e.g. EXECUTING. */
   state?: string;
   /** Set when the stream stopped for good (e.g. `unreadable_log`). */
@@ -72,7 +77,7 @@ export interface EngineState {
 export type EngineStore = StoreApi<EngineState>;
 
 function emptySession(id: string): SessionView {
-  return { id, seats: {}, seatInfo: {}, seatEvents: {}, lastSeq: 0, eventCount: 0 };
+  return { id, seats: {}, seatInfo: {}, seatEvents: {}, lead: emptyLeadBoardView(), lastSeq: 0, eventCount: 0 };
 }
 
 export function createEngineStore(): EngineStore {
@@ -95,12 +100,16 @@ export function createEngineStore(): EngineStore {
         if (!current || current.id !== sessionId || events.length === 0) {
           return s;
         }
-        let { seats, seatInfo, seatEvents, lastSeq, eventCount, state } = current;
+        let { seats, seatInfo, seatEvents, lead, lastSeq, eventCount, state, mode } = current;
         for (const event of events) {
           if (event.sessionId !== sessionId || event.seq <= lastSeq) {
             continue;
           }
           seats = reduceSeatEvents(seats, event);
+          lead = reduceLeadEvents(lead, event);
+          if (event.type === "mode.selected") {
+            mode = event.data.mode;
+          }
           if (event.seatId && event.type === "seat.spawned") {
             const { provider, transport, permissions } = event.data;
             seatInfo = { ...seatInfo, [event.seatId]: { provider, transport, permissions } };
@@ -117,7 +126,7 @@ export function createEngineStore(): EngineStore {
         if (lastSeq === current.lastSeq) {
           return s;
         }
-        return { session: { ...current, seats, seatInfo, seatEvents, lastSeq, eventCount, ...(state ? { state } : {}) } };
+        return { session: { ...current, seats, seatInfo, seatEvents, lead, lastSeq, eventCount, mode, ...(state ? { state } : {}) } };
       }),
     failSession: (sessionId, message) =>
       set((s) => (s.session?.id === sessionId ? { session: { ...s.session, error: message } } : s)),
