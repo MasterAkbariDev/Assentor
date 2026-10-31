@@ -68,6 +68,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-04 · RPC handlers: prompts / teams / playbooks / settings
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T04-02
 
+**Merged 2026-10-31 (planner, under the owner's standing merge direction):** `0f5b81b` + O2 fixes `71093fe`, `e00c626`; O2 PASS. Write methods: prompt.save/fork, team.save/delete, settings.save, env.doctor, env.detectClis, models.discover; reads: prompt.preview/validate, team.validate, playbook.list/get, settings.get (keys as {id, provider, name, healthy} via read-only `KeyVault.readSummaries`). settings.save allowlist excludes binaries, verification commands, security, reviewers, teams, modes; executor.model is a ModelId (no flag-like values). Config saves are atomic (temp + rename, through symlinks) and serialized in-process. Open: cross-process lost updates (follow-up lockfile); `keys.*` handlers.
+
 **Status: ✅ preview cut T04-04p done** (`e6107b4` + `793aaf4`, Haiku #2; Sonnet NEEDS_WORK → fixed). Read-only methods in `packages/engine/src/rpc/library.ts`: `prompt.list`, `prompt.get`, `team.list` (config teams expanded to seats, plus the legacy review team when `modes.review` is unset; config errors → `InvalidRequest "Config problem: …"`, paths scrubbed; never `keyId`), `models.catalog` (a `readOnly` `CliModelCatalog`: reads the cache only, never backs up, discovers or writes). Not in this cut: `prompt.save/fork/preview/validate`, `team.save/delete/validate`, playbooks, `settings.*`, `env.*` (writes or process spawns).
 
 **Goal** — Expose existing library/config functions over RPC.

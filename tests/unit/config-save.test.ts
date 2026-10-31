@@ -357,3 +357,24 @@ describe("autonomy across user and project layers", () => {
     });
   });
 });
+
+describe("saveAssentorConfig on a symlinked config file", () => {
+  it("writes through the symlink, keeps it a symlink and keeps the file mode", async () => {
+    const project = await projectDir();
+    const dotfiles = await fs.mkdtemp(path.join(TEMP_ROOT, "dotfiles-"));
+    tempDirs.push(dotfiles);
+    const real = path.join(dotfiles, "config.yaml");
+    await fs.writeFile(real, "routing:\n  strategy: CHEAPEST\n", { mode: 0o640 });
+    await fs.mkdir(path.dirname(userConfigPath()), { recursive: true });
+    await fs.symlink(real, userConfigPath());
+
+    const config = await loadAssentorConfig(project);
+    config.routing.strategy = "BEST";
+    await saveAssentorConfig(project, config, { scope: "user" });
+
+    expect((await fs.lstat(userConfigPath())).isSymbolicLink()).toBe(true);
+    expect(((await readYaml(real)).routing as { strategy: string }).strategy).toBe("BEST");
+    expect((await fs.stat(real)).mode & 0o777).toBe(0o640);
+    expect((await fs.readdir(dotfiles)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+});
