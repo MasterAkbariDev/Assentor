@@ -54,7 +54,7 @@ Roles: 🟢 **Haiku** implements bounded cards · 🟡 **Sonnet** reviews every 
 
 ## 4. Progress
 
-**49 of 80 cards done** (2026-10-30; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 27/41 · 🟡 Sonnet-tier 11/17 · 🔴 Opus-tier 11/22. Tests: 2312 passing. Core (Phases 0–3 + 2b) left: 3 cards — T02B-13 pair, T02B-15 swarm, T02B-19 retro.
+**52 of 80 cards done** (2026-10-31; plus T02B-01b split card, follow-ups FU-01…06, gate fixes G-1, G-5). By tier: 🟢 Haiku 28/41 · 🟡 Sonnet-tier 13/17 · 🔴 Opus-tier 11/22. Tests: 2432 passing. **Core (Phases 0–3 + 2b) complete.** Phase 4 preview cuts continue (T04-09p, T04-17p merged; T04-10p in fixes).
 
 | Phase | Done | Open |
 |---|---|---|
@@ -149,10 +149,9 @@ Watch-only first preview, ahead of the T04-01 package split. Code stays in the s
   - ✅ T02-08 divide & conquer merged (`e9e7331`): Opus PASS after 3 rounds; user signed off. Phase 2 complete.
 - ✅ T02B-07 danger classifier merged (`9716d2a`): O2 PASS after 3 rounds; user signed off. Merge fix: `modes.cascade` passthrough, `dangerAreas` optional. Follow-up: project `.assentor/config.yaml` with this repo's danger files.
 - **Owner direction (2026-10-30): merge without asking for sign-off.** Cards still need an independent O2 review that ends PASS (or only nits) and a green staged-tree gate; the planner then merges and records it here instead of asking the owner.
-- **Resumed 2026-10-31** (after a machine restart, load ~7). All three committed, then reviewed:
-  - T02B-13 pair `1f8fb32`: O2 NEEDS_WORK (must-fix: cancel during drain spins forever; should-fix: navigator note sent as an autonomous supervisor directive; watchExecutorOutput misses gated executors under manual; resume fails with a raw worktree error) → builder fixing.
-  - T02B-15 swarm `05c83d0`: O2 NEEDS_WORK (must-fix: gate side effects land unreviewed — snapshot taken after gates; should-fix: final pin, crash-resume windows, baseline gate, silent "unchanged" items, truncated diffs landing in full, one verdict failing a whole batch) → builder fixing.
-  - T02B-19 retro `7cfc60f`: Sonnet NEEDS_WORK (missing per-seat review verdicts; sessionId unchecked in the lessons header; temp file left on error; control/bidi chars kept) → builder fixing.
+- **2026-10-31: core complete.** Merged: T02B-19 retro `0444b42`, T02B-13 pair `ddc7ad3`, T02B-15 swarm `3ce4b91` (each O2/Sonnet review → fixes → PASS). Then Phase 4 watch-only preview cuts on the single package (no T04-01 split yet — it would block parallel work): T04-09p negotiation view `9528ff3`, T04-17p Lead board view `e0b592c`; T04-10p review view (`afd1882`, review PASS with should-fixes) is fixing and merging integration in.
+  - Engine follow-ups the views need (they show "not in the event stream" today): proposal authors on `negotiation.proposal`; consensus threshold and decision rationale events; per-reviewer `review.verdict` with confidence; an emitter for `review.finding` with agreement; panel policy on `review.completed`.
+  - Gate note: full suites at load 150–370 time out real-git tests (strategy-divide, swarm-mode, tdd-mode, cascade-mode); they pass alone. Run at most two gates at once.
 - **Paused by the user on 2026-10-30 after merging T02B-18** (`b94c4a9`, Lead team board + lead log; Sonnet review fixes `426369a`). All agents stopped. Paused cards, all on branches `claude/card-<id>` from `248f8e0`, **uncommitted and untested** — review the diff first, then finish:
   - T02B-13 pair (Sonnet): `src/modes/pair.ts`, `tests/unit/mode-pair.test.ts`, registry/index/test edits, and an edit to its card text (revert unless the card asks for it). It was rerunning its gate when stopped.
   - T02B-15 swarm (Sonnet): `src/modes/swarm.ts`, `tests/unit/swarm-mode.test.ts`, registry/test edits, and a change to `src/negotiation/strategies/divide.ts` (shared code — needs O2 review). It was fixing a type cast when stopped.
