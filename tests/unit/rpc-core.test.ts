@@ -598,7 +598,13 @@ function writeServer(calls: number[]) {
   return server
     .register("test.write" as RpcMethodName, handler)
     .register("test.unmarked" as RpcMethodName, handler)
-    .register("sessions.list", () => ({ sessions: [] }));
+    .register("sessions.list", () => ({ sessions: [] }))
+    // Same handler shape as engine.ts.
+    .register("engine.hello", (_params, { connection }) => ({
+      engineVersion: "x",
+      protocolVersion: 1,
+      capabilities: connection.methodNames,
+    }));
 }
 
 describe("write access", () => {
@@ -615,14 +621,19 @@ describe("write access", () => {
     await connection.receive(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "test.write", params: { bad: true } }));
     await connection.receive(JSON.stringify({ jsonrpc: "2.0", method: "test.write", params: { n: 4 } }));
     await connection.receive(JSON.stringify({ jsonrpc: "2.0", id: 5, method: "sessions.list" }));
+    await connection.receive(JSON.stringify({ jsonrpc: "2.0", id: 6, method: "engine.hello" }));
 
     expect(calls).toEqual([]);
+    expect(connection.canWrite).toBe(false);
     expect(frames.map((f) => [f.id, (f.error as { code: number } | undefined)?.code])).toEqual([
       [1, RpcErrorCode.WriteNotAllowed],
       [2, RpcErrorCode.WriteNotAllowed],
       [3, RpcErrorCode.WriteNotAllowed],
       [5, undefined],
+      [6, undefined],
     ]);
+    // Capabilities hide what this connection may not call.
+    expect((frames[4]!.result as { capabilities: string[] }).capabilities).toEqual(["engine.hello", "sessions.list"]);
     expect((frames[0]!.error as { message: string }).message).toMatch(/test\.write.*read-only/);
   });
 
@@ -631,6 +642,12 @@ describe("write access", () => {
     const client = new RpcClient(createInProcessTransport(writeServer(calls)).client);
     cleanups.push(() => client.close());
     expect(await client.call("test.write" as never, { n: 1 } as never)).toEqual({ ok: true });
+    expect((await client.call("engine.hello")).capabilities).toEqual([
+      "engine.hello",
+      "sessions.list",
+      "test.unmarked",
+      "test.write",
+    ]);
 
     const input = new PassThrough();
     const output = new PassThrough();
@@ -643,6 +660,15 @@ describe("write access", () => {
     input.end();
     await done;
     expect(calls).toEqual([1, 2]);
+  });
+});
+
+describe("RpcServer.register", () => {
+  it("refuses a second handler for the same method", () => {
+    const server = new RpcServer().register("sessions.list", () => ({ sessions: [] }));
+    expect(() => server.registerAll({ "sessions.list": () => ({ sessions: [] }) })).toThrow(
+      "RPC method sessions.list is already registered",
+    );
   });
 });
 

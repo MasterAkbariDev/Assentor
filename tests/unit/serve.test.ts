@@ -328,7 +328,12 @@ describe("assentor serve: WebSocket", () => {
         ran = true;
         return { ok: true };
       }) as never)
-      .register("sessions.list", () => ({ sessions: [] }));
+      .register("sessions.list", () => ({ sessions: [] }))
+      .register("engine.hello", (_params, { connection }) => ({
+        engineVersion: "x",
+        protocolVersion: 1,
+        capabilities: connection.methodNames,
+      }));
     const { handle, origin } = await serve({ rpcServer });
     const ws = await authenticated(handle.port, origin);
     ws.send(JSON.stringify({ jsonrpc: "2.0", method: "test.write", params: {} }));
@@ -337,6 +342,9 @@ describe("assentor serve: WebSocket", () => {
     // Reads still work on the same connection.
     ws.send(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "sessions.list" }));
     expect(await nextMessage(ws)).toEqual({ jsonrpc: "2.0", id: 2, result: { sessions: [] } });
+    // The handshake does not advertise the write method.
+    ws.send(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "engine.hello" }));
+    expect(await nextMessage(ws)).toMatchObject({ id: 3, result: { capabilities: ["engine.hello", "sessions.list"] } });
     expect(ran).toBe(false);
   });
 
@@ -409,7 +417,12 @@ describe("assentor serve: writes", () => {
         calls.push(params.secret);
         return { ok: true };
       }) as never)
-      .register("sessions.list", () => ({ sessions: [] }));
+      .register("sessions.list", () => ({ sessions: [] }))
+      .register("engine.hello", (_params, { connection }) => ({
+        engineVersion: "x",
+        protocolVersion: 1,
+        capabilities: connection.methodNames,
+      }));
     return { rpcServer, calls };
   }
 
@@ -464,6 +477,14 @@ describe("assentor serve: writes", () => {
     callWrite(reader, 2);
     expect(await nextMessage(reader)).toMatchObject({ id: 2, error: { code: RpcErrorCode.WriteNotAllowed } });
     expect(calls).toHaveLength(1);
+
+    // engine.hello advertises the write method only to the connection that may use it.
+    const hello = async (socket: WebSocket) => {
+      socket.send(JSON.stringify({ jsonrpc: "2.0", id: 9, method: "engine.hello" }));
+      return ((await nextMessage(socket)).result as { capabilities: string[] }).capabilities;
+    };
+    expect(await hello(ws)).toEqual(["engine.hello", "sessions.list", "test.write"]);
+    expect(await hello(reader)).toEqual(["engine.hello", "sessions.list"]);
 
     const lines = (await auditText()).trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
     expect(lines).toHaveLength(1);
