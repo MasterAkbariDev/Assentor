@@ -1,4 +1,4 @@
-import type { EngineEvent } from "@engine/protocol/events.js";
+import type { EngineEvent, EngineEventOf } from "@engine/protocol/events.js";
 import type { LeadBoardView } from "@engine/ui-shared/lead.js";
 import type { SeatState } from "@engine/ui-shared/status.js";
 import type { EngineState } from "./engineStore.js";
@@ -66,4 +66,26 @@ export function groupSeats(seats: Record<string, SeatState>): SeatGroup[] {
     title: GROUP_TITLES[key],
     seats: buckets[key],
   }));
+}
+
+/** The run's latest reviewer-scoped verdict (T04-10p). Undefined before the first review finishes. */
+export function selectReviewVerdict(state: EngineState) {
+  return state.session?.reviewVerdict;
+}
+
+const NO_FINDINGS: readonly EngineEventOf<"review.finding">[] = [];
+
+/** The run's `review.finding` events, oldest first. Stable empty array, so selectors don't loop. */
+export function selectReviewFindings(state: EngineState) {
+  return state.session?.reviewFindings ?? NO_FINDINGS;
+}
+
+/** True when the run has a review to show: a verdict, a finding, or a reviewer seat. */
+export function selectHasReview(state: EngineState): boolean {
+  const seats = state.session?.seats ?? {};
+  return (
+    selectReviewVerdict(state) !== undefined ||
+    selectReviewFindings(state).length > 0 ||
+    Object.keys(seats).some((id) => id === "panel" || id.startsWith("reviewer-"))
+  );
 }

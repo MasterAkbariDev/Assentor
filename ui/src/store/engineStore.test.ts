@@ -40,6 +40,7 @@ describe("engine store", () => {
       seats: {},
       seatInfo: {},
       seatEvents: {},
+      reviewFindings: [],
       negotiationEvents: [],
       lead: emptyLeadBoardView(),
       lastSeq: 0,
