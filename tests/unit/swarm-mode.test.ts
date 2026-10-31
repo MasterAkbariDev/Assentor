@@ -324,8 +324,13 @@ describe("swarm mode", () => {
     const s = await setup({
       review: [{ type: "needs_work", summary: "batch is off" }, { type: "pass" }, { type: "needs_work", summary: "too clever", requiredChanges: ["simplify"] }],
     });
-    const result = await s.run();
+    const gateCwds: string[] = [];
+    const counting: NonNullable<SwarmExtras["runCommand"]> = (command, cwd, options) => (gateCwds.push(cwd), runCommand(command, cwd, options));
+    const result = await s.run({}, { runCommand: counting });
     expect(result.status).toBe("completed");
+    // Baseline, batch 1, i1 re-merged into a new candidate, batch 2, batch 3, and i2 on tier 2: the re-merged candidate is gated again.
+    expect(gateCwds).toHaveLength(6);
+    expect(gateCwds[2]).not.toBe(gateCwds[1]);
     expect(s.prompts.filter((p) => p.tier === 2).map((p) => p.itemId)).toEqual(["i2"]);
     expect(s.prompts.find((p) => p.tier === 2)!.prompt).toContain("too clever");
     expect(statusesOf(s, "i1")).toEqual(["queued", "running", "merged"]);
@@ -370,6 +375,44 @@ describe("swarm mode", () => {
     const result = await s.run();
     expect(result.status).toBe("blocked");
     expect(result.reason).toContain("the checks fail before any change");
+    expect(s.prompts).toHaveLength(0);
+  });
+
+  it("a leftover process that edits an owned file after the worker returned fails the item; the late edit never lands", async () => {
+    let firstCwd: string | undefined;
+    const s = await setup({
+      config: baseConfig({ files: ["a.txt", "b.txt"] }),
+      work: async (w) => {
+        if (w.tier === 1 && w.itemId === "i1") {
+          firstCwd = w.cwd;
+          return edit(w);
+        }
+        if (w.tier === 1 && w.itemId === "i2") {
+          // i1 has returned and been checked by now; its "leftover process" writes after that.
+          while (!firstCwd) await new Promise((r) => setTimeout(r, 20));
+          await new Promise((r) => setTimeout(r, 1500));
+          await fs.writeFile(path.join(firstCwd, "a.txt"), "late write\n");
+        }
+        return edit(w);
+      },
+    });
+    const result = await s.run();
+    expect(result.status).toBe("completed");
+    expect(s.prompts.map((p) => `${p.itemId}/${p.tier}`)).toEqual(["i1/1", "i2/1", "i1/2"]);
+    expect(s.prompts[2]!.prompt).toContain("changed after the worker returned");
+    expect(await read(s.repo, "a.txt")).toBe("new a.txt\n");
+    expect(await read(s.repo, "b.txt")).toBe("new b.txt\n");
+  });
+
+  it("checks that write files stop the swarm at the baseline", async () => {
+    const s = await setup({});
+    const writing: NonNullable<SwarmExtras["runCommand"]> = async (command, cwd, options) => {
+      await fs.writeFile(path.join(cwd, "report.txt"), "generated\n");
+      return runCommand(command, cwd, options);
+    };
+    const result = await s.run({}, { runCommand: writing });
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("checks that only read");
     expect(s.prompts).toHaveLength(0);
   });
 
