@@ -33,7 +33,7 @@ export function LeadBoard() {
       </div>
       <div className="lead-panels">
         <LeadOrgChart seats={seats} />
-        <LeadLog actions={lead.actions} />
+        <LeadLog actions={lead.actions} total={lead.actionsTotal} />
       </div>
     </section>
   );
@@ -101,7 +101,16 @@ function LeadTaskCard({ task, seat, onOpen }: { task: LeadTaskView; seat?: SeatS
     return <div className="lead-task">{body}</div>;
   }
   return (
-    <button type="button" className="lead-task lead-task-open" aria-haspopup="dialog" onClick={() => onOpen(task.seatId)}>
+    <button
+      type="button"
+      className="lead-task lead-task-open"
+      aria-haspopup="dialog"
+      onClick={(event) => {
+        // Focus the card first: the drawer returns focus to whatever had it (Safari does not focus buttons on click).
+        event.currentTarget.focus();
+        onOpen(task.seatId);
+      }}
+    >
       {body}
     </button>
   );

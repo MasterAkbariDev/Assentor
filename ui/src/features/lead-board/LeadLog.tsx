@@ -6,7 +6,7 @@ import type { LeadLogEntry } from "@engine/ui-shared/lead.js";
  * reason. A switch narrows the list to refused actions. Text only: the action and
  * reason are model output, so they are shown as plain text.
  */
-export function LeadLog({ actions }: { actions: LeadLogEntry[] }) {
+export function LeadLog({ actions, total }: { actions: LeadLogEntry[]; total: number }) {
   const [refusedOnly, setRefusedOnly] = useState(false);
   const headingId = useId();
   const switchId = useId();
@@ -28,6 +28,11 @@ export function LeadLog({ actions }: { actions: LeadLogEntry[] }) {
           <span>Refused only</span>
         </label>
       </div>
+      {total > actions.length ? (
+        <p className="lead-stage-empty">
+          Showing last {actions.length} of {total} actions.
+        </p>
+      ) : null}
       {shown.length === 0 ? (
         <p className="lead-stage-empty">{refusedOnly ? "No refused actions." : "No lead actions yet."}</p>
       ) : (

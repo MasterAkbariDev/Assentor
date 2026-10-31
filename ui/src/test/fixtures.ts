@@ -45,8 +45,8 @@ export const sessionFixture = { id: SESSION_ID, events: stream(SESSION_ID) };
 const LEAD_SESSION_ID = "1c2d3e4f-5a6b-4c7d-8e9f-a0b1c2d3e4f5";
 
 /**
- * A lead-mode run: five tasks, two seats, one refused action, one reassignment
- * and one escalation. Validated against the event schema as it is built.
+ * A lead-mode run: six tasks, two seats, one refused action, one rejected task that stays
+ * rejected, and one reassigned, escalated task. Validated against the event schema as it is built.
  */
 function leadStream(sessionId: string): EngineEvent[] {
   let seq = 0;
@@ -68,22 +68,29 @@ function leadStream(sessionId: string): EngineEvent[] {
     task("T2", "Login API"),
     task("T3", "Session docs"),
     task("T4", "Refactor auth"),
-    task("T5", "Release notes"),
-    e("lead.action", { action: "plan_tasks", accepted: true, reason: "5 task(s) planned" }),
+    task("T5", "Token refresh"),
+    task("T6", "Release notes"),
+    e("lead.action", { action: "plan_tasks", accepted: true, reason: "6 task(s) planned" }),
     e("task.assigned", { taskId: "T1", seatId: "seat-1" }),
     e("task.status", { taskId: "T1", status: "in_progress" }),
     e("seat.status", { status: "writing" }, "seat-1"),
     e("task.assigned", { taskId: "T2", seatId: "seat-2" }),
+    e("task.status", { taskId: "T2", status: "in_progress" }),
     e("task.status", { taskId: "T2", status: "in_review" }),
     e("task.assigned", { taskId: "T3", seatId: "seat-2" }),
+    e("task.status", { taskId: "T3", status: "in_progress" }),
     e("task.accepted", { taskId: "T3" }),
     e("task.assigned", { taskId: "T4", seatId: "seat-1" }),
+    e("task.status", { taskId: "T4", status: "in_progress" }),
     e("task.rejected", { taskId: "T4", reason: "tests are missing" }),
     e("lead.action", { action: "reject", accepted: true, reason: "T4 rejected" }),
+    e("task.assigned", { taskId: "T5", seatId: "seat-1" }),
+    e("task.status", { taskId: "T5", status: "in_progress" }),
+    e("task.rejected", { taskId: "T5", reason: "edge case untested" }),
     e("lead.action", { action: "assign", accepted: false, reason: "seat-1 is busy with another task" }),
-    e("task.escalated", { taskId: "T4", from: "claude-code/opus", to: "claude-code/sonnet" }),
-    e("task.assigned", { taskId: "T4", seatId: "seat-2" }),
-    e("lead.action", { action: "escalate", accepted: true, reason: "T4 escalated to seat-2" }),
+    e("task.escalated", { taskId: "T5", from: "claude-code/opus", to: "claude-code/sonnet" }),
+    e("task.assigned", { taskId: "T5", seatId: "seat-2" }),
+    e("lead.action", { action: "escalate", accepted: true, reason: "T5 escalated to seat-2" }),
   ];
 }
 

@@ -5,7 +5,9 @@ import { App } from "../../App.js";
 import { renderWithStore } from "../../test/render.js";
 import { leadFixture, sessionFixture } from "../../test/fixtures.js";
 import { parseEngineEvent } from "@engine/protocol/events.js";
+import { LEAD_ACTION_LIMIT } from "@engine/ui-shared/lead.js";
 import { SeatDrawer } from "../seat-drawer/SeatDrawer.js";
+import { SessionBoard } from "../session-board/SessionBoard.js";
 import { LeadBoard } from "./LeadBoard.js";
 
 afterEach(() => cleanup());
@@ -36,21 +38,21 @@ describe("LeadBoard: stage columns", () => {
 
     const taskIds = (name: string) =>
       within(getByRole("region", { name })).queryAllByText(/^T\d$/).map((el) => el.textContent);
-    expect(taskIds("Backlog")).toEqual(["T5"]);
-    expect(taskIds("Assigned")).toEqual(["T4"]);
+    expect(taskIds("Backlog")).toEqual(["T6"]);
+    expect(taskIds("Assigned")).toEqual(["T5"]);
     expect(taskIds("In progress")).toEqual(["T1"]);
     expect(taskIds("In review")).toEqual(["T2"]);
     expect(taskIds("Accepted")).toEqual(["T3"]);
-    expect(within(getByRole("region", { name: "Rejected" })).getByText("No tasks")).toBeTruthy();
+    expect(taskIds("Rejected")).toEqual(["T4"]);
   });
 
   it("shows the turn, the owner's name, model and live status, and the reassign and escalation counters", () => {
     const { getByRole, getByText } = renderLeadBoard();
     expect(getByRole("heading", { level: 2, name: /Team board/ }).textContent).toContain("turn 1");
-    const t4 = getByRole("button", { name: /T4 Refactor auth/ });
-    expect(t4.textContent).toContain("Sonnet#2");
-    expect(t4.textContent).toContain("sonnet");
-    expect(t4.textContent).toContain("Reassigned 1 · Escalated 1");
+    const t5 = getByRole("button", { name: /T5 Token refresh/ });
+    expect(t5.textContent).toContain("Sonnet#2");
+    expect(t5.textContent).toContain("sonnet");
+    expect(t5.textContent).toContain("Reassigned 1 · Escalated 1");
     expect(getByText("Login API")).toBeTruthy();
   });
 
@@ -136,8 +138,66 @@ describe("LeadBoard: opening the owner's seat drawer", () => {
     fireEvent.click(getByRole("button", { name: /T1 Login form/ }));
     expect(getByRole("dialog", { name: "Opus#1" })).toBeTruthy();
 
-    expect(queryByRole("button", { name: /T5 Release notes/ })).toBeNull();
+    expect(queryByRole("button", { name: /T6 Release notes/ })).toBeNull();
     expect(getByRole("region", { name: "Backlog" }).textContent).toContain("Unassigned");
+  });
+});
+
+/** The team board, the seat board and the drawer together, with the lead-mode run applied. */
+function renderBoardsAndDrawer() {
+  const rendered = renderWithStore(
+    <>
+      <SessionBoard />
+      <LeadBoard />
+      <SeatDrawer />
+    </>,
+  );
+  act(() => {
+    rendered.store.getState().select(leadFixture.id);
+    rendered.store.getState().applyEvents(leadFixture.id, leadFixture.events);
+  });
+  return rendered;
+}
+
+describe("LeadBoard and SeatDrawer: focus returns to what opened the drawer", () => {
+  it("closing a drawer opened from a lead task card focuses that card", () => {
+    const { getByRole } = renderBoardsAndDrawer();
+    const card = getByRole("button", { name: /T1 Login form/ });
+    fireEvent.click(card);
+    fireEvent.click(within(getByRole("dialog", { name: "Opus#1" })).getByRole("button", { name: "Close" }));
+    expect(document.activeElement).toBe(card);
+  });
+
+  it("closing a drawer opened from a seat card focuses that seat's card", () => {
+    const { container, getByRole } = renderBoardsAndDrawer();
+    const card = container.querySelector<HTMLElement>('[data-seat-id="seat-2"]')!;
+    fireEvent.click(card);
+    fireEvent.click(within(getByRole("dialog", { name: "Sonnet#2" })).getByRole("button", { name: "Close" }));
+    expect(document.activeElement).toBe(card);
+  });
+});
+
+describe("LeadBoard: capped web log", () => {
+  it("says how many actions it shows when older ones were dropped", () => {
+    const { store, getByRole, getByText, queryByText } = renderLeadBoard();
+    expect(queryByText(/Showing last/)).toBeNull();
+    act(() => {
+      store.getState().applyEvents(
+        leadFixture.id,
+        Array.from({ length: LEAD_ACTION_LIMIT + 2 }, (_, i) =>
+          parseEngineEvent({
+            seq: 10_000 + i,
+            sessionId: leadFixture.id,
+            type: "lead.action",
+            data: { action: `bulk${i}`, accepted: true },
+            at: new Date(0).toISOString(),
+          }),
+        ),
+      );
+    });
+    // The fixture has four actions before these 502.
+    expect(getByText("Showing last 500 of 506 actions.")).toBeTruthy();
+    expect(within(getByRole("region", { name: "Lead log" })).getAllByRole("listitem")).toHaveLength(LEAD_ACTION_LIMIT);
   });
 });
 

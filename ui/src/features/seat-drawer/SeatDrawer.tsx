@@ -38,6 +38,8 @@ function SeatDrawerPanel({ seat }: { seat: SeatState }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const now = useNow(TICK_MS, isLiveSeat(seat));
+  // What had focus when the drawer opened: a seat card or a lead task card.
+  const [opener] = useState<Element | null>(() => document.activeElement);
 
   useEffect(() => {
     closeRef.current?.focus();
@@ -54,9 +56,9 @@ function SeatDrawerPanel({ seat }: { seat: SeatState }) {
   }, [closeSeat]);
 
   // Unmounting means the drawer closed (button, Escape, or the run changed).
-  // Put focus back on the card that opened it, if it is still on the board.
+  // Put focus back on whatever opened it; without one, on the seat's card.
   const seatId = seat.seatId;
-  useEffect(() => () => focusCard(seatId), [seatId]);
+  useEffect(() => () => restoreFocus(opener, seatId), [opener, seatId]);
 
   const onTabKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const count = TABS.length;
@@ -132,8 +134,12 @@ function SeatDrawerPanel({ seat }: { seat: SeatState }) {
   );
 }
 
-/** Focus the board card for `seatId`, if it is on screen. */
-function focusCard(seatId: string): void {
+/** Focus the element that opened the drawer if it is still on screen, else the board card for `seatId`. */
+function restoreFocus(opener: Element | null, seatId: string): void {
+  if (opener instanceof HTMLElement && opener.isConnected && opener !== document.body) {
+    opener.focus();
+    return;
+  }
   const cards = Array.from(document.querySelectorAll<HTMLElement>("[data-seat-id]"));
   cards.find((card) => card.dataset.seatId === seatId)?.focus();
 }

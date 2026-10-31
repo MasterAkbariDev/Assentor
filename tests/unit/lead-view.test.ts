@@ -3,6 +3,7 @@ import { parseEngineEvent, type EngineEvent } from "../../src/protocol/events.js
 import { RunReporter } from "../../src/cli/ui/reporter.js";
 import {
   emptyLeadBoardView,
+  LEAD_ACTION_LIMIT,
   LEAD_LOG_LIMIT,
   LEAD_STAGE_LABELS,
   leadColumns,
@@ -124,7 +125,7 @@ describe("reduceLeadEvents for the web board (T04-17)", () => {
     expect(view.tasks.find((t) => t.id === "T5")!.seatId).toBe("");
   });
 
-  it("counts reassignments to a different seat, not repeats on the same seat", () => {
+  it("counts a move to a different seat as a reassign, but not a repeat on the same seat", () => {
     const moved = fold([
       ev("task.created", { taskId: "T1", title: "one" }),
       ev("task.assigned", { taskId: "T1", seatId: "seat-1" }),
@@ -132,6 +133,16 @@ describe("reduceLeadEvents for the web board (T04-17)", () => {
       ev("task.assigned", { taskId: "T1", seatId: "seat-2" }),
     ]);
     expect(moved.tasks[0]).toMatchObject({ seatId: "seat-2", owner: "seat-2", reassigns: 1 });
+  });
+
+  it("counts giving a rejected task out again as a reassign, even to the same seat (board.ts reassignCount)", () => {
+    const retried = fold([
+      ev("task.created", { taskId: "T1", title: "one" }),
+      ev("task.assigned", { taskId: "T1", seatId: "seat-1" }),
+      ev("task.rejected", { taskId: "T1", reason: "tests fail" }),
+      ev("task.assigned", { taskId: "T1", seatId: "seat-1" }),
+    ]);
+    expect(retried.tasks[0]).toMatchObject({ state: "assigned", reassigns: 1 });
   });
 
   it("counts escalations and ignores them for unknown tasks", () => {
@@ -145,15 +156,18 @@ describe("reduceLeadEvents for the web board (T04-17)", () => {
     expect(escalated.tasks).toHaveLength(1);
   });
 
-  it("keeps every lead action in actions, while log stays the short view", () => {
-    const events = Array.from({ length: LEAD_LOG_LIMIT + 2 }, (_, i) =>
+  it("keeps the last LEAD_ACTION_LIMIT actions for the web log and counts all of them; log stays the short view", () => {
+    const count = LEAD_ACTION_LIMIT + 3;
+    const events = Array.from({ length: count }, (_, i) =>
       ev("lead.action", { action: `act${i}`, accepted: i % 2 === 0, reason: `r${i}` }),
     );
     const all = fold(events);
-    expect(all.actions).toHaveLength(LEAD_LOG_LIMIT + 2);
-    expect(all.actions[0]!.action).toBe("act0");
-    expect(all.actions.at(-1)!.action).toBe(`act${LEAD_LOG_LIMIT + 1}`);
+    expect(all.actions).toHaveLength(LEAD_ACTION_LIMIT);
+    expect(all.actions[0]!.action).toBe("act3");
+    expect(all.actions.at(-1)!.action).toBe(`act${count - 1}`);
+    expect(all.actionsTotal).toBe(count);
     expect(all.log).toHaveLength(LEAD_LOG_LIMIT);
+    expect(all.log.at(-1)!.action).toBe(`act${count - 1}`);
   });
 });
 
