@@ -185,8 +185,9 @@ program
   .option("--skip-gates", "Skip deterministic pre-review verification", false)
   .option(
     "--mode <mode>",
-    "Session mode (solo; more coming). supervised|autopilot still work but are deprecated: use --autonomy",
+    "Session mode (see assentor modes). supervised|autopilot still work but are deprecated: use --autonomy",
   )
+  .option("--retro", "With a non-solo --mode: append the session's lessons to .assentor/memory/lessons.md", false)
   .option("--autonomy <level>", "How much runs without asking: manual|supervised|autopilot")
   .option("--autopilot", "Shortcut for --autonomy autopilot (auto next-phase)", false)
   .option("--playbook <id>", "Playbook to run (validates the id only; running playbooks is not wired yet)")
@@ -207,6 +208,7 @@ program
         autonomy?: string;
         autopilot?: boolean;
         playbook?: string;
+        retro?: boolean;
       },
     ) => {
       if (options.playbook !== undefined) {
@@ -241,13 +243,15 @@ program
         skipGates: options.skipGates,
         autonomy: flags.autonomy,
         modeId: flags.modeId,
+        retro: options.retro,
       });
 
       console.log(`Task ${result.taskId} finished: ${result.status}`);
       if (result.reason) {
         console.log(`Reason: ${result.reason}`);
       }
-      if (result.status !== "DONE") {
+      // A mode session ends "completed"; the Supervisor path ends "DONE".
+      if (result.status !== "DONE" && result.status !== "completed") {
         process.exitCode = 1;
       }
     },
@@ -308,7 +312,7 @@ program
       autonomy,
     });
       console.log(`Task ${result.taskId} finished: ${result.status}`);
-      if (result.status !== "DONE") {
+      if (result.status !== "DONE" && result.status !== "completed") {
         process.exitCode = 1;
       }
     },
