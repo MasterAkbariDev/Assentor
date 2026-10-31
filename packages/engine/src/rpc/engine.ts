@@ -52,10 +52,10 @@ export function createEngineRpcServer(options: EngineRpcOptions): RpcServer {
   };
 
   server.registerAll({
-    "engine.hello": () => ({
+    "engine.hello": (_params, { connection }) => ({
       engineVersion,
       protocolVersion: RPC_PROTOCOL_VERSION,
-      capabilities: server.methodNames,
+      capabilities: connection.methodNames,
     }),
     "sessions.list": async () => ({ sessions: await cachedList() }),
     "events.subscribe": ({ sessionId, fromSeq }, { connection }) => ({
