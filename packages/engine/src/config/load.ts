@@ -256,11 +256,15 @@ export async function saveAssentorConfig(
   }
 
   await fs.mkdir(path.dirname(configPath), { recursive: true });
-  await fs.writeFile(
-    configPath,
-    stringifyYaml(output, { lineWidth: 100 }),
-    "utf8",
-  );
+  // Temp file in the same directory + rename: a crash or a concurrent reader never sees a half-written config.
+  const tmp = `${configPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await fs.writeFile(tmp, stringifyYaml(output, { lineWidth: 100 }), "utf8");
+    await fs.rename(tmp, configPath);
+  } catch (error) {
+    await fs.rm(tmp, { force: true });
+    throw error;
+  }
   return configPath;
 }
 

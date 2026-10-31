@@ -12,6 +12,7 @@ import {
   RpcServer,
   type CliModelCatalog,
 } from "../../packages/engine/src/index.js";
+import { SELECTABLE_EXECUTOR_PROVIDERS } from "../../packages/engine/src/executors/providers.js";
 import { registerHandlerMethods } from "../../packages/engine/src/rpc/handlers/index.js";
 import { RpcMethods } from "../../packages/protocol/src/rpc.js";
 
@@ -147,6 +148,49 @@ describe("prompt.save", () => {
   });
 });
 
+describe("prompt.save symlinks", () => {
+  it("refuses to write through a project prompt directory that points outside the project", async () => {
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "rpc-handlers-outside-"));
+    dirs.push(outside);
+    await fs.mkdir(path.join(projectPath, ".assentor"), { recursive: true });
+    await fs.symlink(outside, path.join(projectPath, ".assentor", "prompts"));
+
+    const error = await rejection(
+      engineClient().call("prompt.save", { scope: "project", frontMatter: frontMatter("sneaky"), body: "x" }),
+    );
+
+    expect(error.code).toBe(RpcErrorCode.InvalidParams);
+    expect(await fs.readdir(outside)).toEqual([]);
+  });
+
+  it("refuses when .assentor itself is a symlink out of the project, and for the user layer", async () => {
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "rpc-handlers-outside-"));
+    dirs.push(outside);
+    await fs.symlink(outside, path.join(projectPath, ".assentor"));
+    const client = engineClient();
+    expect((await rejection(client.call("prompt.save", { scope: "project", frontMatter: frontMatter("sneaky"), body: "x" }))).code).toBe(
+      RpcErrorCode.InvalidParams,
+    );
+
+    await fs.symlink(outside, path.join(userDir, "prompts"));
+    expect((await rejection(client.call("prompt.save", { scope: "user", frontMatter: frontMatter("sneaky"), body: "x" }))).code).toBe(
+      RpcErrorCode.InvalidParams,
+    );
+    expect(await fs.readdir(outside)).toEqual([]);
+  });
+
+  it("leaves no temp file behind when the write fails", async () => {
+    const dir = path.join(userDir, "prompts");
+    await fs.mkdir(dir, { recursive: true });
+    // A directory where the prompt file should go: rename onto it fails.
+    await fs.mkdir(path.join(dir, "blocked.md"));
+
+    await rejection(engineClient().call("prompt.save", { scope: "user", frontMatter: frontMatter("blocked"), body: "x" }));
+
+    expect((await fs.readdir(dir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+});
+
 describe("prompt.fork", () => {
   it("copies a built-in prompt under a new id in the user layer", async () => {
     const client = engineClient();
@@ -244,6 +288,40 @@ describe("team.*", () => {
     expect(config).toContain("review:");
   });
 
+  it("refuses to delete a team a playbook stage names", async () => {
+    await fs.writeFile(path.join(userDir, "config.yaml"), "teams:\n  auditors:\n    seats:\n      - provider: mock\n");
+    const client = engineClient();
+
+    const error = await rejection(client.call("team.delete", { name: "auditors" }));
+
+    expect(error.message).toContain("playbook security-audit");
+    expect((error.data as { references: string[] }).references.some((ref) => ref.startsWith("playbook "))).toBe(true);
+  });
+
+  it("refuses to save a user team the project already defines", async () => {
+    await fs.mkdir(path.join(projectPath, ".assentor"), { recursive: true });
+    await fs.writeFile(path.join(projectPath, ".assentor", "config.yaml"), "teams:\n  proj:\n    seats:\n      - provider: mock\n");
+
+    expect((await rejection(engineClient().call("team.save", { name: "proj", team: MOCK_TEAM }))).message).toContain("project config");
+  });
+
+  it("keeps both changes when saves run at the same time", async () => {
+    const client = engineClient();
+
+    await Promise.all([
+      client.call("team.save", { name: "team-a", team: MOCK_TEAM }),
+      client.call("team.save", { name: "team-b", team: MOCK_TEAM }),
+      client.call("settings.save", { settings: { routing: { strategy: "BEST" } } }),
+      client.call("team.save", { name: "team-c", team: MOCK_TEAM }),
+      client.call("settings.save", { settings: { git: { autoCommit: true } } }),
+    ]);
+
+    const names = (await client.call("team.list")).teams.map((team) => team.name);
+    expect(names).toEqual(expect.arrayContaining(["team-a", "team-b", "team-c"]));
+    expect(await client.call("settings.get")).toMatchObject({ settings: { routing: { strategy: "BEST" }, git: { autoCommit: true } } });
+    expect((await fs.readdir(userDir)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
   it("explains an unknown team and a team that only the project defines", async () => {
     await fs.mkdir(path.join(projectPath, ".assentor"), { recursive: true });
     await fs.writeFile(path.join(projectPath, ".assentor", "config.yaml"), "teams:\n  proj:\n    seats:\n      - provider: mock\n");
@@ -298,6 +376,52 @@ describe("settings.*", () => {
     expect(result.settings.executor.provider).toBe("mock");
   });
 
+  it("settings.get has no side effects: no master key is created and the vault file is untouched", async () => {
+    const row = { id: "k1", provider: "openai", name: "work", masked: "sk-t...cdef", ciphertext: "AAAA", enabled: true, priority: 1, health: "healthy", failureCount: 0 };
+    // Two identical rows: KeyVault.load would dedupe and rewrite the file.
+    const before = `${JSON.stringify({ version: 1, keys: [row, { ...row, id: "k2", priority: 2 }] }, null, 2)}\n`;
+    await fs.writeFile(path.join(userDir, "secrets.json"), before);
+
+    const result = await engineClient().call("settings.get");
+
+    expect(result.keys).toEqual([
+      { id: "k1", provider: "openai", name: "work", healthy: true },
+      { id: "k2", provider: "openai", name: "work", healthy: true },
+    ]);
+    expect(await fs.readFile(path.join(userDir, "secrets.json"), "utf8")).toBe(before);
+    expect(await exists(path.join(userDir, ".master.key"))).toBe(false);
+  });
+
+  it("settings.get with no vault file lists no keys", async () => {
+    expect((await engineClient().call("settings.get")).keys).toEqual([]);
+  });
+
+  it("settings.save returns the merged settings, like settings.get", async () => {
+    await fs.mkdir(path.join(projectPath, ".assentor"), { recursive: true });
+    await fs.writeFile(path.join(projectPath, ".assentor", "config.yaml"), "limits:\n  maxRounds: 2\n");
+    const client = engineClient();
+
+    const saved = await client.call("settings.save", { settings: { git: { autoCommit: true } } });
+
+    expect(saved).toEqual({ settings: (await client.call("settings.get")).settings });
+    expect(saved.settings.limits.maxRounds).toBe(2);
+  });
+
+  it("refuses flag-like executor models and providers the engine cannot select", async () => {
+    const client = engineClient();
+    for (const executor of [{ model: "--yolo" }, { model: "-rf" }, { provider: "project-mutating" }, { provider: "../x" }]) {
+      expect((await rejection(client.call("settings.save", { settings: { executor } as never }))).code).toBe(RpcErrorCode.InvalidParams);
+    }
+    await client.call("settings.save", { settings: { executor: { provider: "codex", model: "gpt-5" } } });
+    expect((await client.call("settings.get")).settings.executor).toEqual({ provider: "codex", model: "gpt-5" });
+  });
+
+  it("accepts every provider the engine can select", () => {
+    for (const provider of SELECTABLE_EXECUTOR_PROVIDERS) {
+      expect(RpcMethods["settings.save"].params.safeParse({ settings: { executor: { provider } } }).success).toBe(true);
+    }
+  });
+
   it("saves only the given fields to the user config and keeps teams and modes", async () => {
     await fs.writeFile(
       path.join(userDir, "config.yaml"),
@@ -324,7 +448,7 @@ describe("settings.*", () => {
     await client.call("settings.save", { settings: { git: { autoCommit: true } } });
     expect(await fs.readFile(path.join(userDir, "config.yaml"), "utf8")).not.toMatch(/maxRounds: 2\b/);
 
-    expect((await rejection(client.call("settings.save", { settings: { executor: { provider: "no-such-cli" } } }))).code).toBe(RpcErrorCode.InvalidParams);
+    expect((await rejection(client.call("settings.save", { settings: { executor: { provider: "no-such-cli" } } } as never))).code).toBe(RpcErrorCode.InvalidParams);
     expect(
       (await rejection(client.call("settings.save", { settings: { binaries: { claude: "/tmp/evil" } } } as never))).code,
     ).toBe(RpcErrorCode.InvalidParams);
@@ -346,6 +470,17 @@ describe("env.* and models.discover", () => {
     const { items } = await client.call("env.doctor");
 
     expect(items).toEqual([{ name: "executor:x", ok: true, detail: "Installed at <project>/bin/x" }]);
+  });
+
+  it("env.doctor redacts key-like tokens in provider messages", async () => {
+    const client = injected({
+      projectPath,
+      runDiagnostics: async () => [{ name: "key:work", ok: false, detail: "rejected sk-abcdefghijklmnopqrstuvwxyz123456 by provider" }],
+    });
+
+    const { items } = await client.call("env.doctor");
+
+    expect(items[0]!.detail).toBe("rejected [REDACTED] by provider");
   });
 
   it("env.detectClis returns install state without the binary path", async () => {

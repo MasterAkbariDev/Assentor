@@ -10,7 +10,7 @@ import {
 import { KeyVault } from "../../keys/index.js";
 import { runModeForAutonomy } from "../../core/run-mode.js";
 import { RpcError, type RpcServer } from "../server.js";
-import { configOrReject } from "./teams.js";
+import { configOrReject, withConfigLock } from "./teams.js";
 
 /**
  * `settings.get`, `settings.save` (T04-04). Only plain settings cross the wire.
@@ -22,8 +22,8 @@ import { configOrReject } from "./teams.js";
 
 export interface SettingsMethodsOptions {
   projectPath: string;
-  /** Overrides the user key vault (tests). */
-  createVault?: () => KeyVault;
+  /** Overrides how stored keys are listed (tests). Default: a side-effect-free read of the user vault. */
+  readKeys?: () => ReturnType<typeof KeyVault.readSummaries>;
 }
 
 const publicSettings = (config: AssentorConfig): RpcResult<"settings.get">["settings"] => ({
@@ -42,43 +42,36 @@ const publicSettings = (config: AssentorConfig): RpcResult<"settings.get">["sett
 
 export function registerSettingsMethods(server: RpcServer, options: SettingsMethodsOptions): RpcServer {
   const projectPath = path.resolve(options.projectPath);
-  const createVault = options.createVault ?? (() => new KeyVault(userAssentorProjectRoot()));
+  const readKeys = options.readKeys ?? (() => KeyVault.readSummaries(userAssentorProjectRoot()));
 
   return server.registerAll({
     "settings.get": async () => {
       const config = await configOrReject(projectPath, () => loadAssentorConfig(projectPath));
-      const vault = createVault();
-      await vault.load();
-      return {
-        settings: publicSettings(config),
-        keys: vault.list().map((key) => ({
-          id: key.id,
-          provider: key.provider,
-          name: key.name,
-          healthy: key.health === "healthy",
-        })),
-      };
+      // Read-only: `KeyVault.load` could create the master key or rewrite the vault file.
+      return { settings: publicSettings(config), keys: await readKeys() };
     },
-    "settings.save": async ({ settings: patch }) => {
-      // Patch the user file's own config (not the merged one) so project values are never copied into it.
-      const config = await configOrReject(projectPath, () => loadAssentorConfig(userAssentorProjectRoot()));
-      const next: Record<string, unknown> = { ...config };
-      for (const [section, values] of Object.entries(patch)) {
-        if (section !== "run") {
-          next[section] = { ...(config[section as keyof AssentorConfig] as object), ...values };
+    "settings.save": ({ settings: patch }) =>
+      withConfigLock(async () => {
+        // Patch the user file's own config (not the merged one) so project values are never copied into it.
+        const config = await configOrReject(projectPath, () => loadAssentorConfig(userAssentorProjectRoot()));
+        const next: Record<string, unknown> = { ...config };
+        for (const [section, values] of Object.entries(patch)) {
+          if (section !== "run") {
+            next[section] = { ...(config[section as keyof AssentorConfig] as object), ...values };
+          }
         }
-      }
-      if (patch.run) {
-        next.run = { mode: runModeForAutonomy(patch.run.autonomy), autonomy: patch.run.autonomy };
-      }
-      let valid: AssentorConfig;
-      try {
-        valid = parseAssentorConfig(next);
-      } catch (error) {
-        throw new RpcError(RpcErrorCode.InvalidParams, `Invalid settings: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      await saveAssentorConfig(projectPath, valid, { scope: "user", preserveFromExisting: ["teams", "modes"] });
-      return { settings: publicSettings(valid) };
-    },
+        if (patch.run) {
+          next.run = { mode: runModeForAutonomy(patch.run.autonomy), autonomy: patch.run.autonomy };
+        }
+        let valid: AssentorConfig;
+        try {
+          valid = parseAssentorConfig(next);
+        } catch (error) {
+          throw new RpcError(RpcErrorCode.InvalidParams, `Invalid settings: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        await saveAssentorConfig(projectPath, valid, { scope: "user", preserveFromExisting: ["teams", "modes"] });
+        // Return what settings.get now returns (user + project), not just the user file.
+        return { settings: publicSettings(await configOrReject(projectPath, () => loadAssentorConfig(projectPath))) };
+      }),
   });
 }

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AUTONOMY_LEVELS } from "./events.js";
-import { SEAT_PROVIDERS, STAGE_KINDS, TeamSchema } from "./seats.js";
+import { ModelIdSchema, SEAT_PROVIDERS, STAGE_KINDS, TeamSchema } from "./seats.js";
 import type { EngineEvent } from "./events.js";
 
 /**
@@ -138,8 +138,11 @@ const PlaybookSummarySchema = z.object({
 const KeySummarySchema = z.object({ id: z.string(), provider: z.string(), name: z.string(), healthy: z.boolean() });
 
 /** The non-secret settings `settings.get` returns and `settings.save` can change (each key optional on save). */
+/** Mirrors `SELECTABLE_EXECUTOR_PROVIDERS` in the engine (a test keeps them equal; this file stays browser-safe). */
+const EXECUTOR_PROVIDERS = ["mock", "cursor", "claude-code", "antigravity", "codex", "qwen", "opencode"] as const;
 const SettingsShape = {
-  executor: z.object({ provider: z.string().min(1).max(40), model: z.string().min(1).max(128).optional() }).strict(),
+  // `model` reaches a CLI as an argument value, so it must pass the same check as a seat model (never a flag).
+  executor: z.object({ provider: z.enum(EXECUTOR_PROVIDERS), model: ModelIdSchema.optional() }).strict(),
   run: z.object({ autonomy: z.enum(AUTONOMY_LEVELS) }).strict(),
   routing: z
     .object({
@@ -160,7 +163,10 @@ const SettingsShape = {
     .object({ diff: z.boolean(), tests: z.boolean(), logs: z.boolean(), screenshots: z.boolean() })
     .strict(),
 };
-const SettingsSchema = z.object(SettingsShape).strict();
+// What is read back is whatever the config holds (e.g. `project-mutating`, an older free-text model), so it is not narrowed.
+const SettingsSchema = z
+  .object({ ...SettingsShape, executor: z.object({ provider: z.string(), model: z.string().optional() }).strict() })
+  .strict();
 const SettingsPatchSchema = z
   .object({
     executor: SettingsShape.executor.partial().strict().optional(),

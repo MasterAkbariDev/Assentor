@@ -12,6 +12,7 @@ import {
   validateFrontMatter,
   type TemplateVariables,
 } from "../../prompts/index.js";
+import { userAssentorDir } from "../../config/paths.js";
 import { scrubMessage } from "../library.js";
 import { RpcError, type RpcServer } from "../server.js";
 
@@ -24,6 +25,31 @@ import { RpcError, type RpcServer } from "../server.js";
 
 export interface PromptMethodsOptions {
   projectPath: string;
+}
+
+/** `target` resolved through symlinks as far as it exists; the missing tail is appended unchanged. */
+async function realpathAllowingMissing(target: string): Promise<string> {
+  const tail: string[] = [];
+  let current = path.resolve(target);
+  for (;;) {
+    try {
+      return path.join(await fs.realpath(current), ...tail.reverse());
+    } catch (error) {
+      const parent = path.dirname(current);
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || parent === current) throw error;
+      tail.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
+/** A layer directory that is (or sits behind) a symlink out of its root must not be written through. */
+async function assertInsideRoot(dir: string, root: string): Promise<void> {
+  const real = await realpathAllowingMissing(dir);
+  const relative = path.relative(await realpathAllowingMissing(root), real);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new RpcError(RpcErrorCode.InvalidParams, "The prompt directory resolves outside its root; not writing there");
+  }
 }
 
 /** Everything wrong with a prompt before it is written, plus the variables its body reads. */
@@ -60,12 +86,18 @@ export function registerPromptMethods(server: RpcServer, options: PromptMethodsO
     if (Buffer.byteLength(text) > MAX_PROMPT_FILE_BYTES) {
       throw new RpcError(RpcErrorCode.InvalidParams, `Prompt is larger than ${MAX_PROMPT_FILE_BYTES} bytes`);
     }
+    await assertInsideRoot(dir, scope === "project" ? projectPath : userAssentorDir());
     const previous = await fs.readFile(file, "utf8").catch(() => undefined);
     await fs.mkdir(dir, { recursive: true });
     // Temp file + rename: a crash never leaves a half-written prompt, and a symlink at `file` is replaced, not followed.
     const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-    await fs.writeFile(tmp, text, "utf8");
-    await fs.rename(tmp, file);
+    try {
+      await fs.writeFile(tmp, text, "utf8");
+      await fs.rename(tmp, file);
+    } catch (error) {
+      await fs.rm(tmp, { force: true });
+      throw error;
+    }
 
     const problem = (await PromptLibrary.load({ projectPath })).errors.find((error) => error.file === file);
     if (problem) {

@@ -2,6 +2,7 @@ import path from "node:path";
 import { RpcErrorCode } from "#assentor/protocol/rpc.js";
 import { MODEL_ID_PATTERN, TeamSchema } from "#assentor/protocol/seats.js";
 import { loadAssentorConfig, saveAssentorConfig, userAssentorDir, userAssentorProjectRoot } from "../../config/load.js";
+import { PlaybookLibrary } from "../../playbooks/library.js";
 import { PromptLibrary } from "../../prompts/index.js";
 import { scrubMessage } from "../library.js";
 import { RpcError, type RpcServer } from "../server.js";
@@ -28,6 +29,18 @@ export function findTeamReferences(value: unknown, team: string, at = "modes"): 
   return Object.entries(value).flatMap(([key, child]) =>
     /team$/i.test(key) && child === team ? [`${at}.${key}`] : findTeamReferences(child, team, `${at}.${key}`),
   );
+}
+
+let configLock: Promise<unknown> = Promise.resolve();
+
+/**
+ * Runs `task` after every earlier locked task has finished, so two read-modify-write
+ * config saves in this process (settings.save, team.save, team.delete) cannot lose an update.
+ */
+export function withConfigLock<T>(task: () => Promise<T>): Promise<T> {
+  const result = configLock.then(task, task);
+  configLock = result.catch(() => undefined);
+  return result;
 }
 
 /** Config errors are a client-visible state, not an engine fault; paths are scrubbed. */
@@ -83,35 +96,45 @@ export function registerTeamMethods(server: RpcServer, options: TeamMethodsOptio
       if (problems.length > 0) {
         throw new RpcError(RpcErrorCode.InvalidParams, `Invalid team: ${problems.join("; ")}`);
       }
-      const config = await userConfig();
-      config.teams[name] = TeamSchema.parse(team);
-      await saveUser(config);
-      return { name };
-    },
-    "team.delete": async ({ name }) => {
-      const config = await userConfig();
-      if (!Object.hasOwn(config.teams, name)) {
+      return withConfigLock(async () => {
+        const config = await userConfig();
         const effective = await configOrReject(projectPath, () => loadAssentorConfig(projectPath));
-        throw new RpcError(
-          RpcErrorCode.InvalidParams,
-          Object.hasOwn(effective.teams, name)
-            ? `Team ${name} is defined in the project config; only user-config teams can be deleted here`
-            : `Unknown team ${name}`,
-        );
-      }
-      // References are checked against the merged config: a project's modes may use a user team.
-      const effective = await configOrReject(projectPath, () => loadAssentorConfig(projectPath));
-      const references = findTeamReferences(effective.modes, name);
-      if (references.length > 0) {
-        throw new RpcError(
-          RpcErrorCode.InvalidParams,
-          `Team ${name} is still used by ${references.join(", ")}`,
-          { references },
-        );
-      }
-      delete config.teams[name];
-      await saveUser(config);
-      return { name };
+        if (!Object.hasOwn(config.teams, name) && Object.hasOwn(effective.teams, name)) {
+          // The project's definition would win over the saved one, so the save would have no effect.
+          throw new RpcError(RpcErrorCode.InvalidParams, `Team ${name} is defined in the project config, which overrides the user config`);
+        }
+        config.teams[name] = TeamSchema.parse(team);
+        await saveUser(config);
+        return { name };
+      });
     },
+    "team.delete": ({ name }) =>
+      withConfigLock(async () => {
+        const config = await userConfig();
+        const effective = await configOrReject(projectPath, () => loadAssentorConfig(projectPath));
+        if (!Object.hasOwn(config.teams, name)) {
+          throw new RpcError(
+            RpcErrorCode.InvalidParams,
+            Object.hasOwn(effective.teams, name)
+              ? `Team ${name} is defined in the project config; only user-config teams can be deleted here`
+              : `Unknown team ${name}`,
+          );
+        }
+        // Checked against the merged config (a project's modes may use a user team) and the playbooks,
+        // whose stages name the config teams they run with.
+        const playbooks = (await PlaybookLibrary.load({ projectPath })).list();
+        const references = [
+          ...findTeamReferences(effective.modes, name),
+          ...playbooks.flatMap((playbook) =>
+            playbook.stages.filter((stage) => stage.team === name).map((stage) => `playbook ${playbook.id} stage ${stage.id}`),
+          ),
+        ];
+        if (references.length > 0) {
+          throw new RpcError(RpcErrorCode.InvalidParams, `Team ${name} is still used by ${references.join(", ")}`, { references });
+        }
+        delete config.teams[name];
+        await saveUser(config);
+        return { name };
+      }),
   });
 }

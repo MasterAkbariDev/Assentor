@@ -2,6 +2,7 @@ import path from "node:path";
 import { CliModelCatalog } from "../../models/cli-catalog.js";
 import { buildExecutorRegistry } from "../../executors/index.js";
 import { createAssentorServices, runFullDiagnostics, type DiagnosticItem } from "../../services/app.js";
+import { redactSecrets } from "../../security/redact.js";
 import { scrubMessage } from "../library.js";
 import type { RpcServer } from "../server.js";
 
@@ -21,7 +22,8 @@ export interface EnvMethodsOptions {
 
 export function registerEnvMethods(server: RpcServer, options: EnvMethodsOptions): RpcServer {
   const projectPath = path.resolve(options.projectPath);
-  const scrub = (text: string) => scrubMessage(text, [[projectPath, "<project>"]]);
+  // Provider messages can echo a key; paths and key-like tokens never leave the engine.
+  const scrub = (text: string) => redactSecrets(scrubMessage(text, [[projectPath, "<project>"]])).text;
   const runDiagnostics =
     options.runDiagnostics ?? (async () => runFullDiagnostics(await createAssentorServices(projectPath)));
   const detectClis = options.detectClis ?? (() => buildExecutorRegistry().detectAll());
