@@ -88,6 +88,42 @@ export const SessionSummarySchema = z.object({
 });
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 
+/** Token use folded from `seat.tokens` (TE-01). `cachedTokens` is part of `tokensIn`. */
+export const UsageTotalsSchema = z.object({
+  tokensIn: z.number().nonnegative(),
+  tokensOut: z.number().nonnegative(),
+  cachedTokens: z.number().nonnegative(),
+  costUsd: z.number().nonnegative(),
+  /** `seat.tokens` events folded (one per model call when seats report per call). */
+  calls: z.number().int().nonnegative(),
+});
+export type UsageTotals = z.infer<typeof UsageTotalsSchema>;
+
+/** A `session.warning` of kind `budget`: a limit passed 50% or 80%. */
+export const BudgetWarningSchema = z.object({
+  /** `session.tokens`, `seat.cost`, … */
+  budget: z.string(),
+  threshold: z.number(),
+  used: z.number(),
+  limit: z.number(),
+  seatId: z.string().optional(),
+});
+
+export const UsageReportSchema = z.object({
+  sessionId: z.string(),
+  total: UsageTotalsSchema,
+  /** Keyed by seat id. */
+  bySeat: z.record(UsageTotalsSchema),
+  /** Keyed by stage id; `-` for usage outside a stage. */
+  byStage: z.record(UsageTotalsSchema),
+  /** Keyed by `provider/model`; `unknown` when the seat was never announced. */
+  byModel: z.record(UsageTotalsSchema),
+  /** `seat.retry` events. */
+  retries: z.number().int().nonnegative(),
+  warnings: z.array(BudgetWarningSchema),
+});
+export type UsageReport = z.infer<typeof UsageReportSchema>;
+
 /** Mirrors `PROMPT_ROLES` in src/prompts/format.ts (kept literal so this file stays browser-safe). */
 const PromptRoleSchema = z.enum(["builder", "reviewer", "meta"]);
 
@@ -219,6 +255,12 @@ export const RpcMethods = {
     access: "read",
     params: z.object({ subscriptionId: z.string().min(1) }).strict(),
     result: z.object({ ok: z.boolean() }),
+  },
+  /** Token/cost ledger of one session's event log (TE-01). */
+  "usage.get": {
+    access: "read",
+    params: z.object({ sessionId: SessionIdSchema }).strict(),
+    result: UsageReportSchema,
   },
   // Read-only library methods (src/rpc/library.ts). None of them writes or starts anything.
   "prompt.list": {

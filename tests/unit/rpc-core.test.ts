@@ -153,6 +153,7 @@ describe("JSON-RPC conformance", () => {
         "team.list",
         "team.save",
         "team.validate",
+        "usage.get",
       ],
     });
     await expect(client.call("events.subscribe", { sessionId: "bad" })).rejects.toBeInstanceOf(RpcRemoteError);

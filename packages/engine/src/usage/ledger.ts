@@ -1,0 +1,99 @@
+import type { EngineEvent } from "#assentor/protocol/events.js";
+import type { UsageReport, UsageTotals } from "#assentor/protocol/rpc.js";
+import type { PricingTable } from "../estimate/cost.js";
+
+/**
+ * Usage ledger (TE-01): folds `seat.tokens` into totals per seat, stage,
+ * model and session. Pure; feed it events in log order.
+ *
+ * - `cachedTokens` (when a provider reports it) is a part of `tokensIn`.
+ * - Cost is the event's `costUsd`; without one, the seat's `provider/model`
+ *   price from `pricing` (`estimate/cost.ts`) when known, else 0.
+ * - A seat's model comes from `seat.spawned`, then `seat.model.changed`.
+ * - Budget warnings are the scheduler's `session.warning` events of kind `budget`.
+ */
+export class UsageLedger {
+  private readonly report: UsageReport;
+  private readonly seatModel = new Map<string, string>();
+
+  constructor(sessionId = "", private readonly pricing: PricingTable = {}) {
+    this.report = { sessionId, total: zero(), bySeat: {}, byStage: {}, byModel: {}, retries: 0, warnings: [] };
+  }
+
+  add(event: EngineEvent): void {
+    this.report.sessionId ||= event.sessionId;
+    switch (event.type) {
+      case "seat.spawned":
+        this.seatModel.set(event.seatId ?? "", `${event.data.provider}/${event.data.model}`);
+        return;
+      case "seat.model.changed": {
+        const current = this.seatModel.get(event.seatId ?? "");
+        if (!event.data.pending && current) {
+          this.seatModel.set(event.seatId ?? "", `${current.split("/")[0]}/${event.data.to}`);
+        }
+        return;
+      }
+      case "seat.retry":
+        this.report.retries += 1;
+        return;
+      case "session.warning": {
+        const data = event.data as Record<string, unknown>;
+        if (data.kind === "budget" && typeof data.used === "number" && typeof data.limit === "number") {
+          this.report.warnings.push({
+            budget: String(data.budget ?? ""),
+            threshold: Number(data.threshold ?? 0),
+            used: data.used,
+            limit: data.limit,
+            ...(event.seatId ? { seatId: event.seatId } : {}),
+          });
+        }
+        return;
+      }
+      case "seat.tokens": {
+        const seatId = event.seatId ?? "-";
+        const model = this.seatModel.get(seatId) ?? "unknown";
+        const { tokensIn, tokensOut } = event.data;
+        const price = this.pricing[model];
+        const costUsd =
+          event.data.costUsd ?? (price ? (tokensIn * price.inPerMTok + tokensOut * price.outPerMTok) / 1_000_000 : 0);
+        const delta: UsageTotals = {
+          tokensIn,
+          tokensOut,
+          cachedTokens: event.data.cachedTokens ?? 0,
+          costUsd,
+          calls: 1,
+        };
+        add(this.report.total, delta);
+        add((this.report.bySeat[seatId] ??= zero()), delta);
+        add((this.report.byStage[event.stageId ?? "-"] ??= zero()), delta);
+        add((this.report.byModel[model] ??= zero()), delta);
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
+  /** A copy of the totals so far. */
+  snapshot(): UsageReport {
+    return structuredClone(this.report);
+  }
+}
+
+export function usageFromEvents(events: readonly EngineEvent[], sessionId = "", pricing?: PricingTable): UsageReport {
+  const ledger = new UsageLedger(sessionId, pricing);
+  for (const event of events) ledger.add(event);
+  return ledger.snapshot();
+}
+
+function zero(): UsageTotals {
+  return { tokensIn: 0, tokensOut: 0, cachedTokens: 0, costUsd: 0, calls: 0 };
+}
+
+function add(into: UsageTotals, delta: UsageTotals): void {
+  into.tokensIn += delta.tokensIn;
+  into.tokensOut += delta.tokensOut;
+  into.cachedTokens += delta.cachedTokens;
+  into.costUsd += delta.costUsd;
+  into.calls += delta.calls;
+}

@@ -1,9 +1,12 @@
 import path from "node:path";
-import { RPC_PROTOCOL_VERSION, type SessionSummary } from "#assentor/protocol/rpc.js";
+import { RPC_PROTOCOL_VERSION, RpcErrorCode, type SessionSummary } from "#assentor/protocol/rpc.js";
+import { isId } from "../core/ids.js";
+import { readSessionEvents } from "../events/log.js";
+import { usageFromEvents } from "../usage/ledger.js";
 import { getLocalVersionSync } from "../self/version.js";
 import { registerHandlerMethods } from "./handlers/index.js";
 import { registerLibraryMethods } from "./library.js";
-import { RpcServer } from "./server.js";
+import { RpcError, RpcServer } from "./server.js";
 import {
   listSessions,
   subscribeToSession,
@@ -24,7 +27,7 @@ export interface EngineRpcOptions {
 
 /**
  * The engine's RPC server with every read-only method registered: the
- * handshake, `sessions.list`, `events.subscribe` / `events.unsubscribe`, and
+ * handshake, `sessions.list`, `events.subscribe` / `events.unsubscribe`, `usage.get`, and
  * the prompt, team and model-catalog reads from `library.ts`, and the
  * prompt / team / playbook / settings / env methods from `handlers/` (the
  * writes among them need a connection with write access).
@@ -64,6 +67,12 @@ export function createEngineRpcServer(options: EngineRpcOptions): RpcServer {
     "events.unsubscribe": ({ subscriptionId }, { connection }) => ({
       ok: unsubscribeFromSession(connection, subscriptionId),
     }),
+    "usage.get": async ({ sessionId }) => {
+      if (!isId(sessionId)) {
+        throw new RpcError(RpcErrorCode.InvalidParams, `Invalid session id: ${sessionId}`);
+      }
+      return usageFromEvents(await readSessionEvents(projectPath, sessionId), sessionId);
+    },
   });
 
   registerLibraryMethods(server, { projectPath });

@@ -11,6 +11,7 @@ JSON-RPC 2.0 between the engine and its clients (CLI/TUI in process, the Tauri s
 | `handlers/` | `registerHandlerMethods` (T04-04): `prompts.ts`, `teams.ts`, `playbooks.ts`, `settings.ts`, `env.ts`. |
 | `library.ts` | `registerLibraryMethods` — read-only `prompt.list`, `prompt.get`, `team.list`, `models.catalog`. |
 | `sessions.ts` | `sessions.list`, `events.subscribe` / `events.unsubscribe` (read-only; never locks or repairs the log). |
+| `engine.ts` → `usage.get` | `{ sessionId }` → the session's usage ledger (`UsageReportSchema`, TE-01): totals by seat / stage / model, retries, budget warnings. Reads the log with `readSessionEvents`; a missing log is an all-zero report. |
 | `transports.ts` | `createInProcessTransport(server)`, `serveStdio(server, { input, output })` (NDJSON). |
 | `browser.ts` | Old browser entry, kept as a re-export of the two protocol files. Never import `index.ts` from a browser (it pulls in `node:fs`). |
 

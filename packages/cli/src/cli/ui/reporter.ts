@@ -19,6 +19,8 @@ import {
   reduceLeadEvents,
   type LeadBoardView,
 } from "#assentor/ui-shared/lead.js";
+import { UsageLedger } from "#assentor/engine/usage/ledger.js";
+import { formatUsage } from "../usage.js";
 
 const ESC = "\x1b[";
 const c = {
@@ -74,6 +76,8 @@ export class RunReporter {
   /** Team board folded from lead events. Printed on each lead turn in lead mode. */
   private leadView: LeadBoardView = emptyLeadBoardView();
   private leadMode = false;
+  /** Token use of this run (TE-01), printed by `printUsage`. */
+  private readonly usage = new UsageLedger();
 
   constructor(
     private readonly options: {
@@ -132,6 +136,7 @@ export class RunReporter {
    * stream is strictly ordered, so every reviewer `seat.done` before it is folded.
    */
   onEngineEvent(event: EngineEvent): void {
+    this.usage.add(event);
     if (event.seatId?.startsWith("reviewer-")) {
       this.reviewerSeats = reduceSeatEvents(this.reviewerSeats, event);
     }
@@ -460,6 +465,14 @@ export class RunReporter {
         this.paint(true);
       }
     }
+  }
+
+  /** End-of-run token/cost breakdown. */
+  printUsage(): void {
+    this.endStatus();
+    const [first, ...rest] = formatUsage(this.usage.snapshot());
+    console.log(`\n  ${c.bold}${first}${c.reset}`);
+    for (const line of rest) console.log(`${c.dim}${line}${c.reset}`);
   }
 
   dispose(): void {

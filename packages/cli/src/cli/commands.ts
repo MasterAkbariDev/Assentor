@@ -1027,6 +1027,7 @@ async function runAssentorTaskBody(
   });
 
   const result = await supervisor.run();
+  reporter.printUsage();
 
   printBanner({
     task: contract.goal,
@@ -1239,7 +1240,9 @@ export async function resumeAssentorTask(input: {
       seatScope: seatEvents.scope(memberReviewers.length),
     });
 
-    return await supervisor.run();
+    const result = await supervisor.run();
+    reporter.printUsage();
+    return result;
   } finally {
     detachInterrupt();
     await seatEvents.close();

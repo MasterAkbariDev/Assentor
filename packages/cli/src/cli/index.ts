@@ -157,6 +157,23 @@ program
   });
 
 program
+  .command("usage")
+  .description("Token and cost breakdown of a session from its event log (default: the latest session)")
+  .argument("[sessionId]", "Session id")
+  .option("-p, --project <path>", "Project directory", ".")
+  .option("--json", "Print the usage report as JSON", false)
+  .action(async (sessionId: string | undefined, options: { project: string; json: boolean }) => {
+    const { usageCommand } = await import("./usage.js");
+    process.exitCode = await usageCommand({
+      projectPath: options.project,
+      sessionId,
+      json: options.json,
+      out: (line) => console.log(line),
+      err: (line) => console.error(line),
+    });
+  });
+
+program
   .command("init")
   .description(
     "Create an optional project .assentor/config.yaml override (global defaults live in ~/.assentor)",
