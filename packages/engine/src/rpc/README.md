@@ -33,12 +33,12 @@ JSON-RPC 2.0 between the engine and its clients (CLI/TUI in process, the Tauri s
 
 ## Write access
 
-Default-deny. A connection runs a method whose `access` is not exactly `"read"` only if its transport opened it with `server.connect(send, { allowWrite: true })`; otherwise it answers `-32002 WriteNotAllowed` (a notification is dropped) without validating params or calling the handler.
+Default-deny. A connection runs a method whose `access` is not exactly `"read"` only if its transport opened it with `server.connect(send, { allowWrite: true })`; otherwise it answers `-32002 WriteNotAllowed` (a notification is dropped) without validating params or calling the handler. `engine.hello` capabilities list only the methods the connection may call (`RpcConnection.methodNames`).
 
 | Transport | Writes |
 |---|---|
 | in-process (`createInProcessTransport`) | allowed (same process) |
-| stdio (`serveStdio`) | allowed (the parent process that spawned the engine) |
+| stdio (`serveStdio`) | allowed: full trust in its peer, the parent process that spawned the engine (the Tauri shell). Never connect it to a less-trusted peer (a socket, a pipe another user can open, a browser). |
 | WebSocket (`assentor serve`) | **refused** until T04-03 adds write auth |
 
 ## Read-only library methods (`library.ts`)
