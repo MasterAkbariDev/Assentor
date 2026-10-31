@@ -77,6 +77,9 @@ export class RpcServer {
     if (!def) {
       throw new Error(`RPC method ${method} is not in the contract`);
     }
+    if (this.methods.has(method)) {
+      throw new Error(`RPC method ${method} is already registered`);
+    }
     this.methods.set(method, {
       access: def.access,
       params: def.params,
@@ -92,11 +95,6 @@ export class RpcServer {
       this.register(method as RpcMethodName, handler as RpcHandler<RpcMethodName>);
     }
     return this;
-  }
-
-  /** Method names with a handler, for `engine.hello` capabilities. */
-  get methodNames(): string[] {
-    return [...this.methods.keys()].sort();
   }
 
   /**
@@ -122,6 +120,21 @@ export class RpcConnection {
 
   get closed(): boolean {
     return this.isClosed;
+  }
+
+  /** True when this connection's transport granted write access. */
+  get canWrite(): boolean {
+    return this.allowWrite;
+  }
+
+  /** Registered methods this connection may call, for `engine.hello` capabilities. */
+  get methodNames(): string[] {
+    return [...this.methods].filter(([, method]) => this.permits(method)).map(([name]) => name).sort();
+  }
+
+  /** The one access check: default-deny, anything not exactly "read" needs write access. */
+  private permits(method: Registered): boolean {
+    return method.access === "read" || this.allowWrite;
   }
 
   /** Handle one inbound frame. Never rejects; protocol errors become error responses. */
@@ -164,8 +177,7 @@ export class RpcConnection {
       }
       return; // Unknown notifications are ignored, per JSON-RPC.
     }
-    // Default-deny: anything not explicitly "read" needs a write-capable transport.
-    if (method.access !== "read" && !this.allowWrite) {
+    if (!this.permits(method)) {
       if (id !== undefined) {
         await this.respondError(
           id,

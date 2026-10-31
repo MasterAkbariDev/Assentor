@@ -327,7 +327,12 @@ describe("assentor serve: WebSocket", () => {
         ran = true;
         return { ok: true };
       }) as never)
-      .register("sessions.list", () => ({ sessions: [] }));
+      .register("sessions.list", () => ({ sessions: [] }))
+      .register("engine.hello", (_params, { connection }) => ({
+        engineVersion: "x",
+        protocolVersion: 1,
+        capabilities: connection.methodNames,
+      }));
     const { handle, origin } = await serve({ rpcServer });
     const ws = await authenticated(handle.port, origin);
     ws.send(JSON.stringify({ jsonrpc: "2.0", method: "test.write", params: {} }));
@@ -336,6 +341,9 @@ describe("assentor serve: WebSocket", () => {
     // Reads still work on the same connection.
     ws.send(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "sessions.list" }));
     expect(await nextMessage(ws)).toEqual({ jsonrpc: "2.0", id: 2, result: { sessions: [] } });
+    // The handshake does not advertise the write method.
+    ws.send(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "engine.hello" }));
+    expect(await nextMessage(ws)).toMatchObject({ id: 3, result: { capabilities: ["engine.hello", "sessions.list"] } });
     expect(ran).toBe(false);
   });
 

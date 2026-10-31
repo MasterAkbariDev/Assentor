@@ -137,8 +137,24 @@ describe("JSON-RPC conformance", () => {
         "models.catalog",
         "prompt.get",
         "prompt.list",
+        "seat.inject",
+        "seat.restart",
+        "seat.setModel",
+        "seat.stop",
+        "session.approve",
+        "session.cancel",
+        "session.create",
+        "session.export",
+        "session.get",
+        "session.list",
+        "session.pause",
+        "session.resume",
+        "session.start",
         "sessions.list",
         "team.list",
+        "worktree.apply",
+        "worktree.diff",
+        "worktree.discard",
       ],
     });
     await expect(client.call("events.subscribe", { sessionId: "bad" })).rejects.toBeInstanceOf(RpcRemoteError);
@@ -598,12 +614,24 @@ function writeServer(calls: number[]) {
   return server
     .register("test.write" as RpcMethodName, handler)
     .register("test.unmarked" as RpcMethodName, handler)
-    .register("sessions.list", () => ({ sessions: [] }));
+    .register("sessions.list", () => ({ sessions: [] }))
+    // Same handler shape as engine.ts.
+    .register("engine.hello", (_params, { connection }) => ({
+      engineVersion: "x",
+      protocolVersion: 1,
+      capabilities: connection.methodNames,
+    }));
 }
 
 describe("write access", () => {
-  it("declares every current contract method as read", () => {
-    expect(Object.values(RpcMethods).map((def) => def.access)).toEqual(Object.keys(RpcMethods).map(() => "read"));
+  it("declares the session, seat and worktree mutations as write and everything else as read", () => {
+    const writes = Object.entries(RpcMethods).filter(([, def]) => def.access === "write").map(([name]) => name);
+    expect(writes.sort()).toEqual([
+      "seat.inject", "seat.restart", "seat.setModel", "seat.stop",
+      "session.approve", "session.cancel", "session.create", "session.pause", "session.resume", "session.start",
+      "worktree.apply", "worktree.discard",
+    ]);
+    expect(Object.values(RpcMethods).every((def) => def.access === "read" || def.access === "write")).toBe(true);
   });
 
   it("refuses write methods on a connection without write access, and never runs them", async () => {
@@ -615,14 +643,19 @@ describe("write access", () => {
     await connection.receive(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "test.write", params: { bad: true } }));
     await connection.receive(JSON.stringify({ jsonrpc: "2.0", method: "test.write", params: { n: 4 } }));
     await connection.receive(JSON.stringify({ jsonrpc: "2.0", id: 5, method: "sessions.list" }));
+    await connection.receive(JSON.stringify({ jsonrpc: "2.0", id: 6, method: "engine.hello" }));
 
     expect(calls).toEqual([]);
+    expect(connection.canWrite).toBe(false);
     expect(frames.map((f) => [f.id, (f.error as { code: number } | undefined)?.code])).toEqual([
       [1, RpcErrorCode.WriteNotAllowed],
       [2, RpcErrorCode.WriteNotAllowed],
       [3, RpcErrorCode.WriteNotAllowed],
       [5, undefined],
+      [6, undefined],
     ]);
+    // Capabilities hide what this connection may not call.
+    expect((frames[4]!.result as { capabilities: string[] }).capabilities).toEqual(["engine.hello", "sessions.list"]);
     expect((frames[0]!.error as { message: string }).message).toMatch(/test\.write.*read-only/);
   });
 
@@ -631,6 +664,12 @@ describe("write access", () => {
     const client = new RpcClient(createInProcessTransport(writeServer(calls)).client);
     cleanups.push(() => client.close());
     expect(await client.call("test.write" as never, { n: 1 } as never)).toEqual({ ok: true });
+    expect((await client.call("engine.hello")).capabilities).toEqual([
+      "engine.hello",
+      "sessions.list",
+      "test.unmarked",
+      "test.write",
+    ]);
 
     const input = new PassThrough();
     const output = new PassThrough();
@@ -643,6 +682,15 @@ describe("write access", () => {
     input.end();
     await done;
     expect(calls).toEqual([1, 2]);
+  });
+});
+
+describe("RpcServer.register", () => {
+  it("refuses a second handler for the same method", () => {
+    const server = new RpcServer().register("sessions.list", () => ({ sessions: [] }));
+    expect(() => server.registerAll({ "sessions.list": () => ({ sessions: [] }) })).toThrow(
+      "RPC method sessions.list is already registered",
+    );
   });
 });
 
