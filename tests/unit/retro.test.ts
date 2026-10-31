@@ -62,6 +62,7 @@ function completedStream(): EngineEvent[] {
 
 afterEach(async () => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   await Promise.all(
     tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })),
   );
@@ -89,6 +90,7 @@ describe("buildRetroInput", () => {
         rejected: 1,
         escalatedFrom: 1,
         escalatedTo: 0,
+        verdicts: [],
         failures: ["stopped after [REDACTED] leaked in the log"],
       },
       {
@@ -99,6 +101,7 @@ describe("buildRetroInput", () => {
         rejected: 0,
         escalatedFrom: 0,
         escalatedTo: 0,
+        verdicts: [],
         failures: [],
       },
       {
@@ -109,6 +112,7 @@ describe("buildRetroInput", () => {
         rejected: 0,
         escalatedFrom: 0,
         escalatedTo: 1,
+        verdicts: [],
         failures: [],
       },
     ]);
@@ -170,6 +174,76 @@ describe("buildRetroInput", () => {
     const body = PromptLibrary.loadBuiltinSync().render("retro", retroVariables(buildRetroInput([])));
     expect(body).toContain("not recorded");
   });
+
+  it("a pending model change does not replace the seat's model; a settled one does", () => {
+    seq = 0;
+    const input = buildRetroInput([
+      spawn(0, "s1", "claude", "opus-a", "engineer"),
+      ev(1, "seat.model.changed", { to: "opus-b", pending: true }, "s1"),
+    ]);
+    expect(input.seats[0]).toMatchObject({ provider: "claude", model: "opus-a" });
+
+    seq = 0;
+    const settled = buildRetroInput([
+      spawn(0, "s1", "claude", "opus-a", "engineer"),
+      ev(1, "seat.model.changed", { to: "opus-b", pending: true }, "s1"),
+      ev(2, "seat.model.changed", { to: "opus-c", pending: false }, "s1"),
+    ]);
+    expect(settled.seats[0]).toMatchObject({ model: "opus-c" });
+  });
+
+  it("records review verdicts from the reviewer seat and from a Lead task, and change requests", () => {
+    seq = 0;
+    const input = buildRetroInput([
+      spawn(0, "s1", "claude", "opus-a", "engineer"),
+      spawn(1, "s2", "codex", "mini", "reviewer"),
+      ev(2, "task.assigned", { taskId: "T1", seatId: "s1" }),
+      ev(3, "review.verdict", { status: "NEEDS_WORK", summary: "tests missing" }, "s2"),
+      ev(4, "review.changes_requested", { reason: "rename the helper" }, "s2"),
+      ev(5, "review.verdict", { status: "PASS", taskId: "T1" }),
+    ]);
+
+    expect(input.seats.find((seat) => seat.model === "mini")!.verdicts).toEqual([
+      "NEEDS_WORK: tests missing",
+      "changes requested: rename the helper",
+    ]);
+    expect(input.seats.find((seat) => seat.model === "opus-a")!.verdicts).toEqual(["PASS"]);
+  });
+
+  it("drops format characters and turns controls into spaces before redaction", () => {
+    seq = 0;
+    const input = buildRetroInput([
+      ev(0, "session.created", { title: "Bidi ‮goal" }),
+      spawn(1, "s1", "claude", "opus-a", "engineer"),
+      ev(2, "seat.error", { message: "\x1b[31mred\x1b[0m sk-​abcdefghijklmnopqrstuvwxyz" }, "s1"),
+    ]);
+
+    expect(input.goal).toBe("Bidi goal");
+    expect(input.seats[0]!.failures).toEqual(["[31mred [0m [REDACTED]"]);
+  });
+
+  it("bounds the provider, model and role to 80 characters", () => {
+    const long = "p".repeat(200);
+    seq = 0;
+    const input = buildRetroInput([spawn(0, "s1", long, long, long)]);
+    expect(input.seats[0]!.provider.length).toBeLessThanOrEqual(80);
+    expect(input.seats[0]!.model.length).toBeLessThanOrEqual(80);
+    expect(input.seats[0]!.role.length).toBeLessThanOrEqual(80);
+  });
+
+  it("keeps five failures per seat and says how many more there were", () => {
+    seq = 0;
+    const errors = Array.from({ length: 7 }, (_, i) => ev(i + 1, "seat.error", { message: `error ${i + 1}` }, "s1"));
+    const input = buildRetroInput([spawn(0, "s1", "claude", "opus-a", "engineer"), ...errors]);
+    expect(input.seats[0]!.failures).toEqual([
+      "error 1",
+      "error 2",
+      "error 3",
+      "error 4",
+      "error 5",
+      "+2 more",
+    ]);
+  });
 });
 
 describe("scoreboardRows", () => {
@@ -228,11 +302,48 @@ describe("appendLessons", () => {
     expect(text).toContain("- Failed: the job echoed [REDACTED] then stopped.");
   });
 
+  it("strips terminal escapes and bidi overrides from lessons", async () => {
+    const project = await makeProject();
+    await appendLessons(project, SESSION, ["Failed: \x1b[31ma‮b\x1b[0m"]);
+
+    const text = await fs.readFile(path.join(project, LESSONS_PATH), "utf8");
+    expect(text).not.toMatch(/[\x1b‮]/);
+    expect(text).toContain("- Failed: [31mab [0m");
+  });
+
   it("writes nothing for an empty session with no lessons", async () => {
     const project = await makeProject();
     const wrote = await appendLessons(project, SESSION, ["", "   "]);
 
     expect(wrote).toBe(false);
     await expect(fs.access(path.join(project, LESSONS_PATH))).rejects.toThrow();
+  });
+
+  it("refuses a session id that is not a UUID, and writes nothing", async () => {
+    const project = await makeProject();
+    await expect(appendLessons(project, "../escape", ["Worked: one."])).rejects.toThrow(/Invalid session id/);
+    await expect(fs.access(path.join(project, LESSONS_PATH))).rejects.toThrow();
+  });
+
+  it("removes the temp file and rethrows when the rename fails", async () => {
+    const project = await makeProject();
+    vi.spyOn(fs, "rename").mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(appendLessons(project, SESSION, ["Worked: one."])).rejects.toThrow("disk full");
+    const leftovers = (await fs.readdir(path.dirname(path.join(project, LESSONS_PATH)))).filter((name) =>
+      name.endsWith(".tmp"),
+    );
+    expect(leftovers).toEqual([]);
+  });
+
+  it("refuses a lessons file that is a symlink, and leaves the target alone", async () => {
+    const project = await makeProject();
+    const outside = path.join(project, "outside.txt");
+    await fs.writeFile(outside, "private\n", "utf8");
+    await fs.mkdir(path.dirname(path.join(project, LESSONS_PATH)), { recursive: true });
+    await fs.symlink(outside, path.join(project, LESSONS_PATH));
+
+    await expect(appendLessons(project, SESSION, ["Worked: one."])).rejects.toThrow(/symbolic link/);
+    expect(await fs.readFile(outside, "utf8")).toBe("private\n");
   });
 });
