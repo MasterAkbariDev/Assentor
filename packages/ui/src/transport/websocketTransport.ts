@@ -3,6 +3,8 @@ import { RpcClient, type RpcCallArgs, type RpcClientTransport } from "#assentor/
 import type { SubscribeHandlers, Transport, TransportStatus } from "./types.js";
 import { AuthRejectedError } from "./websocket.js";
 
+const STABLE_MS = 2000;
+
 export interface WebSocketTransportOptions {
   /** Opens an authenticated link (`connectWebSocket` in the app, in-process in tests). */
   connect: () => Promise<RpcClientTransport>;
@@ -76,13 +78,15 @@ export class WebSocketTransport implements Transport {
     }
     const client = new RpcClient(link);
     this.client = client;
+    const openedAt = Date.now();
     client.onClose(() => {
       if (this.client === client) {
         this.client = undefined;
+        // Only a link that stayed up for a while restarts the backoff; a link that drops at once keeps climbing.
+        if (Date.now() - openedAt >= STABLE_MS) this.attempt = 0;
         this.scheduleReconnect();
       }
     });
-    this.attempt = 0;
     this.setStatus("open");
   }
 

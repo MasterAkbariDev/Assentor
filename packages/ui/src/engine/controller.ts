@@ -12,6 +12,8 @@ export interface ControllerOptions {
   transport: Transport;
   /** How often to refresh the session list. Default 3 s. */
   listIntervalMs?: number;
+  /** Delays between `engine.hello` retries on an open link; the last one repeats. Default 1 s, 2 s, 5 s. */
+  helloRetryMs?: number[];
   schedule?: (flush: () => void) => void;
 }
 
@@ -19,6 +21,8 @@ export class EngineController {
   private unsubscribe?: () => Promise<void>;
   private listTimer?: ReturnType<typeof setInterval>;
   private resyncTimer?: ReturnType<typeof setTimeout>;
+  private helloTimer?: ReturnType<typeof setTimeout>;
+  private helloAttempt = 0;
   /** Resubscribes run one at a time, so overlapping selects can't leak a subscription. */
   private subscribeChain: Promise<void> = Promise.resolve();
   /** Bumped on every status change, so work started on an old link can tell it is stale. */
@@ -50,11 +54,14 @@ export class EngineController {
     this.offStatus?.();
     clearInterval(this.listTimer);
     clearTimeout(this.resyncTimer);
+    clearTimeout(this.helloTimer);
     this.options.transport.close();
   }
 
   private onStatus(status: TransportStatus): void {
     this.link += 1;
+    clearTimeout(this.helloTimer);
+    this.helloAttempt = 0;
     if (status === "open") {
       this.open = true;
       void this.onOpen(this.link);
@@ -81,7 +88,14 @@ export class EngineController {
       this.listTimer = setInterval(() => void this.refreshSessions(), this.options.listIntervalMs ?? 3000);
       await this.resubscribe();
     } catch {
-      // The link dropped; the transport reconnects and reports `open` again.
+      // A dropped link reconnects and reports `open` again (which resets this). On a link that
+      // stays open, the engine refused or failed hello: try again rather than stay on "Connecting…".
+      if (link === this.link && !this.stopped) {
+        const delays = this.options.helloRetryMs ?? [1000, 2000, 5000];
+        const delay = delays[Math.min(this.helloAttempt, delays.length - 1)]!;
+        this.helloAttempt += 1;
+        this.helloTimer = setTimeout(() => void this.onOpen(link), delay);
+      }
     }
   }
 

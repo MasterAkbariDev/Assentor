@@ -84,10 +84,11 @@ describe("sections and useRpc", () => {
   });
 
   it("toasts when the connection drops and comes back", () => {
-    const { store, getByText } = renderWithStore(<App />);
+    const { store, getByText, getByRole } = renderWithStore(<App />);
+    expect(getByRole("log", { name: "Notifications" })).toBeTruthy(); // always in the page, so announcements are heard
     act(() => store.getState().setConnection("connected"));
     act(() => store.getState().setConnection("reconnecting"));
-    expect(getByText("Connection lost. Reconnecting…")).toBeTruthy();
+    expect(getByRole("alert").textContent).toContain("Connection lost. Reconnecting…");
     act(() => store.getState().setConnection("connected"));
     expect(getByText("Reconnected.")).toBeTruthy();
   });

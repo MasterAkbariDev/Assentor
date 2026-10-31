@@ -9,6 +9,7 @@ import { createInProcessTransport } from "#assentor/engine/rpc/transports.js";
 import type { RpcClientTransport } from "#assentor/protocol/rpc-client.js";
 import { createEngineStore } from "../store/engineStore.js";
 import { AuthRejectedError } from "../transport/websocket.js";
+import { mockTransport } from "../transport/mock.js";
 import { WebSocketTransport } from "../transport/websocketTransport.js";
 import { EngineController } from "./controller.js";
 
@@ -156,5 +157,28 @@ describe("EngineController", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(calls.subscribe - calls.unsubscribe).toBe(1);
+  });
+});
+
+describe("EngineController: hello failure", () => {
+  it("retries engine.hello on an open link until it works", async () => {
+    let hellos = 0;
+    const transport = mockTransport({
+      engineVersion: "2.0.0",
+      handlers: {
+        "engine.hello": () => {
+          hellos += 1;
+          if (hellos === 1) throw new Error("engine busy");
+          return { engineVersion: "2.0.0", protocolVersion: 1, capabilities: [] };
+        },
+      },
+    });
+    const store = createEngineStore();
+    const controller = new EngineController({ store, transport, helloRetryMs: [10] });
+    stops.push(() => controller.stop());
+    controller.start();
+    await until(() => store.getState().connection === "connected");
+    expect(hellos).toBe(2);
+    expect(store.getState().engineVersion).toBe("2.0.0");
   });
 });

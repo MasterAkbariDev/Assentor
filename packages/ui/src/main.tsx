@@ -6,7 +6,7 @@ import { createEngineStore } from "./store/engineStore.js";
 import { EngineStoreProvider } from "./store/context.js";
 import { takeToken } from "./transport/token.js";
 import { TransportProvider } from "./transport/context.js";
-import { mockTransport } from "./transport/mock.js";
+import { closedTransport } from "./transport/closed.js";
 import { connectWebSocket, engineUrl } from "./transport/websocket.js";
 import { WebSocketTransport } from "./transport/websocketTransport.js";
 import { ToastProvider } from "./shell/Toasts.js";
@@ -21,8 +21,7 @@ if (token) {
   new EngineController({ store, transport }).start();
 } else {
   // No token: nothing can connect, so give `useRpc()` a transport that is already closed.
-  transport = mockTransport();
-  transport.close();
+  transport = closedTransport;
   store.getState().setConnection("no_token");
 }
 

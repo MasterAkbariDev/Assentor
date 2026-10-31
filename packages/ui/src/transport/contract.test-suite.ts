@@ -82,16 +82,20 @@ export function runTransportContract(name: string, make: () => Promise<ContractH
       expect(got).toHaveLength(events.length);
     }));
 
-    it("goes reconnecting then open after the link drops, and resumes from a seq", withHarness(async ({ transport, sessionId, events, drop, emit }) => {
+    it("goes reconnecting then open after the link drops; the old subscription ends and a new one resumes from a seq", withHarness(async ({ transport, sessionId, events, drop, emit }) => {
+      const old: number[] = [];
+      await transport.subscribe(sessionId, 0, { onEvent: (e) => old.push(e.seq) });
+      await until(() => old.length === events.length);
       const seen: TransportStatus[] = [];
       transport.onStatus((s) => seen.push(s));
       drop();
-      const live = await emit();
+      const missed = [await emit(), await emit()];
       await until(() => seen.at(-1) === "open" && seen.includes("reconnecting"));
       const got: number[] = [];
       await transport.subscribe(sessionId, events.length, { onEvent: (e) => got.push(e.seq) });
-      await until(() => got.length === 1);
-      expect(got).toEqual([live.seq]);
+      await until(() => got.length === 2);
+      expect(got).toEqual(missed.map((e) => e.seq));
+      expect(old).toHaveLength(events.length); // the dropped subscription saw nothing more
     }));
 
     it("rejects calls once closed, and stays closed", withHarness(async ({ transport }) => {
