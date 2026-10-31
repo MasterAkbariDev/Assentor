@@ -40,7 +40,9 @@ Default-deny. A connection runs a method whose `access` is not exactly `"read"` 
 |---|---|
 | in-process (`createInProcessTransport`) | allowed (same process) |
 | stdio (`serveStdio`) | allowed: full trust in its peer, the parent process that spawned the engine (the Tauri shell). Never connect it to a less-trusted peer (a socket, a pipe another user can open, a browser). |
-| WebSocket (`assentor serve`) | **refused** until T04-03 adds write auth |
+| WebSocket (`assentor serve`) | refused unless serve runs with `--allow-write` (loopback only, never with `--unsafe-listen`) **and** the client's auth frame is `{"auth":"<token>","write":true}`. Then rate limited (30 per 10 s across connections, `-32003 RateLimited`) and each call appends an `rpc.write` line (method name only) to `~/.assentor/audit.jsonl`; a failed audit append refuses the call |
+
+`connect(send, { allowWrite: true, beforeWrite })`: `beforeWrite(method)` runs after params validate and before the handler; throw `RpcError` (or reject) to refuse.
 
 ## Read-only library methods (`library.ts`)
 
@@ -55,7 +57,7 @@ Results never contain absolute paths, key ids or vault data.
 
 ## Session control (`session-control.ts`)
 
-`session.create` needs a `SessionHost` (`createEngineRpcServer({ sessionHost })`) that returns the `prepareModeSession` deps for a request; without one it answers `-32003 NotSupported`. Sessions run through `prepareModeSession` (no second launcher); `create` validates and starts nothing, `start` opens the event log and runs.
+`session.create` needs a `SessionHost` (`createEngineRpcServer({ sessionHost })`) that returns the `prepareModeSession` deps for a request; without one it answers `-32004 NotSupported`. Sessions run through `prepareModeSession` (no second launcher); `create` validates and starts nothing, `start` opens the event log and runs.
 
 | Method | Access | Delegates to |
 |---|---|---|
@@ -65,13 +67,13 @@ Results never contain absolute paths, key ids or vault data.
 | `session.list` / `get` / `export` | read | the `sessions.list` scan, live state, `readSessionEvents` (5,000 events max) |
 | `worktree.diff` | read | `WorktreeManager.diff` (diff text cut at 512 KiB) |
 | `worktree.apply` / `discard` | write | `applyTo("main")` / `discard`; both need `confirm: true`; discard refuses a live session's worktree |
-| `session.pause` / `resume`, `seat.setModel` / `inject` / `stop` / `restart` | write | **not supported yet** (`-32003`): no engine pause, no static resume via `prepareModeSession`, no registry from a session id to a live Supervisor or executor |
+| `session.pause` / `resume`, `seat.setModel` / `inject` / `stop` / `restart` | write | **not supported yet** (`-32004`): no engine pause, no static resume via `prepareModeSession`, no registry from a session id to a live Supervisor or executor |
 
-Worktrees are addressed by `(sessionId, seatId)` and looked up in the manager's manifest; a client never sends a path. `-32004 Rejected` means the engine understood and refused (wrong state, git refusal).
+Worktrees are addressed by `(sessionId, seatId)` and looked up in the manager's manifest; a client never sends a path. `-32005 Rejected` means the engine understood and refused (wrong state, git refusal).
 
 ## Rules
 
-- No `read` method may write, delete or start anything. Write methods stay off `serve` until T04-03 adds write auth.
+- No `read` method may write, delete or start anything. A new `write` method needs the user's sign-off; on `serve` it is reachable only through the write gate above.
 - Events are delivered in `seq` order. A client that reconnects (`onDisconnect`) resubscribes with `fromSeq` = the last `seq` it applied. On `events.resync_required` it does the same from `lastSeq` for `log_replaced` / `slow_consumer`, and after a backoff for `io_error`; `unreadable_log` (a line over the limit) is terminal (show an error, don't loop).
 - Frames over 1 MiB are rejected (`-32600`). Internal error messages have absolute paths replaced by `<path>`.
 - Memory per subscription is bounded by one read chunk (64 KiB by default): a slow client falls behind on the file instead of growing a queue.

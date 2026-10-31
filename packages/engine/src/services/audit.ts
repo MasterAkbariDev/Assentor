@@ -15,7 +15,8 @@ export type AuditEventType =
   | "retry"
   | "budget"
   | "agent.created"
-  | "agent.updated";
+  | "agent.updated"
+  | "rpc.write";
 
 export interface AuditEvent {
   type: AuditEventType;

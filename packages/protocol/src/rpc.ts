@@ -27,10 +27,12 @@ export const RpcErrorCode = {
   SubscriptionLimit: -32001,
   /** A write method on a connection whose transport only allows reads (e.g. `serve`). */
   WriteNotAllowed: -32002,
+  /** Too many write calls; `serve` limits them. Retry later. */
+  RateLimited: -32003,
   /** A valid method the engine has no implementation for yet (e.g. `seat.inject`). */
-  NotSupported: -32003,
+  NotSupported: -32004,
   /** The engine understood the request and refused it (unknown session, wrong state, git refused). */
-  Rejected: -32004,
+  Rejected: -32005,
 } as const;
 
 /** Largest inbound frame a connection accepts (characters of JSON text). */

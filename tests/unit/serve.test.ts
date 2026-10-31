@@ -7,6 +7,7 @@ import path from "node:path";
 import { WebSocket } from "ws";
 import { z } from "zod";
 import {
+  AuditLog,
   createId,
   EventLog,
   RpcErrorCode,
@@ -396,4 +397,140 @@ describe("assentor serve: WebSocket", () => {
     await until(() => second.at(-1) === total);
     expect(contiguous(second, lastSeq + 1)).toBe(true);
   }, 20_000);
+});
+
+describe("assentor serve: writes", () => {
+  const SECRET = "sk-do-not-log-me";
+
+  /** An RPC server with a test-only write method (no real write methods exist yet). */
+  function writeRpc() {
+    const calls: string[] = [];
+    const rpcServer = new RpcServer({
+      ...RpcMethods,
+      "test.write": {
+        access: "write",
+        params: z.object({ secret: z.string() }).strict(),
+        result: z.object({ ok: z.boolean() }),
+      },
+    })
+      .register("test.write" as RpcMethodName, ((params: { secret: string }) => {
+        calls.push(params.secret);
+        return { ok: true };
+      }) as never)
+      .register("sessions.list", () => ({ sessions: [] }))
+      .register("engine.hello", (_params, { connection }) => ({
+        engineVersion: "x",
+        protocolVersion: 1,
+        capabilities: connection.methodNames,
+      }));
+    return { rpcServer, calls };
+  }
+
+  async function writeServer(extra: Partial<Parameters<typeof startServe>[0]> = {}) {
+    const auditRoot = await tempDir("serve-audit-");
+    const { rpcServer, calls } = writeRpc();
+    const served = await serve({ rpcServer, allowWrite: true, audit: new AuditLog(auditRoot), ...extra });
+    const auditText = () => fs.readFile(path.join(auditRoot, ".assentor", "audit.jsonl"), "utf8").catch(() => "");
+    return { ...served, calls, auditText };
+  }
+
+  async function authWithWrite(port: number, origin: string) {
+    const { ws } = await connect(port, { origin });
+    ws!.send(JSON.stringify({ auth: TOKEN, write: true }));
+    return { ws: ws!, reply: await nextMessage(ws!) };
+  }
+
+  const callWrite = (ws: WebSocket, id: number) =>
+    ws.send(JSON.stringify({ jsonrpc: "2.0", id, method: "test.write", params: { secret: SECRET } }));
+
+  it("refuses writes by default even when the client asks for them", async () => {
+    const { rpcServer, calls } = writeRpc();
+    const { handle, origin } = await serve({ rpcServer });
+    const { ws, reply } = await authWithWrite(handle.port, origin);
+    expect(reply).toEqual({ auth: "ok", write: false });
+    callWrite(ws, 1);
+    expect(await nextMessage(ws)).toMatchObject({ id: 1, error: { code: RpcErrorCode.WriteNotAllowed } });
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses to start with writes enabled and --unsafe-listen or a non-loopback host", async () => {
+    for (const host of ["127.0.0.1", "0.0.0.0"]) {
+      await expect(
+        startServe({ projectPath: os.tmpdir(), host, port: 0, unsafeListen: true, allowWrite: true, log: () => undefined }),
+      ).rejects.toBeInstanceOf(ServeRefusedError);
+    }
+    await expect(
+      startServe({ projectPath: os.tmpdir(), host: "0.0.0.0", port: 0, allowWrite: true, log: () => undefined }),
+    ).rejects.toBeInstanceOf(ServeRefusedError);
+  });
+
+  it("allows writes on loopback only to a connection that opted in, and audits the method without params", async () => {
+    const { handle, origin, calls, auditText, logs } = await writeServer();
+    const { ws, reply } = await authWithWrite(handle.port, origin);
+    expect(reply).toEqual({ auth: "ok", write: true });
+    callWrite(ws, 1);
+    expect(await nextMessage(ws)).toEqual({ jsonrpc: "2.0", id: 1, result: { ok: true } });
+    expect(calls).toEqual([SECRET]);
+
+    // Same server, a connection that did not opt in: still read-only.
+    const reader = await authenticated(handle.port, origin);
+    callWrite(reader, 2);
+    expect(await nextMessage(reader)).toMatchObject({ id: 2, error: { code: RpcErrorCode.WriteNotAllowed } });
+    expect(calls).toHaveLength(1);
+
+    // engine.hello advertises the write method only to the connection that may use it.
+    const hello = async (socket: WebSocket) => {
+      socket.send(JSON.stringify({ jsonrpc: "2.0", id: 9, method: "engine.hello" }));
+      return ((await nextMessage(socket)).result as { capabilities: string[] }).capabilities;
+    };
+    expect(await hello(ws)).toEqual(["engine.hello", "sessions.list", "test.write"]);
+    expect(await hello(reader)).toEqual(["engine.hello", "sessions.list"]);
+
+    const lines = (await auditText()).trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ type: "rpc.write", data: { method: "test.write" } });
+    const everything = `${await auditText()}\n${logs.join("\n")}`;
+    expect(everything).not.toContain(SECRET);
+    expect(everything).not.toContain(TOKEN);
+  });
+
+  it("still refuses a foreign Origin, a wrong token and a missing token with writes enabled", async () => {
+    const { handle, origin, calls } = await writeServer();
+    expect((await connect(handle.port, { origin: "http://evil.example" })).status).toBe(403);
+    expect((await connect(handle.port)).status).toBe(403);
+    for (const frame of [{ auth: "b".repeat(64), write: true }, { write: true }]) {
+      const { ws } = await connect(handle.port, { origin });
+      const closed = closeCode(ws!);
+      ws!.send(JSON.stringify(frame));
+      callWrite(ws!, 1);
+      expect(await closed).toBe(4401);
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it("rate limits write calls across connections", async () => {
+    const { handle, origin, calls, auditText } = await writeServer({ writeRateLimit: { max: 2, windowMs: 60_000 } });
+    const a = (await authWithWrite(handle.port, origin)).ws;
+    const b = (await authWithWrite(handle.port, origin)).ws;
+    callWrite(a, 1);
+    expect(await nextMessage(a)).toMatchObject({ id: 1, result: { ok: true } });
+    callWrite(b, 2);
+    expect(await nextMessage(b)).toMatchObject({ id: 2, result: { ok: true } });
+    callWrite(a, 3);
+    expect(await nextMessage(a)).toMatchObject({ id: 3, error: { code: RpcErrorCode.RateLimited } });
+    expect(calls).toHaveLength(2);
+    expect((await auditText()).trim().split("\n")).toHaveLength(2);
+    // Reads are not limited.
+    a.send(JSON.stringify({ jsonrpc: "2.0", id: 4, method: "sessions.list" }));
+    expect(await nextMessage(a)).toMatchObject({ id: 4, result: { sessions: [] } });
+  });
+
+  it("refuses the write when the audit line cannot be written", async () => {
+    const failing = { append: () => Promise.reject(new Error("disk full")) } as unknown as AuditLog;
+    const { handle, origin, calls } = await writeServer({ audit: failing });
+    const { ws } = await authWithWrite(handle.port, origin);
+    callWrite(ws, 1);
+    expect(await nextMessage(ws)).toMatchObject({ id: 1, error: { code: RpcErrorCode.InternalError } });
+    expect(calls).toEqual([]);
+  });
 });
