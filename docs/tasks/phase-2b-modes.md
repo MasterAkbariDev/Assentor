@@ -359,6 +359,8 @@ Split out of T02B-01 on 2026-10-29 so the CLI card (T02B-17) and the UI can list
 ### T02B-19 · Retro stage
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T02B-01, T02B-10
 
+**Merged 2026-10-31 (planner, under the owner's standing merge direction):** Sonnet review NEEDS_WORK (missing review verdicts; lessons-file safety) → fixed in `fe30b35` → PASS with nits. Library only: `buildRetroInput`, `retroVariables`, `appendLessons` (to `.assentor/memory/lessons.md`), `scoreboardRows`; not yet called by any mode (wire it as the last stage when modes route through the CLI). Limits: two seats on the same provider/model share escalation counts; concurrent retros can drop a lessons section (no lock); the prompt has no variable for the session outcome or verdicts.
+
 **Allowed files** — create: `src/modes/retro.ts`, `tests/unit/retro.test.ts`.
 
 **Spec**

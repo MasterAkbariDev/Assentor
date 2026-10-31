@@ -148,7 +148,7 @@ Design: [modes.md](../plans/modes.md)
 | T02B-16 | Debug mode | 🟡 S | O | M | T02B-01, T02-01 ✅ |
 | T02B-17 | CLI: `--mode`, `--autonomy`, `assentor modes` ✅ | 🟢 H | S | S | T02B-01 |
 | T02B-18 | TUI: Lead team board + lead log | 🟢 H | S | M | T02B-02, T01-06 ✅ |
-| T02B-19 | Retro stage | 🟢 H | S | S | T02B-01, T02B-10 |
+| T02B-19 | Retro stage | 🟢 H | S | S | T02B-01, T02B-10 ✅ |
 
 ### Phase 3 — Prompt library & playbooks · [phase-3-prompts.md](./phase-3-prompts.md)
 | ID | Title | Tier | Review | Size | Depends |
