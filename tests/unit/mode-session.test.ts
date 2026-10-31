@@ -150,6 +150,7 @@ describe("mode contract", () => {
       "pipeline",
       "redteam",
       "tdd",
+      "swarm",
       "debug",
       "explore",
       "plan",
@@ -303,8 +304,8 @@ describe("failure paths", () => {
     expect(problems(() => prepareModeSession({ ...value, resume: true }))).toEqual([
       "a static session resumes through SessionRunner.resume, not resume",
     ]);
-    expect(problems(() => prepareModeSession({ ...value, mode: "swarm" }))).toEqual([
-      'mode "swarm" cannot run yet (no buildSession)',
+    expect(problems(() => prepareModeSession({ ...value, mode: "pair" }))).toEqual([
+      'mode "pair" cannot run yet (no buildSession)',
     ]);
     expect(
       problems(() => prepareModeSession({ ...value, mode: "nope", autonomy: "yolo" as never, goal: " " })),
@@ -338,7 +339,7 @@ describe("failure paths", () => {
   it("only review mode may skip the executor with existing-work", async () => {
     let hostExecutors = 0;
     const pipeline: ModeDefinition = {
-      ...getMode("swarm")!,
+      ...getMode("pair")!,
       buildSession: ({ goal, title }) => ({
         title,
         goal,

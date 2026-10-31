@@ -16,6 +16,7 @@ import { createDebugController, debugProblems } from "./debug.js";
 import { tddRuntime } from "./tdd/mode.js";
 import { cascadeProblems, createCascadeController } from "./cascade.js";
 import { createRedteamController, redteamProblems } from "./redteam.js";
+import { createSwarmController, swarmProblems } from "./swarm.js";
 
 /**
  * Mode registry and mode contract (T02B-01b metadata, T02B-01 contract). A mode
@@ -332,7 +333,11 @@ const MODES: readonly ModeDefinition[] = [
   }),
   // Runs through prepareModeSession once the host returns createTddExecutor for strategy "tdd"; no CLI route yet.
   mode("tdd", "TDD", "Failing tests first, then code that passes them without touching the tests.", "static", true, false, tddRuntime),
-  mode("swarm", "Swarm", "Many small independent items split across cheap seats, then merged.", "static", true),
+  // A controller loop (split, batches, tier retries, gates, review), not a stage graph: the batches depend on the split and on what fails.
+  mode("swarm", "Swarm", "Many small independent items split across cheap seats, then merged.", "dynamic", true, false, {
+    validate: (config) => [...teamProblems(config), ...swarmProblems(config)],
+    createController: (input) => createSwarmController(input),
+  }),
   // A controller loop (hypothesis rounds, then a fix), not a stage graph: how many rounds it takes depends on the evidence.
   mode("debug", "Debug", "Seats test competing hypotheses in their own worktrees; evidence picks the fix.", "dynamic", true, false, {
     validate: (config) => [...teamProblems(config), ...debugProblems(config)],
