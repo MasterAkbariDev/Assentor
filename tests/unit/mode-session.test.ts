@@ -550,6 +550,35 @@ describe("autonomy floor for dynamic modes (T02B-02)", () => {
     expect(auto.asked).toEqual([]);
   });
 
+  it("applyTo refuses when the worktree changed while the user was deciding; nothing lands", async () => {
+    let diff = "v1";
+    const applied: unknown[] = [];
+    const fake = {
+      create: async () => ({}),
+      diff: async () => ({ files: ["a.txt"], diff, head: "h" }),
+      list: async () => [],
+      applyTo: async (target: unknown) => (applied.push(target), { ok: true, strategy: "squash", changed: true }),
+    } as unknown as WorktreeManager;
+    const seat = { sessionId: createId(), seatId: "agent-1.w1" };
+    const errors: string[] = [];
+    const s = await dynamic(
+      "supervised",
+      async (ci) => {
+        await ci.worktrees!.applyTo("main", seat, { strategy: "squash" }).catch((e: Error) => errors.push(e.message));
+        await ci.worktrees!.applyTo("main", seat, { strategy: "squash" }); // unchanged while asked: lands
+      },
+      () => {
+        if (errors.length === 0 && diff === "v1") diff = "v2"; // the first question: the worktree changes meanwhile
+        return "approve";
+      },
+      { worktrees: fake },
+    );
+    await s.result();
+    expect(errors).toEqual(["agent-1.w1 changed while waiting for approval; nothing applied (the work is kept)"]);
+    expect(applied).toEqual(["main"]);
+    expect(s.asked).toHaveLength(2);
+  });
+
   it("answer() checks ids and options; cancel resolves open questions", async () => {
     const abort = new AbortController();
     let answer: string | undefined = "pending";

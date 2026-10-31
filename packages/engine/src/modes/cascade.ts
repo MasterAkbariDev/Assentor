@@ -5,7 +5,7 @@ import { expandSeatSpecs, StageSpecSchema, type Seat, type StageSpec } from "#as
 import type { EngineEventDraft } from "#assentor/protocol/events.js";
 import { DEFAULT_CAPABILITIES } from "./capabilities.js";
 import { classifyRisk, MAX_RISK_DIFF_CHARS, MAX_RISK_PATHS, RISK_UNSCANNED, type RiskAssessment } from "./danger.js";
-import { STAGE_DENIED_SUMMARY, type ModeController, type ModeControllerInput, type ModeControllerResult } from "./registry.js";
+import { STAGE_DENIED, type ModeController, type ModeControllerInput, type ModeControllerResult } from "./registry.js";
 import { costRank } from "./roster.js";
 
 /**
@@ -381,6 +381,7 @@ async function runCascade(input: ModeControllerInput, extras: CascadeExtras): Pr
           throw new Stop({ status: "blocked", reason: `tier ${tier + 1} was not approved${extras.approve ? "" : " (no approval channel)"}: ${why}` });
         }
       }
+      const approvalNote = pendingApproval ? `${pendingApproval} (team ${current.team})` : undefined;
       pendingApproval = undefined;
       attempt += 1;
       const stage = (id: string, kind: "execute" | "review", team: string, extra: Partial<StageSpec> = {}): StageSpec =>
@@ -399,6 +400,7 @@ async function runCascade(input: ModeControllerInput, extras: CascadeExtras): Pr
           review,
           goal,
           ...(feedback ? { feedback } : {}),
+          ...(approvalNote ? { approvalNote } : {}),
           attempt,
           signal,
           emit: (draft) => emit({ ...draft, stageId: exec.id } as EngineEventDraft),
@@ -429,7 +431,8 @@ async function runCascade(input: ModeControllerInput, extras: CascadeExtras): Pr
       }
 
       // The session's per-stage gate (manual) was declined: end here, do not escalate into another question.
-      if (result.outcome === "blocked" && result.summary === STAGE_DENIED_SUMMARY) {
+      // By identity: a reviewer's BLOCKED with the same words is a failure and escalates.
+      if (autonomy === "manual" && result === STAGE_DENIED) {
         return { status: "blocked", reason: `tier ${tier + 1} was not approved` };
       }
       // needs_work or blocked

@@ -17,7 +17,7 @@ import {
   ApprovalDeniedError,
   EXISTING_WORK_STRATEGY,
   getMode,
-  STAGE_DENIED_SUMMARY,
+  STAGE_DENIED,
   type ControllerWorktrees,
   type ModeControllerInput,
   type ModeDefinition,
@@ -324,15 +324,18 @@ function createQuestions(sessionId: string, signal: AbortSignal, emit: (draft: E
   };
 }
 
+/** One line for the user: control characters and newlines collapse to spaces, cut to fit. */
+const oneLine = (text: string) => text.replace(/[\s\p{Cc}]+/gu, " ").trim().slice(0, 200);
+
 /** `manual`: every stage call waits for approval; a denial ends the stage `blocked` without running it. */
 function gateStages(stages: StageRunners, approve: ModeControllerInput["requestApproval"]): StageRunners {
-  const denied = { outcome: "blocked" as const, summary: STAGE_DENIED_SUMMARY };
+  const note = (input: { approvalNote?: string }) => (input.approvalNote ? ` ${oneLine(input.approvalNote)}` : "");
   return {
     ...stages,
     negotiate: async (input) =>
-      (await approve({ question: `Start stage "${input.stage.id}" (${input.stage.kind})?` })) ? stages.negotiate(input) : denied,
+      (await approve({ question: `Start stage "${input.stage.id}" (${input.stage.kind})?${note(input)}` })) ? stages.negotiate(input) : STAGE_DENIED,
     execute: async (input) =>
-      (await approve({ question: `Start stage "${input.stage.id}" (execute)?` })) ? stages.execute(input) : denied,
+      (await approve({ question: `Start stage "${input.stage.id}" (execute)?${note(input)}` })) ? stages.execute(input) : STAGE_DENIED,
   };
 }
 
@@ -388,14 +391,18 @@ function gateWorktrees(
     readAtBase: (...args) => worktrees.readAtBase(...args),
     applyTo: async (target, seat, options) => {
       if (target === "main" && autonomy !== "autopilot") {
-        const { files } = await worktrees.diff(seat);
-        // One line for the user: control characters and newlines in the message collapse to spaces.
-        const oneLine = (text: string) => text.replace(/[\s\p{Cc}]+/gu, " ").trim().slice(0, 200);
+        const before = await worktrees.diff(seat);
+        const { files } = before;
         const what = options.message ? `"${oneLine(options.message)}" ` : "";
         const within = options.allowedPaths?.length ? `, only in ${oneLine(options.allowedPaths.join(", "))}` : "";
         const question = `Apply ${what}(${files.length} file${files.length === 1 ? "" : "s"} from ${seat.seatId}${within}) to your branch (${options.strategy})?`;
         if (!(await approve({ question }))) {
           throw new ApprovalDeniedError(`the user did not approve applying ${seat.seatId} to the main checkout`);
+        }
+        // The user approved what the question described; anything else must ask again.
+        const after = await worktrees.diff(seat);
+        if (after.diff !== before.diff || after.head !== before.head) {
+          throw new ApprovalDeniedError(`${seat.seatId} changed while waiting for approval; nothing applied (the work is kept)`);
         }
       }
       return worktrees.applyTo(target, seat, options);

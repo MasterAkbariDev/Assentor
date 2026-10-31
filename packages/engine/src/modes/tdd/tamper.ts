@@ -28,6 +28,8 @@ export const DEFAULT_TEST_PATTERNS: readonly string[] = [
  * The one list shared by TDD mode (a change to one, or a new one, is tampering) and red-team
  * mode (an attacker may not add one, a builder may not change one). Red-team compares package.json by its runner keys
  * instead of treating every edit as tampering (see `isRunnerFile`).
+ * The merged list is stricter for both modes: TDD now also protects go.mod, setup.py, tsconfig*.json, babel/.babelrc,
+ * global-setup and *.setup.* files; red-team now also protects justfile, noxfile.py and .gitignore.
  */
 export const RUNNER_CONFIG =
   /(?:^|\/)(?:[^/]*(?:vitest|vite|jest|playwright|cypress|ava)\.(?:config|workspace)\.[^/]*|(?:vitest|vite|jest|playwright|karma|mocha|ava|cypress|babel)\.(?:config|workspace|setup)(?:\.[^/]*)?|karma\.conf\.[^/]*|\.mocharc(?:\.[^/]*)?|\.babelrc(?:\.[^/]*)?|setuptests\.[^/]*|global-?setup\.[^/]*|[^/]+\.setup\.[^/.]+|package\.json|\.?pytest\.ini|pyproject\.toml|setup\.cfg|setup\.py|tox\.ini|conftest\.py|noxfile\.py|cargo\.toml|go\.mod|tsconfig[^/]*\.json|makefile|gnumakefile|justfile|\.gitignore)$/i;

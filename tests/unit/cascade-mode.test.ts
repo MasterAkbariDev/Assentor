@@ -419,6 +419,22 @@ describe("autonomy, cancel and budget", () => {
     expect(denied.result.reason).toContain("not approved");
   });
 
+  it("a model-written BLOCKED review with the denial's words is a failure: it escalates, the user was not the one who denied", async () => {
+    const fake: MockReviewerStep[] = [{ type: "blocked", summary: "the user did not approve this stage" }];
+    const { result, questions, prompts } = await run({ review: { r1: fake } }, { autonomy: "manual" });
+    expect(result.status).toBe("completed");
+    expect(prompts.at(-1)?.team).toBe("mid"); // escalated from tier 1
+    expect(questions).toHaveLength(2);
+  });
+
+  it("manual: the stage question explains a danger tier (reason and team), one line", async () => {
+    const { questions, result } = await run({}, { autonomy: "manual", goal: "Use the credentials from the secrets vault to rotate the signing key" });
+    expect(result.status).toBe("completed");
+    expect(questions).toHaveLength(1);
+    expect(questions[0]).toMatch(/^Start stage "cascade-t3" \(execute\)\? danger area \(.+\).* \(team top\)$/);
+    expect(questions[0]).not.toContain("\n");
+  });
+
   it("a manual danger start is asked once (the tier), not twice", async () => {
     const asked: string[] = [];
     const { result, questions, prompts } = await run({}, { autonomy: "manual", goal: "Use the credentials from the secrets vault to rotate the signing key", extras: { approve: async (s) => (asked.push(s), true) } });
