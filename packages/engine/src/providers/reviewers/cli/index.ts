@@ -27,6 +27,8 @@ export interface CliSpawnRequest {
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
+  /** Kills the process when it aborts (resolves like a timeout, without `timedOut`). */
+  signal?: AbortSignal;
 }
 
 export interface CliSpawnResult {
@@ -49,6 +51,7 @@ export interface CliTransport {
     cwd: string;
     timeoutMs: number;
     env?: NodeJS.ProcessEnv;
+    signal?: AbortSignal;
   }): Promise<CliSpawnResult>;
   /** Model for the next `run`. Absent when the transport cannot switch models. */
   setModel?(model: string): void;
@@ -175,6 +178,7 @@ export class ProcessCliTransport implements CliTransport {
     cwd: string;
     timeoutMs: number;
     env?: NodeJS.ProcessEnv;
+    signal?: AbortSignal;
   }): Promise<CliSpawnResult> {
     const args = buildCliArgs(this.adapter, input.prompt, this.extraArgs, {
       cwd: input.cwd,
@@ -188,6 +192,7 @@ export class ProcessCliTransport implements CliTransport {
       cwd: input.cwd,
       env: { ...process.env, ...this.env, ...input.env },
       timeoutMs: input.timeoutMs,
+      ...(input.signal ? { signal: input.signal } : {}),
     });
   }
 }
@@ -454,17 +459,19 @@ export async function defaultCliSpawn(
     let stdout = "";
     let stderr = "";
     let settled = false;
-    const timer = setTimeout(() => {
+    const stop = (timedOut: boolean) => {
       child.kill("SIGTERM");
       setTimeout(() => child.kill("SIGKILL"), 2000).unref?.();
       finish({
         code: null,
         stdout,
         stderr,
-        timedOut: true,
+        ...(timedOut ? { timedOut: true } : {}),
         signal: "SIGTERM",
       });
-    }, request.timeoutMs);
+    };
+    const timer = setTimeout(() => stop(true), request.timeoutMs);
+    const onAbort = () => stop(false);
 
     const finish = (result: CliSpawnResult) => {
       if (settled) {
@@ -472,8 +479,14 @@ export async function defaultCliSpawn(
       }
       settled = true;
       clearTimeout(timer);
+      request.signal?.removeEventListener("abort", onAbort);
       resolve(result);
     };
+    if (request.signal?.aborted) {
+      onAbort();
+    } else {
+      request.signal?.addEventListener("abort", onAbort, { once: true });
+    }
 
     child.stdout?.on("data", (chunk: Buffer | string) => {
       const text = chunk.toString();
@@ -487,6 +500,7 @@ export async function defaultCliSpawn(
     });
     child.on("error", (error) => {
       clearTimeout(timer);
+      request.signal?.removeEventListener("abort", onAbort);
       if (!settled) {
         settled = true;
         reject(error);
