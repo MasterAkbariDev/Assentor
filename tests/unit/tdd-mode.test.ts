@@ -817,7 +817,7 @@ describe("cancel", () => {
     const touched = path.join(dir, "touched");
     expect((await runShellCommand(`touch ${touched}`, dir, { signal: controller.signal })).code).toBe(130);
     await expect(fs.access(touched)).rejects.toThrow();
-  });
+  }, 30_000); // spawns and kills a process tree and waits up to 5 s inside: the default 5 s limit is too tight under load
 });
 
 describe("invalid config", () => {
