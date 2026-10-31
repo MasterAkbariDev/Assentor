@@ -145,6 +145,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-09 · Negotiation view
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T04-06
 
+**Status: ✅ preview cut T04-09p done** (`2afd858` + `186ff94`, Haiku; Sonnet review PASS with should-fixes → fixed; merged 2026-10-31). Watch-only, in `ui/src/features/negotiation/`: round tabs, proposals A/B/… side by side, critique threads with citation chips, vote table with Borda totals recomputed per ballot, consensus meter, decision / leading-proposal card, dissent from `seat.error` in negotiate stages only. Gaps that need engine events: proposal authors (`negotiation.proposal` has no seatId), the consensus threshold, the decision rationale and invalid ballots. Store keeps the last 1,000 negotiation events per session.
+
 **Allowed files** — `packages/ui/src/features/negotiation/*`, tests.
 
 **Spec**
