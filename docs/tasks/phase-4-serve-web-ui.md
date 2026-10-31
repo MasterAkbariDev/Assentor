@@ -224,6 +224,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-14 · Command palette + keyboard map
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T04-06
 
+**Status: ✅ preview cut T04-14p done** (`df59587` + `dcd69d4`, Haiku; Sonnet review NEEDS_WORK (IME Enter, focus leak) → fixed → PASS; merged 2026-10-31). Watch-only, `ui/src/features/palette/` + `ui/src/keymap.ts`: Ctrl/⌘+K palette (combobox + listbox, IME-safe, focus kept inside, max 50 results) over sessions, recent sessions (in memory) and the views on screen; write actions (`/model`, `/pause`, `/inject`, `/approve`) listed disabled with the reason; `?` keyboard map; ⌘ on macOS, Ctrl elsewhere. Left for the full card: working write actions (need write RPCs), prompts navigation (no prompts view yet), persisted recents.
+
 **Allowed files** — `packages/ui/src/features/palette/*`, `packages/ui/src/keymap.ts`, tests.
 
 **Spec** — `Ctrl/Cmd+K` palette with fuzzy search over: navigate (sessions, prompts…), actions on focused session (`/model <seat> <model>`, `/pause`, `/inject <seat> …`, `/approve`), recent sessions. Keyboard map shown in a `?` help dialog. Platform-aware labels (⌘ on macOS, Ctrl elsewhere).

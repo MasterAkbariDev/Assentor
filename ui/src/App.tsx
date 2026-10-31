@@ -1,13 +1,15 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { NegotiationView } from "./features/negotiation/NegotiationView.js";
 import { LeadBoard } from "./features/lead-board/LeadBoard.js";
 import { SeatDrawer } from "./features/seat-drawer/SeatDrawer.js";
+import { CommandPalette } from "./features/palette/CommandPalette.js";
+import { KeyboardHelp } from "./features/palette/KeyboardHelp.js";
+import { useShortcuts } from "./features/palette/useShortcuts.js";
 import { ReviewView } from "./features/review/ReviewView.js";
 import { SessionBoard } from "./features/session-board/SessionBoard.js";
 import { useEngine } from "./store/context.js";
 import type { ConnectionStatus } from "./store/engineStore.js";
-import { selectHasReview } from "./store/selectors.js";
-import { selectHasNegotiation } from "./store/selectors.js";
+import { selectHasNegotiation, selectHasReview } from "./store/selectors.js";
 
 const CONNECTION_LABEL: Record<ConnectionStatus, string> = {
   connecting: "Connecting…",
@@ -42,6 +44,13 @@ export function App() {
   const connection = useEngine((s) => s.connection);
   const engineVersion = useEngine((s) => s.engineVersion);
   const [theme, setTheme] = useTheme();
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const openPalette = useCallback(() => setPaletteOpen(true), []);
+  const closePalette = useCallback(() => setPaletteOpen(false), []);
+  const openHelp = useCallback(() => setHelpOpen(true), []);
+  const closeHelp = useCallback(() => setHelpOpen(false), []);
+  useShortcuts({ enabled: !paletteOpen && !helpOpen, onPalette: openPalette, onHelp: openHelp });
 
   return (
     <div className="shell">
@@ -51,6 +60,9 @@ export function App() {
           {CONNECTION_LABEL[connection]}
           {engineVersion && connection === "connected" ? ` · engine ${engineVersion}` : ""}
         </span>
+        <button type="button" className="header-keys" onClick={openHelp}>
+          Shortcuts
+        </button>
         <label className="theme">
           Theme{" "}
           <select value={theme} onChange={(e) => setTheme(e.target.value as Theme)}>
@@ -67,6 +79,8 @@ export function App() {
         <ConnectionNotice />
         <SessionPanel />
       </main>
+      {paletteOpen ? <CommandPalette onClose={closePalette} /> : null}
+      {helpOpen ? <KeyboardHelp onClose={closeHelp} /> : null}
     </div>
   );
 }

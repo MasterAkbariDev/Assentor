@@ -90,6 +90,8 @@ export interface EngineState {
   engineVersion?: string;
   sessions: SessionSummary[];
   selectedId?: string;
+  /** Session ids, most recently selected first (at most `RECENT_LIMIT`). The command palette's "Recent" group. */
+  recentIds: string[];
   session?: SessionView;
   /** The seat whose drawer is open. Cleared when the selected run changes. */
   openSeatId?: string;
@@ -104,6 +106,9 @@ export interface EngineState {
 
 export type EngineStore = StoreApi<EngineState>;
 
+/** How many recently selected runs the command palette keeps. */
+export const RECENT_LIMIT = 5;
+
 function emptySession(id: string): SessionView {
   return { id, seats: {}, seatInfo: {}, seatEvents: {}, negotiationEvents: [], lead: emptyLeadBoardView(), reviewFindings: [], lastSeq: 0, eventCount: 0 };
 }
@@ -112,6 +117,7 @@ export function createEngineStore(): EngineStore {
   return createStore<EngineState>()((set) => ({
     connection: "connecting",
     sessions: [],
+    recentIds: [],
     setConnection: (connection, engineVersion) =>
       set((s) => ({ connection, engineVersion: engineVersion ?? s.engineVersion })),
     setSessions: (sessions) => set({ sessions }),
@@ -119,7 +125,12 @@ export function createEngineStore(): EngineStore {
       set((s) =>
         id === s.selectedId
           ? s
-          : { selectedId: id, openSeatId: undefined, session: id ? emptySession(id) : undefined },
+          : {
+              selectedId: id,
+              openSeatId: undefined,
+              session: id ? emptySession(id) : undefined,
+              recentIds: id ? [id, ...s.recentIds.filter((x) => x !== id)].slice(0, RECENT_LIMIT) : s.recentIds,
+            },
       ),
     openSeat: (seatId) => set({ openSeatId: seatId }),
     applyEvents: (sessionId, events) =>
