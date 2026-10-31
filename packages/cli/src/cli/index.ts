@@ -75,12 +75,13 @@ program
 
 program
   .command("serve")
-  .description("Serve the web UI and a read-only engine API on this machine (watch runs live)")
+  .description("Serve the web UI and the engine API on this machine (read-only unless --allow-write)")
   .option("-p, --project <path>", "Project directory", ".")
   .option("--port <n>", "Port (0 picks a free one)", (v: string) => Number(v), 4319)
   .option("--host <address>", "Address to listen on", "127.0.0.1")
   .option("--unsafe-listen", "Allow a non-loopback --host (anyone with the token could read your sessions)", false)
   .option("--idle-timeout <minutes>", "Stop after this many minutes with no browser connected", (v: string) => Number(v))
+  .option("--allow-write", "Let clients that ask for it change state (loopback only; refused with --unsafe-listen)", false)
   .action(
     async (options: {
       project: string;
@@ -88,6 +89,7 @@ program
       host: string;
       unsafeListen: boolean;
       idleTimeout?: number;
+      allowWrite: boolean;
     }) => {
       const { startServe } = await import("#assentor/engine/serve/index.js");
       const handle = await startServe({
@@ -95,12 +97,13 @@ program
         port: options.port,
         host: options.host,
         unsafeListen: options.unsafeListen,
+        allowWrite: options.allowWrite,
         ...(options.idleTimeout ? { idleTimeoutMs: options.idleTimeout * 60_000 } : {}),
       });
       // The only place the token is shown: the user needs it to open the UI.
       console.log(`Assentor is serving ${path.resolve(options.project)}`);
       console.log(`Open: ${handle.url}`);
-      console.log("Read-only. Press Ctrl+C to stop.");
+      console.log(`${options.allowWrite ? "Writes allowed for clients that ask (audited)" : "Read-only"}. Press Ctrl+C to stop.`);
       const stop = () => void handle.close();
       process.once("SIGINT", stop);
       process.once("SIGTERM", stop);

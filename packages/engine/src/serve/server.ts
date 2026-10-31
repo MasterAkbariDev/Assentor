@@ -6,15 +6,17 @@ import type { Duplex } from "node:stream";
 import path from "node:path";
 import { resolvePackageRoot } from "../self/package-root.js";
 import { WebSocketServer, type WebSocket } from "ws";
-import { RPC_MAX_FRAME_CHARS } from "#assentor/protocol/rpc.js";
+import { RPC_MAX_FRAME_CHARS, RpcErrorCode } from "#assentor/protocol/rpc.js";
+import { userAssentorProjectRoot } from "../config/paths.js";
 import { createEngineRpcServer } from "../rpc/engine.js";
-import type { RpcConnection, RpcServer } from "../rpc/server.js";
+import { RpcError, type RpcConnection, type RpcServer } from "../rpc/server.js";
+import { AuditLog } from "../services/audit.js";
 import type { SubscriptionOptions } from "../rpc/sessions.js";
 
 /**
  * `assentor serve` (task T04-03p): the engine RPC over a WebSocket, plus the
- * web UI's static files, for one local user. Watch-only: only the read-only
- * methods of `createEngineRpcServer` are reachable.
+ * web UI's static files, for one local user. Read-only unless started with
+ * `allowWrite` (task T04-03, see "Writes" below).
  *
  * Security (Danger list #5):
  * - Binds 127.0.0.1 by default; any non-loopback address needs `unsafeListen`.
@@ -25,6 +27,15 @@ import type { SubscriptionOptions } from "../rpc/sessions.js";
  *   limit; it is compared in constant time and never logged.
  * - Auth failures are rate limited per address; connections and frame sizes
  *   are capped; static files are served only from the UI directory, with CSP.
+ *
+ * Writes (default off). A connection may call `access: "write"` methods only if
+ * all hold: the server was started with `allowWrite` (refused together with
+ * `unsafeListen` or a non-loopback host); the peer address is loopback; the
+ * client passed the Host/Origin checks and sent `{"auth":"<token>","write":true}`
+ * (per-connection opt-in; the reply is `{"auth":"ok","write":<granted>}`).
+ * There is no cookie or ambient credential, so a foreign page cannot CSRF a
+ * write. Writes share one rate limit across connections, and each one appends
+ * an `rpc.write` audit line with the method name only (never params).
  */
 
 export interface ServeOptions {
@@ -50,6 +61,12 @@ export interface ServeOptions {
   subscriptions?: SubscriptionOptions;
   /** Defaults to `createEngineRpcServer({ projectPath })`. */
   rpcServer?: RpcServer;
+  /** Let clients that opt in call write methods (`--allow-write`). Loopback only. */
+  allowWrite?: boolean;
+  /** Write calls allowed per window, across all connections. Default 30 per 10 s. */
+  writeRateLimit?: { max: number; windowMs: number };
+  /** Where write calls are recorded. Default the user's `~/.assentor/audit.jsonl`. */
+  audit?: AuditLog;
 }
 
 export interface ServeHandle {
@@ -102,6 +119,11 @@ export async function startServe(options: ServeOptions): Promise<ServeHandle> {
         "Use --unsafe-listen only if you understand that anyone who can reach it and has the token can read your sessions.",
     );
   }
+  if (options.allowWrite && (options.unsafeListen || !isLoopbackHost(host))) {
+    throw new ServeRefusedError(
+      "Refusing --allow-write with --unsafe-listen or a non-loopback --host: writes are for this machine only.",
+    );
+  }
   const log = options.log ?? ((line: string) => process.stderr.write(`${line}\n`));
   if (!isLoopbackHost(host)) {
     log(`[assentor serve] WARNING: listening on ${host}, not just this machine.`);
@@ -115,6 +137,23 @@ export async function startServe(options: ServeOptions): Promise<ServeHandle> {
   const rpc =
     options.rpcServer ??
     createEngineRpcServer({ projectPath: options.projectPath, subscriptions: options.subscriptions });
+
+  const writeLimit = options.writeRateLimit ?? { max: 30, windowMs: 10_000 };
+  const writeWindow = { start: 0, count: 0 };
+  const audit = options.allowWrite ? (options.audit ?? new AuditLog(userAssentorProjectRoot())) : undefined;
+  const beforeWrite = async (method: string): Promise<void> => {
+    const now = Date.now();
+    if (now - writeWindow.start >= writeLimit.windowMs) {
+      writeWindow.start = now;
+      writeWindow.count = 0;
+    }
+    if (writeWindow.count >= writeLimit.max) {
+      throw new RpcError(RpcErrorCode.RateLimited, "Too many write calls; retry later");
+    }
+    writeWindow.count += 1;
+    // Method name only: params can carry secrets. A failed append refuses the write.
+    await audit!.append("rpc.write", `serve: ${method}`, { method });
+  };
 
   // Keyed by remote address. On loopback that is one key for every local
   // process: any local process can trigger the 60 s block. Accepted for a
@@ -293,7 +332,8 @@ export async function startServe(options: ServeOptions): Promise<ServeHandle> {
       }
       clearTimeout(authTimer);
       const size = Array.isArray(data) ? data.reduce((n, b) => n + b.length, 0) : (data as ArrayBuffer).byteLength;
-      if (isBinary || size > MAX_AUTH_FRAME_BYTES || !checkToken(data.toString(), tokenDigest)) {
+      const auth = isBinary || size > MAX_AUTH_FRAME_BYTES ? undefined : checkToken(data.toString(), tokenDigest);
+      if (!auth) {
         reject("invalid token", "rejected a client with a wrong token");
         return;
       }
@@ -301,9 +341,10 @@ export async function startServe(options: ServeOptions): Promise<ServeHandle> {
       authenticated += 1;
       stopIdleTimer();
       failures.delete(address);
-      // Read-only until T04-03 adds write auth: write methods get WriteNotAllowed.
-      connection = rpc.connect((frame) => sendFrame(ws, frame), { allowWrite: false });
-      ws.send(JSON.stringify({ auth: "ok" }));
+      // Default-deny: without every condition, write methods get WriteNotAllowed.
+      const write = auth.wantsWrite && options.allowWrite === true && isLoopbackHost(address.replace(/^::ffff:/i, ""));
+      connection = rpc.connect((frame) => sendFrame(ws, frame), write ? { allowWrite: true, beforeWrite } : {});
+      ws.send(JSON.stringify(auth.wantsWrite ? { auth: "ok", write } : { auth: "ok" }));
     });
 
     const finish = () => {
@@ -429,13 +470,13 @@ export async function startServe(options: ServeOptions): Promise<ServeHandle> {
   };
 }
 
-/** The first frame must be `{"auth":"<token>"}`. Constant-time compare. */
-function checkToken(frame: string, expected: Buffer): boolean {
+/** The first frame must be `{"auth":"<token>"}`, optionally with `"write":true`. Constant-time compare. */
+function checkToken(frame: string, expected: Buffer): { wantsWrite: boolean } | undefined {
   try {
-    const value = (JSON.parse(frame) as { auth?: unknown }).auth;
-    return typeof value === "string" && timingSafeEqual(digest(value), expected);
+    const { auth, write } = JSON.parse(frame) as { auth?: unknown; write?: unknown };
+    return typeof auth === "string" && timingSafeEqual(digest(auth), expected) ? { wantsWrite: write === true } : undefined;
   } catch {
-    return false;
+    return undefined;
   }
 }
 

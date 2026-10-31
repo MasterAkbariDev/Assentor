@@ -65,6 +65,15 @@ interface Registered {
 /** Sends one text frame. A returned promise means "accepted by the transport". */
 export type FrameSender = (frame: string) => void | Promise<void>;
 
+export interface ConnectOptions {
+  allowWrite?: boolean;
+  /**
+   * Runs before every write handler (after params are validated). Throw
+   * `RpcError` to refuse (rate limit); a rejected promise refuses too (audit failed).
+   */
+  beforeWrite?: (method: string) => void | Promise<void>;
+}
+
 export class RpcServer {
   private readonly methods = new Map<string, Registered>();
 
@@ -104,8 +113,8 @@ export class RpcServer {
    * refused unless `allowWrite` is true (only for a transport whose peer is
    * as trusted as this process).
    */
-  connect(send: FrameSender, options: { allowWrite?: boolean } = {}): RpcConnection {
-    return new RpcConnection(this.methods, send, options.allowWrite === true);
+  connect(send: FrameSender, options: ConnectOptions = {}): RpcConnection {
+    return new RpcConnection(this.methods, send, options.allowWrite === true, options.beforeWrite);
   }
 }
 
@@ -118,6 +127,7 @@ export class RpcConnection {
     private readonly methods: ReadonlyMap<string, Registered>,
     private readonly send: FrameSender,
     private readonly allowWrite = false,
+    private readonly beforeWrite?: (method: string) => void | Promise<void>,
   ) {}
 
   get closed(): boolean {
@@ -191,6 +201,9 @@ export class RpcConnection {
 
     let result: unknown;
     try {
+      if (method.access !== "read") {
+        await this.beforeWrite?.(message.method);
+      }
       result = await method.handler(parsed.data, { connection: this });
     } catch (error) {
       if (id !== undefined) {
