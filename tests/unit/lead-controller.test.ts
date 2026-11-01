@@ -455,6 +455,27 @@ describe("Lead controller", () => {
     expect(estimateTokens(packed)).toBeLessThanOrEqual(100);
   });
 
+  it("context.summaries: auto folds all but the last 4 log entries once they are worth a call; truncation without a summariser", async () => {
+    const run = async (lead: Record<string, unknown>) => {
+      let last = "";
+      const asks = Array.from({ length: 16 }, (_, i) => turn({ action: "ask_user", question: `Question ${i}: ${"which retry cap and backoff should the queue use for jobs that time out? ".repeat(2)}` }));
+      const s = await setup({ lead, context: { summaries: "auto" }, answer: () => "a".repeat(290), script: [...asks, (prompt) => ((last = prompt), turn({ action: "finish", summary: "stop" }))] });
+      await s.run();
+      return { state: last.slice(last.indexOf("Earlier (summary):")), events: s.events };
+    };
+    const withSeat = await run({ summarizer: { provider: "mock", model: "cheap" } });
+    expect(withSeat.state).toMatch(/^Earlier \(summary\):\nsummary\n\nRecent log:\n/);
+    // The oldest entries were folded; what stays verbatim is under the log cap (6000 chars) plus the last 4 entries.
+    const recent = withSeat.state.split("Recent log:\n")[1]!;
+    expect(recent).not.toContain("Question 0:");
+    expect(recent).toContain("Question 15:");
+    expect(recent.length).toBeLessThan(6_000 + 4 * 500);
+    expect(withSeat.events.filter((e) => e.seatId === "summarizer" && e.type === "seat.done").length).toBeGreaterThan(0);
+    const without = await run({});
+    expect(without.state).toMatch(/omitted/);
+    expect(without.events.some((e) => e.seatId === "summarizer")).toBe(false);
+  });
+
   it("renders the library's lead prompt with the caller variables; report text cannot close its <report> block", async () => {
     const repo = await makeRepo();
     await fs.mkdir(path.join(repo, ".assentor", "prompts"), { recursive: true });

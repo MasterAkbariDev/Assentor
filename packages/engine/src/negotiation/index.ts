@@ -27,7 +27,7 @@ export {
   type NegotiationResult,
   type NegotiationStrategy,
 } from "./strategy.js";
-export { packStepVars } from "./pack-vars.js";
+export { packStepVars, summarizeStepVars, type StepSummaryOptions } from "./pack-vars.js";
 export { registerStrategy, getStrategy, listStrategies } from "./strategies/index.js";
 export {
   createDivideExecutor,

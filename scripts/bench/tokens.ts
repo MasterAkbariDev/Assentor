@@ -89,6 +89,13 @@ export interface Variant {
    * proposals / repeated test-output blocks once, which ships ON); with it, the budget cuts too (ships OFF).
    */
   packContext?: { budgetTokens?: number };
+  /**
+   * `context.summaries: auto` (TE-04): over-budget history is folded into digests by a (mock) summariser call
+   * (`model`), or by the deterministic fallback with no summariser (`truncate`, the control that isolates the call's cost).
+   */
+  summaries?: "model" | "truncate";
+  /** Today's Lead with `modes.lead.summarizer` set (its ad-hoc rolling summary). */
+  leadSummarizer?: boolean;
 }
 
 /** Everything a seat of `role` gets in front of its role prompt under `variant`. */
@@ -195,11 +202,20 @@ export function resolveVariant(name: string, root = REPO_ROOT): Variant {
     const alwaysOn = BENCH_TASKS.map((t) => perRole(t.role).alwaysOn).reduce((a, b) => (b.length > a.length ? b : a), "");
     return { name, overlay: { skills: names }, alwaysOn, perRole, notes };
   }
+  if (kind === "context" && /^(summaries|truncate)(@\d+)?$/.test(value)) {
+    const budgetTokens = value.includes("@") ? Number(value.split("@")[1]) : undefined;
+    notes.push("acts on long conversations only (--fixtures long); single-seat tasks keep their CLI's own conversation");
+    return { name, overlay: { context: value }, alwaysOn: defaultAlwaysOn(root), notes, packContext: budgetTokens ? { budgetTokens } : {}, summaries: value.startsWith("summaries") ? "model" : "truncate" };
+  }
+  if (name === "lead:summarizer") {
+    notes.push("today's Lead with modes.lead.summarizer set; acts on the lead-long fixture only");
+    return { name, overlay: {}, alwaysOn: defaultAlwaysOn(root), notes, leadSummarizer: true };
+  }
   if (kind === "context" && /^packed(@\d+)?$/.test(value)) {
     const budgetTokens = value.includes("@") ? Number(value.split("@")[1]) : undefined;
     return { name, overlay: { context: value }, alwaysOn: defaultAlwaysOn(root), notes, packContext: budgetTokens ? { budgetTokens } : {} };
   }
-  throw new Error(`Unknown variant "${name}" (use baseline, style:<name>, profile:<name>, cache:stable|legacy, skills:<a>+<b> or context:packed[@<tokens>])`);
+  throw new Error(`Unknown variant "${name}" (use baseline, style:<name>, profile:<name>, cache:stable|legacy, skills:<a>+<b>, context:packed[@<tokens>], context:summaries[@<tokens>], context:truncate[@<tokens>] or lead:summarizer)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -271,7 +287,7 @@ export function checkPromptSizes(current: PromptSizes, snapshot: PromptSizes): s
 // Runs
 // ---------------------------------------------------------------------------
 
-interface Attempt {
+export interface Attempt {
   variant: string;
   run: number;
   task: string;
@@ -521,7 +537,7 @@ async function readTree(dir: string): Promise<Record<string, string>> {
   return files;
 }
 
-function summarize(runner: BenchReport["runner"], options: BenchOptions, tasks: BenchTask[], model: string, attempts: Attempt[]): BenchReport {
+export function summarize(runner: BenchReport["runner"], options: BenchOptions, tasks: Array<Pick<BenchTask, "id">>, model: string, attempts: Attempt[]): BenchReport {
   const variants = options.variants.map((variant): VariantResult => {
     const mine = attempts.filter((a) => a.variant === variant.name);
     const runs = [...new Set(mine.map((a) => a.run))];

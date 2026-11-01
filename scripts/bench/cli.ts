@@ -3,10 +3,11 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { PromptLibrary } from "#assentor/engine/prompts/library.js";
 import { BENCH_TASKS, BENCH_TASKS_LARGE } from "./tasks.js";
+import { LONG_TASKS, runLongMock } from "./long.js";
 import { gateVariant, renderReport, resolveVariant, runLive, runMock, type BenchReport } from "./tokens.js";
 
-const USAGE = `pnpm bench:tokens [--variants baseline,style:concise,profile:economy,cache:stable,cache:legacy,skills:<a>+<b>,context:packed[@<tokens>]] [--runs N]
-                  [--gate <variant>] [--fixtures original|large] [--json] [--out <file.md>] [--model <id for the token estimate>]
+const USAGE = `pnpm bench:tokens [--variants baseline,style:concise,profile:economy,cache:stable,cache:legacy,skills:<a>+<b>,context:packed[@<tokens>],context:summaries[@<tokens>],context:truncate[@<tokens>],lead:summarizer] [--runs N]
+                  [--gate <variant>] [--fixtures original|large|long|debate-6|lead-long] [--json] [--out <file.md>] [--model <id for the token estimate>]
                   [--live --budget <tokens> --executor <provider> [--executor-model <model>]]`;
 
 const HEADER = `# Token benchmark (TE-10)
@@ -14,6 +15,7 @@ const HEADER = `# Token benchmark (TE-10)
 Net tokens per successful task = all prompt + output tokens of every call, follow-up turn and retry, divided by the tasks that passed their check. Cached tokens are part of the prompt column. \`always-on\` is the text a variant adds to every seat prompt.
 
 - \`context:packed\` (TE-03) sends the task context through the engine's context packer (\`packPromptVariables\`): lossless merging of repeats only, or with budget cuts as \`context:packed@<tokens>\`; \`baseline\` sends it unpacked. \`--fixtures large\` swaps in the bulkier review and refactor contexts. A mock seat is blind when a line its task needs (\`needs\` in the fixtures) is cut, so a variant that over-cuts fails instead of looking small.
+- \`context:summaries[@<tokens>]\` (TE-04) folds over-budget history into summariser digests; \`context:truncate[@<tokens>]\` is the same folding without the call; \`lead:summarizer\` is the Lead's ad-hoc summary. They act on the long fixtures only (\`--fixtures long\`, or \`debate-6\` / \`lead-long\`), where every summariser call is counted.
 - **Mock** numbers (below, regenerated with \`--out\`) measure prompt structure only: replies are scripted, so they cannot show behavioural savings.
 - **Live** numbers come from real CLIs, run by the owner: \`pnpm bench:tokens --live --budget 300000 --executor claude-code --variants <v> --gate <v>\`. Paste the output under a dated heading; it is the evidence for turning a variant on by default (gate: net tokens per success down ≥ 10%, no success-rate drop, always-on text ≤ 300 tokens).
 - **Caching (TE-05)** saves billed cost, not tokens: cached input is billed at a lower rate, but net tokens per success are unchanged (\`cache:stable\` and \`cache:legacy\` have the same net column; only \`cached\` differs). The mock's fresh (uncached) input drop for \`cache:stable\` over \`cache:legacy\` (about −30%) is a best case: sequential calls to a provider with prefix caching and a warm cache. It is unverified on live runs.
@@ -38,9 +40,13 @@ export async function main(argv: string[], io = { out: (s: string) => process.st
     const runs = Number(values.runs ?? 3);
     if (!Number.isInteger(runs) || runs < 1) throw new Error("--runs must be a positive integer");
     const library = PromptLibrary.loadBuiltinSync();
-    if (values.fixtures !== undefined && values.fixtures !== "original" && values.fixtures !== "large") throw new Error("--fixtures must be original or large");
+    const long = values.fixtures === "long" ? LONG_TASKS : LONG_TASKS.filter((t) => t === values.fixtures);
+    if (values.fixtures !== undefined && !["original", "large"].includes(values.fixtures) && !long.length) throw new Error(`--fixtures must be original, large, long or one of ${LONG_TASKS.join(", ")}`);
     const tasks = values.fixtures === "large" ? BENCH_TASKS_LARGE : BENCH_TASKS;
-    if (values.live || values.budget || values.executor) {
+    if (long.length) {
+      if (values.live || values.budget || values.executor) throw new Error("the long fixtures are mock-only");
+      report = await runLongMock({ library, variants, runs, tasks: long, ...(values.model ? { model: values.model } : {}) });
+    } else if (values.live || values.budget || values.executor) {
       report = await runLive({
         library,
         variants,

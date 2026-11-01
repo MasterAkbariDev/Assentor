@@ -12,7 +12,7 @@ import { resolveProviderApiKey } from "#assentor/engine/keys/resolve.js";
 import { CliModelCatalog } from "#assentor/engine/models/cli-catalog.js";
 import { DEFAULT_CAPABILITIES } from "#assentor/engine/modes/capabilities.js";
 import { roleBudget } from "#assentor/engine/context/budget.js";
-import { packStepVars } from "#assentor/engine/negotiation/pack-vars.js";
+import { packStepVars, summarizeStepVars } from "#assentor/engine/negotiation/pack-vars.js";
 import type { ModeHostServices, ModeId, ExecutorOutputChunk } from "#assentor/engine/modes/registry.js";
 import { getMode } from "#assentor/engine/modes/registry.js";
 import { appendLessons, buildRetroInput, retroVariables } from "#assentor/engine/modes/retro.js";
@@ -443,6 +443,8 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
   };
 
   const stepAsk = input.skills ? withSkillsAsk(askSeat, input.skills) : askSeat;
+  /** TE-04 digests of this session (only used with `context.summaries: auto`). */
+  const digests = new Map<string, Promise<string>>();
   const deps: StageRunnerDeps = {
     projectPath,
     scheduler,
@@ -450,7 +452,16 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
     runStep: async ({ seat, step, vars, readOnly, worktreePath, signal, reportUsage }) => {
       if (!readOnly) throw new Error(`negotiation step ${step} edits files; the CLI host runs read-only steps only`);
       // Planning and judging steps never edit, so they never get project skills (builder seats on edit only).
-      const reply = await stepAsk({ seat: { ...seat, permissions: "read-only" }, prompt: input.prompts.render(step, packStepVars(vars, config.context?.budgetTokens) as Record<string, never>), signal, reportUsage });
+      const readOnlySeat: Seat = { ...seat, permissions: "read-only" };
+      // shortcut: the digest is made by the asking seat (its tokens go through its reportUsage, so the ledger and
+      // budgets count them), not by the cheapest roster seat; pick a cheap seat once profiles (TE-06) name one.
+      const summarized = await summarizeStepVars(vars, config.context?.budgetTokens, {
+        summaries: config.context?.summaries,
+        cache: digests,
+        scope: sessionId,
+        summarize: (prompt) => askSeat({ seat: readOnlySeat, prompt, signal, reportUsage }),
+      });
+      const reply = await stepAsk({ seat: readOnlySeat, prompt: input.prompts.render(step, packStepVars(summarized, config.context?.budgetTokens) as Record<string, never>), signal, reportUsage });
       void worktreePath;
       const json = extractJsonCandidate(reply);
       return json.ok ? json.data : reply;

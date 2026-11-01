@@ -16,7 +16,9 @@ import {
 import { createEmptyContract } from "../../core/task-contract.js";
 import { sessionPaths, writeJsonAtomic } from "../../persistence/paths.js";
 import { roleBudget } from "../../context/budget.js";
+import { redactSecrets } from "../../security/redact.js";
 import { packContext, type ContextSection } from "../../context/pack.js";
+import { summarizeHistory } from "../../context/summary.js";
 import { PromptLibrary, renderPrompt, type TemplateVariables } from "../../prompts/index.js";
 import { extractJsonCandidate } from "#assentor/protocol/parse.js";
 import type { ExecutorResult } from "../../providers/executors/types.js";
@@ -978,23 +980,60 @@ class LeadController implements ModeController {
   private async compact(): Promise<void> {
     const { state } = this;
     state.log = state.log.map((line) => clip(line, LINE_LIMIT));
+    if (this.input.config.context?.summaries === "auto") return this.digestLog();
     if (state.log.join("\n").length <= LOG_LIMIT) return;
     const folded = state.log.splice(0, Math.ceil(state.log.length / 2));
     let summary: string | undefined;
-    if (this.cfg.summarizer) {
-      const { provider, model } = this.cfg.summarizer;
-      const seat: Seat = { id: "summarizer", displayName: "Summarizer", ordinal: 1, provider, transport: defaultSeatTransport(provider), model, role: "summarizer", permissions: "read-only" };
+    const seat = this.summarizerSeat();
+    if (seat) {
       this.seatEvent(seat, "seat.status", { status: "thinking" });
-      const prompt = [
+      // TE-04: the summariser never sees secrets (byte-identical when the log holds none).
+      const prompt = redactSecrets([
         `Summarize this lead log for the lead of a coding team, in under ${SUMMARY_LIMIT} characters. Keep decisions, refusals and their reasons, user answers and which models did well or badly. Plain text only.`,
         `Summary so far:\n${state.summary || "(none)"}`,
         `New entries:\n${folded.join("\n")}`,
-      ].join("\n\n");
+      ].join("\n\n")).text;
       const outcome = await this.ask(seat, prompt);
       if (outcome.ok && outcome.value.trim()) summary = outcome.value.trim();
       this.seatEvent(seat, outcome.ok ? "seat.done" : "seat.error", outcome.ok ? { ok: true } : { message: outcome.error });
     }
     state.summary = clipEnd(summary ?? [state.summary, ...folded].filter(Boolean).join("\n"), SUMMARY_LIMIT);
+  }
+
+  /**
+   * `context.summaries: auto` (TE-04): all but the last 4 entries are folded, with the summary so far, once they
+   * are over the log cap and worth a call (`summarizeHistory`: redacted, capped, truncation when there is no
+   * summariser seat or it fails). Smaller than the ad-hoc fold above on the long-Lead bench, so it replaces it there.
+   */
+  private async digestLog(): Promise<void> {
+    const { state } = this;
+    const seat = this.summarizerSeat();
+    const result = await summarizeHistory(state.log, {
+      keepLast: 4,
+      budgetTokens: LOG_LIMIT / 4,
+      digestTokens: SUMMARY_LIMIT / 4,
+      previous: state.summary,
+      ...(seat
+        ? {
+            summarize: async (prompt: string) => {
+              this.seatEvent(seat, "seat.status", { status: "thinking" });
+              const outcome = await this.ask(seat, prompt);
+              this.seatEvent(seat, outcome.ok ? "seat.done" : "seat.error", outcome.ok ? { ok: true } : { message: outcome.error });
+              if (!outcome.ok) throw new Error(outcome.error);
+              return outcome.value;
+            },
+          }
+        : {}),
+    });
+    if (result.folded === 0) return;
+    state.summary = result.text ?? "";
+    state.log = result.recent;
+  }
+
+  private summarizerSeat(): Seat | undefined {
+    if (!this.cfg.summarizer) return undefined;
+    const { provider, model } = this.cfg.summarizer;
+    return { id: "summarizer", displayName: "Summarizer", ordinal: 1, provider, transport: defaultSeatTransport(provider), model, role: "summarizer", permissions: "read-only" };
   }
 
   // -------------------------------------------------------------------------
