@@ -112,7 +112,7 @@ act(() => {
 
 ## Write controls
 
-`features/controls/` (T04-W). Every control reads `useSessionControl()`: `engine.hello` capabilities (via `useCallableMethods`), `session.get` (`live`, `pendingApprovals`; refetched when `user.question`, `user.answer` or `session.state` events arrive, counted in `session.controlTick`) and the store's `session.prompts` (approval question text). `reasonFor(method)` says why a control is disabled: read-only connection, session not live, or (seats) seat finished. Only methods the engine really has are used; `NotSupported` (-32004) reads "Not supported by this engine yet."
+`features/controls/` (T04-W). Every control reads `useSessionControl()`: `useCanWrite()`, and `session.get` (`live`, `pendingApprovals`) fetched once per `user.question`/`user.answer`/`session.state` event (`session.controlTick`) into the store's `control` slice, shared by every control and the store's `session.prompts` (approval question text). `reasonFor(method)` says why a control is disabled: read-only connection, session not live, or (seats) seat finished. Only methods the engine really has are used; `NotSupported` (-32004) reads "Not supported by this engine yet."
 
 - **Session header:** Cancel session (confirm) → `session.cancel`.
 - **Approvals panel** (`ApprovalsPanel`, in the session board; the integrate approval moves to the Lead board as "Approve integration", behind a confirm): Approve / Deny → `session.approve`. A static stage gate (no question text) can only be approved.

@@ -104,6 +104,8 @@ export interface EngineState {
   /** Session ids, most recently selected first (at most `RECENT_LIMIT`). The command palette's "Recent" group. */
   recentIds: string[];
   session?: SessionView;
+  /** What `session.get` last said about a run (shared by every write control): live state and open approval ids. `live` undefined = unknown, null = not live here. */
+  control?: { sessionId: string; live: "created" | "running" | "cancelling" | null | undefined; ids: string[] };
   /** The seat whose drawer is open. Cleared when the selected run changes. */
   openSeatId?: string;
   setConnection(status: ConnectionStatus, engineVersion?: string): void;

@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import { parseEngineEvent, type EngineEvent } from "#assentor/protocol/events.js";
-import { RpcErrorCode, type RpcMethodName } from "#assentor/protocol/rpc.js";
+import { RpcErrorCode } from "#assentor/protocol/rpc.js";
 import { RpcRemoteError } from "#assentor/protocol/rpc-client.js";
 import { App } from "../../App.js";
 import { createEngineStore } from "../../store/engineStore.js";
@@ -12,11 +12,11 @@ import { mockTransport, type MockTransportOptions } from "../../transport/mock.j
 import { LeadBoard } from "../lead-board/LeadBoard.js";
 import { CommandPalette } from "../palette/CommandPalette.js";
 import { SeatDrawer } from "../seat-drawer/SeatDrawer.js";
+import { SessionActions as SessionActionsProbe } from "./SessionActions.js";
 import { SessionBoard } from "../session-board/SessionBoard.js";
 
 afterEach(() => cleanup());
 
-const WRITE: RpcMethodName[] = ["session.cancel", "session.approve", "seat.stop", "seat.setModel"];
 const notSupported = () => {
   throw new RpcRemoteError({ code: RpcErrorCode.NotSupported, message: "seat.stop: no registry" });
 };
@@ -32,8 +32,8 @@ interface Setup {
 function transportFor(id: string, setup: Setup) {
   const approvals = setup.approvals ?? { ids: [] };
   return mockTransport({
+    canWrite: setup.write !== false,
     handlers: {
-      "engine.hello": () => ({ engineVersion: "t", protocolVersion: 1, capabilities: setup.write === false ? [] : WRITE }),
       "session.get": () => ({
         session: { id, title: "t", hasLiveLog: true, lastSeq: 1, ...(setup.live === null ? {} : { live: setup.live ?? "running" }) },
         pendingApprovals: approvals.ids,
@@ -77,7 +77,7 @@ describe("Cancel session", () => {
 
   it("confirms first, then calls session.cancel with the session id", async () => {
     const { getByRole, queryByRole, transport } = header();
-    await waitFor(() => expect((getByRole("button", { name: "Cancel session" }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(getByRole("button", { name: "Cancel session" }).getAttribute("aria-disabled")).toBeNull());
     const opener = getByRole("button", { name: "Cancel session" });
     opener.focus();
     fireEvent.click(opener);
@@ -91,7 +91,7 @@ describe("Cancel session", () => {
 
   it("Escape closes the dialog without calling, and focus returns to the button", async () => {
     const { getByRole, queryByRole, transport } = header();
-    await waitFor(() => expect((getByRole("button", { name: "Cancel session" }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(getByRole("button", { name: "Cancel session" }).getAttribute("aria-disabled")).toBeNull());
     const opener = getByRole("button", { name: "Cancel session" });
     opener.focus();
     fireEvent.click(opener);
@@ -108,7 +108,7 @@ describe("Cancel session", () => {
     const { getByRole, transport } = mount(<App />, sessionFixture, {
       handlers: { "session.cancel": async () => (await gate, { ok: true as const, live: "cancelling" as const }) },
     });
-    await waitFor(() => expect((getByRole("button", { name: "Cancel session" }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(getByRole("button", { name: "Cancel session" }).getAttribute("aria-disabled")).toBeNull());
     fireEvent.click(getByRole("button", { name: "Cancel session" }));
     const confirm = within(getByRole("dialog")).getByRole("button", { name: "Cancel session" });
     fireEvent.click(confirm);
@@ -121,7 +121,7 @@ describe("Cancel session", () => {
     const { getByRole, findByRole } = mount(<App />, sessionFixture, {
       handlers: { "session.cancel": () => { throw new Error("session is cancelling"); } },
     });
-    await waitFor(() => expect((getByRole("button", { name: "Cancel session" }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(getByRole("button", { name: "Cancel session" }).getAttribute("aria-disabled")).toBeNull());
     fireEvent.click(getByRole("button", { name: "Cancel session" }));
     fireEvent.click(within(getByRole("dialog")).getByRole("button", { name: "Cancel session" }));
     expect((await findByRole("alert")).textContent).toBe("session is cancelling");
@@ -131,15 +131,38 @@ describe("Cancel session", () => {
   it("is disabled with a reason on a read-only connection", async () => {
     const { getByRole, getByText, transport } = mount(<App />, sessionFixture, { write: false });
     await ready(transport);
-    expect((getByRole("button", { name: "Cancel session" }) as HTMLButtonElement).disabled).toBe(true);
-    await waitFor(() => expect(getByText(/Read-only connection/)).toBeTruthy());
+    expect(getByRole("button", { name: "Cancel session" }).getAttribute("aria-disabled")).toBe("true");
+    await waitFor(() => expect(getByText(/read-only/)).toBeTruthy());
   });
 
   it("is disabled with a reason when the session is not live", async () => {
     const { getByRole, getByText, transport } = mount(<App />, sessionFixture, { live: null });
     await ready(transport);
     await waitFor(() => expect(getByText("The session is not running on this engine.")).toBeTruthy());
-    expect((getByRole("button", { name: "Cancel session" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(getByRole("button", { name: "Cancel session" }).getAttribute("aria-disabled")).toBe("true");
+  });
+});
+
+describe("Shared state and accessibility", () => {
+  it("one session.get serves every control, and a disabled control stays focusable, inert and described by its reason", async () => {
+    const { getByRole, transport } = mount(<><SessionBoard /><SeatDrawer /><SessionActionsProbe /></>, sessionFixture, { write: false }, [question(sessionFixture, "q1", "Run it?")]);
+    act(() => void 0);
+    await waitFor(() => expect(getByRole("button", { name: "Cancel session" })).toBeTruthy());
+    await new Promise((r) => setTimeout(r, 20));
+    expect(callsTo(transport, "session.get")).toHaveLength(1);
+
+    const cancel = getByRole("button", { name: "Cancel session" });
+    cancel.focus();
+    expect(document.activeElement).toBe(cancel);
+    expect(cancel.getAttribute("aria-disabled")).toBe("true");
+    expect(document.getElementById(cancel.getAttribute("aria-describedby")!)?.textContent).toMatch(/read-only/);
+    fireEvent.click(cancel);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("the approvals region is a polite live region that is mounted before any approval arrives", async () => {
+    const { container } = mount(<SessionBoard />, sessionFixture);
+    expect(container.querySelector('[aria-live="polite"]')).toBeTruthy();
   });
 });
 
@@ -171,15 +194,15 @@ describe("Pending approvals", () => {
     const { getByRole } = mount(<SessionBoard />, sessionFixture, { approvals: { ids: ["review-gate"] } });
     const panel = await waitFor(() => getByRole("region", { name: "Pending approvals" }));
     expect(within(panel).getByText("review-gate")).toBeTruthy();
-    expect((within(panel).getByRole("button", { name: "Deny: review-gate" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((within(panel).getByRole("button", { name: "Approve: review-gate" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(within(panel).getByRole("button", { name: "Deny: review-gate" }).getAttribute("aria-disabled")).toBe("true");
+    expect(within(panel).getByRole("button", { name: "Approve: review-gate" }).getAttribute("aria-disabled")).toBeNull();
   });
 
   it("disables both buttons with the reason on a read-only connection, and shows engine errors as text", async () => {
     const ro = mount(<SessionBoard />, sessionFixture, { write: false, approvals: { ids: ["q1"] } }, [ASK()]);
     const panel = await waitFor(() => ro.getByRole("region", { name: "Pending approvals" }));
-    await waitFor(() => expect(within(panel).getByText(/Read-only connection/)).toBeTruthy());
-    expect((within(panel).getByRole("button", { name: /^Approve/ }) as HTMLButtonElement).disabled).toBe(true);
+    await waitFor(() => expect(within(panel).getByText(/read-only/)).toBeTruthy());
+    expect(within(panel).getByRole("button", { name: /^Approve/ }).getAttribute("aria-disabled")).toBe("true");
     cleanup();
 
     const failing = mount(<SessionBoard />, sessionFixture, {
@@ -187,7 +210,7 @@ describe("Pending approvals", () => {
       handlers: { "session.approve": () => { throw new Error("no pending approval with that id"); } },
     }, [ASK()]);
     const p2 = await waitFor(() => failing.getByRole("region", { name: "Pending approvals" }));
-    await waitFor(() => expect((within(p2).getByRole("button", { name: /^Approve/ }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(within(p2).getByRole("button", { name: /^Approve/ }).getAttribute("aria-disabled")).toBeNull());
     fireEvent.click(within(p2).getByRole("button", { name: /^Approve/ }));
     expect((await failing.findByRole("alert")).textContent).toBe("no pending approval with that id");
   });
@@ -198,7 +221,7 @@ describe("Lead board: approve integration", () => {
     const extra = [question(leadFixture, "q-int", "Integrate the accepted tasks into main?")];
     const { getByRole, queryByRole, transport } = mount(<LeadBoard />, leadFixture, { approvals: { ids: ["q-int"] } }, extra);
     const panel = await waitFor(() => getByRole("region", { name: "Pending approvals" }));
-    await waitFor(() => expect((within(panel).getByRole("button", { name: /^Approve integration:/ }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(within(panel).getByRole("button", { name: /^Approve integration:/ }).getAttribute("aria-disabled")).toBeNull());
     fireEvent.click(within(panel).getByRole("button", { name: /^Approve integration:/ }));
 
     const dialog = getByRole("dialog", { name: "Approve integration?" });
@@ -237,19 +260,19 @@ describe("Seat drawer actions", () => {
   it("Stop seat confirms, then calls seat.stop", async () => {
     const { getByRole, queryByRole, transport } = openLive();
     const drawer = getByRole("dialog", { name: "Executor" });
-    await waitFor(() => expect((within(drawer).getByRole("button", { name: "Stop seat" }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(within(drawer).getByRole("button", { name: "Stop seat" }).getAttribute("aria-disabled")).toBeNull());
     fireEvent.click(within(drawer).getByRole("button", { name: "Stop seat" }));
     const dialog = getByRole("dialog", { name: "Stop Executor?" });
     expect(callsTo(transport, "seat.stop")).toHaveLength(0);
     fireEvent.click(within(dialog).getByRole("button", { name: "Stop seat" }));
     await waitFor(() => expect(queryByRole("dialog", { name: "Stop Executor?" })).toBeNull());
-    expect(callsTo(transport, "seat.stop")).toEqual([{ method: "seat.stop", params: { sessionId: sessionFixture.id, seatId: "executor" } }]);
+    expect(callsTo(transport, "seat.stop")).toEqual([{ method: "seat.stop", params: { sessionId: sessionFixture.id, seatId: "executor", confirm: true } }]);
   });
 
   it("shows NotSupported as a plain message", async () => {
     const { getByRole, findByRole } = openLive({ handlers: { "seat.stop": notSupported } });
     const drawer = getByRole("dialog", { name: "Executor" });
-    await waitFor(() => expect((within(drawer).getByRole("button", { name: "Stop seat" }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(within(drawer).getByRole("button", { name: "Stop seat" }).getAttribute("aria-disabled")).toBeNull());
     fireEvent.click(within(drawer).getByRole("button", { name: "Stop seat" }));
     fireEvent.click(within(getByRole("dialog", { name: "Stop Executor?" })).getByRole("button", { name: "Stop seat" }));
     expect((await findByRole("alert")).textContent).toBe("Not supported by this engine yet.");
@@ -258,7 +281,7 @@ describe("Seat drawer actions", () => {
   it("Change model rejects an invalid id client-side and sends a valid one", async () => {
     const { getByRole, findByText, transport } = openLive();
     const drawer = getByRole("dialog", { name: "Executor" });
-    await waitFor(() => expect((within(drawer).getByRole("button", { name: "Change model" }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(within(drawer).getByRole("button", { name: "Change model" }).getAttribute("aria-disabled")).toBeNull());
     const input = within(drawer).getByLabelText("Model");
 
     fireEvent.change(input, { target: { value: "-bad id" } });
@@ -278,7 +301,7 @@ describe("Seat drawer actions", () => {
       handlers: { "seat.setModel": () => { throw new RpcRemoteError({ code: RpcErrorCode.NotSupported, message: "x" }); } },
     });
     const drawer = getByRole("dialog", { name: "Executor" });
-    await waitFor(() => expect((within(drawer).getByRole("button", { name: "Change model" }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(within(drawer).getByRole("button", { name: "Change model" }).getAttribute("aria-disabled")).toBeNull());
     fireEvent.change(within(drawer).getByLabelText("Model"), { target: { value: "AUTO" } });
     fireEvent.click(within(drawer).getByRole("button", { name: "Change model" }));
     expect((await findByRole("alert")).textContent).toBe("Not supported by this engine yet.");
@@ -287,15 +310,15 @@ describe("Seat drawer actions", () => {
   it("is disabled with a reason without write access, and for a finished seat", async () => {
     const ro = openLive({ write: false });
     await ready(ro.transport);
-    await waitFor(() => expect(within(ro.getByRole("dialog", { name: "Executor" })).getByText(/Read-only connection/)).toBeTruthy());
-    expect((within(ro.getByRole("dialog", { name: "Executor" })).getByRole("button", { name: "Stop seat" }) as HTMLButtonElement).disabled).toBe(true);
+    await waitFor(() => expect(within(ro.getByRole("dialog", { name: "Executor" })).getAllByText(/read-only/)).toHaveLength(2));
+    expect(within(ro.getByRole("dialog", { name: "Executor" })).getByRole("button", { name: "Stop seat" }).getAttribute("aria-disabled")).toBe("true");
     cleanup();
 
     const done = openDrawer({}, "reviewer-1");
     const drawer = done.getByRole("dialog", { name: "Opus#1" });
-    await waitFor(() => expect(within(drawer).getByText("This seat has finished.")).toBeTruthy());
-    expect((within(drawer).getByRole("button", { name: "Stop seat" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((within(drawer).getByRole("button", { name: "Change model" }) as HTMLButtonElement).disabled).toBe(true);
+    await waitFor(() => expect(within(drawer).getAllByText("This seat has finished.")).toBeTruthy());
+    expect(within(drawer).getByRole("button", { name: "Stop seat" }).getAttribute("aria-disabled")).toBe("true");
+    expect(within(drawer).getByRole("button", { name: "Change model" }).getAttribute("aria-disabled")).toBe("true");
   });
 });
 
@@ -375,7 +398,7 @@ describe("Palette write commands", () => {
     enter();
     fireEvent.click(within(getByRole("dialog", { name: "Stop Executor?" })).getByRole("button", { name: "Stop seat" }));
     await waitFor(() => expect(closed).toEqual([true]));
-    expect(callsTo(transport, "seat.stop")).toEqual([{ method: "seat.stop", params: { sessionId: sessionFixture.id, seatId: "executor" } }]);
+    expect(callsTo(transport, "seat.stop")).toEqual([{ method: "seat.stop", params: { sessionId: sessionFixture.id, seatId: "executor", confirm: true } }]);
   });
 
   it("/stop shows NotSupported in the dialog", async () => {
@@ -413,7 +436,7 @@ describe("Palette write commands", () => {
   it("lists the commands disabled with a reason on a read-only connection; /pause and /inject stay disabled", async () => {
     const { getByRole, transport } = palette({ write: false });
     await ready(transport);
-    await waitFor(() => expect(document.querySelector(".palette-option .palette-reason")?.textContent).toMatch(/Read-only connection/));
+    await waitFor(() => expect(document.querySelector(".palette-option .palette-reason")?.textContent).toMatch(/read-only/));
     fireEvent.change(input(), { target: { value: "/cancel" } });
     const cancel = getByRole("option", { name: /^Run \/cancel/ });
     expect(cancel.getAttribute("aria-disabled")).toBe("true");

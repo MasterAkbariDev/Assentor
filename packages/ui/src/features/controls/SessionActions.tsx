@@ -1,19 +1,21 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { ConfirmAction } from "./ConfirmAction.js";
 import { useSessionControl } from "./useSessionControl.js";
+import { WriteButton } from "./WriteButton.js";
 
 /** Session header actions: Cancel session (after a confirm dialog). */
 export function SessionActions() {
   const control = useSessionControl();
   const [open, setOpen] = useState(false);
+  const reasonId = useId();
   const reason = control.reasonFor("session.cancel");
   return (
     <div className="session-actions">
-      <button type="button" className="write-btn" disabled={reason !== undefined} aria-describedby={reason ? "cancel-reason" : undefined} onClick={() => setOpen(true)}>
+      <WriteButton reason={reason} reasonId={reasonId} onClick={() => setOpen(true)}>
         Cancel session
-      </button>
+      </WriteButton>
       {reason ? (
-        <span id="cancel-reason" className="write-reason">
+        <span id={reasonId} className="write-reason">
           {reason}
         </span>
       ) : null}

@@ -4,6 +4,7 @@ import type { SeatState } from "#assentor/ui-shared/status.js";
 import { isLiveSeat } from "../../store/selectors.js";
 import { ConfirmAction } from "./ConfirmAction.js";
 import { errorText, useSessionControl } from "./useSessionControl.js";
+import { WriteButton } from "./WriteButton.js";
 
 /** Seat drawer actions: Stop seat (confirm) and Change model (validated like `ModelIdSchema`). */
 export function SeatActions({ seat }: { seat: SeatState }) {
@@ -48,9 +49,10 @@ export function SeatActions({ seat }: { seat: SeatState }) {
         <input
           id={`${id}-model`}
           value={model}
-          disabled={modelReason !== undefined}
+          readOnly={modelReason !== undefined}
+          aria-disabled={modelReason !== undefined ? true : undefined}
           aria-invalid={fieldError ? true : undefined}
-          aria-describedby={fieldError ? `${id}-err` : undefined}
+          aria-describedby={[modelReason ? `${id}-model-reason` : "", fieldError ? `${id}-err` : ""].filter(Boolean).join(" ") || undefined}
           autoComplete="off"
           spellCheck={false}
           placeholder="AUTO or a model id"
@@ -59,10 +61,15 @@ export function SeatActions({ seat }: { seat: SeatState }) {
             setFieldError(undefined);
           }}
         />
-        <button type="submit" className="write-btn" disabled={modelReason !== undefined || busy}>
+        <WriteButton type="submit" reason={modelReason} reasonId={`${id}-model-reason`} busy={busy}>
           Change model
-        </button>
+        </WriteButton>
       </form>
+      {modelReason ? (
+        <p id={`${id}-model-reason`} className="write-reason">
+          {modelReason}
+        </p>
+      ) : null}
       {fieldError ? (
         <p id={`${id}-err`} className="notice error" role="alert">
           {fieldError}
@@ -73,10 +80,14 @@ export function SeatActions({ seat }: { seat: SeatState }) {
           {result.text}
         </p>
       ) : null}
-      <button type="button" className="write-btn" disabled={stopReason !== undefined} onClick={() => setStopping(true)}>
+      <WriteButton type="button" reason={stopReason} reasonId={`${id}-stop-reason`} onClick={() => setStopping(true)}>
         Stop seat
-      </button>
-      {modelReason || stopReason ? <p className="write-reason">{modelReason ?? stopReason}</p> : null}
+      </WriteButton>
+      {stopReason ? (
+        <p id={`${id}-stop-reason`} className="write-reason">
+          {stopReason}
+        </p>
+      ) : null}
       {stopping ? (
         <ConfirmAction title={`Stop ${seat.displayName}?`} confirmLabel="Stop seat" run={() => control.stopSeat(seat.seatId)} onDone={() => setStopping(false)} onCancel={() => setStopping(false)}>
           <p>The seat stops working now.</p>
