@@ -72,9 +72,8 @@ export interface RangeCompare {
 
 export interface EstimateCompare {
   tokens: RangeCompare;
-  /** Undefined when the estimate had no price (show "unknown"); also when the ledger has no cost yet. */
+  /** Undefined when the estimate had no price or the ledger has no cost (show "unknown"). */
   usd?: RangeCompare;
-  usdKnown: boolean;
 }
 
 function compare(low: number, high: number, actual: number): RangeCompare {
@@ -88,7 +87,7 @@ export function compareEstimate(report: UsageReport): EstimateCompare | undefine
   const tokens = compare(estimate.tokens.low, estimate.tokens.high, total.tokensIn + total.tokensOut);
   // A zero ledger cost means no seat reported or had a price, so it is not an actual of $0.
   const usd = estimate.usd && total.costUsd > 0 ? compare(estimate.usd.low, estimate.usd.high, total.costUsd) : undefined;
-  return { tokens, ...(usd ? { usd } : {}), usdKnown: usd !== undefined };
+  return { tokens, ...(usd ? { usd } : {}) };
 }
 
 /** Skills loaded, most tokens first. */

@@ -139,6 +139,8 @@ export const UsageReportSchema = z.object({
   truncated: z.boolean().optional(),
   /** The pre-run estimate (TE-09), when the run logged one; compare with `total`. */
   estimate: RunEstimateSchema.optional(),
+  /** Model calls with neither a reported cost nor a known price; their cost is missing from `total.costUsd`. Absent when 0. */
+  unpricedCalls: z.number().int().positive().optional(),
   /** Skills sent to seats, keyed by skill name; absent when none were loaded. */
   skills: z.record(SkillUsageSchema).optional(),
 });

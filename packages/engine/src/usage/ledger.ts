@@ -13,6 +13,7 @@ import type { PricingTable } from "../estimate/cost.js";
  * - `calls` counts model turns: a report's `turns` (a CLI run), else 1.
  * - A seat's model comes from `seat.spawned`, then `seat.model.changed`.
  * - Budget warnings are the scheduler's `session.warning` events of kind `budget`.
+ * - `unpricedCalls` counts calls with neither a reported cost nor a table price (cost 0 for them).
  * - `skill.loaded` events fold into `skills` per skill name: loads, summed tokens, seats (TE-07).
  * - The pre-run estimate is the run's `session.estimate` event (TE-09); last one wins.
  */
@@ -88,6 +89,7 @@ export class UsageLedger {
           costUsd,
           calls: event.data.turns ?? 1,
         };
+        if (event.data.costUsd === undefined && !price) this.report.unpricedCalls = (this.report.unpricedCalls ?? 0) + delta.calls;
         add(this.report.total, delta);
         add((this.report.bySeat[seatId] ??= zero()), delta);
         add((this.report.byStage[event.stageId ?? "-"] ??= zero()), delta);

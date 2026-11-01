@@ -85,6 +85,8 @@ describe("UsageLedger", () => {
     expect(report.retries).toBe(1);
     expect(report.warnings).toEqual([{ budget: "session.tokens", threshold: 0.5, used: 3955, limit: 6000 }]);
     expect(UsageReportSchema.parse(report)).toEqual(report);
+    // Two builder turns have neither a reported cost nor a table price.
+    expect(report.unpricedCalls).toBe(2);
     expect(report.estimate).toEqual({ tokens: { low: 2000, high: 5000 } });
     expect(report.skills).toEqual({
       tdd: { loads: 3, tokens: 880, seats: ["builder", "reviewer-1"] },

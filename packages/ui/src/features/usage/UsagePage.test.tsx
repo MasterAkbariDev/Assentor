@@ -177,6 +177,12 @@ describe("UsagePage", () => {
     await view.findByText("No skills were loaded in this run.");
     view.getByText("This run logged no pre-run estimate.");
     cleanup();
+    const partial = setup({ ...REPORT, unpricedCalls: 2, skills: { x: { loads: 1, tokens: 5, seats: ["-"] } }, estimate: { tokens: { low: 1, high: 2 }, usd: { low: 0.1, high: 0.2 } } });
+    const row = (await partial.findByRole("rowheader", { name: "Cost" })).closest("tr")!;
+    expect(row.textContent).toBe("Cost$0.10–$0.20≥ $0.4321 (some calls unpriced)unknown (actual is partial)");
+    expect(partial.container.querySelector(".usage-skills tbody tr")!.textContent).toBe("x(no seat)15");
+    expect(partial.container.querySelectorAll(".usage-table-wrap caption").length).toBeGreaterThanOrEqual(2);
+    cleanup();
     const unpriced = setup({ ...REPORT, estimate: { tokens: { low: 15000, high: 15000 } } });
     const cost = (await unpriced.findByRole("rowheader", { name: "Cost" })).closest("tr")!;
     expect(cost.textContent).toBe("Costunknownunknownunknown");
