@@ -1128,6 +1128,8 @@ export async function resumeAssentorTask(input: {
       style: input.style,
     });
     const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
+    // The resumed executor session keeps the style of its first run (its continuation
+    // prompts carry no style). `--style` here restyles reviewers and the Lead only.
     reporter.setStyle(config.output.style);
 
     const resume = input.taskId
@@ -1171,6 +1173,7 @@ export async function resumeAssentorTask(input: {
       };
       reporter.note(
         `Extended budgets for resume: rounds ${resume.snapshot.budgets.usage.rounds}/${limits.maxRounds}, messages ${resume.snapshot.budgets.usage.messages}/${limits.maxMessages}`,
+        "warning",
       );
     }
     const executorProvider = config.executor.provider;
@@ -1436,7 +1439,7 @@ function attachRunInterrupt(input: {
   };
 }
 
-function printBanner(input: {
+export function printBanner(input: {
   task: string;
   round: string;
   executor: string;

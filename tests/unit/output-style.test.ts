@@ -15,7 +15,10 @@ import { parseAssentorConfig } from "../../packages/engine/src/config/schema.js"
 import { PromptLibrary } from "../../packages/engine/src/prompts/index.js";
 import { specialtyAddendum } from "../../packages/engine/src/review/specialty-prompts.js";
 import { RunReporter } from "../../packages/cli/src/cli/ui/reporter.js";
-import { resolveStyleFlags } from "../../packages/cli/src/cli/commands.js";
+import { printBanner, resolveStyleFlags } from "../../packages/cli/src/cli/commands.js";
+import { createLeadController } from "../../packages/engine/src/modes/lead/controller.js";
+import type { LeadTask } from "../../packages/engine/src/modes/lead/types.js";
+import type { ModeControllerInput } from "../../packages/engine/src/modes/registry.js";
 
 const STYLED: OutputStyle[] = ["concise", "verbose"];
 /** Every built-in prompt whose output a program reads back. */
@@ -256,9 +259,8 @@ describe("reporter output by style", () => {
     return logged.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "")).join("\n");
   }
 
-  it("normal output is unchanged", () => {
-    expect(runOutput(undefined)).toBe(runOutput("normal"));
-    expect(runOutput("normal")).toMatchInlineSnapshot(`
+  it("normal output and banner match the golden output", () => {
+    expect(runOutput(undefined)).toMatchInlineSnapshot(`
       "  task id: T-1
         review strategy: ADAPTIVE · reviewers: Gemini
 
@@ -285,6 +287,35 @@ describe("reporter output by style", () => {
     `);
   });
 
+  it("normal banner matches the golden box, and concise is one line", () => {
+    const banner = (style: OutputStyle | undefined) => {
+      logged = [];
+      printBanner({
+        task: "Add average()",
+        round: "0 / 8",
+        executor: "Claude",
+        reviewer: "Gemini",
+        mode: "supervised",
+        status: "EXECUTING",
+        ...(style === "concise" ? { concise: true } : {}),
+      });
+      return logged.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "")).join("\n");
+    };
+    expect(banner(undefined)).toMatchInlineSnapshot(`
+      "╭──────────────────────────────────────────╮
+      │ ASSENTOR                                    │
+      ├──────────────────────────────────────────┤
+      │ Task      Add average()                │
+      │ Round     0 / 8                        │
+      │ Mode      supervised                   │
+      │ Executor  Claude                       │
+      │ Reviewer  Gemini                       │
+      │ Status    EXECUTING                    │
+      ╰──────────────────────────────────────────╯"
+    `);
+    expect(banner("concise")).toMatchInlineSnapshot(`"ASSENTOR · EXECUTING · round 0 / 8 · Add average()"`);
+  });
+
   it("--brief (concise) keeps one line per stage and the final line", () => {
     const out = runOutput("concise");
     expect(out).not.toContain("Executor response");
@@ -306,6 +337,32 @@ describe("reporter output by style", () => {
 
         Task completed: Done after one fix."
     `);
+  });
+
+  it("concise keeps warnings and the full executor error, and drops setup notes", () => {
+    logged = [];
+    const reporter = new RunReporter({ executorName: "Claude", reviewerName: "Gemini" });
+    reporter.setStyle("concise");
+    const long = "Claude exited with code 1: " + "x".repeat(120) + " (see stderr)";
+    reporter.note("task id: T-1");
+    reporter.note("Extended budgets for resume: rounds 3/8", "warning");
+    reporter.onEngineEvent({
+      type: "session.warning",
+      seatId: "executor",
+      data: { kind: "budget", message: "tokens at 80% of the session limit" },
+    } as never);
+    reporter.onEvent({ type: "executor.started" } as never);
+    reporter.onEvent({ type: "executor.failed", data: { status: "failed", error: long } } as never);
+    reporter.onEvent({ type: "task.failed", data: { summary: long } } as never);
+    reporter.dispose();
+    const out = logged.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "")).join("\n");
+    expect(out).not.toContain("task id:");
+    expect(out).toContain("Extended budgets for resume: rounds 3/8");
+    expect(out).toContain("budget: tokens at 80% of the session limit");
+    // Wrapping may split the sentence, but the whole error text must reach the screen.
+    expect(out).toContain("Claude exited with code 1:");
+    expect(out).toContain("x".repeat(120));
+    expect(out).toContain("(see stderr)");
   });
 
   it("verbose keeps the normal detail", () => {
@@ -338,3 +395,42 @@ describe("reporter output by style", () => {
     expect(seatLines("concise")).not.toContain("Review seats");
   });
 });
+
+describe("Lead agent prompt", () => {
+  /** The Lead's agent prompt for one task, built the way the controller builds it. */
+  function leadAgentPrompt(style: OutputStyle | undefined): string {
+    const config = parseAssentorConfig({
+      ...(style ? { output: { style } } : {}),
+      modes: { lead: { lead: { provider: "mock", model: "lead" } } },
+    });
+    const controller = createLeadController({
+      sessionId: "3f2c1a7e-9b4d-4c8e-8a1f-6d2e5b7c9a10",
+      goal: "Add average() to src/math.ts",
+      title: "Add average()",
+      autonomy: "supervised",
+      config,
+      deps: { projectPath: "/tmp/output-style-lead" },
+    } as unknown as ModeControllerInput) as unknown as {
+      agentPrompt(task: LeadTask, feedback: string | undefined): string;
+    };
+    const task = {
+      id: "T1",
+      title: "Add average()",
+      description: "Add average(xs) to src/math.ts.",
+      acceptance: ["average([1,2]) is 1.5"],
+      ownedPaths: ["src/math.ts"],
+      role: "engineer",
+    } as unknown as LeadTask;
+    return controller.agentPrompt(task, undefined);
+  }
+
+  it("concise adds one fragment in front and leaves the report block intact", () => {
+    const normal = leadAgentPrompt(undefined);
+    const concise = leadAgentPrompt("concise");
+    expect(concise).toBe(`${styleFragment("concise")}\n\n${normal}`);
+    expect(concise.split(styleFragment("concise")).length - 1).toBe(1);
+    expect(concise).toContain('"taskId": "T1"');
+    expect(concise.trimEnd().endsWith("Report only what you did: the lead checks it against your diff and the test gates.")).toBe(true);
+  });
+});
+

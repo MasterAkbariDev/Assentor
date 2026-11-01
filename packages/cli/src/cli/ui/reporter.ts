@@ -136,8 +136,12 @@ export class RunReporter {
     }
   }
 
-  note(message: string): void {
-    if (this.style === "concise") return;
+  /**
+   * Setup detail. Concise drops it unless `level` is "warning" (budget and other
+   * warnings are kept in every style).
+   */
+  note(message: string, level: "info" | "warning" = "info"): void {
+    if (this.style === "concise" && level !== "warning") return;
     this.writeln(`  ${c.dim}${message}${c.reset}`);
   }
 
@@ -158,6 +162,12 @@ export class RunReporter {
     }
     if (event.type === "mode.selected") {
       this.leadMode = event.data.mode === "lead";
+    }
+    // Concise still shows warnings (budget, truncation); normal keeps its output as it was.
+    if (event.type === "session.warning" && this.style === "concise") {
+      this.endStatus();
+      const kind = event.data?.kind ? String(event.data.kind) : "warning";
+      console.log(`  ${c.yellow}!${c.reset} ${kind}: ${String(event.data?.message ?? "")}`);
     }
     this.leadView = reduceLeadEvents(this.leadView, event);
     if (event.type === "lead.turn" && this.leadMode && this.style !== "concise") {
@@ -274,6 +284,13 @@ export class RunReporter {
           ? "timed out"
           : truncate(String(event.data?.error ?? summary), 80);
       this.finishStatus(ok, ok ? "done" : failLabel);
+      if (!ok && this.style === "concise") {
+        // The one-line status above truncates; a failed run needs the whole error.
+        const full = String(event.data?.error ?? summary);
+        for (const line of wrapMultiline(full, 88)) {
+          console.log(`  ${c.red}${line}${c.reset}`);
+        }
+      }
       const body = preferPlainExecutorText(summary, raw);
       if (body && this.style !== "concise") {
         console.log(`\n  ${c.bold}Executor response${c.reset}`);
@@ -376,10 +393,12 @@ export class RunReporter {
           : event.type === "task.failed" || event.type === "budget.exceeded"
             ? c.red
             : c.yellow;
+      // Concise shows the full reason: a failed run's summary is the only place it is said.
+      const cut = (text: string) => (this.style === "concise" ? text : truncate(text, 160));
       const summary = event.data?.summary
-        ? `: ${truncate(String(event.data.summary), 160)}`
+        ? `: ${cut(String(event.data.summary))}`
         : event.data?.reason
-          ? `: ${truncate(String(event.data.reason), 160)}`
+          ? `: ${cut(String(event.data.reason))}`
           : "";
       console.log(`\n  ${color}${c.bold}${labelEvent(event.type)}${summary}${c.reset}`);
       this.debug(event);

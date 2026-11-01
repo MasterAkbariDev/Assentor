@@ -193,7 +193,10 @@ program
   )
   .option("--autonomy <level>", "How much runs without asking: manual|supervised|autopilot")
   .option("--autopilot", "Shortcut for --autonomy autopilot (auto next-phase)", false)
-  .option("--style <style>", "Output style: concise|normal|verbose (default: output.style in config)")
+  .option(
+    "--style <style>",
+    "Output style: concise|normal|verbose (default: output.style). Applies to solo, review and lead prompts; other modes are unstyled for now",
+  )
   .option("--brief", "Shortcut for --style concise", false)
   .option("--playbook <id>", "Playbook to run (validates the id only; running playbooks is not wired yet)")
   .action(
@@ -288,7 +291,10 @@ program
   )
   .option("--team <name>", "Review with this configured team (overrides modes.review.team)")
   .option("--autonomy <level>", "How much runs without asking: manual|supervised|autopilot")
-  .option("--style <style>", "Output style: concise|normal|verbose (default: output.style in config)")
+  .option(
+    "--style <style>",
+    "Output style: concise|normal|verbose. Reviewers and lead use it; the resumed executor keeps the style of its first run",
+  )
   .option("--brief", "Shortcut for --style concise", false)
   .action(
     async (
