@@ -63,6 +63,8 @@ export interface ModeSessionInput {
   mode: string | ModeDefinition;
   sessionId: string;
   goal: string;
+  /** Recorded on `mode.selected` when something other than the user's `--mode` picked this mode (`auto`). */
+  via?: "auto";
   /** Default: the goal's first line, cut to 80 characters. */
   title?: string;
   /** The configured autonomy (CLI flag over config); the session never runs with more. */
@@ -152,7 +154,11 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
 
   const builder = mode.kind === "static" ? "buildSession" : "createController";
   if (!mode[builder]) {
-    throw new ModeValidationError([`mode "${mode.id}" cannot run yet (no ${builder})`]);
+    throw new ModeValidationError([
+      mode.id === "auto"
+        ? 'mode "auto" needs a terminal to ask which mode to run (assentor run --mode auto); start the chosen mode directly here'
+        : `mode "${mode.id}" cannot run yet (no ${builder})`,
+    ]);
   }
   problems.push(...(mode.validate?.(input.config) ?? []));
   if (problems.length > 0) throw new ModeValidationError(problems);
@@ -201,7 +207,7 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
     started = true;
   };
   const selected = () =>
-    emit({ type: "mode.selected", sessionId: input.sessionId, data: { mode: mode.id, kind: mode.kind, autonomy } });
+    emit({ type: "mode.selected", sessionId: input.sessionId, data: { mode: mode.id, kind: mode.kind, autonomy, ...(input.via ? { via: input.via } : {}) } });
 
   if (mode.kind === "static") {
     const spec = staticSpec(mode.buildSession!(buildInput), autonomy, stages.validate, mode.id);

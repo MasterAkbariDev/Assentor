@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { promisify } from "node:util";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addYarnLock, fakePackageManagers } from "./fake-package-managers.js";
 import { readSessionEvents, type EngineEvent } from "../../packages/engine/src/index.js";
 import { createMockLead, type MockLeadStep } from "../../packages/engine/src/modes/lead/mock.js";
@@ -222,6 +222,36 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     expect(io.asked).toEqual([expect.stringContaining("to your branch")]);
     expect(of("user.answer")).toEqual([expect.objectContaining({ data: expect.objectContaining({ answer: "approve" }) })]);
     expect(await git(repo, "show", "HEAD:a/x.ts")).toBe("export const x = 1;");
+  });
+
+  it("auto: the chosen mode runs through the normal path and mode.selected records via auto", async () => {
+    await writeConfig({});
+    const io = terminal(["y"]);
+    const { result, of } = await run("auto", { questions: io }, { prompt: "Please review a/base.txt" });
+    expect(result).toMatchObject({ status: "completed" });
+    expect(of("mode.selected")[0]?.data).toMatchObject({ mode: "review", via: "auto" });
+  });
+
+  it("auto: the cost estimate is shown and confirmed once, by the chosen run only", async () => {
+    await writeConfig({ limits: { confirmAboveTokens: 1 } });
+    const confirm = terminal(["y"]);
+    const { result } = await run("auto", { questions: terminal(["y"]) }, { prompt: "Please review a/base.txt", confirmIO: confirm });
+    expect(result).toMatchObject({ status: "completed" });
+    expect(confirm.asked.filter((q) => q.includes("Start the run?"))).toHaveLength(1);
+  });
+
+  it("auto: picking solo runs the Supervisor path, noted as chosen by auto", async () => {
+    await writeConfig({});
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { result } = await run("auto", { questions: terminal(["solo"]) }, { prompt: "Please review a/base.txt", retro: true });
+    expect(result).toMatchObject({ status: "DONE" });
+    expect(err.mock.calls.map((c) => String(c[0]))).toContain("Note: --retro only applies to a non-solo --mode run; ignored.");
+    err.mockRestore();
+  });
+
+  it("auto: cancel runs nothing", async () => {
+    await writeConfig({});
+    await expect(run("auto", { questions: terminal(["n"]) }, { prompt: "Please review a/base.txt" })).rejects.toThrow("cancelled");
   });
 
   it("lead without a terminal: the landing is denied (fail closed) and nothing reaches the branch", async () => {
@@ -452,9 +482,9 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     expect(lessons).not.toContain("not a bullet");
   });
 
-  it("race, interactive, auto and watch are refused by the CLI", async () => {
+  it("race, interactive and watch are refused by the CLI", async () => {
     await writeConfig({});
-    for (const id of ["race", "interactive", "auto", "watch"]) {
+    for (const id of ["race", "interactive", "watch"]) {
       await expect(run(id)).rejects.toThrow(`Mode ${id} is not available yet.`);
     }
   });

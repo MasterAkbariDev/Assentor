@@ -84,7 +84,7 @@ export async function confirmRunEstimate(input: {
   if (!/^y(es)?$/i.test(answer.trim())) throw new Error("Run cancelled before it started.");
 }
 
-function ask(io: QuestionIO, prompt: string): Promise<string> {
+export function ask(io: QuestionIO, prompt: string): Promise<string> {
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: io.input, output: io.output });
     rl.on("close", () => resolve(""));

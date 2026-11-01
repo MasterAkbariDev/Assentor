@@ -42,6 +42,6 @@ export const MODE_CATALOG: readonly ModeCard[] = [
   { id: "explore", title: "Explore", description: "Read-only seats investigate a question; a synthesizer answers with citations.", kind: "static", editsCode: false, available: true, defaultAutonomy: S },
   { id: "plan", title: "Plan", description: "Produce a spec and task cards, no code.", kind: "static", editsCode: true, available: true, defaultAutonomy: S },
   { id: "interactive", title: "Interactive", description: "Chat with the team; a lead routes messages to seats.", kind: "dynamic", editsCode: true, available: false, reason: UNAVAILABLE_REASON, defaultAutonomy: S },
-  { id: "auto", title: "Auto", description: "Suggest a mode from the task and ask before running it.", kind: "dynamic", editsCode: true, available: false, reason: UNAVAILABLE_REASON, defaultAutonomy: S },
+  { id: "auto", title: "Auto", description: "Suggest a mode from the task and ask before running it.", kind: "dynamic", editsCode: true, available: true, defaultAutonomy: S },
   { id: "watch", title: "Watch", description: "React to commits, PRs or CI failures by running a chosen mode.", kind: "static", editsCode: true, available: false, reason: UNAVAILABLE_REASON, defaultAutonomy: S },
 ];
