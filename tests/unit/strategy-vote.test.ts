@@ -73,10 +73,22 @@ describe("vote strategy: results", () => {
     expect(types.filter((t) => t === "negotiation.proposal")).toHaveLength(3);
     expect(types.filter((t) => t === "negotiation.vote")).toHaveLength(3);
     expect(types.filter((t) => t === "negotiation.consensus")).toHaveLength(1);
-    expect(events.at(-1)).toEqual({
+    expect(events.at(-2)).toEqual({
       type: "negotiation.consensus",
-      data: { round: 2, score: 4 / 6, reached: true, preferred: C },
+      data: { round: 2, score: 4 / 6, reached: true, preferred: C, threshold: 0.5 },
     });
+    expect(events.at(-1)).toEqual({ type: "negotiation.decided", data: { rationale: result.rationale, winner: C } });
+  });
+
+  it("names the proposing seat on each proposal event, in seat order", async () => {
+    const { ctx, events } = createMockNegotiationContext({ seats, script: script(clearWinner) });
+    await voteStrategy.run(ctx);
+    const proposals = events.filter((e) => e.type === "negotiation.proposal");
+    expect(proposals.map((e) => [e.seatId, e.data.label])).toEqual([
+      ["opus-1", A],
+      ["opus-2", B],
+      ["sol-1", C],
+    ]);
   });
 
   it("breaks a tie toward the label that sorts first, and says so", async () => {
@@ -201,7 +213,8 @@ describe("vote strategy: invalid ballots", () => {
     expect(result.tallies).toEqual({ [A]: 0, [B]: 0, [C]: 0 });
     expect(result.dissent).toHaveLength(3);
     expect(result.consensus).toEqual({ score: 0, reached: false });
-    expect(events.at(-1)).toEqual({ type: "negotiation.consensus", data: { round: 2, score: 0, reached: false } });
+    expect(events.at(-2)).toEqual({ type: "negotiation.consensus", data: { round: 2, score: 0, reached: false, threshold: 0.5 } });
+    expect(events.at(-1)).toEqual({ type: "negotiation.decided", data: { rationale: result.rationale } });
   });
 });
 
@@ -233,10 +246,11 @@ describe("vote strategy: proposals and failures", () => {
     expect(result.rounds).toBe(1);
     expect(result.consensus).toEqual({ score: 1, reached: true });
     expect(asks.filter((a) => a.step === "negotiate-rank")).toHaveLength(0);
-    expect(events.at(-1)).toEqual({
+    expect(events.at(-2)).toEqual({
       type: "negotiation.consensus",
-      data: { round: 1, score: 1, reached: true, preferred: A },
+      data: { round: 1, score: 1, reached: true, preferred: A, threshold: 0.5 },
     });
+    expect(events.at(-1)).toEqual({ type: "negotiation.decided", data: { rationale: "only one proposal", winner: A } });
   });
 
   it("no proposal means no decision", async () => {
@@ -250,7 +264,10 @@ describe("vote strategy: proposals and failures", () => {
     expect(result.rationale).toBe("no proposals");
     expect(result.consensus).toEqual({ score: 0, reached: false });
     expect(result.dissent).toHaveLength(3);
-    expect(events).toEqual([{ type: "negotiation.consensus", data: { round: 1, score: 0, reached: false } }]);
+    expect(events).toEqual([
+      { type: "negotiation.consensus", data: { round: 1, score: 0, reached: false, threshold: 0.5 } },
+      { type: "negotiation.decided", data: { rationale: "no proposals" } },
+    ]);
   });
 });
 

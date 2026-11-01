@@ -71,7 +71,10 @@ describe("debate: convergence", () => {
     expect(result.dissent).toEqual([]);
     expect(asks.some((a) => a.step === "negotiate-revise")).toBe(false);
     expect(events.filter((e) => e.type === "negotiation.proposal")).toHaveLength(3);
-    expect(events.at(-1)).toEqual({ type: "negotiation.consensus", data: { round: 1, score: 1, reached: true, preferred: A } });
+    expect(events.at(-2)).toEqual({ type: "negotiation.consensus", data: { round: 1, score: 1, reached: true, preferred: A, threshold: 0.7 } });
+    expect(events.at(-1)).toEqual({ type: "negotiation.decided", data: { rationale: result.rationale, winner: A } });
+    // Every proposal names its author (here seat order is S1, S2, S3).
+    expect(events.filter((e) => e.type === "negotiation.proposal").map((e) => e.seatId)).toEqual([S1, S2, S3]);
   });
 
   it("converges in round 3 after revisions", async () => {
@@ -121,7 +124,10 @@ describe("debate: no convergence", () => {
   });
 
   it("without a moderator the judge step runs on the first seat", async () => {
-    const { result, asks } = await run({ agree: split }, { maxRounds: 1 });
+    const { result, asks, events } = await run({ agree: split }, { maxRounds: 1 });
+    // The last consensus event is below the threshold; the decided event carries the judge's ruling.
+    expect(events.filter((e) => e.type === "negotiation.consensus").at(-1)?.data).toMatchObject({ reached: false, threshold: 0.7 });
+    expect(events.at(-1)).toEqual({ type: "negotiation.decided", data: { rationale: result.rationale, winner: C } });
     const judge = asks.filter((a) => a.step === "judge");
     expect(judge.map((a) => a.seatId)).toEqual([S1]);
     expect(result.rationale).toContain("the judge chose Proposal C");

@@ -74,6 +74,9 @@ export class RunReporter {
   /** Team board folded from lead events. Printed on each lead turn in lead mode. */
   private leadView: LeadBoardView = emptyLeadBoardView();
   private leadMode = false;
+  /** While a question prompt is open: no spinner painting; lines wait in `heldLines`. */
+  private held = false;
+  private heldLines: string[] = [];
 
   constructor(
     private readonly options: {
@@ -118,7 +121,7 @@ export class RunReporter {
   header(lines: string[]): void {
     this.endStatus();
     for (const line of lines) {
-      console.log(`${c.dim}${line}${c.reset}`);
+      this.out(`${c.dim}${line}${c.reset}`);
     }
   }
 
@@ -221,7 +224,7 @@ export class RunReporter {
         ? String(event.data.reason)
         : "transient error";
       this.endStatus();
-      console.log(
+      this.out(
         `  ${c.yellow}↻${c.reset} Retrying ${this.options.executorName} (${attempt}/${maxAttempts}) in ${Math.round(delayMs / 1000)}s ${c.dim}— ${truncate(reason, 72)}${c.reset}`,
       );
       this.debug(event);
@@ -236,7 +239,7 @@ export class RunReporter {
         ? String(event.data.reason)
         : "transient error";
       this.endStatus();
-      console.log(
+      this.out(
         `  ${c.yellow}↻${c.reset} Retrying ${this.options.reviewerName} (${attempt}/${maxAttempts}) in ${Math.round(delayMs / 1000)}s ${c.dim}— ${truncate(reason, 72)}${c.reset}`,
       );
       this.debug(event);
@@ -261,11 +264,11 @@ export class RunReporter {
       this.finishStatus(ok, ok ? "done" : failLabel);
       const body = preferPlainExecutorText(summary, raw);
       if (body) {
-        console.log(`\n  ${c.bold}Executor response${c.reset}`);
+        this.out(`\n  ${c.bold}Executor response${c.reset}`);
         for (const line of wrapMultiline(body, 88)) {
-          console.log(`  ${line}`);
+          this.out(`  ${line}`);
         }
-        console.log("");
+        this.out("");
       }
       this.debug(event);
       return;
@@ -323,13 +326,13 @@ export class RunReporter {
       } else {
         this.endStatus();
         if (files.length > 0) {
-          console.log(
+          this.out(
             `  ${c.green}✓${c.reset} Evidence ready · ${c.cyan}${files.slice(0, 6).join(", ")}${files.length > 6 ? "…" : ""}${c.reset}`,
           );
         } else if (event.data?.note) {
-          console.log(`  ${c.dim}${String(event.data.note)}${c.reset}`);
+          this.out(`  ${c.dim}${String(event.data.note)}${c.reset}`);
         } else if (count > 0) {
-          console.log(
+          this.out(
             `  ${c.yellow}▸${c.reset} Reviewer asked for more evidence (${count})`,
           );
         }
@@ -340,7 +343,7 @@ export class RunReporter {
 
     if (event.type === "change.requested") {
       this.endStatus();
-      console.log(
+      this.out(
         `  ${c.yellow}▸${c.reset} Sending change request back to ${this.options.executorName}`,
       );
       this.debug(event);
@@ -366,7 +369,7 @@ export class RunReporter {
         : event.data?.reason
           ? `: ${truncate(String(event.data.reason), 160)}`
           : "";
-      console.log(`\n  ${color}${c.bold}${labelEvent(event.type)}${summary}${c.reset}`);
+      this.out(`\n  ${color}${c.bold}${labelEvent(event.type)}${summary}${c.reset}`);
       this.debug(event);
       return;
     }
@@ -456,13 +459,25 @@ export class RunReporter {
       this.paint(true);
       if (this.options.verbose) {
         this.endStatus();
-        console.log(`  ${c.yellow}· ${message}${c.reset}`);
+        this.out(`  ${c.yellow}· ${message}${c.reset}`);
         this.paint(true);
       }
     }
   }
 
+  /** Hold (true) or release (false) output while the user answers a question; held lines print on release. */
+  holdOutput(hold: boolean): void {
+    if (hold) {
+      this.endStatus();
+      this.held = true;
+      return;
+    }
+    this.held = false;
+    for (const line of this.heldLines.splice(0)) console.log(line);
+  }
+
   dispose(): void {
+    this.holdOutput(false);
     this.endStatus();
     this.stopHeartbeat();
     if (this.pendingPaint) {
@@ -503,11 +518,11 @@ export class RunReporter {
         break;
       case "DONE":
         this.endStatus();
-        console.log(`\n  ${c.green}${c.bold}✓ Task passed review${c.reset}`);
+        this.out(`\n  ${c.green}${c.bold}✓ Task passed review${c.reset}`);
         break;
       case "FAILED":
         this.endStatus();
-        console.log(
+        this.out(
           `\n  ${c.red}${c.bold}✗ Task failed${c.reset}${reason ? `${c.dim} — ${truncate(reason, 120)}${c.reset}` : ""}`,
         );
         break;
@@ -517,6 +532,10 @@ export class RunReporter {
   }
 
   private writeln(text: string): void {
+    if (this.held) {
+      this.heldLines.push(text);
+      return;
+    }
     if (this.statusActive && this.isTty) {
       this.clearLine();
       process.stdout.write(`${text}\n`);
@@ -532,12 +551,12 @@ export class RunReporter {
       return;
     }
     this.lastSection = title;
-    console.log(`\n${c.bold}${c.cyan}▸ ${title}${c.reset}`);
+    this.out(`\n${c.bold}${c.cyan}▸ ${title}${c.reset}`);
   }
 
   private oneShot(message: string): void {
     this.endStatus();
-    console.log(`  ${c.green}✓${c.reset} ${message}`);
+    this.out(`  ${c.green}✓${c.reset} ${message}`);
   }
 
   private startStatus(
@@ -567,7 +586,7 @@ export class RunReporter {
     const elapsed = formatElapsed(Date.now() - this.phaseStartedAt);
     this.clearLine();
     const mark = ok ? `${c.green}✓${c.reset}` : `${c.red}✗${c.reset}`;
-    console.log(
+    this.out(
       `  ${mark} ${this.statusLabel} ${c.dim}· ${elapsed}${c.reset} · ${truncate(detail, 90)}`,
     );
     this.statusActive = false;
@@ -600,7 +619,7 @@ export class RunReporter {
   }
 
   private paint(force: boolean): void {
-    if (!this.statusActive || !this.statusLabel) {
+    if (this.held || !this.statusActive || !this.statusLabel) {
       return;
     }
 
@@ -632,12 +651,22 @@ export class RunReporter {
     const sec = Math.floor((now - this.phaseStartedAt) / 1000);
     if (sec > 0 && sec % 5 === 0 && sec !== this.lastNonTtySec) {
       this.lastNonTtySec = sec;
-      console.log(line);
+      this.out(line);
     }
   }
 
+  /** Every line the reporter prints goes here (or through `writeln`), so a held prompt holds it. */
+  private out(text = ""): void {
+    if (this.held) {
+      this.heldLines.push(text);
+      return;
+    }
+    console.log(text);
+  }
+
   private clearLine(): void {
-    if (!this.isTty) {
+    // Never touch the line a question prompt is on.
+    if (this.held || !this.isTty) {
       return;
     }
     try {
@@ -663,25 +692,25 @@ export class RunReporter {
           ? c.yellow
           : c.red;
 
-    console.log(
+    this.out(
       `\n  ${statusColor}${c.bold}Decision: ${status}${c.reset}${c.dim}${confidence}${c.reset}`,
     );
     if (summary) {
       for (const paragraph of wrapText(summary, 88)) {
-        console.log(`  ${paragraph}`);
+        this.out(`  ${paragraph}`);
       }
     }
 
     const issues = Array.isArray(data.issues) ? data.issues : [];
     if (issues.length > 0) {
-      console.log(`  ${c.bold}Issues${c.reset}`);
+      this.out(`  ${c.bold}Issues${c.reset}`);
       for (const issue of issues.slice(0, 8)) {
         const row = issue as {
           severity?: string;
           description?: string;
           id?: string;
         };
-        console.log(
+        this.out(
           `    ${c.yellow}•${c.reset} [${row.severity ?? "?"}] ${truncate(row.description ?? String(issue), 100)}`,
         );
       }
@@ -691,9 +720,9 @@ export class RunReporter {
       ? data.requiredChanges.map(String)
       : [];
     if (required.length > 0) {
-      console.log(`  ${c.bold}Required changes${c.reset}`);
+      this.out(`  ${c.bold}Required changes${c.reset}`);
       for (const item of required.slice(0, 8)) {
-        console.log(`    ${c.yellow}•${c.reset} ${truncate(item, 100)}`);
+        this.out(`    ${c.yellow}•${c.reset} ${truncate(item, 100)}`);
       }
     }
 
@@ -701,11 +730,11 @@ export class RunReporter {
       ? data.evidenceRequests
       : [];
     if (evidence.length > 0) {
-      console.log(`  ${c.bold}Evidence requested${c.reset}`);
+      this.out(`  ${c.bold}Evidence requested${c.reset}`);
       for (const item of evidence.slice(0, 8)) {
         const row = item as { kind?: string; path?: string; command?: string };
         const target = row.path ?? row.command ?? JSON.stringify(item);
-        console.log(
+        this.out(
           `    ${c.blue}•${c.reset} ${row.kind ?? "item"}: ${truncate(String(target), 80)}`,
         );
       }
@@ -726,7 +755,7 @@ export class RunReporter {
         : undefined;
     this.endStatus();
     const detail = event.data ? ` ${JSON.stringify(event.data)}` : "";
-    console.log(
+    this.out(
       `  ${c.dim}[debug] ${event.type}${truncate(detail, 160)}${c.reset}`,
     );
     if (resume) {

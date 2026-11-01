@@ -232,7 +232,8 @@ export type NegotiationEventInput =
   | { type: "negotiation.proposal"; seatId?: string; data: EngineEventData<"negotiation.proposal"> }
   | { type: "negotiation.critique"; seatId?: string; data: EngineEventData<"negotiation.critique"> }
   | { type: "negotiation.vote"; seatId?: string; data: EngineEventData<"negotiation.vote"> }
-  | { type: "negotiation.consensus"; seatId?: string; data: EngineEventData<"negotiation.consensus"> };
+  | { type: "negotiation.consensus"; seatId?: string; data: EngineEventData<"negotiation.consensus"> }
+  | { type: "negotiation.decided"; seatId?: string; data: EngineEventData<"negotiation.decided"> };
 
 export interface NegotiationContext {
   readonly sessionId: string;

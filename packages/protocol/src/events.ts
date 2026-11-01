@@ -103,7 +103,13 @@ const NegotiationConsensus = z
     score: z.number().min(0).max(1),
     reached: z.boolean(),
     preferred: z.string().optional(),
+    /** Debate: reached when score >= threshold. Vote and synthesize: reached when score > threshold. */
+    threshold: z.number().min(0).max(1).optional(),
   })
+  .passthrough();
+/** The strategy's final decision: why, and which proposal label won (none for a synthesized answer). */
+const NegotiationDecided = z
+  .object({ rationale: z.string().max(4000), winner: z.string().max(200).optional() })
   .passthrough();
 
 const ReviewFinding = z
@@ -115,6 +121,10 @@ const ReviewFinding = z
     agreement: z
       .object({ count: z.number().int().nonnegative(), total: z.number().int().nonnegative() })
       .optional(),
+    /** Seat ids of the panel members who flagged it (the member names when the panel has no seat ids). */
+    reviewerIds: z.array(z.string().max(200)).max(50).optional(),
+    category: z.string().max(40).optional(),
+    evidence: z.array(z.string().max(2000)).max(20).optional(),
   })
   .passthrough();
 const ReviewVerdict = z
@@ -122,6 +132,10 @@ const ReviewVerdict = z
     status: z.string(),
     summary: z.string().optional(),
     confidence: z.number().optional(),
+    /** Panel decision policy, on the merged verdict of a panel. */
+    policy: z.string().max(64).optional(),
+    /** True on one panel member's own verdict; the merged verdict (from the panel seat) does not set it. */
+    panelMember: z.boolean().optional(),
   })
   .passthrough();
 
@@ -203,6 +217,7 @@ export const EngineEventDataSchemas = {
   "negotiation.critique": NegotiationCritique,
   "negotiation.vote": NegotiationVote,
   "negotiation.consensus": NegotiationConsensus,
+  "negotiation.decided": NegotiationDecided,
 
   "review.finding": ReviewFinding,
   "review.verdict": ReviewVerdict,
