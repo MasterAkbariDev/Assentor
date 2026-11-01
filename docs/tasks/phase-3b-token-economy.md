@@ -76,6 +76,8 @@ Phase exit criteria:
 ### TE-04 · Rolling summaries for long conversations
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** TE-03
 
+**Built (branch `claude/card-te-04`, not merged):** `summarizeHistory` (`packages/engine/src/context/summary.ts`): no call under budget or when the fold is under twice the digest cap; digests cached per (session, folded turns), shared by concurrent asks, extended with only new turns + the old digest; redaction before the summariser and on its reply; fenced, capped; truncation with markers when there is no summariser or it fails (never fails the run). Config `context.summaries: off|auto`, **OFF** (unset). With `auto` + a negotiation budget: debate rounds ≥ 3 replace other seats' over-share proposals by digests (made by the asking seat, counted in its usage); the Lead's `digestLog()` replaces its ad-hoc fold (smaller on the bench). Vote/synthesize and the TDD/red-team/debug retries carry no history, so they are not wired. Bench (`--fixtures debate-6|lead-long`, docs/benchmarks/tokens.md): summaries alone 0% (debate) / −3.5% (Lead); with budgets the same folding without the call is cheaper every time (debate −19.5% vs −8.2% at 800 tokens), so on the mock the call is pure cost and turning it on needs the owner's live A/B.
+
 **Goal** — Keep long negotiations, Lead runs and multi-round fixes from re-sending full history.
 
 **Deliverables**

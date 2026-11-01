@@ -15,7 +15,15 @@ const budget = z.number().int().min(0).optional();
  * Budget cuts ship OFF: they need the owner's live A/B (`bench:tokens --live`) before any default is set.
  * The budgets are passed to each call site from the loaded config; there is no process-wide state.
  */
-export const ContextConfigSchema = z.object({ budgetTokens: z.object({ reviewer: budget, negotiation: budget, lead: budget, coder: budget }).optional() });
+export const ContextConfigSchema = z.object({
+  budgetTokens: z.object({ reviewer: budget, negotiation: budget, lead: budget, coder: budget }).optional(),
+  /**
+   * Rolling summaries (TE-04): `auto` folds what is over a role's budget into a digest made by a model call
+   * instead of cutting it. Unset = `off`. Ships OFF: on the mock bench a digest saves less than truncation at the
+   * same budget (its call costs tokens) and its quality gain needs the owner's live A/B (docs/benchmarks/tokens.md).
+   */
+  summaries: z.enum(["off", "auto"]).optional(),
+});
 
 /** The token budget for `role`, or undefined when cuts are off for it. */
 export const roleBudget = (budgets: ContextBudgets | undefined, role: ContextRole): number | undefined => {
