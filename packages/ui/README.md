@@ -20,6 +20,7 @@ pnpm test              # UI tests run with the rest (jsdom per file)
 | `src/store/context.tsx` | `<EngineStoreProvider>` and `useEngine(selector)`. |
 | `src/store/selectors.ts` | Named selectors (`selectSeats`, `isLiveSeat`) and `groupSeats` (executor, reviewers, other). |
 | `src/features/session-board/` | Session board: `SessionBoard` (grid and the one elapsed ticker, `useNow`), `SeatCard` (opens the drawer). |
+| `src/features/usage/` | Usage section: `UsagePage` (the selected run from the sidebar list) and `UsagePanel` (totals, per seat / stage / model tables, budget bars). `usageModel.ts` holds the pure helpers. |
 | `src/features/seat-drawer/` | Read-only seat drawer: `SeatDrawer` (panel, tabs, focus), `SeatActivity`, `SeatOutput`, `SeatInfo`, `activity.ts` (row text). |
 | `src/transport/types.ts` | `Transport` (`call`, `subscribe`, `onStatus`, `close`): the single seam to the engine. |
 | `src/transport/websocketTransport.ts` | `WebSocketTransport`: connects, reconnects with backoff, wraps the typed RPC client. |
@@ -46,7 +47,7 @@ Status: `connecting` → `open`; a lost link goes `reconnecting` → `open`; `un
 
 ## Routing and shell
 
-A tiny hash router (`shell/route.ts`): `#/sessions` (default), `#/prompts`, `#/teams`, `#/playbooks`, `#/settings`. Prompts, Teams and Playbooks show an empty state until built. Settings is built (`features/settings/`): settings form, keys list, Doctor and CLI detection; the first-run guide (`features/onboarding/`) shows in the sessions view while there are no runs. TanStack Router, Query and Virtual, Radix and Tailwind are not in the approved dependency set (STATUS §6), so none are used. `useToast()` shows a toast; the shell toasts when the connection drops and returns.
+A tiny hash router (`shell/route.ts`): `#/sessions` (default), `#/prompts`, `#/teams`, `#/playbooks`, `#/usage`, `#/settings`. Prompts, Teams and Playbooks show an empty state until built. Settings is built (`features/settings/`): settings form, keys list, Doctor and CLI detection; the first-run guide (`features/onboarding/`) shows in the sessions view while there are no runs. TanStack Router, Query and Virtual, Radix and Tailwind are not in the approved dependency set (STATUS §6), so none are used. `useToast()` shows a toast; the shell toasts when the connection drops and returns.
 
 ## Engine imports
 
@@ -79,6 +80,10 @@ Import other workspace packages only through `#assentor/…` (aliased to their s
 - **Output:** `outputTail` in a `<pre>` as plain text. It follows the end until the reader scrolls up; then "Jump to latest" appears.
 - **Info:** provider, transport and permissions from `seatInfo` (`seat.spawned`), plus model, role, status, start and end times, elapsed time, tokens and the seat and session ids.
 - **Store data:** `seatInfo` (from `seat.spawned`) and `seatEvents` (the last `SEAT_EVENT_CAP` = 200 non-`seat.output.delta` events per seat). Both are rebuilt identically on replay, like the rest of the session view.
+
+## Usage
+
+`#/usage` shows the run picked in the sidebar: totals (tokens in and out, cached share, cost, calls, retries), tables by seat, stage and model, and a budget bar for each budget that has passed its 50% warning (the report carries limits only through warnings). It reads `usage.get`: at most one call is in flight, and `seat.tokens` events that arrive meanwhile (`tokenEvents` in the store) trigger one follow-up call once it settles. Read-only. Not shown yet: estimate vs actual (no field in `UsageReport`) and skills loaded (no `skill.loaded` event in the protocol).
 
 ## Diff & worktrees
 

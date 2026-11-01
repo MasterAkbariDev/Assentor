@@ -121,6 +121,8 @@ Phase exit criteria:
 ### TE-07 · Skills: on-demand instruction packs
 **Tier:** 🟡 S · **Review:** O2 · **Size:** M · **Depends:** —
 
+**Merged 2026-11-01:** `8007fc8` + O2 fixes `4b4b3ac`, `3162274`; re-review PASS. `skills/<name>/SKILL.md` layered built-in → `~/.assentor/skills` → `<project>/.assentor/skills` with prompt-library path safety, 32 KiB cap, ≤ 200 dirs per layer. A capped skills index (≤ 200 tokens, "+N more") goes after the role prompt, labelled as names not instructions, byte-stable per role; bodies load by trigger or a trailing `load_skill:` line, fenced as reference, ≤ 3 skills / 4k tokens per seat, every delivery counted in `skill.loaded`. Project skills only for built-in builder roles on edit seats (never reviewers, Lead or negotiation steps). `assentor skills list|show|new`, RPC `skill.list/get`. Wired into `assentor run --mode`. Not wired yet: serve's session host, profiles (TE-06), reviewer skills (TE-08).
+
 **Goal** — Reusable know-how that costs one line until it is needed (progressive disclosure), instead of long always-on prompt text.
 
 **Deliverables**
@@ -157,6 +159,8 @@ Plus a playbook preset `lean` that wires them to roles (builders: 2–6, reviewe
 
 ### TE-09 · Pre-run estimate and confirm
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** TE-01, TE-06
+
+**Merged 2026-11-01:** `c440f51` + review fixes `0646d00`; Sonnet review. One estimate line before every run (tokens; dollars from this project's own observed prices — recent sessions' costUsd per model — never invented; "not enforced" line when a dollar limit has no observed price); solo includes the executor, mode runs say "excludes executor"; `limits.confirmAboveTokens/Usd` (no defaults written): ask on a TTY, refuse without one unless `--yes`; resume skips the gate; `session.estimate` event and estimate vs actual in the usage report.
 
 **Goal** — No surprise bills.
 

@@ -1,5 +1,7 @@
 import { expandSeatSpecs, type Seat, type Team } from "#assentor/protocol/seats.js";
-import type { NegotiateMode, ReviewMode } from "../config/teams.js";
+import type { AssentorConfig } from "../config/schema.js";
+import { resolveTeams, type NegotiateMode, type ReviewMode } from "../config/teams.js";
+import { estimateTokens } from "../usage/tokens.js";
 
 /**
  * Pre-run cost estimate (T02-10). Pure: no I/O.
@@ -38,6 +40,8 @@ export interface EstimateInput {
   modes: { negotiate?: NegotiateMode; review?: ReviewMode };
   /** Review team for configs without `modes.review`; ignored when `modes.review` is set. */
   reviewTeam?: Team;
+  /** The executor's team (solo runs): one turn low, `maxRounds` high, like a review seat. */
+  executorTeam?: Team;
   /** Tokens of shared context sent on every turn. */
   contextTokens: number;
   /** `limits.maxRounds`; used as the high-end review round count. */
@@ -59,6 +63,8 @@ export interface SessionEstimate {
   /** Present only when every seat has pricing. */
   usd?: { low: number; high: number };
   notes: string[];
+  /** `provider/model` keys of the seats with no pricing (empty when all are priced). */
+  unpriced: string[];
 }
 
 interface SeatTurns {
@@ -105,10 +111,16 @@ export function estimateSession(input: EstimateInput): SessionEstimate {
       addTurns(seat, 1, input.maxRounds);
     }
   }
+  if (input.executorTeam) {
+    for (const seat of expandSeatSpecs(input.executorTeam.seats, { teamName: "executor" })) {
+      addTurns(seat, 1, input.maxRounds);
+    }
+  }
 
   const inPerTurn = input.contextTokens + EXTRA_INPUT_TOKENS;
   const perSeat: SeatEstimate[] = [];
   const notes: string[] = [];
+  const unpriced: string[] = [];
   let totalLow = 0;
   let totalHigh = 0;
   let usdLow = 0;
@@ -135,6 +147,7 @@ export function estimateSession(input: EstimateInput): SessionEstimate {
       usdHigh += (highIn * price.inPerMTok + highOut * price.outPerMTok) / 1_000_000;
     } else {
       allPriced = false;
+      if (!unpriced.includes(key)) unpriced.push(key);
       notes.push(
         entry.seat.transport === "cli"
           ? `${entry.seat.displayName} billed by subscription; no $ estimate`
@@ -143,7 +156,7 @@ export function estimateSession(input: EstimateInput): SessionEstimate {
     }
   }
 
-  const result: SessionEstimate = { perSeat, totalLow, totalHigh, notes };
+  const result: SessionEstimate = { perSeat, totalLow, totalHigh, notes, unpriced };
   if (allPriced) {
     result.usd = { low: usdLow, high: usdHigh };
   }
@@ -165,4 +178,37 @@ function negotiateTurns(
     case "divide":
       return { perSeat: 1, aggregator: 0 };
   }
+}
+
+export interface RunEstimateOptions {
+  prompt: string;
+  /** `solo`, or a mode id. Solo counts the executor; other modes exclude it (their execute stages vary). */
+  modeId: string;
+  /** Observed prices (`usage/observed.ts`); seats without one stay unpriced. */
+  pricing?: PricingTable;
+  /** The executor model the run will use (`--executor-model`, else config); unset = AUTO. */
+  executorModel?: string;
+}
+
+/**
+ * The pre-run estimate of one run (TE-09): the review team's turns, the
+ * executor's for solo, and the negotiate team's when the mode is `negotiate`.
+ * The prompt stands in for the shared context. Pure: no model calls.
+ */
+export function estimateRun(config: AssentorConfig, options: RunEstimateOptions): SessionEstimate {
+  let executorTeam: Team | undefined;
+  if (options.modeId === "solo") {
+    const executor = resolveTeams(config).executor;
+    const model = options.executorModel?.trim() || config.executor.model?.trim() || undefined;
+    executorTeam = { ...executor, seats: executor.seats.map((seat) => ({ ...seat, ...(model ? { model } : {}) })) };
+  }
+  return estimateSession({
+    teams: config.teams,
+    modes: { negotiate: options.modeId === "negotiate" ? config.modes.negotiate : undefined },
+    reviewTeam: resolveTeams(config).review,
+    executorTeam,
+    contextTokens: estimateTokens(options.prompt),
+    maxRounds: config.limits.maxRounds,
+    pricing: options.pricing,
+  });
 }

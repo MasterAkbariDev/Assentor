@@ -32,10 +32,13 @@ import type { Reviewer } from "#assentor/engine/providers/reviewers/types.js";
 import { PanelReviewer, REVIEW_POLICIES, type ReviewPolicy } from "#assentor/engine/review/index.js";
 import { createSeatScheduler, reviewerProviderForSeat } from "#assentor/engine/seats/index.js";
 import { PromptLibrary } from "#assentor/engine/prompts/library.js";
+import { SkillLibrary, SkillSession, withSkillsAsk } from "#assentor/engine/skills/index.js";
 import { WorktreeManager } from "#assentor/engine/worktrees/manager.js";
 import { cliUsage } from "#assentor/engine/usage/cli-usage.js";
 import type { EngineEvent, EngineEventDraft } from "#assentor/protocol/events.js";
 import { extractJsonCandidate } from "#assentor/protocol/parse.js";
+import { estimateRun } from "#assentor/engine/estimate/cost.js";
+import { observedPricing } from "#assentor/engine/usage/observed.js";
 import { expandSeatSpecs, SEAT_CLI_PROVIDERS, type Seat, type StageSpec } from "#assentor/protocol/seats.js";
 import {
   attachRunInterrupt,
@@ -49,6 +52,7 @@ import {
 } from "./commands.js";
 import { createAnswerLoop, terminalQuestionIO, type QuestionIO } from "./mode-questions.js";
 import { printPreflight, runPreflight } from "./preflight.js";
+import { confirmRunEstimate, formatRunEstimate, toRunEstimate } from "./run-estimate.js";
 import { RunReporter } from "./ui/reporter.js";
 
 /**
@@ -103,6 +107,20 @@ export async function runModeTask(input: ModeTaskInput) {
     });
     const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
     const autonomy = config.run.autonomy ?? config.run.mode;
+    const pricing = await observedPricing(projectPath).catch(() => ({}));
+    const estimate = estimateRun(config, { prompt: input.prompt, modeId: mode.id, pricing });
+    reporter.note(formatRunEstimate(estimate, config, `mode ${mode.id}`, { excludesExecutor: true }));
+    // Resume has no --yes and the run was already started: no gate.
+    if (!input.resumeSessionId) {
+      await confirmRunEstimate({
+        estimate,
+        limits: config.limits,
+        yes: input.yes,
+        io: input.confirmIO ?? terminalQuestionIO(),
+        hold: (open) => reporter.holdOutput(open),
+        log: (line) => reporter.note(line),
+      });
+    }
 
     if (!input.skipPreflight) {
       reporter.updatePreparing("checking environment…");
@@ -144,9 +162,12 @@ export async function runModeTask(input: ModeTaskInput) {
       },
     });
     const emit = (draft: EngineEventDraft) => void sink!.emit(draft);
+    if (!input.resumeSessionId) emit({ type: "session.estimate", sessionId, data: toRunEstimate(estimate) });
 
     reporter.updatePreparing("starting seats…");
     const worktrees = new WorktreeManager({ repoPath: projectPath });
+    // One skill session for executors, host asks and negotiation steps (TE-07).
+    const skills = new SkillSession(await SkillLibrary.load({ projectPath }), { sessionId, mode: mode.id, emit });
     const { deps, host } = createModeHost({
       config,
       projectPath,
@@ -154,6 +175,7 @@ export async function runModeTask(input: ModeTaskInput) {
       goal,
       worktrees,
       prompts: await PromptLibrary.load({ projectPath }),
+      skills,
       emit,
       reporter,
       hooks: input.modeHooks ?? {},
@@ -173,6 +195,7 @@ export async function runModeTask(input: ModeTaskInput) {
       signal: abort.signal,
       emit,
       host,
+      skills,
       ...(input.resumeSessionId ? { resume: true } : {}),
     });
     const unwired = prepared.spec?.stages.find((s) => s.kind === "execute" && UNWIRED_STRATEGIES.has(s.strategy ?? ""));
@@ -264,6 +287,8 @@ interface HostInput {
   goal: string;
   worktrees: WorktreeManager;
   prompts: PromptLibrary;
+  /** Negotiation steps ask through it; `prepareModeSession` wraps executors and `host.askSeat` with the same session. */
+  skills?: SkillSession;
   emit: (draft: EngineEventDraft) => void;
   reporter: RunReporter;
   hooks: ModeRunHooks;
@@ -407,13 +432,15 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
     };
   };
 
+  const stepAsk = input.skills ? withSkillsAsk(askSeat, input.skills) : askSeat;
   const deps: StageRunnerDeps = {
     projectPath,
     scheduler,
     seatsFor,
     runStep: async ({ seat, step, vars, readOnly, worktreePath, signal, reportUsage }) => {
       if (!readOnly) throw new Error(`negotiation step ${step} edits files; the CLI host runs read-only steps only`);
-      const reply = await askSeat({ seat, prompt: input.prompts.render(step, packStepVars(step, vars) as Record<string, never>), signal, reportUsage });
+      // Planning and judging steps never edit, so they never get project skills (builder seats on edit only).
+      const reply = await stepAsk({ seat: { ...seat, permissions: "read-only" }, prompt: input.prompts.render(step, packStepVars(step, vars) as Record<string, never>), signal, reportUsage });
       void worktreePath;
       const json = extractJsonCandidate(reply);
       return json.ok ? json.data : reply;

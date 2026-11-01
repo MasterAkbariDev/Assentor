@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import type { AssentorConfig } from "../config/schema.js";
 import { createId, isId } from "../core/ids.js";
 import { AutonomySchema, type Autonomy } from "../core/run-mode.js";
-import { SessionSpecSchema, type SessionSpec } from "#assentor/protocol/seats.js";
+import { SessionSpecSchema, type Seat, type SessionSpec, type StageSpec } from "#assentor/protocol/seats.js";
 import {
   SessionRunner,
   validateSessionGraph,
@@ -13,6 +13,8 @@ import { createStageRunners, type StageRunnerDeps } from "../orchestrator/sessio
 import type { EngineEventDraft } from "#assentor/protocol/events.js";
 import type { Executor, ExecutorResult } from "../providers/executors/types.js";
 import type { WorktreeManager } from "../worktrees/manager.js";
+import type { SkillLibrary } from "../skills/library.js";
+import { SkillSession, withSkills, withSkillsAsk } from "../skills/session.js";
 import {
   ApprovalDeniedError,
   EXISTING_WORK_STRATEGY,
@@ -76,6 +78,14 @@ export interface ModeSessionInput {
   host?: ModeHostServices;
   /** Dynamic modes: continue the state the mode persisted for this `sessionId`. */
   resume?: boolean;
+  /**
+   * Skills (TE-07): executors from `deps.createExecutor` and `host.askSeat` calls
+   * get the seat's skills index and loaded bodies (`withSkills`, `withSkillsAsk`).
+   * Pass a `SkillSession` when the host also routes its own asks (e.g. negotiation
+   * `runStep`) through it; a library gets a session made here. Without it (or
+   * with no eligible skills) prompts are unchanged.
+   */
+  skills?: SkillLibrary | SkillSession;
 }
 
 export interface ModeRunResult extends SessionRunResult {
@@ -133,18 +143,6 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
   problems.push(...(mode.validate?.(input.config) ?? []));
   if (problems.length > 0) throw new ModeValidationError(problems);
 
-  const deps: StageRunnerDeps = {
-    ...input.deps,
-    supervisor: { ...input.deps.supervisor, autopilot: autonomy === "autopilot" },
-    // Only review may skip the executor; staticSpec refuses the strategy in any other mode.
-    createExecutor: (stage) =>
-      mode.id === "review" && stage.strategy === EXISTING_WORK_STRATEGY
-        ? existingWorkExecutor()
-        : input.deps.createExecutor(stage),
-  };
-  const stages = createStageRunners(deps);
-  const title = input.title?.trim() || input.goal.trim().split("\n")[0]!.slice(0, 80);
-  const buildInput = { goal: input.goal, title, autonomy, config: input.config };
   const emit = (draft: EngineEventDraft) => {
     try {
       input.emit?.(draft);
@@ -152,6 +150,30 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
       // Observability must never break a session.
     }
   };
+  const skills =
+    input.skills instanceof SkillSession
+      ? input.skills
+      : input.skills
+        ? new SkillSession(input.skills, { sessionId: input.sessionId, mode: mode.id, emit })
+        : undefined;
+  /** Wrapper → the executor the host made, so `watchExecutorOutput` gets the host's own object. */
+  const hostExecutor = new WeakMap<Executor, Executor>();
+  const deps: StageRunnerDeps = {
+    ...input.deps,
+    supervisor: { ...input.deps.supervisor, autopilot: autonomy === "autopilot" },
+    // Only review may skip the executor; staticSpec refuses the strategy in any other mode.
+    createExecutor: (stage) => {
+      if (mode.id === "review" && stage.strategy === EXISTING_WORK_STRATEGY) return existingWorkExecutor();
+      const executor = input.deps.createExecutor(stage);
+      if (!skills) return executor;
+      const wrapped = withSkills(executor, skills, seatOfStage(stage, input.deps));
+      hostExecutor.set(wrapped, executor);
+      return wrapped;
+    },
+  };
+  const stages = createStageRunners(deps);
+  const title = input.title?.trim() || input.goal.trim().split("\n")[0]!.slice(0, 80);
+  const buildInput = { goal: input.goal, title, autonomy, config: input.config };
   let started = false;
   const claim = () => {
     if (started) throw new Error("a prepared mode session runs once; prepare a new one");
@@ -228,9 +250,10 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
       try {
         const manual = autonomy === "manual";
         // Under manual the controller sees gated executors; the host knows the inner ones (output watching).
-        const inner = new WeakMap<Executor, Executor>();
-        const host: ModeHostServices = input.host ?? {};
-        const watch = host.watchExecutorOutput?.bind(host);
+        const base: ModeHostServices = input.host ?? {};
+        const ask = base.askSeat?.bind(base);
+        const host: ModeHostServices = skills && ask ? { ...base, askSeat: withSkillsAsk(ask, skills) } : base;
+        const watch = host.watchExecutorOutput?.bind(base);
         const controller = mode.createController!({
           ...buildInput,
           sessionId,
@@ -241,12 +264,12 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
                 createExecutor: (stage) => {
                   const executor = deps.createExecutor(stage);
                   const gated = gateExecutor(executor, stage.id, () => approvedStages.has(stage.id), requestApproval);
-                  inner.set(gated, executor);
+                  hostExecutor.set(gated, hostExecutor.get(executor) ?? executor);
                   return gated;
                 },
               }
             : deps,
-          host: watch ? { ...host, watchExecutorOutput: (executor, onChunk) => watch(inner.get(executor) ?? executor, onChunk) } : host,
+          host: watch ? { ...host, watchExecutorOutput: (executor, onChunk) => watch(hostExecutor.get(executor) ?? executor, onChunk) } : host,
           requestApproval,
           ask: ({ question, options }) => questions.ask(question, options, false),
           resume: input.resume ?? false,
@@ -435,6 +458,32 @@ function staticSpec(
   }
   if (problems.length > 0) throw new ModeValidationError(problems);
   return spec;
+}
+
+/**
+ * The seat an execute stage runs as, for its skills: `options.seat` (Lead),
+ * else the seat named by `options.seatId`, else the first edit seat, else the
+ * first seat of `deps.seatsFor(stage)`. Without any (a host that has no seats
+ * for the stage) a read-only `engineer` named after the stage, which gets no
+ * project skills. Strategy executors that fan out (best-of-n, divide) use the
+ * chosen seat's role for all of them.
+ */
+function seatOfStage(stage: StageSpec, deps: StageRunnerDeps): Pick<Seat, "id" | "role" | "permissions"> {
+  const named = stage.options.seat as Partial<Seat> | undefined;
+  if (named && typeof named.id === "string" && typeof named.role === "string") {
+    return { id: named.id, role: named.role, permissions: named.permissions === "edit" ? "edit" : "read-only" };
+  }
+  let seats: readonly Seat[] = [];
+  try {
+    seats = deps.seatsFor(stage);
+  } catch {
+    // An unknown team fails the stage elsewhere.
+  }
+  return (
+    seats.find((seat) => seat.id === stage.options.seatId) ??
+    seats.find((seat) => seat.permissions === "edit") ??
+    seats[0] ?? { id: stage.id, role: "engineer", permissions: "read-only" }
+  );
 }
 
 /** Review mode's executor: changes nothing and has no evidence to add. */

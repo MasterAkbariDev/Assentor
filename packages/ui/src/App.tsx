@@ -11,6 +11,7 @@ import { ReviewView } from "./features/review/ReviewView.js";
 import { SessionBoard } from "./features/session-board/SessionBoard.js";
 import { Onboarding } from "./features/onboarding/Onboarding.js";
 import { SettingsPage } from "./features/settings/SettingsPage.js";
+import { UsagePage } from "./features/usage/UsagePage.js";
 import { useEngine } from "./store/context.js";
 import type { ConnectionStatus } from "./store/engineStore.js";
 import { selectHasNegotiation, selectHasReview } from "./store/selectors.js";
@@ -94,18 +95,20 @@ export function App() {
             <SessionList />
           </>
         ) : null}
+        {route === "usage" ? <SessionList /> : null}
       </aside>
       <main className="main">
         <ConnectionNotice />
         {route === "sessions" ? <SessionPanel /> : null}
         {route === "settings" ? <SettingsPage /> : null}
+        {route === "usage" ? <UsagePage /> : null}
         {route === "new-session" ? <NewSessionPage /> : null}
         {route === "dev/fixtures" && FixturesPage ? (
           <Suspense fallback={<p className="empty">Loading…</p>}>
             <FixturesPage />
           </Suspense>
         ) : null}
-        {SECTIONS.filter((s) => s.id !== "sessions" && s.id !== "settings" && s.id === route).map((s) => (
+        {SECTIONS.filter((s) => s.id !== "sessions" && s.id !== "settings" && s.id !== "usage" && s.id === route).map((s) => (
           <EmptySection key={s.id} id={s.id} label={s.label} />
         ))}
       </main>

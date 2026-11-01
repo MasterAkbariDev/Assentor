@@ -10,6 +10,7 @@ import { extractJsonCandidate } from "#assentor/protocol/parse.js";
 import type { Executor, ExecutorResult } from "../providers/executors/types.js";
 import { runVerificationGates, type RunVerificationCommand } from "../review/verification-gates.js";
 import { runShellCommand } from "../process/run-shell.js";
+import { prepareWorktree } from "../worktrees/prepare.js";
 import { redactSecrets } from "../security/redact.js";
 import { WorktreeError, type SeatKey, type WorktreeDiff } from "../worktrees/manager.js";
 import { packFailureOutput } from "../context/budget.js";
@@ -299,6 +300,11 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
   const contract = deps.contract ?? createEmptyContract(goal);
   // Every command gets the session signal, so cancel kills the process tree instead of abandoning it.
   const runCommand: RunVerificationCommand = (command, cwd, options) => (extras.runCommand ?? runShellCommand)(command, cwd, { ...options, signal });
+  /** Installs dependencies in a new worktree (`worktrees.install`) before anything runs there; failure ends `blocked`. */
+  const prepare = async (root: string) => {
+    const prepared = await prepareWorktree(root, input.config.worktrees?.install, { signal, run: runCommand });
+    if (!prepared.ok) throw new Stop({ status: "blocked", reason: prepared.reason });
+  };
 
   const checkAbort = () => {
     if (signal.aborted) throw new Stop({ status: "blocked", reason: "cancelled" });
@@ -387,6 +393,7 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
     };
     try {
       checkAbort();
+      await prepare(base);
       const commands = await resolveVerificationCommands(base, input.config.verification.commands);
       reproCommand = settings.reproCommand ?? commands.test;
       if (!reproCommand) throw new Stop({ status: "blocked", reason: "no reproduction command: set modes.debug.reproCommand or a test command" });
@@ -417,8 +424,10 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
       try {
         const roots: string[] = [];
         for (const key of keys) {
-          roots.push((await manager.create(key)).path);
+          const root = (await manager.create(key)).path;
           created.push(key);
+          await prepare(root);
+          roots.push(root);
         }
         const settled = await Promise.allSettled(
           hypothesisSeats.map(async (seat, i): Promise<Finding> => {
@@ -469,6 +478,7 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
     // 3. Fix the winner in a clean worktree; gates and the instrumentation check decide.
     const root = (await manager.create(fixKey)).path;
     fixCreated = true;
+    await prepare(root);
     const fixExecutor = deps.createExecutor(fixStage);
     const fixGates = async () => {
       if (input.config.verification.enabled === false) return { passed: true, text: "" };

@@ -171,6 +171,10 @@ export const AssentorConfigSchema = z.object({
       concurrency: z.record(z.enum(SEAT_PROVIDERS), z.number().int().min(1).max(16)).default({}),
       /** Seat scheduler: parallel jobs across all providers. */
       globalConcurrency: z.number().int().min(1).max(32).default(6),
+      /** Pre-run estimate (TE-09): ask before a run whose high estimate passes this many tokens (TTY), refuse without one. Unset = never ask. */
+      confirmAboveTokens: z.number().int().positive().optional(),
+      /** Pre-run estimate (TE-09): as `confirmAboveTokens`, in USD; only when pricing is known for the seats. */
+      confirmAboveUsd: z.number().positive().optional(),
       /** Seat scheduler: whole-session budget across all seats (unset = no limit). */
       session: z
         .object({
@@ -213,6 +217,21 @@ export const AssentorConfigSchema = z.object({
     .default({}),
   /** Optional per-role token budgets for the context packer (TE-03); nothing is written unless set. */
   context: ContextConfigSchema.optional(),
+  worktrees: z
+    .object({
+      /**
+       * Dependency install in each new seat worktree before its gates: `auto`
+       * (from the JS lockfile; nothing without one), `off`, or a shell command.
+       */
+      install: z
+        .string()
+        .trim()
+        .min(1, 'worktrees.install must be "auto", "off" or a command')
+        .max(1000)
+        .refine((v) => !/[\0\r\n]/.test(v), "worktrees.install must be one line")
+        .default("auto"),
+    })
+    .default({}),
   verification: z
     .object({
       enabled: z.boolean().default(true),

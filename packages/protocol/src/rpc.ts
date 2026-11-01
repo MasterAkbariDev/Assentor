@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AUTONOMY_LEVELS, type EngineEvent } from "./events.js";
+import { AUTONOMY_LEVELS, RunEstimateSchema, type EngineEvent } from "./events.js";
 import { ModelIdSchema, SEAT_PROVIDERS, STAGE_KINDS, TeamSchema } from "./seats.js";
 
 /**
@@ -129,6 +129,8 @@ export const UsageReportSchema = z.object({
   skippedLines: z.number().int().positive().optional(),
   /** True when the log was longer than the reader's line cap; totals cover the start only. */
   truncated: z.boolean().optional(),
+  /** The pre-run estimate (TE-09), when the run logged one; compare with `total`. */
+  estimate: RunEstimateSchema.optional(),
 });
 export type UsageReport = z.infer<typeof UsageReportSchema>;
 
@@ -149,6 +151,18 @@ const PromptLoadErrorSchema = z.object({
   /** Relative to the layer's prompt directory, with `/` separators. */
   file: z.string(),
   message: z.string(),
+});
+
+/** A skill (TE-07); `tokens` is the estimated size of its body. */
+const SkillSummarySchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  source: z.enum(["builtin", "user", "project"]),
+  overridden: z.boolean(),
+  roles: z.array(z.string()).optional(),
+  modes: z.array(z.string()).optional(),
+  profiles: z.array(z.string()).optional(),
+  tokens: z.number().int().nonnegative(),
 });
 
 const TeamSeatSchema = z.object({
@@ -299,6 +313,16 @@ export const RpcMethods = {
       frontMatter: z.record(z.unknown()),
       body: z.string(),
     }),
+  },
+  "skill.list": {
+    access: "read",
+    params: z.object({}).strict().optional(),
+    result: z.object({ skills: z.array(SkillSummarySchema), errors: z.array(PromptLoadErrorSchema) }),
+  },
+  "skill.get": {
+    access: "read",
+    params: z.object({ name: z.string().min(1).max(100) }).strict(),
+    result: SkillSummarySchema.extend({ frontMatter: z.record(z.unknown()), body: z.string() }),
   },
   "team.list": {
     access: "read",

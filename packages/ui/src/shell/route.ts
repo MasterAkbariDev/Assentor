@@ -10,6 +10,7 @@ export const SECTIONS = [
   { id: "prompts", label: "Prompts" },
   { id: "teams", label: "Teams" },
   { id: "playbooks", label: "Playbooks" },
+  { id: "usage", label: "Usage" },
   { id: "settings", label: "Settings" },
 ] as const;
 

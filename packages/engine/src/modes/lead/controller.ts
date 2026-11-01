@@ -21,6 +21,7 @@ import { PromptLibrary, renderPrompt, type TemplateVariables } from "../../promp
 import { extractJsonCandidate } from "#assentor/protocol/parse.js";
 import type { ExecutorResult } from "../../providers/executors/types.js";
 import { runVerificationGates } from "../../review/verification-gates.js";
+import { installSetting, lockfileFingerprint, prepareWorktree } from "../../worktrees/prepare.js";
 import type { JobOutcome } from "../../seats/scheduler.js";
 import { ControllerActionSchema, type ControllerAction } from "../controller.js";
 import { ApprovalDeniedError, type ModeController, type ModeControllerInput, type ModeControllerResult } from "../registry.js";
@@ -181,6 +182,8 @@ class LeadController implements ModeController {
   /** Agent runs going on, by lower-cased task id. */
   private readonly running = new Map<string, { seatId: string; done: Promise<void> }>();
   private readonly finished: RunOutcome[] = [];
+  /** Worktree key → lockfile fingerprint of its last good install in this process (a resume installs once more). */
+  private readonly prepared = new Map<string, string>();
   private roster: readonly RosterEntry[] = [];
   /** `lead` prompt from the prompt library (built-in, user, project layers), when one exists. */
   private library: PromptLibrary | undefined;
@@ -615,6 +618,9 @@ class LeadController implements ModeController {
       return { ...base, failure, ...(sessionStop ? { sessionStop } : {}) };
     };
     try {
+      // Dependencies (`worktrees.install`) before the agent and the gates; a failure is a gate problem of this task, not the session's.
+      let installProblem = await this.ensureInstalled(worktree);
+      if (this.stop.signal.aborted) return fail("cancelled");
       this.seatEvent(seat, "seat.status", { status: "editing", detail: task.id });
       const stage: StageSpec = { id: stageId, kind: "execute", strategy: LEAD_AGENT_STRATEGY, options: { seat }, requireApproval: false };
       const executor = this.input.deps.createExecutor(stage);
@@ -659,9 +665,14 @@ class LeadController implements ModeController {
       let gates: Awaited<ReturnType<LeadController["gates"]>>;
       let gateFiles: string[] = [];
       const gateProblems: string[] = [];
+      // The agent may have changed the lockfile: reinstall first (never in a worktree that changed files it does not own).
+      if (outside.length === 0) installProblem ??= await this.ensureInstalled(worktree);
+      if (this.stop.signal.aborted) return fail("cancelled");
       if (outside.length > 0 && this.gatesEnabled()) {
         // Do not run commands from a worktree that changed files it does not own.
         gateProblems.push("gates not run: the run changed files outside the task's owned paths");
+      } else if (installProblem) {
+        gateProblems.push(`gates not run: ${installProblem}`);
       } else {
         // Gate processes take no signal; stop waiting on cancel, like review(). An abandoned gate runs to its own timeout.
         const ran = await Promise.race([this.gates(worktree.path), this.stopped.then(() => "stopped" as const)]);
@@ -695,6 +706,25 @@ class LeadController implements ModeController {
   /** Changed files outside the task's owned paths; case-sensitive, like the manager's `allowedPaths`. */
   private outsideOwned(task: LeadTask, files: readonly string[]): string[] {
     return files.filter((file) => !task.ownedPaths.some((p) => file === p || file.startsWith(`${p}/`)));
+  }
+
+  /**
+   * Installs dependencies in an agent worktree unless its current lockfiles were installed already in this
+   * process; nothing when gates are off. Returns the problem text of a failed install.
+   */
+  private async ensureInstalled(worktree: { key: string; path: string }): Promise<string | undefined> {
+    const sup = this.input.deps.supervisor;
+    const setting = installSetting(this.input.config, !this.gatesEnabled());
+    if (setting === "off") return undefined;
+    const fingerprint = await lockfileFingerprint(worktree.path);
+    if (this.prepared.get(worktree.key) === fingerprint) return undefined;
+    const prepared = await prepareWorktree(worktree.path, setting, {
+      signal: this.stop.signal,
+      ...(sup?.runVerificationCommand ? { run: sup.runVerificationCommand } : {}),
+    });
+    if (!prepared.ok) return clip(prepared.reason, 2000);
+    this.prepared.set(worktree.key, fingerprint);
+    return undefined;
   }
 
   private gatesEnabled(): boolean {

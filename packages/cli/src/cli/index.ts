@@ -19,6 +19,7 @@ import {
   validatePrompts,
 } from "./prompts.js";
 import { checkPlaybookRun, listPlaybooks } from "./playbooks.js";
+import { listSkills, newSkill, showSkill } from "./skills.js";
 import {
   createAssentorServices,
   runFullDiagnostics,
@@ -211,6 +212,7 @@ program
   .option("--autonomy <level>", "How much runs without asking: manual|supervised|autopilot")
   .option("--autopilot", "Shortcut for --autonomy autopilot (auto next-phase)", false)
   .option("--playbook <id>", "Playbook to run (validates the id only; running playbooks is not wired yet)")
+  .option("-y, --yes", "Start without asking when the pre-run estimate is over limits.confirmAbove*", false)
   .action(
     async (
       promptParts: string[],
@@ -229,6 +231,7 @@ program
         autopilot?: boolean;
         playbook?: string;
         retro?: boolean;
+        yes?: boolean;
       },
     ) => {
       if (options.playbook !== undefined) {
@@ -267,6 +270,7 @@ program
         autonomy: flags.autonomy,
         modeId: flags.modeId,
         retro: options.retro,
+        yes: options.yes,
       });
 
       console.log(`Task ${result.taskId} finished: ${result.status}`);
@@ -463,6 +467,37 @@ promptsCmd
   .option("-p, --project <path>", "Project directory", ".")
   .action(async (options: { project: string }) => {
     process.exitCode = await validatePrompts({ projectPath: options.project, ...promptIo });
+  });
+
+const skillsCmd = program
+  .command("skills")
+  .description("List, show and create skills (instruction packs loaded on demand)");
+
+skillsCmd
+  .command("list")
+  .description("List skills with their layer and size; prints load errors")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(async (options: { project: string }) => {
+    process.exitCode = await listSkills({ projectPath: options.project, ...promptIo });
+  });
+
+skillsCmd
+  .command("show")
+  .description("Show a skill's front-matter and body")
+  .argument("<name>", "Skill name")
+  .option("-p, --project <path>", "Project directory", ".")
+  .action(async (name: string, options: { project: string }) => {
+    process.exitCode = await showSkill({ projectPath: options.project, name, ...promptIo });
+  });
+
+skillsCmd
+  .command("new")
+  .description("Create a skill from a template in the user or project layer")
+  .argument("<name>", "Skill name (kebab-case)")
+  .option("-p, --project <path>", "Project directory", ".")
+  .option("--to <layer>", "Where it goes: user or project", "user")
+  .action(async (name: string, options: { project: string; to: string }) => {
+    process.exitCode = await newSkill({ projectPath: options.project, name, to: options.to, ...promptIo });
   });
 
 program
