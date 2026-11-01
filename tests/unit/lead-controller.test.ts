@@ -777,6 +777,46 @@ describe.skipIf(process.platform === "win32")("lead mode: dependency install (fa
     expect(refusals(s.events).filter((r) => r.action === "accept")).toEqual([]);
   });
 
+  it("an agent that changes the lockfile gets a reinstall before the gates", async () => {
+    pm = await fakePackageManagers();
+    const repo = await makeRepo();
+    await addYarnLock(repo, git);
+    const config = parseAssentorConfig({ verification: { commands: { test: "pnpm test" } } });
+    const s = await setup({
+      repo,
+      lead: { policy: { reviewBeforeAccept: false } },
+      supervisor: {
+        verification: config.verification,
+        runVerificationCommand: async (command, cwd, options) =>
+          command.startsWith("yarn ") ? runShellCommand(command, cwd, options) : { stdout: "", stderr: "", code: 0 },
+      },
+      script: [turn(plan({ ...T1, ownedPaths: ["a", "yarn.lock"] }), assign("T1")), turn({ action: "reject", taskId: "T1", reason: "x" }, { action: "finish", summary: "x" })],
+      agents: {
+        cheap: async (task, seat) => {
+          await fs.writeFile(path.join(task.projectPath, "yarn.lock"), "# lock v2\n");
+          return writes("a/x.ts")(task, seat);
+        },
+      },
+    });
+    await s.run();
+    expect(await pm.logged()).toEqual(["yarn install --frozen-lockfile", "yarn install --frozen-lockfile"]);
+  });
+
+  it("no install when gates are skipped", async () => {
+    pm = await fakePackageManagers();
+    const repo = await makeRepo();
+    await addYarnLock(repo, git);
+    const s = await setup({
+      repo,
+      lead: { policy: { reviewBeforeAccept: false } },
+      script: [turn(plan(T1), assign("T1")), turn({ action: "reject", taskId: "T1", reason: "x" }, { action: "finish", summary: "x" })],
+      agents: { cheap: writes("a/x.ts") },
+    });
+    await s.run();
+    expect(s.runs).toHaveLength(1);
+    expect(await pm.logged()).toEqual([]);
+  });
+
   it("a failed install is a gate problem of the task: gates not run, accept refused, session goes on", async () => {
     const { s, gates } = await installSetup('echo "registry unreachable" >&2; exit 1');
     const result = await s.run();

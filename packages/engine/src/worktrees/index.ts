@@ -19,6 +19,8 @@ export {
 export {
   prepareWorktree,
   worktreeInstallCommand,
+  installSetting,
+  lockfileFingerprint,
   INSTALL_TIMEOUT_MS,
   type PrepareResult,
   type WorktreeInstallSetting,

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { runShellCommand } from "../process/run-shell.js";
@@ -48,6 +49,27 @@ const LOCKFILES: ReadonlyArray<readonly [string, string]> = [
   ["bun.lock", "bun install --frozen-lockfile"],
 ];
 
+/**
+ * `worktrees.install`, or `"off"` when the mode's gates are disabled
+ * (`verification.enabled: false`, `--skip-gates`): then nothing needs the deps.
+ */
+export function installSetting(
+  config: { worktrees?: { install?: string }; verification: { enabled?: boolean } },
+  skipGates?: boolean,
+): WorktreeInstallSetting | undefined {
+  return config.verification.enabled === false || skipGates ? "off" : config.worktrees?.install;
+}
+
+/** Hash of the JS lockfiles at the worktree root: an install is stale once this changes. */
+export async function lockfileFingerprint(worktreePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  for (const [file] of LOCKFILES) {
+    const bytes = await fs.readFile(path.join(worktreePath, file)).catch(() => undefined);
+    if (bytes) hash.update(`${file}\0`).update(bytes);
+  }
+  return hash.digest("hex");
+}
+
 export type PrepareResult = { ok: true; command?: string } | { ok: false; reason: string };
 
 /** The install command `setting` resolves to in `worktreePath`, or undefined for none. */
@@ -77,7 +99,7 @@ export async function prepareWorktree(
   const timeoutMs = options.timeoutMs ?? INSTALL_TIMEOUT_MS;
   const run = options.run ?? runShellCommand;
   // A reused worktree (lead after a resume) may hold work already; only what the install adds counts.
-  const before = new Set((await gitStatus(worktreePath)) ?? []);
+  const before = await dirtySnapshot(worktreePath);
   const result = await run(command, worktreePath, {
     timeoutMs,
     env: { CI: "1" },
@@ -87,10 +109,15 @@ export async function prepareWorktree(
   const where = `(worktree kept at ${worktreePath}; set worktrees.install to a working command, or "off")`;
   if (result.code !== 0) {
     const why = result.code === 124 ? `timed out after ${Math.ceil(timeoutMs / 1000)} s` : `exited ${result.code}`;
-    const tail = redactSecrets([result.stdout, result.stderr].filter(Boolean).join("\n").slice(-OUTPUT_TAIL_CHARS)).text;
+    // Redact first: cutting first could split a secret so the redactor no longer recognises it.
+    const tail = redactSecrets([result.stdout, result.stderr].filter(Boolean).join("\n")).text.slice(-OUTPUT_TAIL_CHARS);
     return { ok: false, reason: `installing dependencies in the worktree failed: \`${command}\` ${why} ${where}\n${tail}` };
   }
-  const changed = (await gitStatus(worktreePath))?.filter((entry) => !before.has(entry));
+  const after = await dirtySnapshot(worktreePath);
+  const changed =
+    before && after
+      ? [...new Set([...before.keys(), ...after.keys()])].filter((file) => before.get(file) !== after.get(file))
+      : undefined;
   if (changed === undefined || changed.length > 0) {
     const files = changed?.slice(0, 10).join(", ") ?? "git status failed";
     return {
@@ -101,14 +128,40 @@ export async function prepareWorktree(
   return { ok: true, command };
 }
 
-/** Paths `git status` reports in `cwd`; undefined when git fails. */
-function gitStatus(cwd: string): Promise<string[] | undefined> {
-  return new Promise((resolve) => {
+/**
+ * Every path `git status` reports in `cwd` (untracked files one by one) with a
+ * hash of its content, so a rewrite of an already-dirty file shows; undefined
+ * when git fails.
+ */
+async function dirtySnapshot(cwd: string): Promise<Map<string, string> | undefined> {
+  const out = await new Promise<string | undefined>((resolve) => {
     execFile(
       "git",
-      ["status", "--porcelain", "-z", "--untracked-files=normal"],
-      { cwd, encoding: "utf8", timeout: 60_000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 },
-      (error, stdout) => resolve(error ? undefined : stdout.split("\0").filter(Boolean).map((e) => e.slice(3))),
+      ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+      { cwd, encoding: "utf8", timeout: 60_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 },
+      (error, stdout) => resolve(error ? undefined : stdout),
     );
   });
+  if (out === undefined) return undefined;
+  const files: string[] = [];
+  const fields = out.split("\0");
+  for (let i = 0; i < fields.length; i += 1) {
+    const entry = fields[i]!;
+    if (entry.length < 4) continue;
+    files.push(entry.slice(3));
+    if (entry[0] === "R" || entry[0] === "C") i += 1; // the next field is the rename/copy source
+  }
+  const snapshot = new Map<string, string>();
+  for (const file of files) snapshot.set(file, await contentHash(path.join(cwd, file)));
+  return snapshot;
+}
+
+async function contentHash(file: string): Promise<string> {
+  try {
+    const stat = await fs.lstat(file);
+    const bytes = stat.isSymbolicLink() ? `link:${await fs.readlink(file)}` : stat.isFile() ? await fs.readFile(file) : `type:${stat.mode}`;
+    return createHash("sha256").update(bytes).digest("hex");
+  } catch {
+    return "missing";
+  }
 }

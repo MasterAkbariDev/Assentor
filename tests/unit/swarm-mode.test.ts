@@ -21,6 +21,8 @@ import {
 import type { MockReviewerStep } from "../../packages/engine/src/providers/reviewers/mock/index.js";
 import { checkSwarmItems, chunkItems, createSwarmController, swarmProblems, swarmTiers, type SwarmExtras, type SwarmWorkItem } from "../../packages/engine/src/modes/swarm.js";
 import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
+import { runShellCommand } from "../../packages/engine/src/process/run-shell.js";
+import { addYarnLock, fakePackageManagers } from "./fake-package-managers.js";
 
 const exec = promisify(execFile);
 // Real git in temp repos, like the debug and best-of-n tests.
@@ -607,5 +609,39 @@ describe("swarm mode", () => {
     expect(result.reason).toContain("apply was not approved");
     expect(events.filter((e) => e.type === "user.question")).toHaveLength(1);
     await expectUntouched(s);
+  });
+});
+
+describe.skipIf(process.platform === "win32")("swarm dependency install (fake package managers on PATH)", () => {
+  let pm: Awaited<ReturnType<typeof fakePackageManagers>> | undefined;
+  afterEach(async () => {
+    await pm?.restore();
+    pm = undefined;
+  });
+  const installs: SwarmExtras["runCommand"] = (command, cwd, options) =>
+    command.startsWith("yarn ") ? runShellCommand(command, cwd, options) : Promise.resolve({ stdout: "", stderr: "", code: 0 });
+
+  it("installs in the integration, item and candidate worktrees", async () => {
+    pm = await fakePackageManagers();
+    const repo = await makeRepo();
+    await addYarnLock(repo, git);
+    const s = await setup({ repo, config: baseConfig({ files: ["a.txt"] }) });
+    const result = await s.run({}, { runCommand: installs });
+    expect(result.status).toBe("completed");
+    // integration, the one item, the one batch candidate
+    expect(await pm.logged()).toEqual(Array(3).fill("yarn install --frozen-lockfile"));
+  });
+
+  it("manual asks before the first install; a denial runs nothing", async () => {
+    pm = await fakePackageManagers();
+    const repo = await makeRepo();
+    await addYarnLock(repo, git);
+    const s = await setup({ repo });
+    const requestApproval = vi.fn(async () => false);
+    const result = await s.run({ autonomy: "manual", requestApproval }, { runCommand: installs });
+    expect(result).toMatchObject({ status: "blocked", reason: "installing dependencies was not approved; nothing ran" });
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+    expect(await pm.logged()).toEqual([]);
+    expect(s.prompts).toHaveLength(0);
   });
 });

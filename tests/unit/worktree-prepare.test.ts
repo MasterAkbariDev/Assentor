@@ -106,6 +106,28 @@ describe.skipIf(process.platform === "win32")("prepareWorktree (fake package man
     expect(result).toMatchObject({ ok: false, reason: expect.stringContaining("changed files git tracks or does not ignore (stray.txt)") });
   });
 
+  it("an install that rewrites an already-modified file is refused", async () => {
+    await fakeTool("npm", "echo again >> notes.txt");
+    const wt = await checkout({ "package-lock.json": "{}\n", "notes.txt": "one\n" });
+    await fs.writeFile(path.join(wt, "notes.txt"), "work in progress\n");
+    expect(await prepareWorktree(wt, "auto")).toMatchObject({ ok: false, reason: expect.stringContaining("(notes.txt)") });
+  });
+
+  it("an install that adds a file inside an untracked directory is refused", async () => {
+    await fakeTool("npm", "echo y > scratch/new.txt");
+    const wt = await checkout({ "package-lock.json": "{}\n" });
+    await fs.mkdir(path.join(wt, "scratch"));
+    await fs.writeFile(path.join(wt, "scratch", "old.txt"), "mine\n");
+    expect(await prepareWorktree(wt, "auto")).toMatchObject({ ok: false, reason: expect.stringContaining("(scratch/new.txt)") });
+  });
+
+  it("existing work (including a staged rename) is not blamed on a clean install", async () => {
+    const wt = await checkout({ "package-lock.json": "{}\n", "old name.txt": "x\n" });
+    await exec("git", ["mv", "old name.txt", "new name.txt"], { cwd: wt });
+    await fs.writeFile(path.join(wt, "draft.txt"), "draft\n");
+    expect(await prepareWorktree(wt, "auto")).toEqual({ ok: true, command: "npm ci --prefer-offline" });
+  });
+
   it("times out", async () => {
     await fakeTool("yarn", "sleep 20");
     const wt = await checkout({ "yarn.lock": "\n" });

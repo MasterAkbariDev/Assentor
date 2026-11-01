@@ -11,7 +11,7 @@ import { ReviewStatus } from "../core/types.js";
 import { DividePathSchema, escapingSymlinks, isOwned, pathsOverlap } from "../negotiation/strategies/divide.js";
 import { sessionPaths, writeJsonAtomic } from "../persistence/paths.js";
 import { runShellCommand } from "../process/run-shell.js";
-import { prepareWorktree } from "../worktrees/prepare.js";
+import { installSetting, prepareWorktree, worktreeInstallCommand } from "../worktrees/prepare.js";
 import type { EngineEventDraft } from "#assentor/protocol/events.js";
 import { PromptLibrary } from "../prompts/index.js";
 import type { Executor, ExecutorResult } from "../providers/executors/types.js";
@@ -326,9 +326,10 @@ async function runSwarm(input: ModeControllerInput, extras: SwarmExtras): Promis
   const contract = deps.contract ?? createEmptyContract(goal);
   // Every command gets the session signal, so cancel kills the process tree instead of abandoning it.
   const runCommand: RunVerificationCommand = (command, cwd, options) => (extras.runCommand ?? runShellCommand)(command, cwd, { ...options, signal });
-  /** Installs dependencies in a new worktree (`worktrees.install`) before anything runs there; failure ends `blocked`. */
+  /** Installs dependencies in a new worktree (`worktrees.install`; off with the gates) before anything runs there; failure ends `blocked`. */
+  const install = installSetting(input.config, deps.supervisor?.skipGates);
   const prepare = async (root: string) => {
-    const prepared = await prepareWorktree(root, input.config.worktrees?.install, { signal, run: runCommand });
+    const prepared = await prepareWorktree(root, install, { signal, run: runCommand });
     if (!prepared.ok) throw new Stop({ status: "blocked", reason: prepared.reason });
   };
   const library = input.host.prompts ?? (await PromptLibrary.load({ projectPath: deps.projectPath }).catch(() => undefined));
@@ -424,6 +425,11 @@ async function runSwarm(input: ModeControllerInput, extras: SwarmExtras): Promis
     if (!integrationReady) {
       const created = await manager.create(integrationKey);
       integrationReady = true;
+      // The install runs repo code (lifecycle scripts) before any tier is approved, so manual asks first.
+      const installCommand = await worktreeInstallCommand(created.path, install);
+      if (installCommand && input.autonomy === "manual" && !(await input.requestApproval({ question: `Install dependencies (\`${installCommand}\`) in the swarm worktrees?` }))) {
+        throw new Stop({ status: "blocked", reason: "installing dependencies was not approved; nothing ran" });
+      }
       await prepare(created.path);
       state.integrationHead = (await manager.diff(integrationKey)).head;
     }

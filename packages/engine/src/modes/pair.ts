@@ -12,7 +12,7 @@ import { PromptLibrary } from "../prompts/index.js";
 import type { Executor, ExecutorResult } from "../providers/executors/types.js";
 import { runVerificationGates, type RunVerificationCommand } from "../review/verification-gates.js";
 import { runShellCommand } from "../process/run-shell.js";
-import { prepareWorktree } from "../worktrees/prepare.js";
+import { installSetting, prepareWorktree, worktreeInstallCommand } from "../worktrees/prepare.js";
 import { redactSecrets } from "../security/redact.js";
 import { WorktreeError, type SeatKey } from "../worktrees/manager.js";
 import { classifyRisk } from "./danger.js";
@@ -262,8 +262,17 @@ async function runPair(input: ModeControllerInput, extras: PairExtras): Promise<
   try {
     const root = (await mgr.create(key)).path;
     created = true;
-    // Dependencies (`worktrees.install`) before the driver or any gate; a failed install ends `blocked`, worktree kept.
-    const prepared = await prepareWorktree(root, input.config.worktrees?.install, { signal, run: runCommand });
+    // Dependencies (`worktrees.install`; off with the gates) before the driver or any gate; a failed install ends `blocked`, worktree kept.
+    const install = installSetting(input.config, deps.supervisor?.skipGates);
+    const installCommand = await worktreeInstallCommand(root, install);
+    if (installCommand && input.autonomy === "manual") {
+      // The install runs repo code (lifecycle scripts), so manual asks first; approving also starts the first driver without a second question.
+      const question = `Install dependencies (\`${installCommand}\`) and start the driver in the pair worktree?`;
+      if (!(await input.requestApproval({ question, stageId: `${DRIVER_STAGE}-1` }))) {
+        throw new Stop({ status: "blocked", reason: "installing dependencies was not approved; nothing ran" });
+      }
+    }
+    const prepared = await prepareWorktree(root, install, { signal, run: runCommand });
     if (!prepared.ok) throw new Stop({ status: "blocked", reason: prepared.reason });
     let driverSeat = first;
     let navigatorSeat = second;

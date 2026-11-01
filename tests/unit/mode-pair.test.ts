@@ -733,6 +733,29 @@ describe("pair mode", () => {
       await expectKeptFailed(s);
     });
 
+    it("manual asks before the install (pre-approving the first driver); a denial runs nothing", async () => {
+      pm = await fakePackageManagers();
+      const d = driver(writes("feature.txt"));
+      const s = await setup({ drivers: { drivers: [d] } });
+      await addYarnLock(s.repo, git);
+      const denied = vi.fn(async () => false);
+      const result = await s.run({ autonomy: "manual", requestApproval: denied }, { runCommand });
+      expect(result).toMatchObject({ status: "blocked", reason: "installing dependencies was not approved; nothing ran" });
+      expect(denied).toHaveBeenCalledWith({ question: "Install dependencies (`yarn install --frozen-lockfile`) and start the driver in the pair worktree?", stageId: "pair-driver-1" });
+      expect(await pm.logged()).toEqual([]);
+      expect(d.prompts).toHaveLength(0);
+      await expectKeptFailed(s);
+    });
+
+    it("no install when the gates are off", async () => {
+      pm = await fakePackageManagers();
+      const d = driver(writes("feature.txt"));
+      const s = await setup({ drivers: { drivers: [d] }, config: baseConfig({}, { verification: { enabled: false } }) });
+      await addYarnLock(s.repo, git);
+      expect((await s.run({}, { runCommand })).status).toBe("completed");
+      expect(await pm.logged()).toEqual([]);
+    });
+
     it("worktrees.install off runs nothing", async () => {
       pm = await fakePackageManagers();
       const d = driver(writes("feature.txt"));
