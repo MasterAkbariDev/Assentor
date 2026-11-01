@@ -1,7 +1,9 @@
 import {
+  cliPromptInvocation,
   findOnPath,
   locateBinary,
   spawnCliProcess,
+  type BinaryTool,
   type HostEnv,
 } from "../../../executors/cli-locator.js";
 import { requestedModel } from "../../executors/cli-print/recipes.js";
@@ -26,6 +28,8 @@ export type CliReviewerAdapter = "claude" | "antigravity" | "cursor" | "codex" |
 export interface CliSpawnRequest {
   command: string;
   args: string[];
+  /** Prompt for the child's stdin (Windows `.cmd` shims only; see `cliPromptInvocation`). */
+  stdin?: string;
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
@@ -190,15 +194,22 @@ export class ProcessCliTransport implements CliTransport {
       binary: this.binary,
       model: this.model,
     });
-    this.lastCommand = { command: this.binary, args, cwd: input.cwd };
-    const result = await this.spawnFn({
-      command: this.binary,
-      args,
-      cwd: input.cwd,
-      env: { ...process.env, ...this.env, ...input.env },
-      timeoutMs: input.timeoutMs,
-      ...(input.signal ? { signal: input.signal } : {}),
-    });
+    const invocation = cliPromptInvocation(ADAPTER_TOOL[this.adapter], this.binary, args, input.prompt);
+    this.lastCommand = { command: this.binary, args: invocation.args, cwd: input.cwd };
+    let result: CliSpawnResult;
+    try {
+      result = await this.spawnFn({
+        command: this.binary,
+        args: invocation.args,
+        ...(invocation.stdin !== undefined ? { stdin: invocation.stdin } : {}),
+        cwd: input.cwd,
+        env: { ...process.env, ...this.env, ...input.env },
+        timeoutMs: input.timeoutMs,
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+    } finally {
+      invocation.cleanup();
+    }
     return this.adapter === "claude" ? unwrapClaudeJson(result) : result;
   }
 }
@@ -368,6 +379,13 @@ export class CliReviewer implements Reviewer {
   }
 }
 
+const ADAPTER_TOOL: Record<Exclude<CliReviewerAdapter, "mock">, BinaryTool> = {
+  claude: "claude",
+  antigravity: "agy",
+  cursor: "cursor",
+  codex: "codex",
+};
+
 /** Env var that points at each adapter's binary (see `TOOL_ENV` in cli-locator). */
 const BINARY_ENV: Record<Exclude<CliReviewerAdapter, "mock">, string> = {
   claude: "ASSENTOR_CLAUDE_BINARY",
@@ -422,15 +440,7 @@ export function isCliReviewerAvailable(
     if (adapter === "mock") {
       return true;
     }
-    const tool =
-      adapter === "claude"
-        ? "claude"
-        : adapter === "cursor"
-          ? "cursor"
-          : adapter === "codex"
-            ? "codex"
-            : "agy";
-    return Boolean(locateBinary(tool, { ...options, persist: false }));
+    return Boolean(locateBinary(ADAPTER_TOOL[adapter], { ...options, persist: false }));
   } catch {
     return false;
   }
@@ -489,11 +499,16 @@ export async function defaultCliSpawn(
   return new Promise((resolve, reject) => {
     // Tracked until it exits, so Ctrl+C (killAllTrackedProcesses) also stops reviewer and seat asks.
     const child = trackChildProcess(
-      spawnCliProcess(request.command, request.args, {
-        cwd: request.cwd,
-        env: request.env,
-        stdio: ["ignore", "pipe", "pipe"],
-      }),
+      spawnCliProcess(
+        request.command,
+        request.args,
+        {
+          cwd: request.cwd,
+          env: request.env,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+        request.stdin,
+      ),
     );
 
     let stdout = "";
