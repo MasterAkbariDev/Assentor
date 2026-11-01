@@ -5,15 +5,19 @@ import { isLiveSeat } from "../../store/selectors.js";
 import { useNow } from "../session-board/useNow.js";
 import { SeatActions } from "../controls/SeatActions.js";
 import { SeatActivity } from "./SeatActivity.js";
+import { SeatFiles } from "./SeatFiles.js";
 import { SeatInfo } from "./SeatInfo.js";
 import { SeatOutput } from "./SeatOutput.js";
+import { SeatTranscript } from "./SeatTranscript.js";
 
 /** Refresh period of the drawer's elapsed time (Info tab). */
 const TICK_MS = 1000;
 
 const TABS = [
   { id: "activity", label: "Activity" },
+  { id: "transcript", label: "Transcript" },
   { id: "output", label: "Output" },
+  { id: "files", label: "Files" },
   { id: "info", label: "Info" },
 ] as const;
 
@@ -129,7 +133,9 @@ function SeatDrawerPanel({ seat }: { seat: SeatState }) {
       </div>
       <div role="tabpanel" id={panelId} aria-labelledby={tabId(tab)} tabIndex={0} className="seat-drawer-body">
         {tab === "activity" ? <SeatActivity seatId={seat.seatId} /> : null}
+        {tab === "transcript" ? <SeatTranscript seatId={seat.seatId} /> : null}
         {tab === "output" ? <SeatOutput text={seat.outputTail} /> : null}
+        {tab === "files" ? <SeatFiles seat={seat} /> : null}
         {tab === "info" ? <SeatInfo seat={seat} now={now} /> : null}
       </div>
     </div>

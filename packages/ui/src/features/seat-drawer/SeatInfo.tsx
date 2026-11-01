@@ -24,6 +24,9 @@ export function SeatInfo({ seat, now }: { seat: SeatState; now: number }) {
     ["Tokens", `${seat.tokensIn} in · ${seat.tokensOut} out`],
     ["Seat id", seat.seatId],
     ["Session id", sessionId ?? "—"],
+    // The engine reports neither in the event stream or an RPC the UI keeps.
+    ["Worktree", "not reported by the engine"],
+    ["Cost", "not reported by the engine"],
   ];
   return (
     <dl className="seat-info">
