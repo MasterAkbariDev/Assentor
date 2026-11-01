@@ -166,6 +166,7 @@ describe("JSON-RPC conformance", () => {
         "team.list",
         "team.save",
         "team.validate",
+        "usage.get",
         "worktree.apply",
         "worktree.diff",
         "worktree.discard",

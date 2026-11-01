@@ -12,6 +12,7 @@ JSON-RPC 2.0 between the engine and its clients (CLI/TUI in process, the Tauri s
 | `library.ts` | `registerLibraryMethods` — read-only `prompt.list`, `prompt.get`, `team.list`, `models.catalog`. |
 | `session-control.ts` | `registerSessionControlMethods` — `session.*`, `seat.*`, `worktree.*` (see **Session control**). |
 | `sessions.ts` | `sessions.list`, `events.subscribe` / `events.unsubscribe` (read-only; never locks or repairs the log). |
+| `engine.ts` → `usage.get` | `{ sessionId }` → the session's usage ledger (`UsageReportSchema`, TE-01): totals by seat / stage / model, retries, budget warnings. Streams the log (`usage/read.ts`): unreadable lines are skipped and counted (`skippedLines`), reading stops after 1,000,000 lines (`truncated`); a missing log is an all-zero report. Token counts come from `seat.tokens`: scheduler jobs that report usage, solo-run executor turns (seat sink) and mode-run executor turns and asks (`cli/mode-run.ts`) whose CLI prints a usage line (Claude Code stream-json; see `usage/cli-usage.ts`), interrupted turns included. Text-format output (codex, opencode, the reviewer transport's `--output-format text`) and API seats report nothing yet (API usage is TE-05). |
 | `transports.ts` | `createInProcessTransport(server)`, `serveStdio(server, { input, output })` (NDJSON). |
 | `browser.ts` | Old browser entry, kept as a re-export of the two protocol files. Never import `index.ts` from a browser (it pulls in `node:fs`). |
 

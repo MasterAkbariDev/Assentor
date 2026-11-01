@@ -311,6 +311,65 @@ describe("SeatEventSink", () => {
     expect(JSON.stringify(raw)).toContain(secret);
   });
 
+  it("emits seat.tokens from a Claude Code stream-json result line, once per executor turn (TE-01)", async () => {
+    // Shape of a real `claude -p --output-format stream-json --verbose` transcript (trimmed).
+    const stream = [
+      { type: "system", subtype: "init", session_id: "0b5c", model: "claude-sonnet-4-5", tools: ["Read", "Edit", "Bash"] },
+      {
+        type: "assistant",
+        message: { id: "msg_1", role: "assistant", content: [{ type: "text", text: "Fixing add()." }], usage: { input_tokens: 4, cache_read_input_tokens: 13000, output_tokens: 90 } },
+        session_id: "0b5c",
+      },
+      { type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] }, session_id: "0b5c" },
+      {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        duration_ms: 18234,
+        duration_api_ms: 17000,
+        num_turns: 6,
+        result: "add() now returns a + b.",
+        session_id: "0b5c",
+        total_cost_usd: 0.0412,
+        usage: {
+          input_tokens: 21,
+          cache_creation_input_tokens: 2400,
+          cache_read_input_tokens: 41000,
+          output_tokens: 1300,
+          server_tool_use: { web_search_requests: 0 },
+          service_tier: "standard",
+        },
+      },
+    ]
+      .map((line) => JSON.stringify(line))
+      .join("\n");
+    const events: EngineEvent[] = [];
+    const sink = new SeatEventSink({ sessionId: "s", onEvent: (e) => events.push(e) });
+    const turn = (rawOutput: string) =>
+      sink.supervisor(
+        { type: "executor.completed", at: new Date().toISOString(), data: { summary: "done", rawOutput } },
+        { executorSeatId: "executor", stageId: "build" },
+      );
+    turn(stream);
+    turn("plain text output with no usage line\n");
+    // A turn interrupted for a model switch still paid for what it did.
+    sink.supervisor(
+      { type: "executor.interrupted", at: new Date().toISOString(), data: { reason: "switch", rawOutput: stream } },
+      { executorSeatId: "executor", stageId: "build" },
+    );
+    await sink.close();
+
+    const tokens = events.filter((e) => e.type === "seat.tokens");
+    expect(tokens).toHaveLength(2);
+    expect(tokens[0]).toMatchObject({
+      seatId: "executor",
+      stageId: "build",
+      data: { tokensIn: 43421, tokensOut: 1300, cachedTokens: 41000, turns: 6, costUsd: 0.0412 },
+    });
+    // Right after the turn's own event, so the log reads in order.
+    expect(events.map((e) => e.type).indexOf("seat.tokens")).toBe(1);
+  });
+
   it("keeps only the length of a mirrored rawOutput", async () => {
     const events: EngineEvent[] = [];
     const sink = new SeatEventSink({ sessionId: "s", onEvent: (e) => events.push(e) });

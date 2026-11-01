@@ -208,7 +208,7 @@ describe("rate limits", () => {
 });
 
 describe("budgets", () => {
-  it("warns at 80%, stops the seat at 100% and leaves others running", async () => {
+  it("warns at 50% and 80%, stops the seat at 100% and leaves others running", async () => {
     const { scheduler, events } = setup();
     const [tight] = claude(1, { maxTokens: 100 });
     const [free] = gemini(1);
@@ -227,10 +227,40 @@ describe("budgets", () => {
     expect(await tightRun).toMatchObject({ ok: false, reason: "budget", scope: "seat" });
     expect(aborted).toBe(true);
     expect(await freeRun).toMatchObject({ ok: true });
-    const kinds = events.filter((e) => e.type.startsWith("budget.")).map((e) => [e.type, (e.data as { kind: string }).kind]);
+    const kinds = events
+      .filter((e) => e.type.startsWith("budget.") || e.type === "session.warning")
+      .map((e) => [e.type, (e.data as { budget?: string; kind: string }).budget ?? e.data.kind, (e.data as { threshold?: number }).threshold]);
     expect(kinds).toEqual([
-      ["budget.warning", "seat.tokens"],
-      ["budget.exceeded", "seat.tokens"],
+      ["session.warning", "seat.tokens", 0.5],
+      ["session.warning", "seat.tokens", 0.8],
+      ["budget.exceeded", "seat.tokens", undefined],
+    ]);
+    // Every report is a seat.tokens delta for the usage ledger.
+    expect(events.filter((e) => e.type === "seat.tokens").map((e) => [e.seatId, e.data])).toEqual([
+      [tight!.id, { tokensIn: 85, tokensOut: 0 }],
+      [tight!.id, { tokensIn: 0, tokensOut: 20 }],
+    ]);
+  });
+
+  it("passes cached tokens and the job's stage through to seat.tokens", async () => {
+    const { scheduler, events } = setup();
+    const [seat] = claude(1);
+    await scheduler.run(seat!, async (ctx) => ctx.reportUsage({ tokensIn: 10, tokensOut: 2, cachedTokens: 6 }), { stageId: "plan" });
+    expect(events.filter((e) => e.type === "seat.tokens").map((e) => [e.stageId, e.data])).toEqual([
+      ["plan", { tokensIn: 10, tokensOut: 2, cachedTokens: 6 }],
+    ]);
+  });
+
+  it("warns once per threshold for the session budget", async () => {
+    const { scheduler, events } = setup({ sessionBudget: { maxTokens: 100 } });
+    const [seat] = claude(1);
+    await scheduler.run(seat!, async (ctx) => {
+      for (const n of [30, 25, 10, 20, 5]) ctx.reportUsage({ tokensIn: n });
+    });
+    const warnings = events.filter((e) => e.type === "session.warning").map((e) => [e.seatId, e.data]);
+    expect(warnings).toEqual([
+      [undefined, { kind: "budget", budget: "session.tokens", threshold: 0.5, used: 55, limit: 100, message: "session tokens budget at 50% (55 of 100)" }],
+      [undefined, { kind: "budget", budget: "session.tokens", threshold: 0.8, used: 85, limit: 100, message: "session tokens budget at 80% (85 of 100)" }],
     ]);
   });
 

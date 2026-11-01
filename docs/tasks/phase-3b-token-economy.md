@@ -25,6 +25,8 @@ Phase exit criteria:
 ### TE-01 · Usage ledger, report and budget warnings
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** —
 
+**Merged 2026-11-01:** `8bb8386` + O2 fixes `6ffe7cb`, `558a97b`; re-review PASS. `UsageLedger` over `seat.tokens` (cached tokens inside tokensIn, priced at the cached rate when known); real counts from Claude Code's stream-json `result` usage for solo and mode-run executor turns (one source per turn); `assentor usage [sessionId] [--json]`; RPC `usage.get`; live 50/80% budget warnings. Limits: Codex, OpenCode, CLI reviewers (text output) and API seats report nothing yet (TE-05); mode-run executor tokens don't count toward scheduler budgets yet.
+
 **Goal** — Make token use visible: per seat, stage, model and run.
 
 **Deliverables**
@@ -169,6 +171,8 @@ Plus a playbook preset `lean` that wires them to roles (builders: 2–6, reviewe
 
 ### TE-10 · Token benchmark, A/B gate and prompt-size guard
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** TE-01 · **Built first, with TE-01** — every other card is judged by it.
+
+**Merged 2026-11-01:** `1e08600` + O2 fixes `6ffe7cb`; PASS. `pnpm bench:tokens` (scripts/bench, dev only): 5 fixture tasks with success checks, mock (deterministic, CI) and `--live` (owner's CLIs, budget required) runners; net tokens per successful task; gate fails on < 10% saving, success drop, cached-share drop > 5 points, or always-on overhead over the variant's own size. Prompt-size snapshot (`scripts/bench/prompt-sizes.json`): ±5% fails; style + skills index measured from the shipped defaults, capped at 300 tokens. Needs the owner: live A/B runs to turn any saving on by default.
 
 **Goal** — Prove net savings per completed task and stop regressions.
 

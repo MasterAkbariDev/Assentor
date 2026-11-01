@@ -26,6 +26,8 @@ export interface ModelPricing {
   inPerMTok: number;
   /** USD per million output tokens. */
   outPerMTok: number;
+  /** USD per million input tokens served from the prompt cache; unset = the input price (an overestimate). */
+  cachedInPerMTok?: number;
 }
 
 /** Keyed by `"<provider>/<model>"`, e.g. `"openai/gpt-4o-mini"`. */

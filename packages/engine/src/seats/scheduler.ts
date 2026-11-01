@@ -16,8 +16,8 @@ import type { EngineEventDraft } from "#assentor/protocol/events.js";
  *   Its slot is released while it waits; the seat shows `rate_limited`.
  * - **Budgets**: tokens, cost and runtime per seat (`Seat.budget`) and per
  *   session. Runtime is enforced while a job runs (a timer fires at the
- *   remaining budget). `budget.warning` at 80%, then `budget.exceeded` and the
- *   job is stopped. A seat breach stops all of that seat's jobs; a session
+ *   remaining budget). A `session.warning` (kind `budget`) at 50% and at 80%,
+ *   once each, then `budget.exceeded` and the job is stopped. A seat breach stops all of that seat's jobs; a session
  *   breach stops everything. Session runtime is the sum of seat time (6
  *   parallel seats use it 6× faster than the wall clock). Known limit: each
  *   attempt's runtime timer uses the budget left when it starts, so jobs
@@ -44,6 +44,10 @@ export interface Usage {
   tokensIn: number;
   tokensOut: number;
   costUsd: number;
+  /** Input tokens served from a prompt cache (part of `tokensIn`); passed through to `seat.tokens`, not budgeted. */
+  cachedTokens?: number;
+  /** Model turns the report covers (a CLI run makes several); passed through to `seat.tokens`. */
+  turns?: number;
 }
 
 export interface BudgetLimits {
@@ -88,6 +92,8 @@ export interface RunOptions {
   classify?: (error: unknown) => RateLimitVerdict;
   /** Overrides the scheduler's default max attempts. */
   maxAttempts?: number;
+  /** Stage the job belongs to; set on its `seat.tokens` events. */
+  stageId?: string;
 }
 
 export interface SchedulerOptions {
@@ -134,6 +140,9 @@ export function classifyRateLimit(error: unknown): RateLimitVerdict {
     ? { rateLimited: true, retryAfterMs }
     : { rateLimited: true };
 }
+
+/** Budget fractions that each warn once (TE-01). */
+const BUDGET_WARN_AT = [0.5, 0.8] as const;
 
 const zeroUsage = (): Usage => ({ tokensIn: 0, tokensOut: 0, costUsd: 0 });
 
@@ -418,6 +427,19 @@ export class SeatScheduler {
           signal: controller.signal,
           attempt: attempts,
           reportUsage: (delta) => {
+            this.emit({
+              type: "seat.tokens",
+              sessionId: this.options.sessionId,
+              seatId: seat.id,
+              ...(runOptions.stageId ? { stageId: runOptions.stageId } : {}),
+              data: {
+                tokensIn: Math.max(0, delta.tokensIn ?? 0),
+                tokensOut: Math.max(0, delta.tokensOut ?? 0),
+                ...(delta.costUsd !== undefined ? { costUsd: Math.max(0, delta.costUsd) } : {}),
+                ...(delta.cachedTokens !== undefined ? { cachedTokens: Math.max(0, delta.cachedTokens) } : {}),
+                ...(delta.turns !== undefined && delta.turns >= 1 ? { turns: Math.round(delta.turns) } : {}),
+              },
+            });
             addUsage(usage, delta);
             addUsage(tracker.usage, delta);
             addUsage(this.session.usage, delta);
@@ -674,7 +696,7 @@ export class SeatScheduler {
     return { ...soonest, ms: Math.max(0, soonest.ms) };
   }
 
-  /** Warn at 80%, return (and announce) a breach at 100%. */
+  /** Warn at 50% and 80%, return (and announce) a breach at 100%. */
   private checkBudgets(seat: Seat, tracker: Tracker): Breach | undefined {
     const breach = this.findBreach(seat, tracker, true);
     if (breach) {
@@ -707,13 +729,25 @@ export class SeatScheduler {
             message: `${scope === "session" ? "session" : seat.displayName} ${kind} budget exhausted (${round(used)} of ${round(limit)})`,
           };
         }
-        if (warn && used >= limit * 0.8 && !t.warned.has(kind)) {
-          t.warned.add(kind);
+        for (const threshold of BUDGET_WARN_AT) {
+          const key = `${kind}@${threshold}`;
+          if (!warn || used < limit * threshold || t.warned.has(key)) {
+            continue;
+          }
+          t.warned.add(key);
+          const who = scope === "session" ? "session" : seat.displayName;
           this.emit({
-            type: "budget.warning",
+            type: "session.warning",
             sessionId: this.options.sessionId,
             ...(scope === "seat" ? { seatId: seat.id } : {}),
-            data: { kind: `${scope}.${kind}`, used: round(used), limit: round(limit) },
+            data: {
+              kind: "budget",
+              message: `${who} ${kind} budget at ${threshold * 100}% (${round(used)} of ${round(limit)})`,
+              budget: `${scope}.${kind}`,
+              threshold,
+              used: round(used),
+              limit: round(limit),
+            },
           });
         }
       }

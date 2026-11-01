@@ -10,7 +10,10 @@ import { createMockLead, type MockLeadStep } from "../../packages/engine/src/mod
 import type { RosterEntry } from "../../packages/engine/src/modes/roster.js";
 import type { Executor, ExecutorTask } from "../../packages/engine/src/providers/executors/types.js";
 import { resumeAssentorTask, runAssentorTask } from "../../packages/cli/src/cli/commands.js";
-import { runModeTask, type ModeRunHooks } from "../../packages/cli/src/cli/mode-run.js";
+import { createModeHost, runModeTask, type ModeRunHooks } from "../../packages/cli/src/cli/mode-run.js";
+import { RunReporter } from "../../packages/cli/src/cli/ui/reporter.js";
+import { parseAssentorConfig } from "../../packages/engine/src/config/load.js";
+import { PromptLibrary } from "../../packages/engine/src/prompts/library.js";
 import type { QuestionIO } from "../../packages/cli/src/cli/mode-questions.js";
 
 // `assentor run --mode <id>` end to end through the CLI command function, with mock seats.
@@ -201,6 +204,57 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     const { result, of } = await run("cascade", { questions: terminal(["y", "y", "y"], true) });
     expect(result.status).toBe("completed");
     expect(of("mode.selected")[0]?.data).toMatchObject({ mode: "cascade" });
+  });
+
+  it("cascade: each executor turn's CLI usage becomes one seat.tokens with its seat and stage (TE-01)", async () => {
+    const transcript = await fs.readFile(path.join(import.meta.dirname, "../fixtures/claude-code-stream.ndjson"), "utf8");
+    await writeConfig({
+      teams: { cheap: { seats: [ed("engineer")] }, top: { seats: [ed("engineer")] }, r1: { seats: [ro("code-reviewer")] } },
+      modes: { cascade: { tiers: [{ team: "cheap", reviewTeam: "r1" }, { team: "top", reviewTeam: "r1" }] } },
+    });
+    let turns = 0;
+    const agent: Executor = {
+      name: "claude-like",
+      capabilities: () => ({ canEditFiles: true, canRunCommands: true, canContinueSession: false, supportsScreenshots: false }),
+      async run(task: ExecutorTask) {
+        turns += 1;
+        await fs.writeFile(path.join(task.projectPath, "a", "x.ts"), "export const x = 1;\n");
+        return { status: "completed", summary: "x added.", rawOutput: transcript };
+      },
+      continue: async () => ({ status: "completed", summary: "x added.", rawOutput: transcript }),
+      cancel: async () => undefined,
+    };
+    const { result, of } = await run("cascade", { seatExecutor: () => agent, questions: terminal(["y", "y", "y"], true) });
+    expect(result.status).toBe("completed");
+    const tokens = of("seat.tokens");
+    expect(turns).toBeGreaterThan(0);
+    expect(tokens).toHaveLength(turns);
+    expect(tokens[0]).toMatchObject({
+      seatId: expect.any(String),
+      stageId: expect.any(String),
+      data: { tokensIn: 43421, tokensOut: 1300, cachedTokens: 41000, turns: 6, costUsd: 0.0412 },
+    });
+  });
+
+  it("askSeat: CLI usage in the reply goes to the caller's reportUsage (the scheduler emits it), not to a second event", async () => {
+    const transcript = await fs.readFile(path.join(import.meta.dirname, "../fixtures/claude-code-stream.ndjson"), "utf8");
+    const emitted: unknown[] = [];
+    const { host } = createModeHost({
+      config: parseAssentorConfig({}),
+      projectPath: repo,
+      sessionId: "s",
+      goal: GOAL,
+      worktrees: {} as never,
+      prompts: PromptLibrary.loadBuiltinSync(),
+      emit: (draft) => void emitted.push(draft),
+      reporter: new RunReporter({ executorName: "e", reviewerName: "r" }),
+      hooks: { askSeat: async () => transcript },
+    });
+    const reported: unknown[] = [];
+    const seat = { id: "lead", provider: "claude-code", model: "AUTO", role: "lead", permissions: "read-only" } as never;
+    await host.askSeat!({ seat, prompt: "p", signal: new AbortController().signal, reportUsage: (u) => void reported.push(u) });
+    expect(reported).toEqual([{ tokensIn: 43421, tokensOut: 1300, cachedTokens: 41000, turns: 6, costUsd: 0.0412 }]);
+    expect(emitted).toEqual([]);
   });
 
   const PLAYBOOK_TEAMS = {

@@ -164,8 +164,8 @@ Design: [modes.md](../plans/modes.md)
 Measure first: TE-01 and TE-10 come first; every saving must pass the TE-10 net-tokens gate before it is on by default.
 | ID | Title | Tier | Review | Size | Depends |
 |---|---|---|---|---|---|
-| TE-01 | Usage ledger, report, budget warnings | 🟢 H | S | S | — |
-| TE-10 | Token benchmark, A/B gate, prompt-size guard | 🟡 S | O | M | TE-01 |
+| TE-01 | Usage ledger, report, budget warnings | 🟢 H | S | S | — ✅ |
+| TE-10 | Token benchmark, A/B gate, prompt-size guard | 🟡 S | O | M | TE-01 ✅ |
 | TE-02 | Output styles (concise / normal / verbose) | 🟢 H | S | S | TE-10 gate |
 | TE-03 | Context packer (budgeted context) | 🟡 S | O | M | TE-01, TE-10 |
 | TE-04 | Rolling summaries for long conversations | 🟡 S | O | M | TE-03 |
