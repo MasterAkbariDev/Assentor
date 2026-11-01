@@ -14,7 +14,7 @@ import {
   normalizeExecutorProvider,
 } from "../executors/providers.js";
 import { CascadeTierSchema, NegotiateModeSchema, ReviewModeSchema } from "./teams.js";
-import { SEAT_PROVIDERS, TeamSchema } from "#assentor/protocol/seats.js";
+import { SEAT_PROVIDERS, SEAT_ROLE_PATTERN, TeamSchema } from "#assentor/protocol/seats.js";
 import { MODE_ALIASES, MODE_IDS } from "../modes/registry.js";
 import { DangerAreaRuleSchema } from "../modes/danger.js";
 import { DEFAULT_OUTPUT_STYLE, OutputStyleSchema } from "../output/style.js";
@@ -224,6 +224,12 @@ export const AssentorConfigSchema = z.object({
     .default({}),
   /** Optional per-role token budgets for the context packer (TE-03); nothing is written unless set. */
   context: ContextConfigSchema.optional(),
+  skills: z
+    .object({
+      /** Opt-in skills (`optIn: true`) to offer, by name or preset (`lean`). User and project skills are always offered. */
+      enabled: z.array(z.string().trim().max(48).regex(SEAT_ROLE_PATTERN, "must be a kebab-case skill or preset name")).max(50).default([]),
+    })
+    .default({}),
   worktrees: z
     .object({
       /**

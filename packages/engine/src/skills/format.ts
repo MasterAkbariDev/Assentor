@@ -46,11 +46,26 @@ export const SkillFrontMatterSchema = z
       })
       .strict()
       .optional(),
+    /** Off unless the config's `skills.enabled` names it (or a preset that does). For skills that have not passed the TE-10 gate. */
+    optIn: z.boolean().optional(),
     version: z.number().int().positive(),
   })
   .strict();
 
 export type SkillFrontMatter = z.infer<typeof SkillFrontMatterSchema>;
+
+/**
+ * Named sets for `skills.enabled`. A built-in skill belongs in a preset only
+ * after the TE-10 gate showed >= 10% fewer net tokens per successful task with
+ * no success drop; tests/unit/skills-builtin.test.ts enforces it.
+ * `lean` is empty: no skill has passed yet (docs/benchmarks/tokens.md).
+ */
+export const SKILL_PRESETS: Readonly<Record<string, readonly string[]>> = { lean: [] };
+
+/** `skills.enabled` entries with presets replaced by their skills. */
+export function expandSkillPresets(names: readonly string[]): string[] {
+  return [...new Set(names.flatMap((name) => SKILL_PRESETS[name] ?? [name]))];
+}
 
 /**
  * The only roles a project-layer skill may reach, and only on seats with edit

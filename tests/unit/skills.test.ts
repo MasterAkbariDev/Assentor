@@ -344,6 +344,41 @@ describe("skills in prompts", () => {
     expect(withSkillsRun.prompts[0]).toMatch(/^Add widgets support\n\nSkill index [^]*\n\n<skill name="example"/);
     expect(withSkillsRun.events.find((e) => e.type === "skill.loaded")).toMatchObject({ seatId: "execute", data: { name: "example" } });
   });
+
+  it("mode sessions honour skills.enabled: an opt-in skill is offered only when the config names it", async () => {
+    await writeSkill(userDir, "saver", skillText("saver", { optIn: "true" }));
+    const library = await load();
+    const promptWith = async (enabled: string[]) => {
+      const prompts: string[] = [];
+      const prepared = prepareModeSession({
+        mode: "solo",
+        sessionId: createId(),
+        goal: "Add widgets support",
+        autonomy: "supervised",
+        config: parseAssentorConfig({ skills: { enabled } }),
+        skills: library,
+        deps: {
+          projectPath,
+          scheduler: new SeatScheduler({ sessionId: "s", backoffBaseMs: 1 }),
+          runStep: async () => ({}),
+          seatsFor: () => [],
+          createExecutor: () => ({
+            name: "mock",
+            capabilities: () => ({ canEditFiles: true, canRunCommands: true, canContinueSession: true, supportsScreenshots: false }),
+            run: async (task) => (prompts.push(task.prompt), { status: "completed", summary: "done" }),
+            continue: async () => ({ status: "completed", summary: "done" }),
+            cancel: async () => undefined,
+          }),
+          createReviewer: () => new PanelReviewer({ name: "panel", policy: "majority", reviewers: [new MockReviewer({ name: "r1" })] }),
+          supervisor: { skipGates: true },
+        },
+      });
+      await prepared.run();
+      return prompts[0]!;
+    };
+    expect(await promptWith([])).not.toContain("saver");
+    expect(await promptWith(["saver"])).toContain("- saver: Use for saver.");
+  });
 });
 
 describe("skill safety limits", () => {
@@ -415,7 +450,8 @@ describe("skill CLI and RPC", () => {
     const client = new RpcClient(createInProcessTransport(server).client);
     try {
       const list = await client.call("skill.list");
-      expect(list.skills).toEqual([
+      // The shipped built-in skills (TE-08) are listed too; this test is about the project one.
+      expect(list.skills.filter((skill) => skill.source === "project")).toEqual([
         { name: "local", description: "Use for local.", source: "project", overridden: false, roles: ["engineer"], tokens: estimateTokens("BODY-OF-local") },
       ]);
       expect(list.errors).toEqual([{ file: "broken/SKILL.md", message: expect.stringMatching(/front-matter/) }]);

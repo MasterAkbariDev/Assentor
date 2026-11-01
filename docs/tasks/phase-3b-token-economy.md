@@ -141,6 +141,8 @@ Phase exit criteria:
 ### TE-08 · Built-in token-saver skills
 **Tier:** 🟢 H · **Review:** O (quality) · **Size:** M · **Depends:** TE-07
 
+**Built 2026-11-01 (branch `claude/card-te-08`):** the eight skills ship in `skills/`, all **off** (`optIn: true`; turned on by `skills.enabled`, by name or preset). Mock benchmark: every skill raises net tokens per task (+4% to +33%; all eight together +92% (3 bodies per seat), the owner's failure mode); the mock models costs (index + body) and no behavioural saving, so none passes the ship-on rule and the `lean` preset (`SKILL_PRESETS`) is empty. Numbers: `docs/benchmarks/tokens.md`; each description carries its own. Needs the owner: a `--live` A/B per skill; best candidates `review-signal-only` and `plan-in-bullets`. Passing skills go into `SKILL_PRESETS.lean`; TE-06's `economy` profile should expand that preset.
+
 **Goal** — Ship a strong default set; on in `economy`, opt-in elsewhere.
 
 **Skills** (each ≤ 400 words, concrete do/don't lists, one short example):

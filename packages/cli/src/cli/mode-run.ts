@@ -33,7 +33,7 @@ import type { Reviewer } from "#assentor/engine/providers/reviewers/types.js";
 import { PanelReviewer, REVIEW_POLICIES, type ReviewPolicy } from "#assentor/engine/review/index.js";
 import { createSeatScheduler, reviewerProviderForSeat } from "#assentor/engine/seats/index.js";
 import { PromptLibrary } from "#assentor/engine/prompts/library.js";
-import { SkillLibrary, SkillSession, withSkillsAsk } from "#assentor/engine/skills/index.js";
+import { expandSkillPresets, SkillLibrary, SkillSession, withSkillsAsk } from "#assentor/engine/skills/index.js";
 import { WorktreeManager } from "#assentor/engine/worktrees/manager.js";
 import { cliUsage } from "#assentor/engine/usage/cli-usage.js";
 import type { EngineEvent, EngineEventDraft } from "#assentor/protocol/events.js";
@@ -168,7 +168,12 @@ export async function runModeTask(input: ModeTaskInput) {
     reporter.updatePreparing("starting seats…");
     const worktrees = new WorktreeManager({ repoPath: projectPath });
     // One skill session for executors, host asks and negotiation steps (TE-07).
-    const skills = new SkillSession(await SkillLibrary.load({ projectPath }), { sessionId, mode: mode.id, emit });
+    const skills = new SkillSession(await SkillLibrary.load({ projectPath }), {
+      sessionId,
+      mode: mode.id,
+      enabled: expandSkillPresets(config.skills.enabled),
+      emit,
+    });
     const { deps, host } = createModeHost({
       config,
       projectPath,

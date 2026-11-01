@@ -14,6 +14,7 @@ import type { EngineEventDraft } from "#assentor/protocol/events.js";
 import type { Executor, ExecutorResult } from "../providers/executors/types.js";
 import type { WorktreeManager } from "../worktrees/manager.js";
 import type { SkillLibrary } from "../skills/library.js";
+import { expandSkillPresets } from "../skills/format.js";
 import { SkillSession, withSkills, withSkillsAsk } from "../skills/session.js";
 import {
   ApprovalDeniedError,
@@ -154,7 +155,12 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
     input.skills instanceof SkillSession
       ? input.skills
       : input.skills
-        ? new SkillSession(input.skills, { sessionId: input.sessionId, mode: mode.id, emit })
+        ? new SkillSession(input.skills, {
+            sessionId: input.sessionId,
+            mode: mode.id,
+            enabled: expandSkillPresets(input.config.skills.enabled),
+            emit,
+          })
         : undefined;
   /** Wrapper → the executor the host made, so `watchExecutorOutput` gets the host's own object. */
   const hostExecutor = new WeakMap<Executor, Executor>();
