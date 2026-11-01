@@ -160,6 +160,8 @@ Plus a playbook preset `lean` that wires them to roles (builders: 2–6, reviewe
 ### TE-09 · Pre-run estimate and confirm
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** TE-01, TE-06
 
+**Merged 2026-11-01:** `c440f51` + review fixes `0646d00`; Sonnet review. One estimate line before every run (tokens; dollars from this project's own observed prices — recent sessions' costUsd per model — never invented; "not enforced" line when a dollar limit has no observed price); solo includes the executor, mode runs say "excludes executor"; `limits.confirmAboveTokens/Usd` (no defaults written): ask on a TTY, refuse without one unless `--yes`; resume skips the gate; `session.estimate` event and estimate vs actual in the usage report.
+
 **Goal** — No surprise bills.
 
 **Deliverables**

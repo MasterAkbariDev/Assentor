@@ -212,6 +212,7 @@ program
   .option("--autonomy <level>", "How much runs without asking: manual|supervised|autopilot")
   .option("--autopilot", "Shortcut for --autonomy autopilot (auto next-phase)", false)
   .option("--playbook <id>", "Playbook to run (validates the id only; running playbooks is not wired yet)")
+  .option("-y, --yes", "Start without asking when the pre-run estimate is over limits.confirmAbove*", false)
   .action(
     async (
       promptParts: string[],
@@ -230,6 +231,7 @@ program
         autopilot?: boolean;
         playbook?: string;
         retro?: boolean;
+        yes?: boolean;
       },
     ) => {
       if (options.playbook !== undefined) {
@@ -268,6 +270,7 @@ program
         autonomy: flags.autonomy,
         modeId: flags.modeId,
         retro: options.retro,
+        yes: options.yes,
       });
 
       console.log(`Task ${result.taskId} finished: ${result.status}`);

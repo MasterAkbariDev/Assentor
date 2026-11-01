@@ -31,6 +31,12 @@ const SessionState = z
 const SessionWarning = z
   .object({ kind: z.string(), message: z.string().optional() })
   .passthrough();
+/** Pre-run estimate of a run (TE-09): tokens and, when priced, USD, each as a low-high range. */
+export const RunEstimateSchema = z.object({
+  tokens: z.object({ low: z.number().nonnegative(), high: z.number().nonnegative() }),
+  usd: z.object({ low: z.number().nonnegative(), high: z.number().nonnegative() }).optional(),
+}).passthrough();
+export type RunEstimate = z.infer<typeof RunEstimateSchema>;
 
 const StageEvent = z
   .object({ kind: z.string(), strategy: z.string().optional() })
@@ -208,6 +214,7 @@ export const EngineEventDataSchemas = {
   "session.completed": Open,
   "session.blocked": Open,
   "session.failed": Open,
+  "session.estimate": RunEstimateSchema,
 
   "stage.started": StageEvent,
   "stage.completed": StageEvent,

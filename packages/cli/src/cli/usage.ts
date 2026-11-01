@@ -10,13 +10,16 @@ const n = (value: number) => Math.round(value).toLocaleString("en-US");
 /** One line: totals, calls, retries, cost when known. */
 export function formatUsageLine(report: UsageReport): string {
   const t = report.total;
+  const est = report.estimate
+    ? ` · estimate ${n(report.estimate.tokens.low)}–${n(report.estimate.tokens.high)} tokens${report.estimate.usd ? ` · $${report.estimate.usd.low.toFixed(4)}–$${report.estimate.usd.high.toFixed(4)}` : ""}`
+    : "";
   if (t.calls === 0) {
-    return "Usage: no token counts reported by these seats";
+    return `Usage: no token counts reported by these seats${est}`;
   }
   const cached = t.cachedTokens > 0 ? ` (cached ${n(t.cachedTokens)})` : "";
   const retries = report.retries > 0 ? ` · ${report.retries} ${report.retries === 1 ? "retry" : "retries"}` : "";
   const cost = t.costUsd > 0 ? ` · $${t.costUsd.toFixed(4)}` : "";
-  return `Usage: ${n(t.tokensIn + t.tokensOut)} tokens · in ${n(t.tokensIn)}${cached} · out ${n(t.tokensOut)} · ${t.calls} calls${retries}${cost}`;
+  return `Usage: ${n(t.tokensIn + t.tokensOut)} tokens · in ${n(t.tokensIn)}${cached} · out ${n(t.tokensOut)} · ${t.calls} calls${retries}${cost}${est}`;
 }
 
 /** The summary line, then one compact table by seat / model / stage, then budget warnings. `concise`: the line only. */

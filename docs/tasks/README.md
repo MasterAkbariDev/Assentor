@@ -173,7 +173,7 @@ Measure first: TE-01 and TE-10 come first; every saving must pass the TE-10 net-
 | TE-06 | Run profiles (economy / balanced / max) | 🟢 H | S | S | TE-02, TE-10 |
 | TE-07 | Skills: on-demand instruction packs | 🟡 S | O2 | M | — ✅ |
 | TE-08 | Built-in token-saver skills (benchmarked) | 🟢 H | O (quality) | M | TE-07, TE-10 |
-| TE-09 | Pre-run estimate and confirm | 🟢 H | S | S | TE-01, TE-06 |
+| TE-09 | Pre-run estimate and confirm | 🟢 H | S | S | TE-01, TE-06 ✅ |
 
 ### Phase 4 — Engine server & Web UI · [phase-4-serve-web-ui.md](./phase-4-serve-web-ui.md)
 | ID | Title | Tier | Review | Size | Depends |

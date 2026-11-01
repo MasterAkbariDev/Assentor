@@ -9,13 +9,16 @@ import { UsageLedger } from "./ledger.js";
 export const MAX_USAGE_LINES = 1_000_000;
 
 /**
- * The usage ledger of a session's event log (TE-01), streamed line by line.
- * Unlike `readSessionEvents` it tolerates damage: an unreadable line is skipped
- * and counted (`skippedLines`), and reading stops after `maxLines`. A missing
- * log is an all-zero report. Read-only: never locks or repairs the log.
+ * Streams one session's event log into `ledger`. Unlike `readSessionEvents` it
+ * tolerates damage: an unreadable line is skipped and counted, and reading stops
+ * after `maxLines`. A missing log feeds nothing. Read-only.
  */
-export async function readSessionUsage(projectPath: string, sessionId: string, maxLines = MAX_USAGE_LINES): Promise<UsageReport> {
-  const ledger = new UsageLedger(sessionId);
+export async function readSessionLogInto(
+  ledger: UsageLedger,
+  projectPath: string,
+  sessionId: string,
+  maxLines = MAX_USAGE_LINES,
+): Promise<{ skipped: number; truncated: boolean }> {
   let skipped = 0;
   let lines = 0;
   let truncated = false;
@@ -41,5 +44,15 @@ export async function readSessionUsage(projectPath: string, sessionId: string, m
   } finally {
     stream.destroy();
   }
+  return { skipped, truncated };
+}
+
+/**
+ * The usage ledger of a session's event log (TE-01). A missing log is an
+ * all-zero report. Read-only: never locks or repairs the log.
+ */
+export async function readSessionUsage(projectPath: string, sessionId: string, maxLines = MAX_USAGE_LINES): Promise<UsageReport> {
+  const ledger = new UsageLedger(sessionId);
+  const { skipped, truncated } = await readSessionLogInto(ledger, projectPath, sessionId, maxLines);
   return { ...ledger.snapshot(), ...(skipped ? { skippedLines: skipped } : {}), ...(truncated ? { truncated } : {}) };
 }
