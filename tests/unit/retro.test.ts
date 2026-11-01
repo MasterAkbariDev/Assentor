@@ -210,6 +210,22 @@ describe("buildRetroInput", () => {
     expect(input.seats.find((seat) => seat.model === "opus-a")!.verdicts).toEqual(["PASS"]);
   });
 
+  it("gives each panel member its own verdict and the panel seat only the merged one", () => {
+    seq = 0;
+    const input = buildRetroInput([
+      spawn(0, "reviewer-1", "claude", "opus-a", "reviewer"),
+      spawn(1, "reviewer-2", "codex", "mini", "reviewer"),
+      spawn(2, "panel", "panel", "AUTO", "panel"),
+      ev(3, "review.verdict", { status: "PASS", panelMember: true }, "reviewer-1"),
+      ev(4, "review.verdict", { status: "NEEDS_WORK", summary: "tests missing", panelMember: true }, "reviewer-2"),
+      ev(5, "review.verdict", { status: "NEEDS_WORK", summary: "Panel [majority] split", policy: "majority" }, "panel"),
+    ]);
+    const verdicts = (model: string) => input.seats.find((seat) => seat.model === model)!.verdicts;
+    expect(verdicts("opus-a")).toEqual(["PASS"]);
+    expect(verdicts("mini")).toEqual(["NEEDS_WORK: tests missing"]);
+    expect(verdicts("AUTO")).toEqual(["NEEDS_WORK: Panel [majority] split"]);
+  });
+
   it("drops format characters and turns controls into spaces before redaction", () => {
     seq = 0;
     const input = buildRetroInput([

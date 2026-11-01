@@ -77,6 +77,21 @@ describe("buildNegotiationRuns", () => {
   });
 });
 
+describe("threshold and decision", () => {
+  it("reads the threshold and the last decided event, and leaves both out for older logs", () => {
+    const [run] = buildNegotiationRuns([
+      ev(1, { type: "negotiation.consensus", stageId: "d", data: { round: 1, score: 0.4, reached: false, threshold: 0.7 } }),
+      ev(2, { type: "negotiation.decided", stageId: "d", data: { rationale: "first", winner: "Proposal A" } }),
+      ev(3, { type: "negotiation.decided", stageId: "d", data: { rationale: "second" } }),
+    ]);
+    expect(run!.consensus[0]!.threshold).toBe(0.7);
+    expect(run!.decided).toEqual({ rationale: "second" });
+    const [old] = buildNegotiationRuns(negotiationFixture.events);
+    expect(old!.decided).toBeUndefined();
+    expect(old!.consensus[0]!.threshold).toBeUndefined();
+  });
+});
+
 describe("bordaTally", () => {
   it("matches the engine's Borda rule on the fixture's ballots", () => {
     const [, vote] = buildNegotiationRuns(negotiationFixture.events);

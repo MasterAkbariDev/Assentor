@@ -123,6 +123,16 @@ describe("renderSessionReport", () => {
     expect(report).toContain("- gate `verify`: failed");
   });
 
+  it("marks a panel member's own verdict so it is not read as a second panel verdict", () => {
+    const report = renderSessionReport([
+      ev(0, "review.verdict", { status: "NEEDS_WORK", panelMember: true }, { seatId: "reviewer-1" }),
+      ev(1, "review.verdict", { status: "NEEDS_WORK", policy: "majority" }, { seatId: "panel" }),
+    ]);
+
+    expect(report).toContain("- round unknown, seat `reviewer-1` (panel member): `NEEDS_WORK`");
+    expect(report).toContain("- round unknown, seat `panel`: `NEEDS_WORK`");
+  });
+
   it("lists warnings and seat errors", () => {
     const report = renderSessionReport(fixture());
 

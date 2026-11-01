@@ -355,9 +355,10 @@ export class RunSeatEvents {
     this.sink?.status(reviewerSeatId(index), "thinking", message);
   };
 
-  trackMembers(members: Reviewer[]): Reviewer[] {
+  /** `panel`: a `PanelReviewer` runs these members, so each also reports its own verdict. */
+  trackMembers(members: Reviewer[], panel: boolean): Reviewer[] {
     return members.map((member, index) =>
-      trackReviewerSeat(member, reviewerSeatId(index), () => this.sink),
+      trackReviewerSeat(member, reviewerSeatId(index), () => this.sink, panel),
     );
   }
 
@@ -946,12 +947,13 @@ async function runAssentorTaskBody(
     onStatus: (message) => reporter.onReviewerStatus(message),
     onMemberStatus: seatEvents.memberStatus,
   });
-  const memberReviewers = seatEvents.trackMembers(builtReviewers);
+  const usePanel = !((reviewStrategy === "SINGLE" && !teamMode) || builtReviewers.length <= 1);
+  const memberReviewers = seatEvents.trackMembers(builtReviewers, usePanel);
 
-  const reviewer: Reviewer =
-    (reviewStrategy === "SINGLE" && !teamMode) || memberReviewers.length <= 1
+  const reviewer: Reviewer = !usePanel
       ? memberReviewers[0]!
       : new PanelReviewer({
+          memberSeatIds: memberReviewers.map((_, index) => reviewerSeatId(index)),
           name: teamMode ? "panel:team" : `panel:${reviewStrategy.toLowerCase()}`,
           reviewers: memberReviewers,
           goal: input.prompt,
@@ -1218,12 +1220,13 @@ export async function resumeAssentorTask(input: {
       onStatus: (message) => reporter.onReviewerStatus(message),
       onMemberStatus: seatEvents.memberStatus,
     });
-    const memberReviewers = seatEvents.trackMembers(builtReviewers);
+    const usePanel = !((reviewStrategy === "SINGLE" && !teamMode) || builtReviewers.length <= 1);
+    const memberReviewers = seatEvents.trackMembers(builtReviewers, usePanel);
 
-    const reviewer: Reviewer =
-      (reviewStrategy === "SINGLE" && !teamMode) || memberReviewers.length <= 1
+    const reviewer: Reviewer = !usePanel
         ? memberReviewers[0]!
         : new PanelReviewer({
+            memberSeatIds: memberReviewers.map((_, index) => reviewerSeatId(index)),
             name: teamMode ? "panel:team" : `panel:${reviewStrategy.toLowerCase()}`,
             reviewers: memberReviewers,
             goal: resume.snapshot.contract.goal,

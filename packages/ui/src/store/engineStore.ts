@@ -49,6 +49,7 @@ export const NEGOTIATION_EVENT_TYPES: ReadonlySet<EngineEventType> = new Set<Eng
   "negotiation.critique",
   "negotiation.vote",
   "negotiation.consensus",
+  "negotiation.decided",
   "stage.started",
   "seat.error",
 ]);
@@ -75,6 +76,8 @@ export interface SessionView {
   eventCount: number;
   /** Latest reviewer-scoped `review.verdict` (it has a seat id; Lead's per-task verdict does not). */
   reviewVerdict?: EngineEventOf<"review.verdict">;
+  /** Each panel member's latest own `review.verdict` (`panelMember`), keyed by seat id. */
+  memberVerdicts: Record<string, EngineEventOf<"review.verdict">>;
   /** The last `REVIEW_FINDING_CAP` `review.finding` events, oldest first. */
   reviewFindings: EngineEventOf<"review.finding">[];
   /** The lead team board, folded by the shared `reduceLeadEvents` (T02B-18). Empty outside lead mode. */
@@ -110,7 +113,7 @@ export type EngineStore = StoreApi<EngineState>;
 export const RECENT_LIMIT = 5;
 
 function emptySession(id: string): SessionView {
-  return { id, seats: {}, seatInfo: {}, seatEvents: {}, negotiationEvents: [], lead: emptyLeadBoardView(), reviewFindings: [], lastSeq: 0, eventCount: 0 };
+  return { id, seats: {}, seatInfo: {}, seatEvents: {}, negotiationEvents: [], lead: emptyLeadBoardView(), reviewFindings: [], memberVerdicts: {}, lastSeq: 0, eventCount: 0 };
 }
 
 export function createEngineStore(): EngineStore {
@@ -139,7 +142,7 @@ export function createEngineStore(): EngineStore {
         if (!current || current.id !== sessionId || events.length === 0) {
           return s;
         }
-        let { seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, reviewFindings, lastSeq, eventCount, state, mode } = current;
+        let { seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, lastSeq, eventCount, state, mode } = current;
         for (const event of events) {
           if (event.sessionId !== sessionId || event.seq <= lastSeq) {
             continue;
@@ -157,7 +160,13 @@ export function createEngineStore(): EngineStore {
             seatEvents = { ...seatEvents, [event.seatId]: [...(seatEvents[event.seatId] ?? []), event].slice(-SEAT_EVENT_CAP) };
           }
           if (event.type === "review.verdict" && event.seatId) {
-            reviewVerdict = event;
+            if (event.data.panelMember) {
+              memberVerdicts = { ...memberVerdicts, [event.seatId]: event };
+            } else {
+              reviewVerdict = event;
+              // Findings follow their verdict: a new decision starts a new list.
+              reviewFindings = [];
+            }
           }
           if (event.type === "review.finding") {
             reviewFindings = [...reviewFindings, event].slice(-REVIEW_FINDING_CAP);
@@ -175,7 +184,7 @@ export function createEngineStore(): EngineStore {
           return s;
         }
         return {
-          session: { ...current, seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, reviewFindings, lastSeq, eventCount, mode, ...(state ? { state } : {}) },
+          session: { ...current, seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, lastSeq, eventCount, mode, ...(state ? { state } : {}) },
         };
       }),
     failSession: (sessionId, message) =>

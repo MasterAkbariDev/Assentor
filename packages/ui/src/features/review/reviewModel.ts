@@ -1,5 +1,5 @@
 import type { EngineEventOf } from "#assentor/protocol/events.js";
-import { ReviewIssueSchema, Severity } from "#assentor/protocol/review-result.js";
+import { IssueCategory, ReviewIssueSchema, Severity } from "#assentor/protocol/review-result.js";
 import {
   rankCorrelatedFindings,
   REVIEW_POLICIES,
@@ -24,11 +24,13 @@ export type FindingView = Omit<CorrelatedFinding, "severity"> & { severity: stri
 /** Severities the schema knows. Any other string in the stream is shown as given and matches the "other" filter. */
 const KNOWN_SEVERITIES: ReadonlySet<string> = new Set<string>(Object.values(Severity));
 
+const KNOWN_CATEGORIES: ReadonlySet<string> = new Set<string>(Object.values(IssueCategory));
+
 export interface ReviewDecision {
   status: string;
   summary?: string;
   confidence?: number;
-  /** Only when the summary carries the engine's `Panel [policy]` label, which it does for non-default policies. */
+  /** From the verdict's `policy`; older logs only have the summary's `Panel [policy]` label, which non-default policies add. */
   policy?: ReviewPolicy;
 }
 
@@ -38,7 +40,7 @@ export function decisionOf(verdict: Verdict | undefined): ReviewDecision | undef
     return undefined;
   }
   const { status, summary, confidence } = verdict.data;
-  const label = summary?.match(/^Panel \[([a-z-]+)\]/)?.[1];
+  const label = verdict.data.policy ?? summary?.match(/^Panel \[([a-z-]+)\]/)?.[1];
   return {
     status,
     summary,
@@ -84,16 +86,16 @@ export function findingsOf(
 }
 
 function fromFindingEvent(event: FindingEvent): FindingView {
-  const { key, description, severity, affectedFiles, agreement } = event.data;
+  const { key, description, severity, affectedFiles, agreement, reviewerIds, category, evidence } = event.data;
   return {
     key,
     description,
     severity,
-    category: "other",
-    agentIds: [],
+    category: KNOWN_CATEGORIES.has(category ?? "") ? (category as FindingView["category"]) : "other",
+    agentIds: reviewerIds ?? [],
     issueIds: [],
     affectedFiles,
-    evidence: [],
+    evidence: evidence ?? [],
     agreement: agreement
       ? { count: agreement.count, total: agreement.total, ratio: agreement.total > 0 ? agreement.count / agreement.total : 0 }
       : { count: 0, total: 0, ratio: 0 },

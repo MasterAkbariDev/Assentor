@@ -225,9 +225,10 @@ function negotiateReviewStream(sessionId: string): EngineEvent[] {
     e("seat.tool_call", { name: "reading", summary: "src/average.ts", file: "src/average.ts" }, { seatId: "reviewer-1" }),
     e("seat.done", { ok: true, summary: "one minor issue" }, { seatId: "reviewer-1" }),
     e("seat.done", { ok: true, summary: "no security issues" }, { seatId: "reviewer-2" }),
+    // Engine order (FU-08): the merged verdict first, then its findings (a merged verdict clears the previous round's findings).
+    e("review.verdict", { status: "PASS", summary: "Panel [majority] 2 of 2 PASS, 1 minor note", confidence: 0.85 }, { seatId: "panel" }),
     finding("avg-empty", "Empty input returns NaN without a documented contract", "minor", ["src/average.ts"], 1),
     finding("avg-chunk", "Chunk size is hard-coded", "info", ["src/average.ts", "src/config.ts"], 2),
-    e("review.verdict", { status: "PASS", summary: "Panel [majority] 2 of 2 PASS, 1 minor note", confidence: 0.85 }, { seatId: "panel" }),
     e("session.state", { to: "DONE" }),
   ];
 }

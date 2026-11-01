@@ -78,7 +78,12 @@ describe("synthesize strategy: results", () => {
     // Only the non-aggregator seats propose.
     expect(asks.filter((a) => a.step === "negotiate-propose").map((a) => a.seatId)).toEqual(["opus-1", "opus-2"]);
     expect(asks.find((a) => a.step === "negotiate-synthesize")!.seatId).toBe(AGG);
-    expect(events.at(-1)).toEqual({ type: "negotiation.consensus", data: { round: 2, score: 1, reached: true } });
+    expect(events.at(-2)).toEqual({ type: "negotiation.consensus", data: { round: 2, score: 1, reached: true, threshold: 0.5 } });
+    expect(events.at(-1)).toEqual({ type: "negotiation.decided", data: { rationale: result.rationale } });
+    // Each proposal names its proposing seat (the aggregator does not propose).
+    expect(events.filter((e) => e.type === "negotiation.proposal").map((e) => e.seatId)).toEqual(
+      seats.filter((s) => s.id !== AGG).map((s) => s.id),
+    );
   });
 
   it("an unknown label is dissent, and that proposal is not counted", async () => {
@@ -131,7 +136,8 @@ describe("synthesize strategy: results", () => {
     expect(result.dissent).toEqual([{ seatId: AGG, reason: "rate limited" }]);
     expect(result.consensus).toEqual({ score: 0, reached: false });
     expect(result.rounds).toBe(2);
-    expect(events.at(-1)).toEqual({ type: "negotiation.consensus", data: { round: 2, score: 0, reached: false } });
+    expect(events.at(-2)).toEqual({ type: "negotiation.consensus", data: { round: 2, score: 0, reached: false, threshold: 0.5 } });
+    expect(events.at(-1)).toEqual({ type: "negotiation.decided", data: { rationale: "the aggregator gave no answer" } });
   });
 
   it("a failed proposer is dissent, and the rest still synthesize", async () => {
@@ -176,7 +182,10 @@ describe("synthesize strategy: results", () => {
     expect(result.rounds).toBe(1);
     expect(result.dissent).toHaveLength(2);
     expect(asks.filter((a) => a.step === "negotiate-synthesize")).toHaveLength(0);
-    expect(events).toEqual([{ type: "negotiation.consensus", data: { round: 1, score: 0, reached: false } }]);
+    expect(events).toEqual([
+      { type: "negotiation.consensus", data: { round: 1, score: 0, reached: false, threshold: 0.5 } },
+      { type: "negotiation.decided", data: { rationale: "no proposals to synthesize" } },
+    ]);
   });
 });
 
