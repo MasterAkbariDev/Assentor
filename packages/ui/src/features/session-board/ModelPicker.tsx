@@ -8,13 +8,13 @@ import { useCanWrite, useRpc } from "../../transport/context.js";
 import type { Transport } from "../../transport/types.js";
 import { errorText, READ_ONLY_REASON } from "../controls/useSessionControl.js";
 
-type Entries = RpcResult<"models.catalog">["entries"];
+export type Entries = RpcResult<"models.catalog">["entries"];
 type Provider = (typeof SEAT_PROVIDERS)[number];
 
 // One `models.catalog` per transport and provider, however many cards ask. A failed call is forgotten so a later card retries.
 const catalogs = new WeakMap<Transport, Map<string, Promise<Entries>>>();
 
-function loadCatalog(rpc: Transport, provider: Provider): Promise<Entries> {
+export function loadCatalog(rpc: Transport, provider: Provider): Promise<Entries> {
   const byProvider = catalogs.get(rpc) ?? new Map<string, Promise<Entries>>();
   catalogs.set(rpc, byProvider);
   let pending = byProvider.get(provider);
@@ -26,7 +26,7 @@ function loadCatalog(rpc: Transport, provider: Provider): Promise<Entries> {
   return pending;
 }
 
-const isProvider = (value: string | undefined): value is Provider => (SEAT_PROVIDERS as readonly string[]).includes(value ?? "");
+export const isProvider = (value: string | undefined): value is Provider => (SEAT_PROVIDERS as readonly string[]).includes(value ?? "");
 
 /**
  * Model of one seat. Choosing a model calls `seat.setModel`, which applies at the seat's next turn, so the picker

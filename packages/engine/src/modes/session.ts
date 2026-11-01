@@ -149,6 +149,7 @@ export interface PreparedModeSession {
    * same turn once more; whoever awaited it sees only the second result. Returns why not.
    */
   restartSeat(seatId: string): string | undefined;
+  /**
    * FU-18b: a user command for the running controller (Lead's override, pin, pause, resume).
    * Returns why it was refused (no controller yet, a mode without controls, the controller's own refusal).
    */

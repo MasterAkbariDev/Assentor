@@ -837,3 +837,18 @@ button.lead-task-open:focus-visible { outline: 2px solid var(--accent); outline-
 .budget-item progress { width: 100%; height: 8px; accent-color: var(--accent); }
 .budget-item[data-state="warn"] progress { accent-color: var(--warn); }
 .budget-item[data-state="warn"] .budget-text { color: var(--warn); }
+
+/* Wave 2 controls: pause, inject, restart, Lead task controls */
+.pause-toggle { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.badge.paused { border: 1px solid var(--warn); color: var(--warn); border-radius: 999px; padding: 1px 8px; font-size: 12px; }
+.lead-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.seat-inject { display: flex; flex-direction: column; gap: 4px; flex-basis: 100%; }
+.seat-inject textarea { font: inherit; resize: vertical; }
+.seat-inject textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.inject-count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.inject-count.is-over { color: var(--error); }
+.lead-task-pinned { font-size: 12px; color: var(--muted); }
+.lead-task-controls { margin-top: 4px; font-size: 13px; }
+.lead-task-controls-body { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 0; }
+.lead-task-controls-body .write-reason, .lead-task-controls-body .notice { flex-basis: 100%; }
+.lead-entry-by { font-family: inherit; color: var(--accent); }

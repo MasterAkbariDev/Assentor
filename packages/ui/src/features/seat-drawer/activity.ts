@@ -52,6 +52,8 @@ export function activityText(event: EngineEvent): string | undefined {
       const change = event.data.from ? `model ${event.data.from} → ${event.data.to}` : `model ${event.data.to}`;
       return event.data.pending ? `${change} (from next turn)` : change;
     }
+    case "seat.injected":
+      return `message queued for the next turn (${event.data.chars} chars): ${event.data.preview}`;
     case "review.verdict":
       return withDetail(`verdict ${event.data.status}`, event.data.summary);
     default:

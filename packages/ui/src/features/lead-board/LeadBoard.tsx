@@ -4,14 +4,16 @@ import { STATUS_META, type SeatState } from "#assentor/ui-shared/status.js";
 import { useEngine } from "../../store/context.js";
 import { selectLeadBoard, selectSeats } from "../../store/selectors.js";
 import { ApprovalsPanel } from "../controls/ApprovalsPanel.js";
+import { PauseToggle } from "../controls/PauseToggle.js";
+import { LeadTaskControls } from "./LeadTaskControls.js";
 import { LeadLog } from "./LeadLog.js";
 import { LeadOrgChart } from "./LeadOrgChart.js";
 
 /**
  * The lead team board of the selected run (T04-17, watch-only): task stages,
  * the org chart and the lead log. Shows nothing unless the run is in lead mode.
- * Write controls: the integration approval (`session.approve`). Override, pin and
- * pause need RPCs the engine does not have. Cards open the owner's seat drawer.
+ * Write controls: the integration approval, Pause/Resume lead (a state of its own, apart from
+ * the session pause), and per task Override assignment and Pin model. Cards open the owner's seat drawer.
  */
 export function LeadBoard() {
   const lead = useEngine(selectLeadBoard);
@@ -23,10 +25,13 @@ export function LeadBoard() {
   }
   return (
     <section className="lead-board" aria-label="Team board">
-      <h2 className="lead-title">
-        Team board
-        {lead.turn > 0 ? <span className="lead-turn"> · turn {lead.turn}</span> : null}
-      </h2>
+      <div className="lead-head">
+        <h2 className="lead-title">
+          Team board
+          {lead.turn > 0 ? <span className="lead-turn"> · turn {lead.turn}</span> : null}
+        </h2>
+        <PauseToggle target="lead" />
+      </div>
       <ApprovalsPanel scope="integration" />
       <div className="lead-stages">
         {LEAD_STAGES.map((stage) => (
@@ -66,6 +71,7 @@ function LeadStageColumn({
           {tasks.map((task) => (
             <li key={task.id}>
               <LeadTaskCard task={task} seat={Object.hasOwn(seats, task.seatId) ? seats[task.seatId] : undefined} onOpen={onOpen} />
+              {stage === "accepted" ? null : <LeadTaskControls task={task} seats={seats} />}
             </li>
           ))}
         </ul>
@@ -94,6 +100,7 @@ function LeadTaskCard({ task, seat, onOpen }: { task: LeadTaskView; seat?: SeatS
           <span>{task.owner || "Unassigned"}</span>
         )}
       </span>
+      {task.pinnedModel ? <span className="lead-task-pinned">Pinned: {task.pinnedModel}</span> : null}
       <span className="lead-task-counters">
         Reassigned {task.reassigns} · Escalated {task.escalations}
       </span>

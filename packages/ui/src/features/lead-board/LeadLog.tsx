@@ -2,7 +2,7 @@ import { useId, useState } from "react";
 import type { LeadLogEntry } from "#assentor/ui-shared/lead.js";
 
 /**
- * Lead log (T04-17): every lead action with its ✓ accepted or ✗ refused mark and
+ * Lead log (T04-17): every lead action (yours are marked "You") with its ✓ accepted or ✗ refused mark and
  * reason. A switch narrows the list to refused actions. Text only: the action and
  * reason are model output, so they are shown as plain text.
  */
@@ -43,7 +43,10 @@ export function LeadLog({ actions, total }: { actions: LeadLogEntry[]; total: nu
                 {entry.accepted ? "✓" : "✗"}
               </span>
               <span className="visually-hidden">{entry.accepted ? "Accepted: " : "Refused: "}</span>
-              <span className="lead-entry-action">{entry.action}</span>
+              <span className="lead-entry-action">
+                {entry.by === "user" ? <span className="lead-entry-by">You: </span> : null}
+                {entry.action}
+              </span>
               {entry.reason ? <span className="lead-entry-reason"> {entry.reason}</span> : null}
             </li>
           ))}

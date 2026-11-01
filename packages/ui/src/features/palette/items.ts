@@ -44,14 +44,16 @@ export interface PaletteInput {
  */
 export const WRITE_ACTIONS: ReadonlyArray<{ id: string; label: string; detail: string; method?: RpcMethodName; fill?: string; command?: Command; blocked?: string }> = [
   { id: "model", label: "/model <seat> <model>", detail: "Change a seat's model", method: "seat.setModel", fill: "/model " },
-  { id: "pause", label: "/pause", detail: "Pause the run", blocked: "the engine has no pause yet" },
-  { id: "inject", label: "/inject <seat> …", detail: "Send a message to a seat", blocked: "the engine can't send text to a running seat yet" },
+  { id: "pause", label: "/pause", detail: "Pause the session: no new turn starts", method: "session.pause", command: { name: "pause" } },
+  { id: "resume", label: "/resume", detail: "Resume a paused session", method: "session.resume", command: { name: "resume" } },
+  { id: "inject", label: "/inject <seat> <text>", detail: "Queue a message for a seat's next turn", method: "seat.inject", fill: "/inject " },
+  { id: "restart", label: "/restart <seat>", detail: "Kill a seat's turn and run it again", method: "seat.restart", fill: "/restart " },
   { id: "approve", label: "/approve", detail: "Approve the pending approval", method: "session.approve", command: { name: "approve" } },
   { id: "stop", label: "/stop <seat>", detail: "Stop a seat", method: "seat.stop", fill: "/stop " },
   { id: "cancel", label: "/cancel", detail: "Cancel the session", method: "session.cancel", command: { name: "cancel" } },
 ];
 
-const COMMAND_METHOD: Record<Command["name"], RpcMethodName> = { approve: "session.approve", cancel: "session.cancel", model: "seat.setModel", stop: "seat.stop" };
+const COMMAND_METHOD: Record<Command["name"], RpcMethodName> = { approve: "session.approve", cancel: "session.cancel", model: "seat.setModel", stop: "seat.stop", pause: "session.pause", resume: "session.resume", inject: "seat.inject", restart: "seat.restart" };
 
 /** Views the UI renders, by the class of their root element. */
 export const VIEW_TARGETS: ReadonlyArray<{ label: string; selector: string; shown: "hasSeats" | "hasNegotiation" | "hasLeadBoard" | "hasReview" }> = [

@@ -4,13 +4,15 @@ import type { SeatState } from "#assentor/ui-shared/status.js";
 import { isLiveSeat } from "../../store/selectors.js";
 import { ConfirmAction } from "./ConfirmAction.js";
 import { errorText, useSessionControl } from "./useSessionControl.js";
+import { SeatInject } from "./SeatInject.js";
 import { WriteButton } from "./WriteButton.js";
 
-/** Seat drawer actions: Stop seat (confirm) and Change model (validated like `ModelIdSchema`). */
+/** Seat drawer actions: Stop seat and Restart turn (confirm), Change model (validated like `ModelIdSchema`) and Inject message. */
 export function SeatActions({ seat }: { seat: SeatState }) {
   const control = useSessionControl();
   const id = useId();
   const [stopping, setStopping] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const [model, setModel] = useState("");
   const [fieldError, setFieldError] = useState<string>();
   const [result, setResult] = useState<{ ok: boolean; text: string }>();
@@ -19,6 +21,7 @@ export function SeatActions({ seat }: { seat: SeatState }) {
 
   const finished = isLiveSeat(seat) ? undefined : "This seat has finished.";
   const stopReason = control.reasonFor("seat.stop") ?? finished;
+  const restartReason = control.reasonFor("seat.restart") ?? finished;
   const modelReason = control.reasonFor("seat.setModel") ?? finished;
 
   const onModel = async (event: FormEvent) => {
@@ -87,6 +90,20 @@ export function SeatActions({ seat }: { seat: SeatState }) {
         <p id={`${id}-stop-reason`} className="write-reason">
           {stopReason}
         </p>
+      ) : null}
+      <WriteButton type="button" reason={restartReason} reasonId={`${id}-restart-reason`} onClick={() => setRestarting(true)}>
+        Restart turn
+      </WriteButton>
+      {restartReason ? (
+        <p id={`${id}-restart-reason`} className="write-reason">
+          {restartReason}
+        </p>
+      ) : null}
+      <SeatInject seatId={seat.seatId} finished={finished} />
+      {restarting ? (
+        <ConfirmAction title={`Restart ${seat.displayName}'s turn?`} confirmLabel="Restart turn" run={() => control.restartSeat(seat.seatId)} onDone={() => setRestarting(false)} onCancel={() => setRestarting(false)}>
+          <p>The turn in flight is killed and run once more with the same task. At most 3 restarts per turn.</p>
+        </ConfirmAction>
       ) : null}
       {stopping ? (
         <ConfirmAction title={`Stop ${seat.displayName}?`} confirmLabel="Stop seat" run={() => control.stopSeat(seat.seatId)} onDone={() => setStopping(false)} onCancel={() => setStopping(false)}>

@@ -59,6 +59,8 @@ export function useSessionControl() {
   const tick = useEngine((s) => s.session?.controlTick ?? 0);
   const prompts = useEngine((s) => s.session?.prompts);
   const connection = useEngine((s) => s.connection);
+  const paused = useEngine((s) => s.session?.paused ?? false);
+  const leadPaused = useEngine((s) => s.session?.lead.paused ?? false);
   const shared = useEngine((s) => s.control);
   useEffect(() => loadControl(store, rpc, false), [store, rpc, sessionId, tick, connection]);
 
@@ -86,12 +88,24 @@ export function useSessionControl() {
   };
   return {
     sessionId,
+    /** The whole session is paused (`session.pause`). Separate from `leadPaused`. */
+    paused,
+    /** Only the Lead controller is paused (`lead.pause`). */
+    leadPaused,
     approvals,
     reasonFor,
     cancelSession: () => call((id) => rpc.call("session.cancel", { sessionId: id })),
     answerApproval: (approvalId: string, decision: "approve" | "deny") => call((id) => rpc.call("session.approve", { sessionId: id, id: approvalId, decision })),
     stopSeat: (seatId: string) => call((id) => rpc.call("seat.stop", { sessionId: id, seatId, confirm: true })),
     setModel: (seatId: string, model: string) => call((id) => rpc.call("seat.setModel", { sessionId: id, seatId, model })),
+    pause: () => call((id) => rpc.call("session.pause", { sessionId: id })),
+    resume: () => call((id) => rpc.call("session.resume", { sessionId: id })),
+    inject: (seatId: string, text: string) => call((id) => rpc.call("seat.inject", { sessionId: id, seatId, text })),
+    restartSeat: (seatId: string) => call((id) => rpc.call("seat.restart", { sessionId: id, seatId, confirm: true })),
+    leadOverride: (taskId: string, seatId: string) => call((id) => rpc.call("lead.override", { sessionId: id, taskId, seatId })),
+    leadPin: (taskId: string, model: string | null) => call((id) => rpc.call("lead.pin", { sessionId: id, taskId, model })),
+    leadPause: () => call((id) => rpc.call("lead.pause", { sessionId: id })),
+    leadResume: () => call((id) => rpc.call("lead.resume", { sessionId: id })),
   };
 }
 
