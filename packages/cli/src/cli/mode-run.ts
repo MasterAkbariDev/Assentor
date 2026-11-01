@@ -11,6 +11,7 @@ import { isSelectableExecutorProvider, normalizeExecutorProvider } from "#assent
 import { resolveProviderApiKey } from "#assentor/engine/keys/resolve.js";
 import { CliModelCatalog } from "#assentor/engine/models/cli-catalog.js";
 import { DEFAULT_CAPABILITIES } from "#assentor/engine/modes/capabilities.js";
+import { packStepVars } from "#assentor/engine/negotiation/pack-vars.js";
 import type { ModeHostServices, ModeId, ExecutorOutputChunk } from "#assentor/engine/modes/registry.js";
 import { getMode } from "#assentor/engine/modes/registry.js";
 import { appendLessons, buildRetroInput, retroVariables } from "#assentor/engine/modes/retro.js";
@@ -412,7 +413,7 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
     seatsFor,
     runStep: async ({ seat, step, vars, readOnly, worktreePath, signal, reportUsage }) => {
       if (!readOnly) throw new Error(`negotiation step ${step} edits files; the CLI host runs read-only steps only`);
-      const reply = await askSeat({ seat, prompt: input.prompts.render(step, vars as Record<string, never>), signal, reportUsage });
+      const reply = await askSeat({ seat, prompt: input.prompts.render(step, packStepVars(step, vars) as Record<string, never>), signal, reportUsage });
       void worktreePath;
       const json = extractJsonCandidate(reply);
       return json.ok ? json.data : reply;

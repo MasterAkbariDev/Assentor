@@ -209,3 +209,27 @@ describe("bench:tokens CLI", () => {
     expect(await main(["--runs", "1", "--gate", "baseline"], io)).toBe(1);
   });
 });
+
+describe("context:packed (TE-03)", () => {
+  const run = (...names: string[]) => runMock({ library, variants: [baseline, ...names.map((n) => resolveVariant(n))], runs: 2 });
+  const row = (report: BenchReport, name: string) => report.variants.find((v) => v.name === name)!;
+
+  it("cuts prompt tokens with success unchanged, and passes the mock gate", () => {
+    const report = run("context:packed");
+    expect(row(report, "context:packed").promptTokens).toBeLessThan(row(report, "baseline").promptTokens * 0.95);
+    expect(row(report, "context:packed").successRate).toBe(row(report, "baseline").successRate);
+    expect(gateVariant(report, "context:packed").pass).toBe(true);
+  });
+
+  it("keeps what the tasks need even under a tiny budget, and the mock seat is blind when a needed line is gone", () => {
+    const tiny = run("context:packed@300");
+    expect(row(tiny, "context:packed@300").successRate).toBe(1);
+    // A blunt cut of the same context loses the vulnerable line and the first failing assertion.
+    const blunt = runMock({ library, variants: [baseline, { ...variant("blunt", { contextScale: 0.2 }) }], runs: 1 });
+    expect(row(blunt, "blunt").successRate).toBeLessThan(1);
+  });
+
+  it("rejects a malformed packed variant", () => {
+    expect(() => resolveVariant("context:everything")).toThrow(/Unknown variant/);
+  });
+});

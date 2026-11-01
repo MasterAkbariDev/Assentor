@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Context packer (TE-03)** — Prompts that carry task context (review evidence packs and diffs, negotiation proposals/critiques, the Lead's engine state, failing-test output sent to coders and debug fixers) are built by one packer under a token budget: lower priority parts shrink first with an explicit `[… N lines omitted — ask to see more]` marker, diffs keep changed lines plus context, repeated blocks are sent once. Optional `context.budgetTokens.{reviewer,negotiation,lead,coder}` in the config (0 turns it off for a role); nothing is written on save. `pnpm bench:tokens --variants context:packed` measures it.
+
 ### Changed
 
 - **Monorepo split (T04-01)** — Source moved (with history) into pnpm workspace packages `packages/{protocol,ui-shared,engine,cli,ui}`. `protocol` now owns the seat/team/session schemas (`core/seats.ts`) and `Severity`, `ReviewStatus`, `PhaseItemSchema` and `AUTONOMY_LEVELS` (still re-exported from their old engine modules); `ui-shared` is Node-free; `engine` has no Ink/React. Packages import each other as `#assentor/<package>/…`, resolved by the root `package.json` `imports` into one `dist/` with the same layout as before, so `bin/assentor`, the installers and the published `assentor` package behave the same. The built web UI moved from `ui/dist` to `packages/ui/dist`. `pnpm build` now runs `tsc -b` over project references.

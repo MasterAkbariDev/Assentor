@@ -24,6 +24,7 @@ import type { RunVerificationCommand } from "../../review/verification-gates.js"
 import { redactSecrets } from "../../security/redact.js";
 import type { SeatScheduler } from "../../seats/scheduler.js";
 import type { SeatKey, WorktreeManager } from "../../worktrees/index.js";
+import { packFailureOutput } from "../../context/budget.js";
 import { parseTddOptions } from "./config.js";
 import { detectTamper, isTestFile, lockTests, normalizePath, RUNNER_CONFIG } from "./tamper.js";
 
@@ -319,7 +320,7 @@ export function createTddExecutor(deps: TddDeps): Executor {
       warnings.push(`the test command created ${grown.join(", ")} (applyTo would commit them; ignore them in .gitignore)`);
     }
     const text = [result.stdout, result.stderr].filter(Boolean).join("\n");
-    return { code: result.code, output: redactSecrets(text.slice(-OUTPUT_LIMIT)).text };
+    return { code: result.code, output: redactSecrets(packFailureOutput(text, OUTPUT_LIMIT) ?? text.slice(-OUTPUT_LIMIT)).text };
   }
 
   /** A file's bytes (hash) and text. A symlink hashes as its target, so turning a file into a link shows. */

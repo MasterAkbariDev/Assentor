@@ -190,3 +190,29 @@ describe("evidence pack prompt budget", () => {
     expect(prompt).toContain("cut to fit the prompt budget");
   });
 });
+
+describe("evidence pack prompt packing (TE-03)", () => {
+  function pack() {
+    const p = emptyEvidencePack("/tmp/p", { taskId: "t", round: 1 });
+    p.executorExplanation.whatChanged = "Moved auth into the service layer and removed the duplicate session lookup from the controller.";
+    p.architecture.summary = "Controllers call services; services own transactions; repositories are the only code that touches SQL.";
+    p.git.diff = ["diff --git a/f b/f", "--- a/f", "+++ b/f", "@@ -1,60 +1,61 @@", ...Array.from({ length: 30 }, (_, i) => ` before ${i}`), "+VULNERABLE_LINE", ...Array.from({ length: 30 }, (_, i) => ` after ${i}`)].join("\n");
+    p.relevantFiles = Array.from({ length: 6 }, (_, i) => ({ path: `src/f${i}.ts`, role: "relevant" as const, description: "", content: `line\n`.repeat(900), truncated: false }));
+    return p;
+  }
+
+  it("does not repeat Sections C and K in the claims block", () => {
+    const prompt = formatEvidencePackForPrompt(pack());
+    expect(prompt.split("Moved auth into the service layer").length).toBe(2);
+    expect(prompt).toContain("[… same text as Section K above omitted]");
+    expect(prompt).toContain("[… same text as Section C above omitted]");
+  });
+
+  it("keeps the diff's changed lines when file bodies have to give way", () => {
+    const prompt = formatEvidencePackForPrompt(pack(), 9_000);
+    expect(prompt).toContain("+VULNERABLE_LINE");
+    expect(prompt).toContain("lines omitted — ask to see more");
+    expect(prompt).toMatch(/not delivered|partially/);
+    expect(prompt).toContain("Moved auth into the service layer");
+  });
+});

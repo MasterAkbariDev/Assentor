@@ -10,6 +10,8 @@ import type { PromptLibrary } from "#assentor/engine/prompts/library.js";
 import { templateVariables } from "#assentor/engine/prompts/template.js";
 import { UsageLedger } from "#assentor/engine/usage/ledger.js";
 import { estimateTokens } from "#assentor/engine/usage/tokens.js";
+import { DEFAULT_BUDGET_TOKENS, roleOfPrompt } from "#assentor/engine/context/budget.js";
+import { packPromptVariables } from "#assentor/engine/context/vars.js";
 import { cliUsage } from "#assentor/engine/usage/cli-usage.js";
 import { BENCH_TASKS, type BenchTask, type TaskResult } from "./tasks.js";
 
@@ -54,11 +56,16 @@ export interface MockScript {
 export interface Variant {
   name: string;
   /** Config overlay the variant stands for (applied by the features as they land). */
-  overlay: { style?: string; profile?: string; skills?: string[] };
+  overlay: { style?: string; profile?: string; skills?: string[]; context?: string };
   /** Text added to every seat prompt (style fragment, skills index, or a skill body). */
   alwaysOn: string;
   notes: string[];
   mock?: MockScript;
+  /**
+   * Task context goes through the engine's context packer (TE-03) before it is rendered into the role prompt:
+   * the same `packPromptVariables` the engine uses, with the role's default budget or this many tokens.
+   */
+  packContext?: { budgetTokens?: number };
 }
 
 /** A style fragment as shipped (`prompts/builtin/style-<name>.md`); empty with a note when it does not exist. */
@@ -106,7 +113,7 @@ export function defaultAlwaysOn(root = REPO_ROOT): string {
 }
 
 /**
- * `baseline`, `style:<name>`, `profile:<name>` or `skills:<a>+<b>`, each on top
+ * `baseline`, `style:<name>`, `profile:<name>`, `skills:<a>+<b>` or `context:packed[@<tokens>]`, each on top
  * of the default config. Features that are not built yet resolve to a no-op
  * with a note, so the harness never depends on them.
  */
@@ -128,7 +135,11 @@ export function resolveVariant(name: string, root = REPO_ROOT): Variant {
     const skills = [...new Set([...base.skills, ...value.split("+")])];
     return { name, overlay: { skills }, alwaysOn: joinParts(styleText(base.style, root, []), skillsIndex(skills, root, notes)), notes };
   }
-  throw new Error(`Unknown variant "${name}" (use baseline, style:<name>, profile:<name> or skills:<a>+<b>)`);
+  if (kind === "context" && /^packed(@\d+)?$/.test(value)) {
+    const budgetTokens = value.includes("@") ? Number(value.split("@")[1]) : undefined;
+    return { name, overlay: { context: value }, alwaysOn: defaultAlwaysOn(root), notes, packContext: budgetTokens ? { budgetTokens } : {} };
+  }
+  throw new Error(`Unknown variant "${name}" (use baseline, style:<name>, profile:<name>, skills:<a>+<b> or context:packed[@<tokens>])`);
 }
 
 // ---------------------------------------------------------------------------
@@ -143,12 +154,14 @@ function emptyVariables(library: PromptLibrary, id: string): Record<string, stri
 }
 
 /** A role prompt rendered with the task's variables (each cut to `contextScale`); unset variables are empty. */
-export function rolePrompt(library: PromptLibrary, task: BenchTask, contextScale = 1): string {
+export function rolePrompt(library: PromptLibrary, task: BenchTask, contextScale = 1, pack?: Variant["packContext"]): string {
   const vars: Record<string, string | string[]> = emptyVariables(library, task.role);
   for (const [name, value] of Object.entries(task.variables)) {
     vars[name] = value.slice(0, Math.round(value.length * contextScale));
   }
-  return library.render(task.role, vars);
+  if (!pack) return library.render(task.role, vars);
+  const budgetTokens = pack.budgetTokens ?? DEFAULT_BUDGET_TOKENS[roleOfPrompt(task.role)] ?? Infinity;
+  return library.render(task.role, packPromptVariables(vars, { budgetTokens }));
 }
 
 /** The always-on part of a prompt: its text with every variable empty, after `extra` (style + skills index). */
@@ -254,7 +267,8 @@ function noise(key: string): number {
   return ((h ^ (h >>> 16)) >>> 0) / 2 ** 32;
 }
 
-function mockReply(task: BenchTask, script: MockScript, u: number): string {
+function mockReply(task: BenchTask, script: MockScript, u: number, blind = false): string {
+  if (blind) return "I could not find the code or output this task refers to in the context I was given.";
   const full = task.mock.output;
   const at = full.lastIndexOf("```json");
   const prose = at >= 0 ? full.slice(0, at) : full;
@@ -275,7 +289,9 @@ function mockAttempt(library: PromptLibrary, task: BenchTask, variant: Variant, 
     ledger.add({ seq: ++seq, sessionId, seatId: task.role, at: "", type, data } as EngineEvent);
 
   const contextScale = script.contextScale ?? 1;
-  const base = (variant.alwaysOn ? `${variant.alwaysOn}\n\n` : "") + rolePrompt(library, task, contextScale);
+  const base = (variant.alwaysOn ? `${variant.alwaysOn}\n\n` : "") + rolePrompt(library, task, contextScale, variant.packContext);
+  // A seat that was not given what the task needs cannot answer it.
+  const blind = !(task.needs ?? []).every((text) => base.includes(text));
   // The seat reads each project file in its own tool turn; extra turns re-read the first one.
   const reads = Object.values(task.files);
   const extra = reads.length ? Array.from({ length: script.extraTurns ?? 0 }, () => reads[0]!) : [];
@@ -296,14 +312,14 @@ function mockAttempt(library: PromptLibrary, task: BenchTask, variant: Variant, 
     history += STEP + file.slice(0, Math.round(file.length * contextScale));
   }
   const u = noise(`${task.id}:${run}`);
-  let output = mockReply(task, script, u);
+  let output = mockReply(task, script, u, blind);
   call(base + history, output);
   history += output;
   const files = { ...task.files, ...task.mock.edits };
   let success = task.check({ output, files });
   for (let followUp = 1; !success && followUp <= MAX_FOLLOW_UPS; followUp += 1) {
     emit("seat.retry", { attempt: followUp + 1, maxAttempts: MAX_FOLLOW_UPS + 1, delayMs: 0, reason: "reply failed the task check" });
-    output = mockReply(task, { ...script, dropHandoff: false }, u);
+    output = mockReply(task, { ...script, dropHandoff: false }, u, blind);
     call(base + history + FOLLOW_UP, output);
     history += FOLLOW_UP + output;
     success = task.check({ output, files });
@@ -378,7 +394,7 @@ export async function runLive(options: LiveOptions): Promise<BenchReport> {
             await fs.mkdir(path.dirname(path.join(dir, file)), { recursive: true });
             await fs.writeFile(path.join(dir, file), text);
           }
-          const prompt = (variant.alwaysOn ? `${variant.alwaysOn}\n\n` : "") + rolePrompt(options.library, task);
+          const prompt = (variant.alwaysOn ? `${variant.alwaysOn}\n\n` : "") + rolePrompt(options.library, task, 1, variant.packContext);
           const executor = await createExecutor(options.executor, dir, { model: options.executorModel, timeoutMs: 15 * 60_000 });
           const result = await executor.run({ taskId: createId(), projectPath: dir, contract: buildContract(task.variables.goal ?? task.id), prompt });
           const output = result.summary;

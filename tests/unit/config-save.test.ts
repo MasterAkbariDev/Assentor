@@ -162,10 +162,14 @@ describe("saveAssentorConfig", () => {
     });
     const written = await readYaml(file);
 
+    // `context` (TE-03) is optional with no default: nothing is written until the user sets it.
     expect(Object.keys(written).sort()).toEqual(
-      Object.keys(AssentorConfigSchema.shape).sort(),
+      Object.keys(AssentorConfigSchema.shape).filter((key) => key !== "context").sort(),
     );
     expect(written.project).toEqual({ path: "." });
+
+    const set = await saveAssentorConfig(dir, parseAssentorConfig({ context: { budgetTokens: { lead: 3000 } } }), { scope: "project" });
+    expect((await readYaml(set)).context).toEqual({ budgetTokens: { lead: 3000 } });
   });
 
   it("omits optional fields that are unset instead of writing nulls", async () => {

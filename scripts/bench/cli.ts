@@ -4,7 +4,7 @@ import { parseArgs } from "node:util";
 import { PromptLibrary } from "#assentor/engine/prompts/library.js";
 import { gateVariant, renderReport, resolveVariant, runLive, runMock, type BenchReport } from "./tokens.js";
 
-const USAGE = `pnpm bench:tokens [--variants baseline,style:concise,profile:economy,skills:<a>+<b>] [--runs N]
+const USAGE = `pnpm bench:tokens [--variants baseline,style:concise,profile:economy,skills:<a>+<b>,context:packed[@<tokens>]] [--runs N]
                   [--gate <variant>] [--json] [--out <file.md>] [--model <id for the token estimate>]
                   [--live --budget <tokens> --executor <provider> [--executor-model <model>]]`;
 
@@ -12,6 +12,7 @@ const HEADER = `# Token benchmark (TE-10)
 
 Net tokens per successful task = all prompt + output tokens of every call, follow-up turn and retry, divided by the tasks that passed their check. Cached tokens are part of the prompt column. \`always-on\` is the text a variant adds to every seat prompt.
 
+- \`context:packed\` (TE-03) sends the task context through the engine's context packer (\`packPromptVariables\`, default budgets, or \`context:packed@<tokens>\`); \`baseline\` sends it unpacked. A mock seat is blind when a line its task needs (\`needs\` in the fixtures) is cut, so a variant that over-cuts fails instead of looking small.
 - **Mock** numbers (below, regenerated with \`--out\`) measure prompt structure only: replies are scripted, so they cannot show behavioural savings.
 - **Live** numbers come from real CLIs, run by the owner: \`pnpm bench:tokens --live --budget 300000 --executor claude-code --variants <v> --gate <v>\`. Paste the output under a dated heading; it is the evidence for turning a variant on by default (gate: net tokens per success down ≥ 10%, no success-rate drop, always-on text ≤ 300 tokens).
 

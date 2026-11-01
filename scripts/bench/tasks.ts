@@ -18,6 +18,12 @@ export interface BenchTask {
   /** Variables rendered into the role prompt. */
   variables: Record<string, string>;
   files: Record<string, string>;
+  /**
+   * Strings the seat's prompt must still contain for a competent seat to get the task right (the vulnerable
+   * line to review, the first failing assertion). The mock seat is blind without them, so a variant that cuts
+   * context it needs fails the task instead of just looking smaller.
+   */
+  needs?: string[];
   check(result: TaskResult): boolean;
   mock: {
     output: string;
@@ -111,21 +117,69 @@ export function cartTotal(lines: Line[]): number {
 }
 `;
 
-const USERS_DIFF = `diff --git a/src/users.ts b/src/users.ts
---- a/src/users.ts
-+++ b/src/users.ts
-@@ -1,9 +1,14 @@
- import { db } from "./db.js";
+/** A module of `count` small query helpers, the shape of a real src/users.ts. */
+const userHelpers = (count: number) =>
+  Array.from(
+    { length: count },
+    (_, i) => `export async function listUsersBy${i}(value: string, limit = 50) {
+  // Admin listing ${i}: filter on column c${i}, newest first.
+  const rows = await db.query("SELECT id, name FROM users WHERE c${i} = $1 ORDER BY id DESC LIMIT $2", [value, limit]);
+  return rows.map((row) => ({ id: row.id, name: row.name }));
+}
+`,
+  ).join("\n");
 
- export async function findUser(id: number) {
-   return db.query("SELECT id, name FROM users WHERE id = $1", [id]);
- }
-+
-+export async function searchUsers(name: string) {
-+  // Search by name for the admin page.
-+  return db.query(\`SELECT id, name, email FROM users WHERE name LIKE '%\${name}%'\`);
-+}
-`;
+const USERS_BEFORE = `import { db } from "./db.js";
+
+export async function findUser(id: number) {
+  return db.query("SELECT id, name FROM users WHERE id = $1", [id]);
+}
+
+${userHelpers(24)}`;
+
+const SEARCH_USERS = `export async function searchUsers(name: string) {
+  // Search by name for the admin page.
+  return db.query(\`SELECT id, name, email FROM users WHERE name LIKE '%\${name}%'\`);
+}`;
+
+const beforeLines = USERS_BEFORE.split("\n");
+const addedLines = ["", ...SEARCH_USERS.split("\n")];
+
+/** The change as a function-context diff (the whole file around the hunk), which is what a "show me the function" diff looks like. */
+const USERS_DIFF = [
+  "diff --git a/src/users.ts b/src/users.ts",
+  "--- a/src/users.ts",
+  "+++ b/src/users.ts",
+  `@@ -1,${beforeLines.length} +1,${beforeLines.length + addedLines.length} @@`,
+  ...beforeLines.map((line) => ` ${line}`),
+  ...addedLines.map((line) => `+${line}`),
+  "",
+].join("\n");
+
+/** What an evidence pack carries next to the diff: the project tree, the callee and the new file in full. */
+const USERS_EVIDENCE = [
+  "### Project structure",
+  "src/db.ts, src/users.ts, src/routes/admin.ts, tests/users.test.ts, package.json",
+  "",
+  "### src/db.ts",
+  "db.query(sql, params?) passes params to the driver as bound parameters.",
+  "",
+  "### src/users.ts (after the change)",
+  [...beforeLines, ...addedLines].join("\n"),
+].join("\n");
+
+/** A failing run whose retry warning repeats verbatim, as retry loops and flaky suites print it. */
+const RETRY_BLOCK = "[warn] connect ECONNREFUSED 127.0.0.1:5432, retrying in 200ms\n    at connect (src/net/pool.ts:41:11)\n    at retry (src/net/pool.ts:77:5)\n    at Pool.acquire (src/net/pool.ts:102:9)";
+const TEST_OUTPUT = [
+  " RUN  v3.2.7 /work/pricing",
+  " FAIL  tests/price.test.ts > cartTotal > rounds each line once",
+  "AssertionError: expected 24.01 to be 24",
+  "    at tests/price.test.ts:18:34",
+  "",
+  ...Array.from({ length: 14 }, () => `${RETRY_BLOCK}\n`),
+  " Test Files  1 failed | 3 passed (4)",
+  "      Tests  1 failed | 11 passed (12)",
+].join("\n");
 
 export const BENCH_TASKS: BenchTask[] = [
   {
@@ -216,9 +270,10 @@ describe("slugify", () => {
     variables: {
       goal: "Remove the duplicated VAT rounding in src/price.ts without changing behaviour.",
       subtask: "Extract the gross calculation into one helper used by netToGross() and cartTotal(). Owned paths: src/price.ts.",
-      testOutput: "No tests yet; check behaviour by reading the two call sites.",
+      testOutput: TEST_OUTPUT,
     },
     files: { "src/price.ts": PRICE_TS },
+    needs: ["AssertionError: expected 24.01 to be 24"],
     check: ({ output, files }) => {
       const text = files["src/price.ts"] ?? "";
       return (text.match(/1\.2\b/g) ?? []).length === 1 && /export function netToGross/.test(text) && /export function cartTotal/.test(text) && hasHandoff(output);
@@ -269,9 +324,10 @@ export function cartTotal(lines: Line[]): number {
       goal: "Add a user search for the admin page.",
       acceptanceCriteria: "- searchUsers(name) returns users whose name contains the text\n- no SQL injection",
       diff: USERS_DIFF,
-      evidence: "src/db.ts: db.query(sql, params?) passes params to the driver as bound parameters.",
+      evidence: USERS_EVIDENCE,
     },
     files: {},
+    needs: ["name LIKE '%${name}%'"],
     check: ({ output }) => {
       const review = lastJson(output);
       return review?.status === "NEEDS_WORK" && /inject/i.test(JSON.stringify(review.issues ?? []));

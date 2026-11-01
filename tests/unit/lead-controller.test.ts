@@ -23,6 +23,7 @@ import {
   type Seat,
   type StageRunnerDeps,
 } from "../../packages/engine/src/index.js";
+import { setContextBudgets } from "../../packages/engine/src/context/budget.js";
 import { builtinPromptDir, PromptLibrary } from "../../packages/engine/src/prompts/index.js";
 import { SeatScheduler, type SchedulerOptions } from "../../packages/engine/src/seats/index.js";
 
@@ -431,6 +432,19 @@ describe("Lead controller", () => {
     expect(resumed.questions).toEqual([expect.stringContaining("Start task T1")]);
     expect(refusals(resumed.events)).toEqual([expect.objectContaining({ action: "assign", reason: "the user did not approve this run" })]);
     expect(resumed.runs).toEqual([]);
+  });
+
+  it("packs the engine state under context.budgetTokens.lead: the headline stays, the rest shrinks", async () => {
+    const seen: string[] = [];
+    setContextBudgets({ lead: 150 });
+    try {
+      const s = await setup({ script: [(prompt) => (seen.push(prompt), turn(plan(T1)))] });
+      await s.run();
+    } finally {
+      setContextBudgets(undefined);
+    }
+    expect(seen[0]).toContain("## Engine state");
+    expect(seen[0]).toMatch(/Turn 1 of \d+/);
   });
 
   it("renders the library's lead prompt with the caller variables; report text cannot close its <report> block", async () => {

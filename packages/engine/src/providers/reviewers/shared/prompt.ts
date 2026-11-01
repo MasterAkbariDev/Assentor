@@ -13,6 +13,8 @@ import type { ProjectReviewEvidencePack } from "../../../review/evidence-pack.js
 import { evidencePackToMarkdown } from "../../../review/persist.js";
 import type { AIImagePart } from "../../ai/types.js";
 import { ArtifactType } from "../../../artifacts/types.js";
+import { contextBudget } from "../../../context/budget.js";
+import { compactDiff, packContext, type ContextSection } from "../../../context/pack.js";
 
 export function buildReviewPrompt(input: {
   contract: TaskContract;
@@ -37,7 +39,7 @@ export function buildReviewPrompt(input: {
       }
       const limit = artifact.type === "file" ? 24_000 : 4_000;
       const body = artifact.content
-        ? `\n\`\`\`\n${truncate(artifact.content, limit)}\n\`\`\``
+        ? `\n\`\`\`\n${fitArtifact(artifact, limit)}\n\`\`\``
         : "";
       return `${header}${body}`;
     })
@@ -190,6 +192,11 @@ export function formatEvidencePackForPrompt(
     ? `### Diff\n\`\`\`\n${truncate(pack.git.diff, 12_000)}\n\`\`\``
     : "";
 
+  const budgetTokens = contextBudget("reviewer");
+  if (budgetTokens !== undefined) {
+    return packedEvidence({ pack, md, files, sections, depExcerpt, gitDiff, maxChars, budgetTokens });
+  }
+
   const beforeFiles = [md, "", "## File contents", ""].join("\n");
   const evidence = [
     beforeFiles + (sections.join("\n\n") || "(none)"),
@@ -234,13 +241,77 @@ export function formatEvidencePackForPrompt(
   return `${evidenceBlock}\n${decisionSections(pack, files.length, partial, omitted, evidenceTruncated)}`;
 }
 
+const FILE_PRIORITY: Record<string, number> = { changed: 70, test: 60, unchanged_important: 40 };
+
+/**
+ * `formatEvidencePackForPrompt` with the context packer (TE-03): the diff outranks file bodies,
+ * which shrink from the least important up, instead of everything after the character budget
+ * being cut off. The decision sections stay outside the budget exactly as before, and the
+ * coverage report is built from what the packer actually delivered.
+ */
+function packedEvidence(input: {
+  pack: ProjectReviewEvidencePack;
+  md: string;
+  files: Array<ProjectReviewEvidencePack["relevantFiles"][number]>;
+  sections: string[];
+  depExcerpt: string;
+  gitDiff: string;
+  maxChars: number;
+  budgetTokens: number;
+}): string {
+  const { pack, md, files, sections, depExcerpt } = input;
+  const diff = pack.git.diff ? `### Diff\n\`\`\`\n${fitDiffChars(pack.git.diff, 12_000)}\n\`\`\`` : "";
+  const reserve =
+    decisionSections(pack, files.length, [], files.map((f) => f.path), true).length + PARTIAL_LABEL.length + 32;
+  const budget = Math.min(input.budgetTokens, Math.floor(Math.max(0, input.maxChars - reserve) / 4));
+  const inlined = files.slice(0, MAX_INLINED_FILES);
+  const packSections: ContextSection[] = [
+    { id: "pack", kind: "summary", priority: 90, keep: "start", text: md },
+    { id: "files", kind: "task", text: `## File contents\n${sections.length ? "" : "\n(none)"}` },
+    ...inlined.map((f, i): ContextSection => ({ id: `file${i}`, kind: "excerpt", priority: FILE_PRIORITY[f.role] ?? 50, keep: "start", text: sections[i]! })),
+    { id: "manifest", kind: "excerpt", priority: 30, keep: "start", text: depExcerpt },
+    { id: "diff", kind: "diff", priority: 85, text: diff },
+  ];
+  const packed = packContext(packSections, { budgetTokens: budget });
+
+  const lineCount = (text: string) => text.split("\n").length;
+  const partial: string[] = [];
+  const omitted: string[] = [];
+  files.forEach((f, i) => {
+    const section = sections[i];
+    const cut = packed.omitted.find((o) => o.id === `file${i}`);
+    if (section === undefined || !f.content) omitted.push(f.path);
+    else if (cut && cut.lines >= lineCount(section)) omitted.push(f.path);
+    else if (cut || f.truncated || f.content.length > MAX_INLINED_FILE_CHARS) partial.push(f.path);
+  });
+  const evidenceTruncated = packed.omitted.length > 0 || packed.clipped || (pack.git.diff ?? "").length > 12_000;
+  const inPack = !packed.omitted.some((o) => o.id === "pack") && !packed.clipped;
+  return `${packed.text}\n${decisionSections(pack, files.length, partial, omitted, evidenceTruncated, inPack)}`;
+}
+
+/** A diff of at most `maxChars`: past that, only the changed lines and their context are kept. */
+export function fitDiffChars(diff: string, maxChars: number): string {
+  if (diff.length <= maxChars) return diff;
+  return truncate(compactDiff(diff), maxChars);
+}
+
+/** An artifact body of at most `limit` characters: diffs keep their hunks, anything else is cut at the end. */
+function fitArtifact(artifact: ReviewArtifactRef, limit: number): string {
+  const content = artifact.content ?? "";
+  if (content.length <= limit) return content;
+  return contextBudget("reviewer") !== undefined && (artifact.type === ArtifactType.GitDiff || artifact.type === "diff") ? fitDiffChars(content, limit) : truncate(content, limit);
+}
+
 function decisionSections(
   pack: ProjectReviewEvidencePack,
   fileCount: number,
   partial: string[],
   omitted: string[],
   evidenceTruncated: boolean,
+  /** The pack's own Sections C and K were delivered in full above, so their text is not repeated. */
+  inPack = false,
 ): string {
+  const again = (text: string, section: string) => (inPack && text.length >= 60 ? `[… same text as Section ${section} above omitted]` : text);
   const list = (paths: string[]) => paths.map((p) => `\`${p}\``).join(", ");
   const full = fileCount - partial.length - omitted.length;
   return [
@@ -255,11 +326,10 @@ function decisionSections(
     "",
     "## Executor claims vs evidence",
     `Explanation source: ${pack.executorExplanation.source}`,
-    pack.executorExplanation.whatChanged ||
-      pack.executorExplanation.raw ||
+    again(pack.executorExplanation.whatChanged || pack.executorExplanation.raw || "", "K") ||
       "(no executor explanation)",
     `Architecture source: ${pack.architecture.source}`,
-    pack.architecture.summary || "(no architecture summary)",
+    again(pack.architecture.summary, "C") || "(no architecture summary)",
     pack.executorStalledWaitingForConfirmation
       ? "\n## Stall signal\nExecutor appears stalled waiting for confirmation to proceed to the next phase. Do NOT PASS. Issue a nextPhaseDirective."
       : "",
