@@ -104,7 +104,7 @@ export class ReviewCoordinator {
   private readonly adjudicatorProfile?: LogicalAgentProfile;
   private readonly goal: string;
   private readonly acceptanceCriteria: string[];
-  private readonly policy: ReviewPolicy;
+  readonly policy: ReviewPolicy;
   private readonly tiebreak: "adjudicator" | "negotiate";
   private readonly onDisagreement?: ReviewCoordinatorOptions["onDisagreement"];
   /** Member id (as in `runIndependentReviews`) → weight. */
@@ -378,12 +378,17 @@ export class PanelReviewer implements Reviewer {
   private readonly verificationRequested = new Set<string>();
   callCount = 0;
 
+  /** Seat id of each member, in member order; `review.finding` names reviewers by these. */
+  private readonly memberSeatIds?: string[];
+
   constructor(
     options: ReviewCoordinatorOptions & {
       name?: string;
+      memberSeatIds?: string[];
     },
   ) {
     this.name = options.name ?? "panel";
+    this.memberSeatIds = options.memberSeatIds;
     this.members = [...options.reviewers];
     this.coordinator = new ReviewCoordinator(options);
   }
@@ -500,10 +505,16 @@ export class PanelReviewer implements Reviewer {
       };
     }
 
+    const correlated = this.coordinator.correlate(findings);
+    const seatOf = new Map(
+      uniqueMemberIds(this.members.map((m) => m.name)).map((id, i) => [id, this.memberSeatIds?.[i] ?? id]),
+    );
     return {
       result,
       messages: communication.length > 0 ? communication : undefined,
-      rawOutput: rawOutput(this.coordinator.correlate(findings)),
+      rawOutput: rawOutput(correlated),
+      policy: this.coordinator.policy,
+      correlated: correlated.map((c) => ({ ...c, agentIds: c.agentIds.map((id) => seatOf.get(id) ?? id) })),
     };
   }
 }

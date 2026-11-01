@@ -8,6 +8,9 @@ import {
   type SeatProposal,
 } from "../strategy.js";
 
+/** Consensus needs a score strictly above this. */
+const CONSENSUS_THRESHOLD = 0.5;
+
 /**
  * Vote strategy (T02-04): every seat proposes, every seat ranks every proposal,
  * and a Borda count picks the winner.
@@ -41,7 +44,9 @@ export const voteStrategy: NegotiationStrategy = {
       }
     }
     const { anonymized, seatByLabel } = anonymizeProposals(proposals);
-    anonymized.forEach((p) => ctx.emit({ type: "negotiation.proposal", data: { round: 1, label: p.label, text: p.text } }));
+    anonymized.forEach((p, i) =>
+      ctx.emit({ type: "negotiation.proposal", seatId: proposals[i]!.seatId, data: { round: 1, label: p.label, text: p.text } }),
+    );
     const listed = proposals.map((p, i) => ({ label: anonymized[i]!.label, seatId: p.seatId, text: p.text }));
 
     const n = anonymized.length;
@@ -51,12 +56,14 @@ export const voteStrategy: NegotiationStrategy = {
       const consensus = { score: only ? 1 : 0, reached: Boolean(only) };
       ctx.emit({
         type: "negotiation.consensus",
-        data: { round: 1, ...consensus, ...(only ? { preferred: only.label } : {}) },
+        data: { round: 1, ...consensus, threshold: CONSENSUS_THRESHOLD, ...(only ? { preferred: only.label } : {}) },
       });
+      const rationale = only ? "only one proposal" : "no proposals";
+      ctx.emit({ type: "negotiation.decided", data: { rationale, ...(only ? { winner: only.label } : {}) } });
       return {
         strategy: "vote",
         decision: only?.text ?? "",
-        rationale: only ? "only one proposal" : "no proposals",
+        rationale,
         proposals: listed,
         dissent,
         rounds: 1,
@@ -97,11 +104,13 @@ export const voteStrategy: NegotiationStrategy = {
     const tallies = Object.fromEntries(labels.map((label) => [label, points.get(label) ?? 0]));
     const maxPossible = votes.length * (n - 1);
     if (votes.length === 0) {
-      ctx.emit({ type: "negotiation.consensus", data: { round: 2, score: 0, reached: false } });
+      ctx.emit({ type: "negotiation.consensus", data: { round: 2, score: 0, reached: false, threshold: CONSENSUS_THRESHOLD } });
+      const rationale = "no valid ballots, so no winner";
+      ctx.emit({ type: "negotiation.decided", data: { rationale } });
       return {
         strategy: "vote",
         decision: "",
-        rationale: "no valid ballots, so no winner",
+        rationale,
         proposals: listed,
         votes,
         tallies,
@@ -116,13 +125,14 @@ export const voteStrategy: NegotiationStrategy = {
     const topLabels = labels.filter((label) => points.get(label) === top);
     const winner = topLabels[0]!;
     const score = top / maxPossible;
-    const reached = score > 0.5;
+    const reached = score > CONSENSUS_THRESHOLD;
     const winnerText = listed.find((p) => p.label === winner)?.text ?? "";
     const rationale =
       `${winner} won with ${top} of ${maxPossible} points from ${votes.length} valid ballot(s)` +
       (topLabels.length > 1 ? `; tie-break: ${winner} is the earliest of the top labels` : "") +
       (reached ? "" : "; below the 0.5 consensus threshold");
-    ctx.emit({ type: "negotiation.consensus", data: { round: 2, score, reached, preferred: winner } });
+    ctx.emit({ type: "negotiation.consensus", data: { round: 2, score, reached, preferred: winner, threshold: CONSENSUS_THRESHOLD } });
+    ctx.emit({ type: "negotiation.decided", data: { rationale, winner } });
     return {
       strategy: "vote",
       decision: winnerText,

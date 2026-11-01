@@ -182,8 +182,8 @@ describe("explore and plan are read-only", () => {
     ]);
   });
 
-  it("explore and plan are not CLI-available; pipeline is not available either; editsCode matches", () => {
-    for (const id of IDS) expect(getMode(id)!.available).toBe(false);
+  it("pipeline, explore and plan are CLI-available; editsCode matches", () => {
+    for (const id of IDS) expect(getMode(id)!.available).toBe(true);
     expect(getMode("explore")!.editsCode).toBe(false);
     expect(getMode("plan")!.editsCode).toBe(true);
   });

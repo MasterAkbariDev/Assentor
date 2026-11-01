@@ -8,6 +8,9 @@ import {
   type SeatProposal,
 } from "../strategy.js";
 
+/** Consensus needs a score strictly above this. */
+const CONSENSUS_THRESHOLD = 0.5;
+
 /**
  * Synthesize strategy (T02-07): every seat except one aggregator proposes, then
  * the aggregator writes one merged answer that cites the proposals it used.
@@ -54,15 +57,19 @@ export const synthesizeStrategy: NegotiationStrategy = {
       }
     }
     const { anonymized } = anonymizeProposals(proposals);
-    anonymized.forEach((p) => ctx.emit({ type: "negotiation.proposal", data: { round: 1, label: p.label, text: p.text } }));
+    anonymized.forEach((p, i) =>
+      ctx.emit({ type: "negotiation.proposal", seatId: proposals[i]!.seatId, data: { round: 1, label: p.label, text: p.text } }),
+    );
     const listed = proposals.map((p, i) => ({ label: anonymized[i]!.label, seatId: p.seatId, text: p.text }));
 
     if (anonymized.length === 0) {
-      ctx.emit({ type: "negotiation.consensus", data: { round: 1, score: 0, reached: false } });
+      ctx.emit({ type: "negotiation.consensus", data: { round: 1, score: 0, reached: false, threshold: CONSENSUS_THRESHOLD } });
+      const rationale = "no proposals to synthesize";
+      ctx.emit({ type: "negotiation.decided", data: { rationale } });
       return {
         strategy: "synthesize",
         decision: "",
-        rationale: "no proposals to synthesize",
+        rationale,
         proposals: listed,
         dissent,
         rounds: 1,
@@ -81,11 +88,13 @@ export const synthesizeStrategy: NegotiationStrategy = {
     );
     if (!reply.ok) {
       dissent.push({ seatId: aggregator, reason: reply.error });
-      ctx.emit({ type: "negotiation.consensus", data: { round: 2, score: 0, reached: false } });
+      ctx.emit({ type: "negotiation.consensus", data: { round: 2, score: 0, reached: false, threshold: CONSENSUS_THRESHOLD } });
+      const rationale = "the aggregator gave no answer";
+      ctx.emit({ type: "negotiation.decided", data: { rationale } });
       return {
         strategy: "synthesize",
         decision: "",
-        rationale: "the aggregator gave no answer",
+        rationale,
         proposals: listed,
         dissent,
         rounds: 2,
@@ -105,11 +114,12 @@ export const synthesizeStrategy: NegotiationStrategy = {
     }
     const uncited = labels.filter((label) => !cited.has(label));
     const score = cited.size / labels.length;
-    const reached = score > 0.5;
+    const reached = score > CONSENSUS_THRESHOLD;
     const rationale =
       `synthesized from ${cited.size} of ${labels.length} proposals` +
       (uncited.length > 0 ? `; not used: ${uncited.join(", ")}` : "");
-    ctx.emit({ type: "negotiation.consensus", data: { round: 2, score, reached } });
+    ctx.emit({ type: "negotiation.consensus", data: { round: 2, score, reached, threshold: CONSENSUS_THRESHOLD } });
+    ctx.emit({ type: "negotiation.decided", data: { rationale } });
     return {
       strategy: "synthesize",
       decision: reply.data.answer,
