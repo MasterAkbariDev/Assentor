@@ -360,6 +360,7 @@ class LeadController implements ModeController {
       this.paused = pause;
       this.userAction(command.kind, true, pause ? "the lead takes no new actions; agent runs in flight finish" : "the lead continues");
       if (!pause) this.poke();
+      if (this.state) void this.save().catch(() => undefined);
       return undefined;
     }
     if (!this.state) return "the lead has not loaded its board yet";

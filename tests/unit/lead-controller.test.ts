@@ -91,6 +91,7 @@ interface Setup {
   sessionId: string;
   controller: AbortController;
   run(): Promise<ModeRunResult>;
+  control: ReturnType<typeof prepareModeSession>["control"];
 }
 
 interface SetupOptions {
@@ -188,7 +189,7 @@ async function setup(options: SetupOptions): Promise<Setup> {
       }
     },
   });
-  return { repo, manager, events, runs, cancelled, questions, lead, sessionId, controller, run: () => session!.run() };
+  return { repo, manager, events, runs, cancelled, questions, lead, sessionId, controller, run: () => session!.run(), control: (command) => session!.control(command) };
 }
 
 const of = (events: EngineEventDraft[], type: string) => events.filter((e) => e.type === type).map((e) => e.data as Record<string, unknown>);
@@ -910,3 +911,32 @@ async function until(check: () => boolean, ms = 20_000): Promise<void> {
     await new Promise((r) => setTimeout(r, 5));
   }
 }
+
+describe("FU-18b: pause survives a resume", () => {
+  it("a paused lead is saved at once and a resumed session waits for lead.resume", async () => {
+    let first: Setup | undefined;
+    first = await setup({
+      script: [
+        () => {
+          expect(first!.control({ kind: "pause" })).toBeUndefined();
+          return turn(plan(T1));
+        },
+      ],
+    });
+    const run = first.run();
+    const stateFile = path.join(first.repo, ".assentor", "sessions", first.sessionId, "lead.json");
+    await vi.waitFor(async () => expect(JSON.parse(await fs.readFile(stateFile, "utf8")).paused).toBe(true), { timeout: 10_000 });
+    first.controller.abort();
+    await run;
+    expect(JSON.parse(await fs.readFile(stateFile, "utf8")).paused).toBe(true);
+
+    const second = await setup({ repo: first.repo, sessionId: first.sessionId, resume: true, script: [turn(plan(T1))] });
+    const resumed = second.run();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(second.lead.prompts).toHaveLength(0); // still paused: no lead turn
+    expect(second.control({ kind: "pause" })).toMatch(/already paused/);
+    expect(second.control({ kind: "resume" })).toBeUndefined();
+    await resumed; // one turn, then the script runs out
+    expect(of(second.events, "task.created")).toHaveLength(1);
+  });
+});
