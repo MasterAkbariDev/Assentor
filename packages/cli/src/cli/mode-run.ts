@@ -37,6 +37,7 @@ import { cliUsage } from "#assentor/engine/usage/cli-usage.js";
 import type { EngineEvent, EngineEventDraft } from "#assentor/protocol/events.js";
 import { extractJsonCandidate } from "#assentor/protocol/parse.js";
 import { estimateRun } from "#assentor/engine/estimate/cost.js";
+import { observedPricing } from "#assentor/engine/usage/observed.js";
 import { expandSeatSpecs, SEAT_CLI_PROVIDERS, type Seat, type StageSpec } from "#assentor/protocol/seats.js";
 import {
   attachRunInterrupt,
@@ -105,16 +106,20 @@ export async function runModeTask(input: ModeTaskInput) {
     });
     const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
     const autonomy = config.run.autonomy ?? config.run.mode;
-    const estimate = estimateRun(config, input.prompt, mode.id);
-    reporter.note(formatRunEstimate(estimate, config, `mode ${mode.id}`));
-    await confirmRunEstimate({
-      estimate,
-      limits: config.limits,
-      yes: input.yes,
-      io: input.confirmIO ?? terminalQuestionIO(),
-      hold: (open) => reporter.holdOutput(open),
-      log: (line) => reporter.note(line),
-    });
+    const pricing = await observedPricing(projectPath).catch(() => ({}));
+    const estimate = estimateRun(config, { prompt: input.prompt, modeId: mode.id, pricing });
+    reporter.note(formatRunEstimate(estimate, config, `mode ${mode.id}`, { excludesExecutor: true }));
+    // Resume has no --yes and the run was already started: no gate.
+    if (!input.resumeSessionId) {
+      await confirmRunEstimate({
+        estimate,
+        limits: config.limits,
+        yes: input.yes,
+        io: input.confirmIO ?? terminalQuestionIO(),
+        hold: (open) => reporter.holdOutput(open),
+        log: (line) => reporter.note(line),
+      });
+    }
 
     if (!input.skipPreflight) {
       reporter.updatePreparing("checking environment…");

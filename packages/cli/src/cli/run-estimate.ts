@@ -9,17 +9,23 @@ import type { QuestionIO } from "./mode-questions.js";
 const n = (value: number) => Math.round(value).toLocaleString("en-US");
 
 /**
- * One line before a run. `profile` is `balanced` for now: `run.profile` (TE-06)
- * does not change the estimate yet.
+ * One line before a run. `excludesExecutor` marks mode runs, whose execute
+ * stages are not estimated. The profile is `n/a` until `run.profile` (TE-06) exists.
  */
-export function formatRunEstimate(estimate: SessionEstimate, config: AssentorConfig, modeLabel: string): string {
+export function formatRunEstimate(
+  estimate: SessionEstimate,
+  config: AssentorConfig,
+  modeLabel: string,
+  options: { excludesExecutor: boolean },
+): string {
   const tokens = `${n(estimate.totalLow)}–${n(estimate.totalHigh)} tokens`;
   const cost = estimate.usd
     ? `$${estimate.usd.low.toFixed(4)}–$${estimate.usd.high.toFixed(4)}`
     : "cost not estimated (no pricing)";
   const seats = estimate.perSeat.length;
   const team = config.modes.review?.team ? `team ${config.modes.review.team}` : "legacy reviewers";
-  return `Estimate: ${tokens}, ${cost} · ${modeLabel} · ${team} · ${seats} ${seats === 1 ? "seat" : "seats"} · review rounds 1–${config.limits.maxRounds} · profile balanced`;
+  const excludes = options.excludesExecutor ? " · excludes executor" : "";
+  return `Estimate: ${tokens}, ${cost} · ${modeLabel}${excludes} · ${team} · ${seats} ${seats === 1 ? "seat" : "seats"} · review rounds 1–${config.limits.maxRounds} · profile n/a`;
 }
 
 /** The estimate as the `session.estimate` event and the usage report carry it. */
@@ -28,6 +34,12 @@ export function toRunEstimate(estimate: SessionEstimate): RunEstimate {
     tokens: { low: estimate.totalLow, high: estimate.totalHigh },
     ...(estimate.usd ? { usd: estimate.usd } : {}),
   };
+}
+
+/** Why `limits.confirmAboveUsd` cannot be checked for this run (no observed price), or undefined. */
+export function usdGateNote(estimate: SessionEstimate, limits: AssentorConfig["limits"]): string | undefined {
+  if (limits.confirmAboveUsd === undefined || estimate.usd) return undefined;
+  return `confirmAboveUsd not enforced for ${estimate.unpriced.join(", ")}: no observed price yet`;
 }
 
 /** Why the estimate passes a `limits.confirmAbove*` value (its high end counts), or undefined. */
@@ -44,7 +56,7 @@ export function overEstimateLimit(estimate: SessionEstimate, limits: AssentorCon
 /**
  * Asks before an over-limit run on a terminal; refuses without one unless `yes`.
  * Throws when the run must not start. `hold` keeps a live reporter quiet while
- * the question waits.
+ * the question waits. Callers skip it on resume (no `--yes` there).
  */
 export async function confirmRunEstimate(input: {
   estimate: SessionEstimate;
@@ -54,6 +66,8 @@ export async function confirmRunEstimate(input: {
   hold?: (open: boolean) => void;
   log: (line: string) => void;
 }): Promise<void> {
+  const note = usdGateNote(input.estimate, input.limits);
+  if (note) input.log(note);
   const reason = overEstimateLimit(input.estimate, input.limits);
   if (!reason) return;
   if (input.yes) {

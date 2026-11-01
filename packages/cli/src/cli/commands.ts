@@ -20,6 +20,7 @@ import {
 } from "#assentor/engine/orchestrator/seat-events.js";
 import { EventLog } from "#assentor/engine/events/log.js";
 import { estimateRun } from "#assentor/engine/estimate/cost.js";
+import { observedPricing } from "#assentor/engine/usage/observed.js";
 import type { EngineEvent, RunEstimate } from "#assentor/protocol/events.js";
 import { PRINT_CLI_RECIPES } from "#assentor/engine/providers/executors/cli-print/recipes.js";
 import { isTerminalState, TaskState } from "#assentor/engine/orchestrator/state-machine.js";
@@ -890,8 +891,14 @@ async function runAssentorTaskBody(
     autonomy: input.autonomy,
   });
   const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
-  const estimate = estimateRun(config, input.prompt, "solo");
-  reporter.note(formatRunEstimate(estimate, config, "solo"));
+  const pricing = await observedPricing(projectPath).catch(() => ({}));
+  const estimate = estimateRun(config, {
+    prompt: input.prompt,
+    modeId: "solo",
+    pricing,
+    executorModel: resolveExecutorModel(input.executorModel, config.executor.model),
+  });
+  reporter.note(formatRunEstimate(estimate, config, "solo", { excludesExecutor: false }));
   await confirmRunEstimate({
     estimate,
     limits: config.limits,

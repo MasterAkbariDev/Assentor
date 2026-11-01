@@ -18,6 +18,7 @@ import type { PricingTable } from "../estimate/cost.js";
 export class UsageLedger {
   private readonly report: UsageReport;
   private readonly seatModel = new Map<string, string>();
+  private readonly costed = new Map<string, { costUsd: number; tokens: number }>();
 
   constructor(sessionId = "", private readonly pricing: PricingTable = {}) {
     this.report = { sessionId, total: zero(), bySeat: {}, byStage: {}, byModel: {}, retries: 0, warnings: [] };
@@ -82,11 +83,22 @@ export class UsageLedger {
         add((this.report.bySeat[seatId] ??= zero()), delta);
         add((this.report.byStage[event.stageId ?? "-"] ??= zero()), delta);
         add((this.report.byModel[model] ??= zero()), delta);
+        if (event.data.costUsd !== undefined && model !== "unknown") {
+          const sum = this.costed.get(model) ?? { costUsd: 0, tokens: 0 };
+          sum.costUsd += event.data.costUsd;
+          sum.tokens += tokensIn + tokensOut;
+          this.costed.set(model, sum);
+        }
         return;
       }
       default:
         return;
     }
+  }
+
+  /** Reported dollars and tokens per `provider/model`, from the `seat.tokens` events that carry a `costUsd`. */
+  costedByModel(): Record<string, { costUsd: number; tokens: number }> {
+    return Object.fromEntries(this.costed);
   }
 
   /** A copy of the totals so far. */

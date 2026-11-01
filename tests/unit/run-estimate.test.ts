@@ -4,23 +4,30 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { parseAssentorConfig } from "../../packages/engine/src/config/schema.js";
+import { createId } from "../../packages/engine/src/core/ids.js";
 import { estimateRun } from "../../packages/engine/src/estimate/cost.js";
+import { sessionPaths } from "../../packages/engine/src/persistence/paths.js";
+import { observedPricing } from "../../packages/engine/src/usage/observed.js";
 import { readSessionUsage } from "../../packages/engine/src/usage/read.js";
 import { UsageLedger } from "../../packages/engine/src/usage/ledger.js";
 import { runAssentorTask } from "../../packages/cli/src/cli/commands.js";
+import { runModeTask } from "../../packages/cli/src/cli/mode-run.js";
 import { formatUsageLine } from "../../packages/cli/src/cli/usage.js";
 import { confirmRunEstimate, formatRunEstimate, toRunEstimate } from "../../packages/cli/src/cli/run-estimate.js";
 import type { QuestionIO } from "../../packages/cli/src/cli/mode-questions.js";
 import type { EngineEvent } from "../../packages/protocol/src/events.js";
 
 // Pre-run estimate and confirm (TE-09). The prompt "goal" is 1 token, so each
-// turn sends 2_001 input tokens. One mock reviewer, maxRounds 3:
-// low 1 × 2_001 + 1_500 = 3_501; high 3 × 2_001 + 3 × 4_000 = 18_003.
+// turn sends 2_001 input tokens. One mock reviewer and one mock executor
+// (solo), maxRounds 3: each seat low 1 × 2_001 + 1_500 = 3_501, high
+// 3 × 2_001 + 3 × 4_000 = 18_003. Solo total 7_002 – 36_006; a mode run
+// excludes the executor, so 3_501 – 18_003.
 
 const CONFIG = {
   reviewers: [{ provider: "mock" }],
   limits: { maxRounds: 3 },
 };
+const SOLO = { prompt: "goal", modeId: "solo" };
 
 /** Collects what a run prints to the console or stdout (mocked). */
 async function captureOutput<T>(run: () => Promise<T>): Promise<{ value: T; text: string }> {
@@ -57,40 +64,107 @@ function terminal(answer: string): QuestionIO & { asked: string[] } {
 
 const NO_TTY: QuestionIO = { input: new PassThrough(), output: new Writable({ write: (_c, _e, d) => d() }), interactive: false };
 
+/** A session log in `projectPath` with one mock seat; each turn is `[tokensIn, tokensOut, costUsd?]`. */
+async function sessionWithTurns(projectPath: string, turns: Array<[number, number, number?]>): Promise<string> {
+  const sessionId = createId();
+  const line = (seq: number, type: string, data: Record<string, unknown>) =>
+    JSON.stringify({ seq, sessionId, at: "2026-11-01T10:00:00.000Z", type, seatId: "s1", data });
+  const lines = [
+    line(1, "seat.spawned", { displayName: "Mock", provider: "mock", transport: "api", model: "AUTO", role: "builder", permissions: "edit" }),
+    ...turns.map(([tokensIn, tokensOut, costUsd], i) =>
+      line(i + 2, "seat.tokens", costUsd === undefined ? { tokensIn, tokensOut } : { tokensIn, tokensOut, costUsd }),
+    ),
+  ];
+  const file = sessionPaths(projectPath, sessionId).events;
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, `${lines.join("\n")}\n`);
+  return sessionId;
+}
+
 describe("pre-run estimate line", () => {
-  it("solo: one line with tokens, cost status, team, seats and rounds", () => {
+  it("solo: one line with tokens, cost status, team, seats and rounds; the executor is counted", () => {
     const config = parseAssentorConfig(CONFIG);
-    const estimate = estimateRun(config, "goal", "solo");
-    expect(estimate.totalLow).toBe(3_501);
-    expect(estimate.totalHigh).toBe(18_003);
-    expect(formatRunEstimate(estimate, config, "solo")).toBe(
-      "Estimate: 3,501–18,003 tokens, cost not estimated (no pricing) · solo · legacy reviewers · 1 seat · review rounds 1–3 · profile balanced",
+    const estimate = estimateRun(config, SOLO);
+    expect(estimate.totalLow).toBe(7_002);
+    expect(estimate.totalHigh).toBe(36_006);
+    expect(formatRunEstimate(estimate, config, "solo", { excludesExecutor: false })).toBe(
+      "Estimate: 7,002–36,006 tokens, cost not estimated (no pricing) · solo · legacy reviewers · 2 seats · review rounds 1–3 · profile n/a",
     );
   });
 
-  it("negotiate mode adds the negotiate team's turns; other modes keep the review estimate", () => {
+  it("a negotiate mode adds the negotiate team's turns; other modes review only and say so", () => {
     const config = parseAssentorConfig({
       ...CONFIG,
       teams: { panel: { seats: [{ provider: "mock", count: 2 }] } },
       modes: { negotiate: { team: "panel", strategy: "debate", maxRounds: 3, consensus: 0.7 } },
     });
-    const solo = estimateRun(config, "goal", "solo");
-    const negotiate = estimateRun(config, "goal", "negotiate");
-    const lead = estimateRun(config, "goal", "lead");
-    expect(negotiate.totalHigh).toBeGreaterThan(solo.totalHigh);
-    expect(lead.totalHigh).toBe(solo.totalHigh);
-    expect(formatRunEstimate(negotiate, config, "mode negotiate")).toMatch(
-      /^Estimate: [\d,]+–[\d,]+ tokens, cost not estimated \(no pricing\) · mode negotiate · legacy reviewers · \d+ seats · review rounds 1–3 · profile balanced$/,
+    const negotiate = estimateRun(config, { prompt: "goal", modeId: "negotiate" });
+    const lead = estimateRun(config, { prompt: "goal", modeId: "lead" });
+    expect(lead.totalHigh).toBe(18_003);
+    expect(negotiate.totalHigh).toBeGreaterThan(lead.totalHigh);
+    expect(formatRunEstimate(negotiate, config, "mode negotiate", { excludesExecutor: true })).toMatch(
+      /^Estimate: [\d,]+–[\d,]+ tokens, cost not estimated \(no pricing\) · mode negotiate · excludes executor · legacy reviewers · \d+ seats · review rounds 1–3 · profile n\/a$/,
     );
   });
 });
 
+describe("observed prices (TE-09)", () => {
+  let projectPath: string;
+  beforeEach(async () => {
+    projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "run-estimate-prices-"));
+  });
+  afterEach(async () => {
+    await fs.rm(projectPath, { recursive: true, force: true });
+  });
+
+  it("blends reported dollars over the tokens of the same turns, per provider/model", async () => {
+    // Priced turns: 1_500 tokens for $0.03 → $0.00002 a token. The unpriced turn is ignored.
+    await sessionWithTurns(projectPath, [[1_000, 500, 0.03], [500, 0]]);
+    const pricing = await observedPricing(projectPath);
+    expect(Object.keys(pricing)).toEqual(["mock/AUTO"]);
+    expect(pricing["mock/AUTO"]!.inPerMTok).toBeCloseTo(20, 8);
+    expect(pricing["mock/AUTO"]!.outPerMTok).toBeCloseTo(20, 8);
+  });
+
+  it("a model with no reported cost has no price, and nothing is invented", async () => {
+    await sessionWithTurns(projectPath, [[1_000, 500]]);
+    expect(await observedPricing(projectPath)).toEqual({});
+    expect(await observedPricing(path.join(projectPath, "missing"))).toEqual({});
+  });
+
+  it("with observed prices the estimate carries USD; a limit on USD is checked against it", async () => {
+    await sessionWithTurns(projectPath, [[1_000, 500, 0.03]]);
+    const pricing = await observedPricing(projectPath);
+    const config = parseAssentorConfig(CONFIG);
+    const estimate = estimateRun(config, { ...SOLO, pricing });
+    expect(estimate.usd!.low).toBeCloseTo(7_002 * 0.00002, 6);
+    expect(estimate.usd!.high).toBeCloseTo(36_006 * 0.00002, 6);
+    expect(formatRunEstimate(estimate, config, "solo", { excludesExecutor: false })).toContain("$0.1400–$0.7201");
+
+    const limits = parseAssentorConfig({ limits: { confirmAboveUsd: 0.5 } }).limits;
+    await expect(confirmRunEstimate({ estimate, limits, io: NO_TTY, log: () => undefined })).rejects.toThrow(
+      "confirmAboveUsd ($0.5)",
+    );
+  });
+
+  it("without an observed price a USD limit is not enforced, and the line says which models", async () => {
+    const config = parseAssentorConfig(CONFIG);
+    const estimate = estimateRun(config, { ...SOLO, pricing: {} });
+    expect(estimate.usd).toBeUndefined();
+    expect(estimate.unpriced).toEqual(["mock/AUTO"]);
+    const limits = parseAssentorConfig({ limits: { confirmAboveUsd: 1 } }).limits;
+    const lines: string[] = [];
+    await confirmRunEstimate({ estimate, limits, io: NO_TTY, log: (line) => lines.push(line) });
+    expect(lines).toEqual(["confirmAboveUsd not enforced for mock/AUTO: no observed price yet"]);
+  });
+});
+
 describe("confirmRunEstimate", () => {
-  const big = estimateRun(parseAssentorConfig(CONFIG), "goal", "solo");
+  const big = estimateRun(parseAssentorConfig(CONFIG), SOLO);
 
   it("passes silently when under every limit", async () => {
     await expect(
-      confirmRunEstimate({ estimate: big, limits: { maxRounds: 3, maxMessages: 50, maxToolCalls: 200, maxRuntimeMinutes: 120, concurrency: {}, globalConcurrency: 6, session: {}, confirmAboveTokens: 100_000 }, io: NO_TTY, log: () => undefined }),
+      confirmRunEstimate({ estimate: big, limits: parseAssentorConfig({ limits: { confirmAboveTokens: 100_000 } }).limits, io: NO_TTY, log: () => undefined }),
     ).resolves.toBeUndefined();
   });
 
@@ -114,9 +188,9 @@ describe("confirmRunEstimate", () => {
     await expect(confirmRunEstimate({ estimate: big, limits, io: yes, log: () => undefined })).resolves.toBeUndefined();
     expect(yes.asked.join("")).toContain("Start the run? [y/N]");
 
-    await expect(
-      confirmRunEstimate({ estimate: big, limits, io: terminal("n"), log: () => undefined }),
-    ).rejects.toThrow("Run cancelled before it started.");
+    await expect(confirmRunEstimate({ estimate: big, limits, io: terminal("n"), log: () => undefined })).rejects.toThrow(
+      "Run cancelled before it started.",
+    );
   });
 });
 
@@ -138,13 +212,11 @@ describe("usage report carries the estimate", () => {
       sessionId: "s1",
       seq: 1,
       at: "2026-11-01T10:00:00.000Z",
-      data: toRunEstimate(estimateRun(parseAssentorConfig(CONFIG), "goal", "solo")),
+      data: toRunEstimate(estimateRun(parseAssentorConfig(CONFIG), SOLO)),
     } as EngineEvent);
     const report = ledger.snapshot();
-    expect(report.estimate).toEqual({ tokens: { low: 3_501, high: 18_003 } });
-    expect(formatUsageLine(report)).toBe(
-      "Usage: no token counts reported by these seats · estimate 3,501–18,003 tokens",
-    );
+    expect(report.estimate).toEqual({ tokens: { low: 7_002, high: 36_006 } });
+    expect(formatUsageLine(report)).toBe("Usage: no token counts reported by these seats · estimate 7,002–36,006 tokens");
   });
 });
 
@@ -200,6 +272,18 @@ describe("run gate end to end", () => {
     ).rejects.toThrow("Re-run with --yes");
   });
 
+  it("a mode resume is not gated: no --yes refusal", async () => {
+    const error = await runModeTask({
+      projectPath: projectDir,
+      prompt: "goal",
+      modeId: "lead",
+      resumeSessionId: createId(),
+      skipPreflight: true,
+      confirmIO: NO_TTY,
+    }).catch((caught: unknown) => caught);
+    expect(String(error)).not.toContain("Re-run with --yes");
+  });
+
   it("solo on a terminal: a 'no' cancels before the run starts", async () => {
     await expect(
       runAssentorTask({ projectPath: projectDir, prompt: "goal", team: "panel", skipPreflight: true, skipGates: true, confirmIO: terminal("n") }),
@@ -212,6 +296,7 @@ describe("run gate end to end", () => {
     );
     expect(value.result.status).toBe("DONE");
     expect(text).toContain("Estimate: ");
+    expect(text).toContain("profile n/a");
     expect(text).toContain("starting anyway (--yes)");
 
     const report = await readSessionUsage(projectDir, value.result.taskId);
