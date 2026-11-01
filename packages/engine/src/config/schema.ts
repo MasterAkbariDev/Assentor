@@ -214,6 +214,21 @@ export const AssentorConfigSchema = z.object({
       screenshots: z.boolean().default(false),
     })
     .default({}),
+  worktrees: z
+    .object({
+      /**
+       * Dependency install in each new seat worktree before its gates: `auto`
+       * (from the JS lockfile; nothing without one), `off`, or a shell command.
+       */
+      install: z
+        .string()
+        .trim()
+        .min(1, 'worktrees.install must be "auto", "off" or a command')
+        .max(1000)
+        .refine((v) => !/[\0\r\n]/.test(v), "worktrees.install must be one line")
+        .default("auto"),
+    })
+    .default({}),
   verification: z
     .object({
       enabled: z.boolean().default(true),

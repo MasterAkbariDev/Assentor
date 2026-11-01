@@ -12,6 +12,7 @@ import type { Executor, ExecutorResult } from "../providers/executors/types.js";
 import { runVerificationGates, type RunVerificationCommand } from "../review/verification-gates.js";
 import { redactSecrets } from "../security/redact.js";
 import { runShellCommand } from "../process/run-shell.js";
+import { prepareWorktree } from "../worktrees/prepare.js";
 import type { SeatKey, WorktreeDiff } from "../worktrees/manager.js";
 import { classifyRisk } from "./danger.js";
 import { ApprovalDeniedError, type ModeController, type ModeControllerInput, type ModeControllerResult } from "./registry.js";
@@ -469,6 +470,9 @@ async function runRedteam(input: ModeControllerInput, extras: RedteamExtras): Pr
       return out;
     };
 
+    // Dependencies first (`worktrees.install`), with the gates' env; a failed install ends `blocked`.
+    const prepared = await prepareWorktree(root, input.config.worktrees?.install, { signal, run });
+    if (!prepared.ok) throw new Stop({ status: "blocked", reason: prepared.reason });
     const baseline = await gates(false);
     if (!baseline.testRan) throw new Stop({ status: "blocked", reason: "no test command found; red-team mode needs one to confirm attacks" });
     if (!baseline.passed) {

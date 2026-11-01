@@ -16,3 +16,12 @@ export {
   type CleanupReport,
   type ReconcileReport,
 } from "./manager.js";
+export {
+  prepareWorktree,
+  worktreeInstallCommand,
+  installSetting,
+  lockfileFingerprint,
+  INSTALL_TIMEOUT_MS,
+  type PrepareResult,
+  type WorktreeInstallSetting,
+} from "./prepare.js";
