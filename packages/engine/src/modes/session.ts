@@ -133,6 +133,11 @@ export interface PreparedModeSession {
    */
   setSeatModel(seatId: string, model: string): string | undefined;
   /**
+   * FU-18b: a user command for the running controller (Lead's override, pin, pause, resume).
+   * Returns why it was refused (no controller yet, a mode without controls, the controller's own refusal).
+   */
+  control(command: ControllerCommand): string | undefined;
+  /**
    * FU-18a: no new turn starts (executor turns wait at their start, scheduler jobs at
    * admission) until `resume()`; turns in flight finish. Emits `session.paused` /
    * `session.resumed`. A cancel still works while paused. Returns why it was refused.
@@ -149,11 +154,6 @@ export interface PreparedModeSession {
    * same turn once more; whoever awaited it sees only the second result. Returns why not.
    */
   restartSeat(seatId: string): string | undefined;
-  /**
-   * FU-18b: a user command for the running controller (Lead's override, pin, pause, resume).
-   * Returns why it was refused (no controller yet, a mode without controls, the controller's own refusal).
-   */
-  control(command: ControllerCommand): string | undefined;
 }
 
 /** Every reason a mode cannot start; nothing was started. */
@@ -255,11 +255,11 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
       answer: () => false,
       stopSeat: seatControls.stop,
       setSeatModel: seatControls.setModel,
+      control: () => `${mode.id} mode takes no lead controls`,
       pause: seatControls.pause,
       resume: seatControls.resume,
       injectSeat: seatControls.inject,
       restartSeat: seatControls.restart,
-      control: () => `${mode.id} mode takes no lead controls`,
       run: async () => {
         claim();
         try {
@@ -296,12 +296,12 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
     answer: (questionId, answer) => questions.answer(questionId, answer, false),
     stopSeat: seatControls.stop,
     setSeatModel: seatControls.setModel,
+    control: (command) =>
+      !live ? "the session's controller is not running" : live.control ? live.control(command) : `${mode.id} mode takes no lead controls`,
     pause: seatControls.pause,
     resume: seatControls.resume,
     injectSeat: seatControls.inject,
     restartSeat: seatControls.restart,
-    control: (command) =>
-      !live ? "the session's controller is not running" : live.control ? live.control(command) : `${mode.id} mode takes no lead controls`,
     run: async () => {
       claim();
       selected();
