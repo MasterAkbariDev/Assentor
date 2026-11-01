@@ -117,7 +117,7 @@ describe("mock runner", () => {
 
   it("prompt order (TE-05): the shipped stable order keeps panel prefixes cached; the pre-TE-05 order loses them", () => {
     const report = bench(resolveVariant("cache:stable"), resolveVariant("cache:legacy"));
-    const [base, stable, legacy] = ["baseline", "cache:stable", "cache:legacy"].map((name) => result(report, name));
+    const [base, stable, legacy] = (["baseline", "cache:stable", "cache:legacy"] as const).map((name) => result(report, name)) as [VariantResult, VariantResult, VariantResult];
     expect({ ...stable, name: "baseline", notes: [] }).toEqual({ ...base, notes: [] });
     // Same tokens, only where the cache can serve them differs.
     expect(legacy.promptTokens).toBe(base.promptTokens);
