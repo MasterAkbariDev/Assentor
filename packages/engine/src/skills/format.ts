@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BUILTIN_REVIEW_ROLES, SEAT_ROLE_PATTERN, SeatRoleSchema } from "#assentor/protocol/seats.js";
+import { BUILTIN_BUILDER_ROLES, SEAT_ROLE_PATTERN, SeatRoleSchema } from "#assentor/protocol/seats.js";
 
 /**
  * Skill file format (task TE-07): `<layer>/<name>/SKILL.md`, Markdown with YAML
@@ -53,21 +53,12 @@ export const SkillFrontMatterSchema = z
 export type SkillFrontMatter = z.infer<typeof SkillFrontMatterSchema>;
 
 /**
- * Roles a project-layer skill may not reach. The project is the code under
- * review: its files must not be able to instruct the seats that judge it.
- * Built-in review/meta roles plus the legacy reviewer specialties.
+ * The only roles a project-layer skill may reach, and only on seats with edit
+ * permission (an allowlist: no Lead, no reviewer, no custom role). The project
+ * is untrusted input — the code under work and under review — so its skills
+ * may shape how builders edit it, never how it is judged or planned.
  */
-export const PROJECT_SKILL_FORBIDDEN_ROLES: ReadonlySet<string> = new Set([
-  ...BUILTIN_REVIEW_ROLES,
-  "general",
-  "architecture",
-  "code",
-  "testing",
-  "security",
-  "performance",
-  "ui",
-  "adjudicator",
-]);
+export const PROJECT_SKILL_ROLES: ReadonlySet<string> = new Set(BUILTIN_BUILDER_ROLES);
 
 export function validateSkillFrontMatter(
   data: Record<string, unknown>,

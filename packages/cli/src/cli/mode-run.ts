@@ -31,6 +31,7 @@ import type { Reviewer } from "#assentor/engine/providers/reviewers/types.js";
 import { PanelReviewer, REVIEW_POLICIES, type ReviewPolicy } from "#assentor/engine/review/index.js";
 import { createSeatScheduler, reviewerProviderForSeat } from "#assentor/engine/seats/index.js";
 import { PromptLibrary } from "#assentor/engine/prompts/library.js";
+import { SkillLibrary, SkillSession, withSkillsAsk } from "#assentor/engine/skills/index.js";
 import { WorktreeManager } from "#assentor/engine/worktrees/manager.js";
 import type { EngineEvent, EngineEventDraft } from "#assentor/protocol/events.js";
 import { extractJsonCandidate } from "#assentor/protocol/parse.js";
@@ -145,6 +146,8 @@ export async function runModeTask(input: ModeTaskInput) {
 
     reporter.updatePreparing("starting seats…");
     const worktrees = new WorktreeManager({ repoPath: projectPath });
+    // One skill session for executors, host asks and negotiation steps (TE-07).
+    const skills = new SkillSession(await SkillLibrary.load({ projectPath }), { sessionId, mode: mode.id, emit });
     const { deps, host } = createModeHost({
       config,
       projectPath,
@@ -152,6 +155,7 @@ export async function runModeTask(input: ModeTaskInput) {
       goal,
       worktrees,
       prompts: await PromptLibrary.load({ projectPath }),
+      skills,
       emit,
       reporter,
       hooks: input.modeHooks ?? {},
@@ -171,6 +175,7 @@ export async function runModeTask(input: ModeTaskInput) {
       signal: abort.signal,
       emit,
       host,
+      skills,
       ...(input.resumeSessionId ? { resume: true } : {}),
     });
     const unwired = prepared.spec?.stages.find((s) => s.kind === "execute" && UNWIRED_STRATEGIES.has(s.strategy ?? ""));
@@ -260,6 +265,8 @@ interface HostInput {
   goal: string;
   worktrees: WorktreeManager;
   prompts: PromptLibrary;
+  /** Negotiation steps ask through it; `prepareModeSession` wraps executors and `host.askSeat` with the same session. */
+  skills?: SkillSession;
   emit: (draft: EngineEventDraft) => void;
   reporter: RunReporter;
   hooks: ModeRunHooks;
@@ -368,13 +375,14 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
     };
   };
 
+  const stepAsk = input.skills ? withSkillsAsk(askSeat, input.skills) : askSeat;
   const deps: StageRunnerDeps = {
     projectPath,
     scheduler,
     seatsFor,
     runStep: async ({ seat, step, vars, readOnly, worktreePath, signal, reportUsage }) => {
       if (!readOnly) throw new Error(`negotiation step ${step} edits files; the CLI host runs read-only steps only`);
-      const reply = await askSeat({ seat, prompt: input.prompts.render(step, vars as Record<string, never>), signal, reportUsage });
+      const reply = await stepAsk({ seat, prompt: input.prompts.render(step, vars as Record<string, never>), signal, reportUsage });
       void worktreePath;
       const json = extractJsonCandidate(reply);
       return json.ok ? json.data : reply;

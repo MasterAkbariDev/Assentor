@@ -154,6 +154,27 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     expect(prompts[0]).toContain(GOAL);
   });
 
+  it("negotiate: steps get the user's skills (index, trigger, load_skill re-ask) and skill.loaded is logged", async () => {
+    await writeConfig({ teams: { peers: { seats: [ro("architect"), ro("planner")] } }, modes: { negotiate: { team: "peers", strategy: "debate" } } });
+    for (const [name, extra] of [["module-tips", "autoload:\n  keywords: [module]\n"], ["on-ask", ""]] as const) {
+      const dir = path.join(userDir, ".assentor", "skills", name);
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: Use for ${name}.\n${extra}version: 1\n---\nBODY-${name}\n`);
+    }
+    const prompts: string[] = [];
+    const { result, of } = await run("negotiate", {
+      askSeat: async ({ prompt }) => (prompts.push(prompt), prompts.length === 1 ? "load_skill: on-ask" : STEP_REPLY),
+    });
+    expect(result).toMatchObject({ status: "completed" });
+    expect(prompts[0]).toContain("- on-ask: Use for on-ask.");
+    expect(prompts[0]).toContain("BODY-module-tips");
+    expect(prompts[0]).not.toContain("BODY-on-ask");
+    // Seats ask in parallel: the asking seat's re-ask (and only that seat's prompts) carries the body.
+    expect(prompts.filter((p) => p.includes("BODY-on-ask")).length).toBeGreaterThanOrEqual(1);
+    expect(prompts.filter((p) => !p.includes("BODY-on-ask")).length).toBeGreaterThanOrEqual(2);
+    expect(of("skill.loaded").length).toBeGreaterThanOrEqual(3);
+  });
+
   it("lead: plans, hires from the roster, the agent works in a worktree, the terminal approves the landing", async () => {
     await writeConfig({ modes: { lead: { lead: { provider: "mock", model: "lead" } } } });
     const lead = createMockLead(LEAD_SCRIPT);

@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { SEAT_ROLE_PATTERN } from "#assentor/protocol/seats.js";
+import { isInside } from "#assentor/engine/prompts/library.js";
 import { SkillLibrary, skillLayerDirs, type SkillLibraryLoadOptions } from "#assentor/engine/skills/index.js";
 
 /**
@@ -79,6 +80,28 @@ version: 1
 Short, concrete do/don't list. This text costs tokens only after it is loaded.
 `;
 
+/**
+ * Why writing under `target` could land outside the project (an existing
+ * `.assentor`, `skills` or skill directory that is a symlink out of it), or
+ * undefined when every existing step resolves inside it.
+ */
+async function escapesProject(projectPath: string, target: string): Promise<string | undefined> {
+  const root = await fs.realpath(path.resolve(projectPath));
+  const steps = path.relative(path.resolve(projectPath), target).split(path.sep);
+  for (let i = 1; i <= steps.length; i += 1) {
+    const step = path.join(path.resolve(projectPath), ...steps.slice(0, i));
+    let real: string;
+    try {
+      real = await fs.realpath(step);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+    if (!isInside(root, real)) return `${step} resolves outside the project`;
+  }
+  return undefined;
+}
+
 /** Writes `<layer>/<name>/SKILL.md` from a template; never overwrites. */
 export async function newSkill(options: SkillCommandOptions & { name: string; to?: string }): Promise<number> {
   const to = options.to ?? "user";
@@ -93,6 +116,13 @@ export async function newSkill(options: SkillCommandOptions & { name: string; to
   const layerDir = skillLayerDirs({ projectPath: options.projectPath, userDir: options.userDir }).find((d) => d.layer === to)!.dir;
   const dir = path.join(layerDir, options.name);
   const file = path.join(dir, "SKILL.md");
+  if (to === "project") {
+    const problem = await escapesProject(options.projectPath, dir);
+    if (problem) {
+      options.err(`Refusing to create the skill: ${problem}`);
+      return 1;
+    }
+  }
   await fs.mkdir(dir, { recursive: true });
   try {
     await fs.writeFile(file, scaffold(options.name), { flag: "wx" });

@@ -81,9 +81,11 @@ export interface ModeSessionInput {
   /**
    * Skills (TE-07): executors from `deps.createExecutor` and `host.askSeat` calls
    * get the seat's skills index and loaded bodies (`withSkills`, `withSkillsAsk`).
-   * Without it (or with no eligible skills) prompts are unchanged.
+   * Pass a `SkillSession` when the host also routes its own asks (e.g. negotiation
+   * `runStep`) through it; a library gets a session made here. Without it (or
+   * with no eligible skills) prompts are unchanged.
    */
-  skills?: SkillLibrary;
+  skills?: SkillLibrary | SkillSession;
 }
 
 export interface ModeRunResult extends SessionRunResult {
@@ -148,7 +150,12 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
       // Observability must never break a session.
     }
   };
-  const skills = input.skills ? new SkillSession(input.skills, { sessionId: input.sessionId, mode: mode.id, emit }) : undefined;
+  const skills =
+    input.skills instanceof SkillSession
+      ? input.skills
+      : input.skills
+        ? new SkillSession(input.skills, { sessionId: input.sessionId, mode: mode.id, emit })
+        : undefined;
   /** Wrapper → the executor the host made, so `watchExecutorOutput` gets the host's own object. */
   const hostExecutor = new WeakMap<Executor, Executor>();
   const deps: StageRunnerDeps = {
@@ -455,21 +462,28 @@ function staticSpec(
 
 /**
  * The seat an execute stage runs as, for its skills: `options.seat` (Lead),
- * else the team seat named by `options.seatId`, else the team's first seat,
- * else (no team: the configured executor, e.g. solo) an `engineer` named after
- * the stage. Strategy executors that fan out (best-of-n, divide) use the first
- * seat's role.
+ * else the seat named by `options.seatId`, else the first edit seat, else the
+ * first seat of `deps.seatsFor(stage)`. Without any (a host that has no seats
+ * for the stage) a read-only `engineer` named after the stage, which gets no
+ * project skills. Strategy executors that fan out (best-of-n, divide) use the
+ * chosen seat's role for all of them.
  */
-function seatOfStage(stage: StageSpec, deps: StageRunnerDeps): Pick<Seat, "id" | "role"> {
+function seatOfStage(stage: StageSpec, deps: StageRunnerDeps): Pick<Seat, "id" | "role" | "permissions"> {
   const named = stage.options.seat as Partial<Seat> | undefined;
-  if (named && typeof named.id === "string" && typeof named.role === "string") return { id: named.id, role: named.role };
+  if (named && typeof named.id === "string" && typeof named.role === "string") {
+    return { id: named.id, role: named.role, permissions: named.permissions === "edit" ? "edit" : "read-only" };
+  }
   let seats: readonly Seat[] = [];
   try {
-    if (stage.team) seats = deps.seatsFor(stage);
+    seats = deps.seatsFor(stage);
   } catch {
-    // An unknown team fails the stage elsewhere; skills fall back to the executor seat.
+    // An unknown team fails the stage elsewhere.
   }
-  return seats.find((seat) => seat.id === stage.options.seatId) ?? seats[0] ?? { id: stage.id, role: "engineer" };
+  return (
+    seats.find((seat) => seat.id === stage.options.seatId) ??
+    seats.find((seat) => seat.permissions === "edit") ??
+    seats[0] ?? { id: stage.id, role: "engineer", permissions: "read-only" }
+  );
 }
 
 /** Review mode's executor: changes nothing and has no evidence to add. */

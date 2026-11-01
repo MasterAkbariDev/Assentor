@@ -7,7 +7,7 @@ import { checkFileStat, isInside } from "../prompts/library.js";
 import { resolvePackageRoot } from "../self/package-root.js";
 import {
   estimateTokens,
-  PROJECT_SKILL_FORBIDDEN_ROLES,
+  PROJECT_SKILL_ROLES,
   validateSkillFrontMatter,
   type SkillFrontMatter,
 } from "./format.js";
@@ -21,13 +21,19 @@ import {
  * Path safety as for prompts: a symlinked skill directory or `SKILL.md` must
  * resolve inside its layer directory, the project layer must resolve inside the
  * project, files are size-capped, the name is kebab-case and equals the
- * directory name. A bad skill is recorded in `errors` and skipped (a bad
- * override leaves the lower-layer skill in place). Other entries (plain files,
- * dot-directories) are ignored.
+ * directory name, at most `MAX_SKILLS_PER_LAYER` per layer. A bad skill is
+ * recorded in `errors` and skipped (a bad override leaves the lower-layer skill
+ * in place). Other entries (plain files, dot-directories) are ignored.
+ *
+ * Project skills reach only built-in builder roles on edit seats
+ * (`PROJECT_SKILL_ROLES`). Where a project skill is refused for a seat, the
+ * user or built-in skill of the same name is offered instead.
  */
 
 /** Largest SKILL.md read. A body this size is ~8k tokens: anything bigger is not a "pack". */
 export const MAX_SKILL_FILE_BYTES = 32 * 1024;
+/** Skill directories read per layer; the rest are reported and ignored. */
+export const MAX_SKILLS_PER_LAYER = 200;
 const SKILL_FILE = "SKILL.md";
 
 export interface SkillDefinition extends SkillFrontMatter {
@@ -55,9 +61,10 @@ export interface SkillLibraryLoadOptions {
   userDir?: string;
 }
 
-/** Who is asking: a seat's role, and the run's mode and profile. */
+/** Who is asking: a seat's role and permissions, and the run's mode and profile. */
 export interface SkillScope {
   role: string;
+  permissions?: "read-only" | "edit";
   mode?: string;
   profile?: string;
 }
@@ -79,22 +86,23 @@ export function skillLayerDirs(options: SkillLibraryLoadOptions = {}): Array<{ l
 
 export class SkillLibrary {
   private constructor(
-    private readonly skills: ReadonlyMap<string, SkillDefinition>,
+    /** name → every loaded definition, lowest layer first. */
+    private readonly versions: ReadonlyMap<string, readonly SkillDefinition[]>,
     readonly errors: readonly SkillLoadError[],
   ) {}
 
   /** Load every layer. Never throws for bad files; see `errors`. */
   static async load(options: SkillLibraryLoadOptions = {}): Promise<SkillLibrary> {
-    const skills = new Map<string, SkillDefinition>();
+    const versions = new Map<string, SkillDefinition[]>();
     const errors: SkillLoadError[] = [];
     for (const { layer, dir } of skillLayerDirs(options)) {
       const within = layer === "project" ? path.resolve(options.projectPath!) : undefined;
       for (const loaded of await readLayer(layer, dir, within, errors)) {
-        const lower = skills.get(loaded.name);
-        skills.set(loaded.name, lower ? { ...loaded, overrides: lower.layer } : loaded);
+        const lower = versions.get(loaded.name) ?? [];
+        versions.set(loaded.name, [...lower, lower.length ? { ...loaded, overrides: lower.at(-1)!.layer } : loaded]);
       }
     }
-    return new SkillLibrary(skills, errors);
+    return new SkillLibrary(versions, errors);
   }
 
   /** An empty library (no skills: every prompt stays exactly as it was). */
@@ -102,19 +110,20 @@ export class SkillLibrary {
     return new SkillLibrary(new Map(), []);
   }
 
+  /** The highest-layer definition of `name`. */
   get(name: string): SkillDefinition | undefined {
-    return this.skills.get(name);
+    return this.versions.get(name)?.at(-1);
   }
 
-  /** Every skill, sorted by name. */
+  /** Every skill (highest layer), sorted by name. */
   list(): SkillDefinition[] {
-    return [...this.skills.values()].sort((a, b) => a.name.localeCompare(b.name));
+    return [...this.versions.keys()].sort().map((name) => this.get(name)!);
   }
 
-  /** Why `scope` may not load `skill`, or undefined when it may. */
+  /** Why `scope` may not load this definition, or undefined when it may. */
   refusal(skill: SkillDefinition, scope: SkillScope): string | undefined {
-    if (skill.layer === "project" && PROJECT_SKILL_FORBIDDEN_ROLES.has(scope.role)) {
-      return `project skills are not offered to reviewer role "${scope.role}"`;
+    if (skill.layer === "project" && !(PROJECT_SKILL_ROLES.has(scope.role) && scope.permissions === "edit")) {
+      return `project skills reach only built-in builder roles on edit seats (not "${scope.role}", ${scope.permissions ?? "no"} permission)`;
     }
     if (skill.roles && !skill.roles.includes(scope.role)) return `not for role "${scope.role}"`;
     if (skill.modes && !(scope.mode && skill.modes.includes(scope.mode))) return `not for mode "${scope.mode ?? "(none)"}"`;
@@ -124,9 +133,25 @@ export class SkillLibrary {
     return undefined;
   }
 
-  /** Skills `scope` may load, sorted by name. */
+  /**
+   * The definition of `name` that `scope` gets: the highest layer it may load
+   * (a refused project skill falls back to the user or built-in one).
+   */
+  resolve(name: string, scope: SkillScope): { skill: SkillDefinition } | { refusal: string } {
+    const versions = this.versions.get(name);
+    if (!versions) return { refusal: "no such skill" };
+    for (const skill of [...versions].reverse()) {
+      if (this.refusal(skill, scope) === undefined) return { skill };
+    }
+    return { refusal: this.refusal(versions.at(-1)!, scope)! };
+  }
+
+  /** Definitions `scope` may load, sorted by name. */
   eligible(scope: SkillScope): SkillDefinition[] {
-    return this.list().filter((skill) => this.refusal(skill, scope) === undefined);
+    return [...this.versions.keys()]
+      .sort()
+      .map((name) => this.resolve(name, scope))
+      .flatMap((r) => ("skill" in r ? [r.skill] : []));
   }
 
   /**
@@ -170,8 +195,13 @@ async function readLayer(
     return out;
   }
 
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (entry.name.startsWith(".") || !(entry.isDirectory() || entry.isSymbolicLink())) continue;
+  const candidates = entries
+    .filter((entry) => !entry.name.startsWith(".") && (entry.isDirectory() || entry.isSymbolicLink()))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  if (candidates.length > MAX_SKILLS_PER_LAYER) {
+    errors.push({ file: dir, layer, message: `more than ${MAX_SKILLS_PER_LAYER} skills; only the first ${MAX_SKILLS_PER_LAYER} by name are read` });
+  }
+  for (const entry of candidates.slice(0, MAX_SKILLS_PER_LAYER)) {
     const skillDir = path.join(dir, entry.name);
     const file = path.join(skillDir, SKILL_FILE);
     try {
@@ -187,9 +217,9 @@ async function readLayer(
       }
       const validated = validateSkillFrontMatter(raw.frontMatter);
       if (!validated.ok) throw new Error(validated.message);
-      const forbidden = layer === "project" ? validated.value.roles?.filter((r) => PROJECT_SKILL_FORBIDDEN_ROLES.has(r)) : [];
+      const forbidden = layer === "project" ? validated.value.roles?.filter((r) => !PROJECT_SKILL_ROLES.has(r)) : [];
       if (forbidden?.length) {
-        throw new Error(`a project skill may not target reviewer roles (${forbidden.join(", ")}): the code under review must not instruct its reviewers`);
+        throw new Error(`a project skill may target only built-in builder roles, not ${forbidden.join(", ")}: project files must not instruct reviewers, leads or custom roles`);
       }
       if (!raw.body.trim()) throw new Error("the skill body is empty");
       out.push({ ...validated.value, body: raw.body, layer, file, tokens: estimateTokens(raw.body) });

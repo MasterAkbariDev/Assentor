@@ -179,9 +179,18 @@ const UserQuestion = z
   .object({ question: z.string(), options: z.array(z.string()).optional() })
   .passthrough();
 const UserAnswer = z.object({ answer: z.string() }).passthrough();
-/** A skill body entered a seat's prompt (TE-07); `tokens` is its estimated size. The seat is the envelope's `seatId`. */
+/**
+ * A skill body was sent in a seat's prompt (TE-07): one event per delivery, re-sends included
+ * (`delivery` counts them), so usage sees every copy. `tokens` is the estimated fenced size.
+ * The seat is the envelope's `seatId`.
+ */
 const SkillLoaded = z
-  .object({ name: z.string(), tokens: z.number().int().nonnegative(), via: z.enum(["trigger", "request"]).optional() })
+  .object({
+    name: z.string(),
+    tokens: z.number().int().nonnegative(),
+    via: z.enum(["trigger", "request"]).optional(),
+    delivery: z.number().int().positive().optional(),
+  })
   .passthrough();
 
 /**
