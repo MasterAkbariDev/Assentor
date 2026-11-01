@@ -56,3 +56,36 @@ export function usageOf(value: unknown): CliUsage | undefined {
   }
   return undefined;
 }
+
+/**
+ * The model a CLI or API reply says it ran (FU-17), or undefined when it names
+ * none: then the model is unverified. Reads a top-level `model` (Claude Code's
+ * stream-json `system` line, Cursor's, an OpenAI-style body), an assistant
+ * line's `message.model`, Gemini's `modelVersion`, or Claude Code's JSON
+ * result `modelUsage` (the model with the most output tokens). Never falls back
+ * to the requested model.
+ */
+export function reportedModel(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  for (const doc of [raw, ...raw.split("\n")]) {
+    const text = doc.trim();
+    if (!text.startsWith("{") || !/"model/.test(text)) continue;
+    try {
+      const model = modelOf(JSON.parse(text));
+      if (model) return model;
+    } catch {
+      // Not one JSON document; try the next line.
+    }
+  }
+  return undefined;
+}
+
+function modelOf(value: unknown): string | undefined {
+  const v = (value ?? {}) as { model?: unknown; message?: { model?: unknown }; modelVersion?: unknown; modelUsage?: unknown };
+  // `<synthetic>` and the like are placeholders, not models.
+  const name = (x: unknown) => (typeof x === "string" && x.trim() && !x.trim().startsWith("<") ? x.trim() : undefined);
+  const usage = v.modelUsage && typeof v.modelUsage === "object" ? Object.entries(v.modelUsage as Record<string, { outputTokens?: unknown }>) : [];
+  const out = (entry: (typeof usage)[number]) => (typeof entry[1]?.outputTokens === "number" ? entry[1].outputTokens : 0);
+  const main = usage.sort((a, b) => out(b) - out(a))[0]?.[0];
+  return name(v.model) ?? name(v.message?.model) ?? name(v.modelVersion) ?? name(main);
+}

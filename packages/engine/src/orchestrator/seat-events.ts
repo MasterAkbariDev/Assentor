@@ -18,7 +18,7 @@ import type {
   ReviewInput,
 } from "../providers/reviewers/types.js";
 import { redactSecrets } from "../security/redact.js";
-import { cliUsage, type CliUsage } from "../usage/cli-usage.js";
+import { cliUsage, reportedModel, type CliUsage } from "../usage/cli-usage.js";
 import { fromSupervisorEvent, type SupervisorEventContext } from "./engine-events.js";
 import type { SupervisorEvent } from "./supervisor.js";
 
@@ -122,6 +122,8 @@ export class SeatEventSink {
   private readonly lastStatus = new Map<string, string>();
   /** Seats whose current turn has started but not reported done or error. */
   private readonly openTurns = new Set<string>();
+  /** Requested model per seat (`seat.spawned`, applied `seat.model.changed`); a panel seat has none. */
+  private readonly requestedModels = new Map<string, string>();
 
   constructor(options: SeatEventSinkOptions) {
     this.sessionId = options.sessionId;
@@ -164,6 +166,7 @@ export class SeatEventSink {
     if (draft.seatId && !this.trackStatus(draft)) {
       return false;
     }
+    this.trackRequestedModel(draft);
     if (draft.seatId && draft.type !== "seat.output.delta") {
       this.flushSeat(draft.seatId);
     }
@@ -270,6 +273,12 @@ export class SeatEventSink {
         const { rawOutput, ...rest } = data;
         draft.data = { ...rest, rawOutputChars: rawOutput.length } as typeof draft.data;
         usage = cliUsage(rawOutput);
+        if (draft.seatId) {
+          draft.data = { ...draft.data, ...this.modelFields(draft.seatId, reportedModel(rawOutput)) };
+        }
+      } else if (event.type === "review.completed" && draft.seatId) {
+        const reported = typeof data.reportedModel === "string" ? data.reportedModel : undefined;
+        draft.data = { ...draft.data, ...this.modelFields(draft.seatId, reported) };
       }
       const ending = SESSION_END[event.type];
       if (ending) {
@@ -303,6 +312,31 @@ export class SeatEventSink {
       }
     } catch (error) {
       this.report(error, "supervisor event mapping");
+    }
+  }
+
+  /**
+   * What a seat's turn ran on (FU-17): `reportedModel` is the model the provider
+   * reported, or `unverified` when it named none; `requestedModel` is added when
+   * that differs from what the seat asked for. Empty for a seat with no single
+   * model (a panel) or one never spawned here.
+   */
+  modelFields(seatId: string, reported: string | undefined): { reportedModel?: string; requestedModel?: string } {
+    const requested = this.requestedModels.get(seatId);
+    if (requested === undefined) return {};
+    const reportedModel = reported ?? "unverified";
+    return reportedModel.toLowerCase() === requested.toLowerCase()
+      ? { reportedModel }
+      : { reportedModel, requestedModel: requested };
+  }
+
+  private trackRequestedModel(draft: EngineEventDraft): void {
+    const data = draft.data as { provider?: unknown; model?: unknown; to?: unknown; pending?: unknown };
+    if (!draft.seatId) return;
+    if (draft.type === "seat.spawned" && data.provider !== "panel" && typeof data.model === "string") {
+      this.requestedModels.set(draft.seatId, data.model);
+    } else if (draft.type === "seat.model.changed" && data.pending === false && typeof data.to === "string") {
+      if (this.requestedModels.has(draft.seatId)) this.requestedModels.set(draft.seatId, data.to);
     }
   }
 
@@ -463,7 +497,7 @@ export function trackReviewerSeat(
             type: "review.verdict",
             sessionId: sink.sessionId,
             seatId,
-            data: { status, confidence, summary, panelMember: true },
+            data: { status, confidence, summary, panelMember: true, ...sink.modelFields(seatId, result.model) },
           });
         }
         sink?.done(seatId, true, result.result?.summary);

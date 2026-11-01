@@ -419,6 +419,10 @@ export class PanelReviewer implements Reviewer {
     method: "review" | "continue",
   ): Promise<ReviewerTurnResult> {
     this.callCount += 1;
+    // Every member runs on every call, retries included (FU-17): the supervisor
+    // also re-reviews the same round after it fulfils evidence, and the panel
+    // cannot tell that from a retry, so reusing an earlier verdict could decide
+    // on stale evidence. Retries follow operational failures and are rare.
     const reviewed = await this.coordinator.runIndependentReviews(input, method, this.narrow?.(input) ? 1 : undefined);
     // Every member's reported tokens, whatever the panel decides (TE-05).
     const memberUsage = reviewed.turns.flatMap(({ agentId, turn }, i) => [
@@ -650,11 +654,7 @@ type SecurityClaim = { agentId: string; issue: ResultIssue };
 function securityClaims(findings: ReviewerFinding[]): SecurityClaim[] {
   return findings.flatMap((f) =>
     (f.result.issues ?? [])
-      .filter(
-        (issue) =>
-          issue.category === IssueCategory.Security &&
-          (issue.severity === Severity.Blocker || issue.severity === Severity.Major),
-      )
+      .filter(isSevereSecurity)
       .map((issue) => ({ agentId: f.agentId, issue })),
   );
 }
@@ -713,6 +713,9 @@ function enforceSecurityAuthority(
   findings: ReviewerFinding[],
   verificationRequested?: Set<string>,
 ): ReviewResult {
+  if (result.status === ReviewStatus.NeedsWork) {
+    return withoutUnsupportedClaims(result, findings, verificationRequested);
+  }
   if (result.status !== ReviewStatus.Pass) {
     return result;
   }
@@ -724,27 +727,16 @@ function enforceSecurityAuthority(
   if (unsupported.length === 0) {
     return result;
   }
-  const described = unsupported
-    .map((c) => `${c.agentId}: ${truncate(c.issue.description, 120)}`)
-    .join("; ");
+  const described = describeClaims(unsupported);
 
   const fresh = unsupported.filter((c) => !verificationRequested?.has(claimKey(c)));
   if (fresh.length === 0) {
-    return makeReviewResult({
-      status: ReviewStatus.Blocked,
-      confidence: averageConfidence(findings),
-      summary: `Unverified security claim still unsupported after verification; a human must decide: ${described}`,
-      issues: unsupported.map((c) => c.issue),
-      requiredChanges: [],
-      optionalChanges: [],
-      evidenceRequests: [],
-    });
+    return stillUnsupported(unsupported, findings);
   }
   for (const claim of fresh) {
     verificationRequested?.add(claimKey(claim));
   }
 
-  const files = [...new Set(unsupported.flatMap((c) => c.issue.affectedFiles ?? []))];
   return makeReviewResult({
     status: ReviewStatus.NeedsWork,
     confidence: averageConfidence(findings),
@@ -752,22 +744,107 @@ function enforceSecurityAuthority(
     issues: [],
     requiredChanges: [],
     optionalChanges: [],
-    evidenceRequests: [
-      {
-        kind: EvidenceKind.GitDiff,
-        description: `Verify security claim(s): ${described}`,
-      },
-      ...(files.length > 0
-        ? [
-            {
-              kind: EvidenceKind.Files,
-              paths: files,
-              description: "Files named by the unverified security claim",
-            },
-          ]
-        : []),
-    ],
+    evidenceRequests: verificationRequests(unsupported),
   });
+}
+
+/**
+ * A NEEDS_WORK merge keeps its supported findings, but an unsupported severe
+ * security claim inside it is not sent to the executor as a change to make: it
+ * becomes a verification request, as on the PASS path. When nothing else is
+ * left and the claim was already sent for verification, a human decides.
+ */
+function withoutUnsupportedClaims(
+  result: ReviewResult,
+  findings: ReviewerFinding[],
+  verificationRequested?: Set<string>,
+): ReviewResult {
+  const unsupported = securityClaims(findings).filter((c) => !isEvidenced(c.issue));
+  if (unsupported.length === 0) {
+    return result;
+  }
+  const isClaim = (issue: ResultIssue) => isSevereSecurity(issue) && !isEvidenced(issue);
+  const dropped = (result.issues ?? []).filter(isClaim);
+  const claimText = new Set(
+    [...unsupported.map((c) => c.issue), ...dropped].flatMap((i) => [i.description, i.requiredChange ?? i.description]),
+  );
+  // A member whose only issues are unsupported claims restates them as its required changes.
+  const claimOnly = new Set(
+    findings
+      .filter((f) => (f.result.issues ?? []).length > 0 && (f.result.issues ?? []).every(isClaim))
+      .map((f) => f.agentId),
+  );
+  const otherChanges = new Set(
+    findings.filter((f) => !claimOnly.has(f.agentId)).flatMap((f) => f.result.requiredChanges ?? []),
+  );
+  const claimChanges = new Set(
+    findings.filter((f) => claimOnly.has(f.agentId)).flatMap((f) => f.result.requiredChanges ?? []),
+  );
+  const issues = (result.issues ?? []).filter((i) => !isClaim(i));
+  const requiredChanges = (result.requiredChanges ?? []).filter(
+    (change) => !claimText.has(change) && (otherChanges.has(change) || !claimChanges.has(change)),
+  );
+
+  const fresh = unsupported.filter((c) => !verificationRequested?.has(claimKey(c)));
+  const evidenceRequests = result.evidenceRequests ?? [];
+  if (fresh.length === 0 && issues.length === 0 && requiredChanges.length === 0 && evidenceRequests.length === 0) {
+    return stillUnsupported(unsupported, findings);
+  }
+  for (const claim of fresh) {
+    verificationRequested?.add(claimKey(claim));
+  }
+  return makeReviewResult({
+    ...result,
+    summary: truncate(`${result.summary} Unverified security claim(s) sent for verification, not as changes: ${describeClaims(unsupported)}`, 500),
+    issues,
+    requiredChanges,
+    evidenceRequests: dedupeEvidenceRequests([
+      ...evidenceRequests,
+      ...(fresh.length > 0 ? verificationRequests(unsupported) : []),
+    ]),
+  });
+}
+
+function isSevereSecurity(issue: ResultIssue): boolean {
+  return (
+    issue.category === IssueCategory.Security &&
+    (issue.severity === Severity.Blocker || issue.severity === Severity.Major)
+  );
+}
+
+function describeClaims(claims: SecurityClaim[]): string {
+  return claims.map((c) => `${c.agentId}: ${truncate(c.issue.description, 120)}`).join("; ");
+}
+
+function stillUnsupported(unsupported: SecurityClaim[], findings: ReviewerFinding[]): ReviewResult {
+  return makeReviewResult({
+    status: ReviewStatus.Blocked,
+    confidence: averageConfidence(findings),
+    summary: `Unverified security claim still unsupported after verification; a human must decide: ${describeClaims(unsupported)}`,
+    issues: unsupported.map((c) => c.issue),
+    requiredChanges: [],
+    optionalChanges: [],
+    evidenceRequests: [],
+  });
+}
+
+function verificationRequests(unsupported: SecurityClaim[]): NonNullable<ReviewResult["evidenceRequests"]> {
+  const files = [...new Set(unsupported.flatMap((c) => c.issue.affectedFiles ?? []))];
+  return [
+    {
+      kind: EvidenceKind.GitDiff,
+      description: `Verify security claim(s): ${describeClaims(unsupported)}`,
+    },
+    ...(files.length > 0
+      ? [
+          {
+            kind: EvidenceKind.Files,
+            paths: files,
+            description: "Files named by the unverified security claim",
+          },
+        ]
+      : []),
+  ];
 }
 
 function weightedMerge(findings: ReviewerFinding[], total?: number): ReviewResult {

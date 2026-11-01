@@ -50,6 +50,24 @@ export function formatUsage(report: UsageReport, options: { concise?: boolean } 
   return lines;
 }
 
+/** Per seat id: its display name, requested model and, once a provider named it, the model it reported. */
+export type SeatModels = Map<string, { name: string; requested: string; reported?: string }>;
+
+/**
+ * `Models: Claude opus → claude-opus-4-1 · Gemini AUTO (unverified)` (FU-17), by seat display name.
+ * A model no provider reported is never shown as verified. Undefined with no seats.
+ */
+export function formatSeatModels(models: SeatModels): string | undefined {
+  if (models.size === 0) return undefined;
+  const one = ({ requested, reported }: { requested: string; reported?: string }) =>
+    !reported
+      ? `${requested} (unverified)`
+      : reported.toLowerCase() === requested.toLowerCase()
+        ? reported
+        : `${requested} → ${reported}`;
+  return `Models: ${[...models.values()].map((model) => `${model.name} ${one(model)}`).join(" · ")}`;
+}
+
 /** `assentor usage [sessionId] [--json]`; default session = the most recently updated one with an event log. */
 export async function usageCommand(input: {
   projectPath: string;

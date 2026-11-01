@@ -85,6 +85,7 @@ import { confirmRunEstimate, formatRunEstimate, toRunEstimate } from "./run-esti
 import { RunReporter } from "./ui/reporter.js";
 import type { ModeRunHooks } from "./mode-run.js";
 import { resolveProviderApiKey } from "#assentor/engine/keys/resolve.js";
+import { createAssentorServices, type AssentorServices } from "#assentor/engine/services/app.js";
 
 export interface RunAssentorInput {
   projectPath: string;
@@ -552,6 +553,22 @@ export function panelPolicyOptions(
     ...(mode ? { policy: mode.policy, tiebreak: mode.tiebreak } : {}),
     roles: backends.map((backend) => backend.role ?? "general"),
   };
+}
+
+/**
+ * The LLM adjudicator for a panel whose policy is `adjudicator` (FU-17): the
+ * enabled `adjudicator` agent profile and the routing engine, as the library
+ * takes them. Any other policy, or no enabled profile, keeps the deterministic merge.
+ */
+export async function panelAdjudicator(
+  policy: string | undefined,
+  projectPath: string,
+  services?: Pick<AssentorServices, "agents" | "routing">,
+): Promise<Pick<ReviewCoordinatorOptions, "routing" | "adjudicatorProfile">> {
+  if (policy !== "adjudicator") return {};
+  const { agents, routing } = services ?? (await createAssentorServices(projectPath));
+  const profile = agents.list().find((p) => p.kind === "adjudicator" && p.enabled);
+  return profile ? { routing, adjudicatorProfile: profile } : {};
 }
 
 /** Exported for `run --mode` (mode-run.ts). */
@@ -1056,6 +1073,7 @@ async function runAssentorTaskBody(
           acceptanceCriteria: input.acceptanceCriteria ?? [],
           ...panelNarrowing(config, input.prompt, projectPath, teamMode),
           ...panelPolicyOptions(config, memberBackends),
+          ...(await panelAdjudicator(config.modes.review?.policy, projectPath)),
         });
 
   reporter.note(
@@ -1347,6 +1365,7 @@ export async function resumeAssentorTask(input: {
             goal: resume.snapshot.contract.goal,
             ...panelNarrowing(config, resume.snapshot.contract.goal, projectPath, teamMode),
             ...panelPolicyOptions(config, memberBackends),
+            ...(await panelAdjudicator(config.modes.review?.policy, projectPath)),
             acceptanceCriteria:
               resume.snapshot.contract.acceptanceCriteria ?? [],
           });

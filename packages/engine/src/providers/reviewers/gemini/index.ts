@@ -144,7 +144,7 @@ export class GeminiReviewer implements Reviewer {
         });
         this.lastModelUsed = model;
         this.onStatus?.(`Gemini responded with ${model}`);
-        return withTokens(reviewResultFromModelText(response.text), response.tokens);
+        return withTokens(reviewResultFromModelText(response.text), response.tokens, response.raw);
       } catch (error) {
         if (error instanceof ProviderRequestError) {
           errors.push(`${model}: ${error.error.message}`);

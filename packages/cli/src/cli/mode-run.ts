@@ -47,6 +47,7 @@ import {
   buildContract,
   createMembersFromBackends,
   executorEmitsPlainText,
+  panelAdjudicator,
   panelNarrowing,
   panelPolicyOptions,
   resolveExecutorModel,
@@ -423,6 +424,10 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
         });
         if ((reviewStrategy === "SINGLE" && !teamMode) || members.length <= 1) return { reviewer: members[0]!, seatId: seatIds?.[0] ?? members[0]!.name };
         const policy = stage?.options.policy;
+        const adjudicator = await panelAdjudicator(
+          (REVIEW_POLICIES as readonly string[]).includes(policy as string) ? (policy as string) : config.modes.review?.policy,
+          projectPath,
+        );
         const panel = new PanelReviewer({
           name: `panel:${team?.name ?? "review"}`,
           reviewers: members,
@@ -433,6 +438,7 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
           ...panelPolicyOptions(config, backends),
           ...((REVIEW_POLICIES as readonly string[]).includes(policy as string) ? { policy: policy as ReviewPolicy } : {}),
           ...tiebreak,
+          ...adjudicator,
         });
         return { reviewer: panel as Reviewer, seatId: panel.name };
       })());

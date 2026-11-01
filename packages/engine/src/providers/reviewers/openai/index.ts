@@ -110,7 +110,7 @@ export class OpenAICompatibleReviewer implements Reviewer {
         jsonMode: true,
         timeoutMs: this.timeoutMs,
       });
-      return withTokens(reviewResultFromModelText(response.text), response.tokens);
+      return withTokens(reviewResultFromModelText(response.text), response.tokens, response.raw);
     } catch (error) {
       if (error instanceof ProviderRequestError) {
         return {

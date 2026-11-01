@@ -24,7 +24,7 @@ import {
   type LeadBoardView,
 } from "#assentor/ui-shared/lead.js";
 import { UsageLedger } from "#assentor/engine/usage/ledger.js";
-import { formatUsage } from "../usage.js";
+import { formatSeatModels, formatUsage, type SeatModels } from "../usage.js";
 
 const ESC = "\x1b[";
 const c = {
@@ -82,6 +82,8 @@ export class RunReporter {
   private leadMode = false;
   /** Token use of this run (TE-01), printed by `printUsage`. */
   private readonly usage = new UsageLedger();
+  /** Requested and provider-reported model per seat (FU-17), printed by `printUsage`. */
+  private readonly seatModels: SeatModels = new Map();
   /** While a question prompt is open: no spinner painting; lines wait in `heldLines`. */
   private held = false;
   private heldLines: string[] = [];
@@ -159,6 +161,7 @@ export class RunReporter {
    */
   onEngineEvent(event: EngineEvent): void {
     this.usage.add(event);
+    this.trackSeatModel(event);
     if (event.type === "session.warning" && event.data.kind === "budget") {
       this.note(`⚠ ${event.data.message ?? "budget warning"}`);
     }
@@ -507,12 +510,28 @@ export class RunReporter {
     }
   }
 
-  /** End-of-run token/cost breakdown. */
+  /** End-of-run token/cost breakdown, then each seat's requested vs reported model. */
   printUsage(): void {
     this.endStatus();
     const [first, ...rest] = formatUsage(this.usage.snapshot());
     this.out(`\n  ${c.bold}${first}${c.reset}`);
     for (const line of rest) this.out(`${c.dim}${line}${c.reset}`);
+    const models = formatSeatModels(this.seatModels);
+    if (models) this.out(`${c.dim}  ${models}${c.reset}`);
+  }
+
+  private trackSeatModel(event: EngineEvent): void {
+    const seatId = event.seatId;
+    if (!seatId) return;
+    const data = event.data as { displayName?: unknown; provider?: unknown; model?: unknown; to?: unknown; pending?: unknown; reportedModel?: unknown };
+    const seat = this.seatModels.get(seatId);
+    if (event.type === "seat.spawned" && data.provider !== "panel" && typeof data.model === "string") {
+      this.seatModels.set(seatId, { name: typeof data.displayName === "string" ? data.displayName : seatId, requested: data.model });
+    } else if (seat && event.type === "seat.model.changed" && data.pending === false && typeof data.to === "string") {
+      seat.requested = data.to;
+    } else if (seat && typeof data.reportedModel === "string" && data.reportedModel !== "unverified") {
+      seat.reported = data.reportedModel;
+    }
   }
 
   /** Hold (true) or release (false) output while the user answers a question; held lines print on release. */
