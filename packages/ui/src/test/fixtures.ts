@@ -184,8 +184,8 @@ function negotiateReviewStream(sessionId: string): EngineEvent[] {
     parseEngineEvent({ seq: ++seq, sessionId, ...extra, type, data, at: at(seq) });
   const spawn = (seatId: string, displayName: string, role: string, permissions: "edit" | "read-only") =>
     e("seat.spawned", { displayName, provider: "claude-code", transport: "cli", model: "opus", role, permissions }, { seatId });
-  const finding = (key: string, description: string, severity: string, affectedFiles: string[], count: number) =>
-    e("review.finding", { key, description, severity, affectedFiles, agreement: { count, total: 2 } });
+  const finding = (key: string, description: string, severity: string, affectedFiles: string[], reviewerIds: string[]) =>
+    e("review.finding", { key, description, severity, affectedFiles, agreement: { count: reviewerIds.length, total: 2 }, reviewerIds });
   const deltas = (seatId: string, lines: string[]) => lines.map((text) => e("seat.output.delta", { text: `${text}\n` }, { seatId }));
 
   return [
@@ -201,13 +201,14 @@ function negotiateReviewStream(sessionId: string): EngineEvent[] {
     e("stage.started", { kind: "negotiate", strategy: "debate", attempt: 1 }, { stageId: "debate-1" }),
     e("seat.status", { status: "thinking" }, { seatId: "seat-a" }),
     e("seat.status", { status: "thinking" }, { seatId: "seat-b" }),
-    e("negotiation.proposal", { round: 1, label: "Proposal A", text: "Stream the file in chunks and keep a running sum and count." }, { stageId: "debate-1" }),
-    e("negotiation.proposal", { round: 1, label: "Proposal B", text: "Load the whole file, then sum." }, { stageId: "debate-1" }),
+    e("negotiation.proposal", { round: 1, label: "Proposal A", text: "Stream the file in chunks and keep a running sum and count." }, { stageId: "debate-1", seatId: "seat-a" }),
+    e("negotiation.proposal", { round: 1, label: "Proposal B", text: "Load the whole file, then sum." }, { stageId: "debate-1", seatId: "seat-b" }),
     e("negotiation.critique", { round: 1, targetLabel: "Proposal A", text: "A chunk boundary can split a line; carry the partial line.", citations: ["src/average.ts:12"] }, { stageId: "debate-1", seatId: "seat-b" }),
     e("negotiation.critique", { round: 1, targetLabel: "Proposal B", text: "Reads the whole file into memory.", citations: [] }, { stageId: "debate-1", seatId: "seat-c" }),
-    e("negotiation.consensus", { round: 1, score: 0.5, reached: false }, { stageId: "debate-1" }),
-    e("negotiation.proposal", { round: 2, label: "Proposal A", text: "Stream in chunks, carry the partial line, return NaN when empty." }, { stageId: "debate-1" }),
-    e("negotiation.consensus", { round: 2, score: 0.9, reached: true, preferred: "Proposal A" }, { stageId: "debate-1" }),
+    e("negotiation.consensus", { round: 1, score: 0.5, reached: false, threshold: 0.8 }, { stageId: "debate-1" }),
+    e("negotiation.proposal", { round: 2, label: "Proposal A", text: "Stream in chunks, carry the partial line, return NaN when empty." }, { stageId: "debate-1", seatId: "seat-a" }),
+    e("negotiation.consensus", { round: 2, score: 0.9, reached: true, preferred: "Proposal A", threshold: 0.8 }, { stageId: "debate-1" }),
+    e("negotiation.decided", { rationale: "Consensus at 90% in round 2, above the 80% threshold.", winner: "Proposal A" }, { stageId: "debate-1" }),
     e("seat.done", { ok: true, summary: "proposal agreed" }, { seatId: "seat-a" }),
     e("seat.done", { ok: true, summary: "critique sent" }, { seatId: "seat-b" }),
     e("seat.done", { ok: true, summary: "critique sent" }, { seatId: "seat-c" }),
@@ -223,12 +224,14 @@ function negotiateReviewStream(sessionId: string): EngineEvent[] {
     e("seat.status", { status: "thinking" }, { seatId: "reviewer-1" }),
     e("seat.status", { status: "thinking" }, { seatId: "reviewer-2" }),
     e("seat.tool_call", { name: "reading", summary: "src/average.ts", file: "src/average.ts" }, { seatId: "reviewer-1" }),
-    e("seat.done", { ok: true, summary: "one minor issue" }, { seatId: "reviewer-1" }),
-    e("seat.done", { ok: true, summary: "no security issues" }, { seatId: "reviewer-2" }),
     // Engine order (FU-08): the merged verdict first, then its findings (a merged verdict clears the previous round's findings).
-    e("review.verdict", { status: "PASS", summary: "Panel [majority] 2 of 2 PASS, 1 minor note", confidence: 0.85 }, { seatId: "panel" }),
-    finding("avg-empty", "Empty input returns NaN without a documented contract", "minor", ["src/average.ts"], 1),
-    finding("avg-chunk", "Chunk size is hard-coded", "info", ["src/average.ts", "src/config.ts"], 2),
+    e("review.verdict", { status: "PASS", summary: "one minor issue", confidence: 0.8, panelMember: true }, { seatId: "reviewer-1" }),
+    e("seat.done", { ok: true, summary: "one minor issue" }, { seatId: "reviewer-1" }),
+    e("review.verdict", { status: "PASS", summary: "no security issues", confidence: 0.9, panelMember: true }, { seatId: "reviewer-2" }),
+    e("seat.done", { ok: true, summary: "no security issues" }, { seatId: "reviewer-2" }),
+    e("review.verdict", { status: "PASS", summary: "Panel [majority] 2 of 2 PASS, 1 minor note", confidence: 0.85, policy: "majority" }, { seatId: "panel" }),
+    finding("avg-empty", "Empty input returns NaN without a documented contract", "minor", ["src/average.ts"], ["reviewer-1"]),
+    finding("avg-chunk", "Chunk size is hard-coded", "info", ["src/average.ts", "src/config.ts"], ["reviewer-1", "reviewer-2"]),
     e("session.state", { to: "DONE" }),
   ];
 }

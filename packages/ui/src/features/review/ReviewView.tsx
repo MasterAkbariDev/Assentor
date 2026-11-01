@@ -51,6 +51,9 @@ function toneOf(severity: string): StatusTone {
   return (SEVERITY_TONE as Record<string, StatusTone | undefined>)[severity] ?? "muted";
 }
 
+/** Confidence is 0 to 1 in the event; shown as a percentage. */
+const pct = (c: number) => `${Math.round(c * 100)}%`;
+
 export function ReviewView() {
   const verdict = useEngine(selectReviewVerdict);
   const findingEvents = useEngine(selectReviewFindings);
@@ -67,6 +70,7 @@ export function ReviewView() {
 
   const [severity, setSeverity] = useState<SeverityFilter>("all");
   const [onlyDisagreements, setOnlyDisagreements] = useState(false);
+  const [reviewer, setReviewer] = useState("");
   const uid = useId();
   const noteId = `${uid}-agreement-note`;
   // Agreement data gone (a new run, or no finding has a count): the switch cannot apply, so clear it.
@@ -81,7 +85,13 @@ export function ReviewView() {
     const clash = name !== undefined && reviewers.some((seat) => seat.seatId !== id && seat.displayName === name);
     return name === undefined ? id : clash ? `${name} (${id})` : name;
   };
-  const visible = filterFindings(findings, { severity, onlyDisagreements: onlyDisagreements && agreementKnown });
+  // Reviewers a finding names; the filter is offered only when some finding does.
+  const flaggers = [...new Set(findings.flatMap((f) => f.agentIds))];
+  const visible = filterFindings(findings, {
+    severity,
+    onlyDisagreements: onlyDisagreements && agreementKnown,
+    ...(reviewer && flaggers.includes(reviewer) ? { reviewer } : {}),
+  });
 
   return (
     <section className="review" aria-labelledby={`${uid}-heading`}>
@@ -117,7 +127,7 @@ export function ReviewView() {
                 {own ? (
                   <span className="review-reviewer-verdict">
                     Verdict {DECISION_LABEL[own.data.status] ?? own.data.status}
-                    {own.data.confidence !== undefined ? ` · confidence ${own.data.confidence}` : ""}
+                    {own.data.confidence !== undefined ? ` · confidence ${pct(own.data.confidence)}` : ""}
                   </span>
                 ) : null}
                 {seat.detail ? <span className="review-reviewer-detail">{seat.detail}</span> : null}
@@ -146,6 +156,19 @@ export function ReviewView() {
           ))}
           <option value="other">other</option>
         </select>
+        {flaggers.length > 0 ? (
+          <>
+            <label htmlFor={`${uid}-reviewer`}>Reviewer</label>
+            <select id={`${uid}-reviewer`} value={reviewer} onChange={(event) => setReviewer(event.target.value)}>
+              <option value="">All</option>
+              {flaggers.map((id) => (
+                <option key={id} value={id}>
+                  {reviewerName(id)}
+                </option>
+              ))}
+            </select>
+          </>
+        ) : null}
         <button
           type="button"
           role="switch"
@@ -176,6 +199,10 @@ export function ReviewView() {
         </p>
       ) : null}
 
+      <p className="review-note" aria-live="polite" aria-atomic="true">
+        {findings.length > 0 ? `Showing ${visible.length} of ${findings.length} findings.` : ""}
+      </p>
+
       {findings.length === 0 ? (
         <p className="empty">No findings in this run.</p>
       ) : visible.length === 0 ? (
@@ -183,7 +210,9 @@ export function ReviewView() {
       ) : (
         groupByFile(visible).map((group) => (
           <section key={group.file} className="review-file">
-            <h4 className="review-file-name">{group.file || "No file named"}</h4>
+            <h4 className="review-file-name">
+              {group.file ? <a href={`#/sessions?diff=${encodeURIComponent(group.file)}`}>{group.file}</a> : "No file named"}
+            </h4>
             <ul className="review-findings">
               {group.findings.map((finding, index) => (
                 <FindingItem key={`${finding.key}:${index}`} finding={finding} reviewerName={reviewerName} />
@@ -203,7 +232,7 @@ function DecisionBanner({ decision, singleReviewer }: { decision: ReviewDecision
       <p className="review-verdict-status">
         Decision: {DECISION_LABEL[decision.status] ?? decision.status}
         {decision.confidence !== undefined ? (
-          <span className="review-verdict-confidence"> · confidence {decision.confidence}</span>
+          <span className="review-verdict-confidence"> · confidence {pct(decision.confidence)}</span>
         ) : null}
       </p>
       <p className="review-policy">

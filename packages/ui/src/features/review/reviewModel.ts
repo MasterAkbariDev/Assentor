@@ -161,6 +161,8 @@ export type SeverityFilter = Severity | "other" | "all";
 export interface FindingFilter {
   severity: SeverityFilter;
   onlyDisagreements: boolean;
+  /** Seat id (or member name) from a finding's `reviewerIds`; undefined = every reviewer. */
+  reviewer?: string;
 }
 
 export function filterFindings(findings: readonly FindingView[], filter: FindingFilter): FindingView[] {
@@ -168,6 +170,7 @@ export function filterFindings(findings: readonly FindingView[], filter: Finding
     (f) =>
       (filter.severity === "all" ||
         (filter.severity === "other" ? !KNOWN_SEVERITIES.has(f.severity) : f.severity === filter.severity)) &&
-      (!filter.onlyDisagreements || isDisagreement(f)),
+      (!filter.onlyDisagreements || isDisagreement(f)) &&
+      (!filter.reviewer || f.agentIds.includes(filter.reviewer)),
   );
 }

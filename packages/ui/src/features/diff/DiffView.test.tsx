@@ -253,4 +253,26 @@ describe("DiffView", () => {
     });
     await waitFor(() => expect(diffs).toBe(2));
   });
+
+  it("opens at the file named by a #/sessions?diff= link", async () => {
+    window.location.hash = "#/sessions?diff=src%2Fb.ts";
+    try {
+      const v = setup();
+      await v.findByRole("button", { name: "src/b.ts", pressed: true });
+      expect(v.getByRole("heading", { name: "src/b.ts" })).toBeTruthy();
+      expect(v.queryByRole("heading", { name: "src/a.ts" })).toBeNull();
+    } finally {
+      window.location.hash = "";
+    }
+  });
+
+  it("says so when the linked file is not in the diff", async () => {
+    window.location.hash = "#/sessions?diff=nope.ts";
+    try {
+      const v = setup();
+      await v.findByText("nope.ts: file not in this diff.");
+    } finally {
+      window.location.hash = "";
+    }
+  });
 });
