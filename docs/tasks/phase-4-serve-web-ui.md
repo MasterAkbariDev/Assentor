@@ -194,6 +194,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-11 · Diff & worktrees view
 **Tier:** 🟢 H · **Review:** S, plus O for apply/discard flow · **Size:** M · **Depends:** T04-06 · **New deps:** `@monaco-editor/react` (lazy-loaded)
 
+**Merged 2026-11-01 (planner, under the owner's standing merge direction):** `ede6359` + review fixes `59d8838`, `88f9651`; Opus review (apply/discard) PASS after two rounds. Per-seat worktree diff viewer (file list, collapsible hunks, truncation notice); apply (strategy) and discard (force) behind a confirm dialog listing the files; apply sends `allowedPaths` = the shown files and re-fetches the diff on confirm, refusing if files, content, head, base or dirty state changed; blocked while the session is live or its state is unknown, or without write access. Not done: Monaco side-by-side, two-candidate compare, branch/gate columns (no RPC carries them).
+
 **Allowed files** — `packages/ui/src/features/diff/*`, tests.
 
 **Spec**

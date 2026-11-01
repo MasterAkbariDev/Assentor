@@ -80,6 +80,10 @@ Import other workspace packages only through `#assentor/…` (aliased to their s
 - **Info:** provider, transport and permissions from `seatInfo` (`seat.spawned`), plus model, role, status, start and end times, elapsed time, tokens and the seat and session ids.
 - **Store data:** `seatInfo` (from `seat.spawned`) and `seatEvents` (the last `SEAT_EVENT_CAP` = 200 non-`seat.output.delta` events per seat). Both are rebuilt identically on replay, like the rest of the session view.
 
+## Diff & worktrees
+
+`features/diff/` (collapsed section under the run): one row per seat, "View diff" loads `worktree.diff`. Shows the complete file list, a per-file filter, collapsible hunks (plain text, never HTML), and a notice when the engine cut the diff at 512 KiB. Apply (strategy) and Discard (force) open a modal confirm listing the files and then send `confirm: true`. Both are disabled with a reason unless `engine.hello` capabilities include `worktree.apply` and `worktree.discard` (the connection has write access; the opt-in UI is T04-12), and while `session.get` reports the session live. Not built: Monaco side-by-side and two-candidate compare (no new dependency), branch and gate status (no RPC or event carries them).
+
 ## Writing a screen test
 
 ```tsx
