@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import type { AssentorConfig } from "../config/schema.js";
 import { createId, isId } from "../core/ids.js";
 import { AutonomySchema, type Autonomy } from "../core/run-mode.js";
-import { SessionSpecSchema, type Seat, type SessionSpec, type StageSpec } from "#assentor/protocol/seats.js";
+import { ModelIdSchema, SessionSpecSchema, type Seat, type SessionSpec, type StageSpec } from "#assentor/protocol/seats.js";
 import {
   SessionRunner,
   validateSessionGraph,
@@ -13,6 +13,7 @@ import { createStageRunners, type StageRunnerDeps } from "../orchestrator/sessio
 import type { EngineEventDraft } from "#assentor/protocol/events.js";
 import type { Executor, ExecutorResult } from "../providers/executors/types.js";
 import type { WorktreeManager } from "../worktrees/manager.js";
+import type { SeatScheduler } from "../seats/scheduler.js";
 import type { SkillLibrary } from "../skills/library.js";
 import { SkillSession, withSkills, withSkillsAsk } from "../skills/session.js";
 import {
@@ -112,6 +113,18 @@ export interface PreparedModeSession {
    * (nothing changes) for an unknown id or an answer that does not fit.
    */
   answer(questionId: string, answer: string): boolean;
+  /**
+   * FU-12: stops the seat's executor turns in flight (`cancel(taskId)` kills the process
+   * tree) and its scheduler jobs; the session goes on, and whoever awaited the turn sees it
+   * `cancelled`. Returns why nothing was stopped, else undefined.
+   */
+  stopSeat(seatId: string): string | undefined;
+  /**
+   * FU-12: the seat's executors switch to `model` when their next turn starts: emits
+   * `seat.model.changed` with `pending: true` now and `pending: false` when applied.
+   * Returns why the switch was refused, else undefined.
+   */
+  setSeatModel(seatId: string, model: string): string | undefined;
 }
 
 /** Every reason a mode cannot start; nothing was started. */
@@ -158,17 +171,19 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
         : undefined;
   /** Wrapper → the executor the host made, so `watchExecutorOutput` gets the host's own object. */
   const hostExecutor = new WeakMap<Executor, Executor>();
+  const seatControls = createSeatControls(input.sessionId, emit, input.deps.scheduler);
   const deps: StageRunnerDeps = {
     ...input.deps,
     supervisor: { ...input.deps.supervisor, autopilot: autonomy === "autopilot" },
     // Only review may skip the executor; staticSpec refuses the strategy in any other mode.
+    // Every other executor of the session is made here, so this is where seat control finds it.
     createExecutor: (stage) => {
       if (mode.id === "review" && stage.strategy === EXISTING_WORK_STRATEGY) return existingWorkExecutor();
       const executor = input.deps.createExecutor(stage);
-      if (!skills) return executor;
-      const wrapped = withSkills(executor, skills, seatOfStage(stage, input.deps));
-      hostExecutor.set(wrapped, executor);
-      return wrapped;
+      const seat = seatOfStage(stage, input.deps);
+      const tracked = seatControls.track(seat.id, skills ? withSkills(executor, skills, seat) : executor, seat.model);
+      hostExecutor.set(tracked, executor);
+      return tracked;
     },
   };
   const stages = createStageRunners(deps);
@@ -198,15 +213,21 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
       spec,
       approve: (stageId) => runner.approve(stageId),
       answer: () => false,
+      stopSeat: seatControls.stop,
+      setSeatModel: seatControls.setModel,
       run: async () => {
         claim();
-        // SessionRunner.run refuses an existing graph too, but only after we would have emitted.
-        const file = runner.graphFile;
-        if (file && (await fs.stat(file).catch(() => undefined))) {
-          throw new Error(`session ${input.sessionId} already has a stage graph; use resume()`);
+        try {
+          // SessionRunner.run refuses an existing graph too, but only after we would have emitted.
+          const file = runner.graphFile;
+          if (file && (await fs.stat(file).catch(() => undefined))) {
+            throw new Error(`session ${input.sessionId} already has a stage graph; use resume()`);
+          }
+          selected();
+          return { ...(await runner.run(spec)), mode: mode.id, autonomy };
+        } finally {
+          seatControls.close();
         }
-        selected();
-        return { ...(await runner.run(spec)), mode: mode.id, autonomy };
       },
     };
   }
@@ -226,6 +247,8 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
     autonomy,
     approve: (questionId) => questions.answer(questionId, "approve", true),
     answer: (questionId, answer) => questions.answer(questionId, answer, false),
+    stopSeat: seatControls.stop,
+    setSeatModel: seatControls.setModel,
     run: async () => {
       claim();
       selected();
@@ -289,7 +312,119 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
         return finish("failed", `controller failed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
         questions.closeAll();
+        seatControls.close();
       }
+    },
+  };
+}
+
+/**
+ * The live executors of one session by seat id (FU-12): what `stopSeat` / `setSeatModel`
+ * reach. Each executor is wrapped once; the wrapper knows its turns in flight and applies a
+ * pending model right before the next turn (like `Supervisor.requestModelChange`, without
+ * the interrupt-now option). `close()` (the run ended) empties it and refuses later calls.
+ */
+function createSeatControls(sessionId: string, emit: (draft: EngineEventDraft) => void, scheduler: SeatScheduler) {
+  interface Tracked {
+    executor: Executor;
+    /** Task ids of turns in flight. */
+    running: Set<string>;
+    /** Task ids `stop` cancelled; their turn ends with the stop's reason, not the executor's. */
+    stopped: Set<string>;
+    pending?: string;
+    model?: string;
+  }
+  const bySeat = new Map<string, Set<Tracked>>();
+  let closed = false;
+  const modelChanged = (seatId: string, data: { from?: string; to: string; pending: boolean; reverted?: boolean }) =>
+    emit({ type: "seat.model.changed", sessionId, seatId, data });
+
+  return {
+    /** `model`: the seat's configured model (blank and AUTO = the CLI default). */
+    track(seatId: string, executor: Executor, model?: string): Executor {
+      const configured = model?.trim();
+      const entry: Tracked = { executor, running: new Set(), stopped: new Set(), ...(configured && configured !== "AUTO" ? { model: configured } : {}) };
+      if (!closed) {
+        if (!bySeat.has(seatId)) bySeat.set(seatId, new Set());
+        bySeat.get(seatId)!.add(entry);
+      }
+      const turn = async (taskId: string, start: () => Promise<ExecutorResult>): Promise<ExecutorResult> => {
+        const model = entry.pending;
+        if (model !== undefined) {
+          entry.pending = undefined;
+          try {
+            executor.setModel!(model);
+            modelChanged(seatId, { ...(entry.model ? { from: entry.model } : {}), to: model, pending: false });
+            entry.model = model;
+          } catch {
+            modelChanged(seatId, { from: model, to: entry.model ?? "AUTO", pending: false, reverted: true });
+          }
+        }
+        entry.running.add(taskId);
+        // Replaces e.g. the executor's "Interrupted (Ctrl+C)" text, which the Supervisor reports as the failure.
+        const stopped = (): ExecutorResult | undefined =>
+          entry.stopped.delete(taskId) ? { status: "cancelled", summary: `seat ${seatId} stopped over RPC`, error: `seat ${seatId} stopped over RPC` } : undefined;
+        try {
+          const result = await start();
+          return stopped() ?? result;
+        } catch (error) {
+          const result = stopped();
+          if (result) return result;
+          throw error;
+        } finally {
+          entry.running.delete(taskId);
+        }
+      };
+      const tracked: Executor = {
+        name: executor.name,
+        capabilities: () => executor.capabilities(),
+        run: (task) => turn(task.taskId, () => executor.run(task)),
+        continue: (task) => turn(task.taskId, () => executor.continue(task)),
+        cancel: (taskId) => executor.cancel(taskId),
+      };
+      if (executor.setModel) {
+        // The Supervisor's own switch is newer than any RPC request still pending.
+        tracked.setModel = (model) => {
+          executor.setModel!(model);
+          entry.pending = undefined;
+          entry.model = model;
+        };
+      }
+      if (executor.interrupt) tracked.interrupt = () => executor.interrupt!();
+      return tracked;
+    },
+
+    stop: (seatId: string): string | undefined => {
+      if (closed) return "the session has finished";
+      const turns = [...(bySeat.get(seatId) ?? [])].flatMap((e) => [...e.running].map((taskId) => ({ e, taskId })));
+      const jobs = scheduler.cancelSeat(seatId, "stopped by the user");
+      for (const { e, taskId } of turns) {
+        e.stopped.add(taskId);
+        try {
+          void Promise.resolve(e.executor.cancel(taskId)).catch(() => undefined);
+        } catch {
+          // A cancel that throws must not keep the other turns running.
+        }
+      }
+      return turns.length + jobs > 0 ? undefined : `seat "${seatId}" has no work running in this session`;
+    },
+
+    setModel: (seatId: string, model: string): string | undefined => {
+      if (closed) return "the session has finished";
+      if (!ModelIdSchema.safeParse(model).success) return `invalid model id ${JSON.stringify(model)}`;
+      const entries = [...(bySeat.get(seatId) ?? [])];
+      if (entries.length === 0) return `seat "${seatId}" has no executor in this session`;
+      const fixed = entries.find((e) => !e.executor.setModel);
+      if (fixed) return `seat "${seatId}" (${fixed.executor.name}) cannot switch models`;
+      if (entries.every((e) => (e.pending ?? e.model) === model)) return undefined; // already on (or switching to) it
+      for (const e of entries) e.pending = model;
+      modelChanged(seatId, { ...(entries[0]!.model ? { from: entries[0]!.model } : {}), to: model, pending: true });
+      return undefined;
+    },
+
+    close(): void {
+      closed = true;
+      bySeat.clear();
     },
   };
 }
@@ -468,10 +603,15 @@ function staticSpec(
  * project skills. Strategy executors that fan out (best-of-n, divide) use the
  * chosen seat's role for all of them.
  */
-function seatOfStage(stage: StageSpec, deps: StageRunnerDeps): Pick<Seat, "id" | "role" | "permissions"> {
+function seatOfStage(stage: StageSpec, deps: StageRunnerDeps): Pick<Seat, "id" | "role" | "permissions"> & { model?: string } {
   const named = stage.options.seat as Partial<Seat> | undefined;
   if (named && typeof named.id === "string" && typeof named.role === "string") {
-    return { id: named.id, role: named.role, permissions: named.permissions === "edit" ? "edit" : "read-only" };
+    return {
+      id: named.id,
+      role: named.role,
+      permissions: named.permissions === "edit" ? "edit" : "read-only",
+      ...(typeof named.model === "string" ? { model: named.model } : {}),
+    };
   }
   let seats: readonly Seat[] = [];
   try {

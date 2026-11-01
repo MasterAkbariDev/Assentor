@@ -266,9 +266,11 @@ export class SeatScheduler {
     return this.running;
   }
 
-  /** Cancel every queued, running and backing-off job of one seat. */
-  cancelSeat(seatId: string, message = "seat cancelled"): void {
+  /** Cancel every queued, running and backing-off job of one seat. Returns how many it stopped. */
+  cancelSeat(seatId: string, message = "seat cancelled"): number {
+    const count = this.active.get(seatId)?.size ?? 0;
     this.stopSeat(seatId, { reason: "cancelled", scope: "seat", message });
+    return count;
   }
 
   /** Cancel everything; later `run` calls resolve cancelled immediately. */

@@ -18,9 +18,11 @@ import { RpcError, scrubPaths, type RpcServer } from "./server.js";
  *   `SessionHost`; this module owns only the lifecycle, the event log and the abort signal.
  * - Worktrees are addressed by (sessionId, seatId) and found in the manager's manifest;
  *   a client never supplies a path. `apply`/`discard` need `confirm: true` (a contract literal).
- * - `session.pause`/`resume` and all `seat.*` answer `NotSupported`: the engine has no pause,
- *   no static-session resume through `prepareModeSession`, and no registry that reaches a
- *   live Supervisor or executor from a session id.
+ * - `seat.stop`/`setModel` (FU-12) reach the session's live executors through
+ *   `PreparedModeSession.stopSeat`/`setSeatModel` (the registry lives in `prepareModeSession`).
+ * - `session.pause`/`resume`, `seat.inject`/`restart` answer `NotSupported`: the engine has no
+ *   pause, no static-session resume through `prepareModeSession`, no way to feed text into a
+ *   running CLI turn, and no controller that takes a restarted seat back mid-session.
  */
 
 /** What `prepareModeSession` needs besides the fields this module owns. */
@@ -109,6 +111,15 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
     const found = (await options.list()).find((s) => s.id === sessionId);
     if (!found && !live) throw invalid("unknown session");
     return { ...(found ?? { id: sessionId, title: live!.title, hasLiveLog: false, lastSeq: 0 }), ...(live ? { live: live.state } : {}) };
+  };
+
+  /** Seat control reaches only a running session of this engine; `act` returns why it refused. */
+  const seatCall = (sessionId: string, act: (prepared: PreparedModeSession) => string | undefined) => {
+    const live = liveOf(sessionId);
+    if (live.state !== "running") throw rejected(`session is ${live.state}`);
+    const refused = act(live.prepared);
+    if (refused) throw rejected(refused);
+    return { ok: true as const };
   };
 
   const finish = async (sessionId: string, live: Live, run: Promise<unknown>) => {
@@ -233,10 +244,10 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
       return readEventsBounded(sessionPaths(projectPath, sessionId).events, fromSeq);
     },
 
-    "seat.setModel": unsupported("seat.setModel", "no registry reaches a live Supervisor from a session id (Supervisor.requestModelChange exists)"),
+    "seat.setModel": ({ sessionId, seatId, model }) => seatCall(sessionId, (p) => p.setSeatModel(seatId, model)),
+    "seat.stop": ({ sessionId, seatId }) => seatCall(sessionId, (p) => p.stopSeat(seatId)),
     "seat.inject": unsupported("seat.inject", "the engine has no way to inject text into a running seat"),
-    "seat.stop": unsupported("seat.stop", "no registry reaches a live executor from a session id"),
-    "seat.restart": unsupported("seat.restart", "no registry reaches a live executor from a session id"),
+    "seat.restart": unsupported("seat.restart", "no controller takes a restarted seat back mid-session; stop it instead"),
 
     "worktree.diff": async ({ sessionId, seatId }) => {
       const key = await seatKey(sessionId, seatId);

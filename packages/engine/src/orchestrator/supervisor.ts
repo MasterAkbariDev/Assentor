@@ -651,7 +651,8 @@ export class Supervisor {
       return true;
     }
     if (result.status === "cancelled") {
-      this.moveTo(TaskState.Failed, withResumeHint(result.error ?? "Interrupted (Ctrl+C)."));
+      // A stop over RPC says so itself; the executors' Ctrl+C text already carries the hint.
+      this.moveTo(TaskState.Failed, result.error?.trim() || withResumeHint("Interrupted (Ctrl+C)."));
       return true;
     }
     return false;
