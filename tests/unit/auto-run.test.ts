@@ -66,10 +66,10 @@ describe("assentor run --mode auto", () => {
   });
 
   it("asks again after a mode that is not available, then cancel runs nothing", async () => {
-    const io = terminal(["race", "n"]);
+    const io = terminal(["watch", "n"]);
     await expect(choose(io)).rejects.toThrow("cancelled");
     expect(io.prompts()).toBe(2);
-    expect(io.text()).toContain("Not an available mode: race");
+    expect(io.text()).toContain("Not an available mode: watch");
   });
 
   it("stdin closing at the question cancels", async () => {

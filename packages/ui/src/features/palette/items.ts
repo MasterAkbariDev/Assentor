@@ -7,6 +7,8 @@ export const WRITE_REASON = "needs write access (not in the watch-only preview)"
 export type PaletteAction =
   | { kind: "session"; sessionId: string }
   | { kind: "view"; selector: string }
+  /** Go to a top-level page: set the location hash (`#/prompts`). */
+  | { kind: "route"; hash: string }
   | { kind: "command"; command: Command }
   /** Put `text` in the search box: the command needs arguments. */
   | { kind: "fill"; text: string }
@@ -14,7 +16,7 @@ export type PaletteAction =
 
 export interface PaletteItem {
   id: string;
-  group: "Recent" | "Session" | "View" | "Action";
+  group: "Recent" | "Session" | "View" | "Go to" | "Action";
   /** What the palette matches against: a run's title, a view's name, or a command such as `/pause`. */
   label: string;
   /** Short text after the label: a run's status, or what an action does. */
@@ -59,8 +61,15 @@ export const VIEW_TARGETS: ReadonlyArray<{ label: string; selector: string; show
   { label: "Review", selector: ".review", shown: "hasReview" },
 ];
 
+/** Pages the palette can open (their hash routes, see `shell/route.ts`). */
+export const NAV_TARGETS: ReadonlyArray<{ label: string; hash: string; detail: string }> = [
+  { label: "Prompts", hash: "#/prompts", detail: "Prompt library" },
+  { label: "Teams", hash: "#/teams", detail: "Team definitions" },
+  { label: "Playbooks", hash: "#/playbooks", detail: "Playbooks" },
+];
+
 /**
- * Every palette entry, in display order: recent runs, the other runs, views, then
+ * Every palette entry, in display order: recent runs, the other runs, views, pages, then
  * actions. A run in Recent is not repeated under Session.
  */
 export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
@@ -80,6 +89,9 @@ export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
     if (input[view.shown]) {
       items.push({ id: `view:${view.selector}`, group: "View", label: view.label, action: { kind: "view", selector: view.selector } });
     }
+  }
+  for (const nav of NAV_TARGETS) {
+    items.push({ id: `nav:${nav.hash}`, group: "Go to", label: nav.label, detail: nav.detail, action: { kind: "route", hash: nav.hash } });
   }
   const reasonFor = input.reasonFor ?? (() => WRITE_REASON);
   for (const write of WRITE_ACTIONS) {

@@ -294,6 +294,11 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .seat-info-row { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 16px; }
 .seat-info dt { color: var(--muted); }
 .seat-info dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.seat-transcript { display: flex; flex: 1; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; }
+.seat-more { align-self: flex-start; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.seat-tool-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.seat-msg-error { color: var(--error); }
+.seat-file-list { display: grid; gap: 4px; margin: 0; padding: 0; overflow-y: auto; list-style: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
 
 /* Review view (T04-10p). Colours come from the status tokens above. */
 .review { display: grid; gap: 12px; margin-top: 24px; }
@@ -369,7 +374,9 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .vote-table tfoot th, .vote-table tfoot td { font-weight: 600; }
 .consensus { margin-bottom: 16px; }
 .consensus-line { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0; font-size: 13px; }
-.consensus-line meter { width: min(240px, 60vw); height: 14px; }
+.consensus-bar { position: relative; display: inline-block; }
+.consensus-line meter { width: min(240px, 60vw); height: 14px; display: block; }
+.consensus-marker { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--text); pointer-events: none; }
 .consensus-value { font-variant-numeric: tabular-nums; }
 .consensus-state { color: var(--muted); }
 .consensus-state.is-reached { color: var(--ok); }
@@ -809,3 +816,24 @@ button.lead-task-open:focus-visible { outline: 2px solid var(--accent); outline-
 .lib button:focus-visible, .lib input:focus-visible, .lib select:focus-visible, .lib textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .lib-readonly { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: 12px; }
 .lib-name-err { color: var(--error) !important; }
+
+/* Session board: stage rail, model picker, budget bar (T04-07) */
+.stage-rail { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.stage { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--panel); font-size: 13px; }
+.stage-status { color: var(--muted); }
+.stage-done .stage-icon { color: var(--ok); }
+.stage-running { border-color: var(--active); }
+.stage-running .stage-icon { color: var(--active); }
+.stage-failed .stage-icon, .stage-failed .stage-status { color: var(--error); }
+.stage-pending { color: var(--muted); }
+.model-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 2px; min-width: 0; }
+.model-picker-label { font-size: 12px; color: var(--muted); flex-basis: 100%; }
+.model-picker select { font: inherit; font-size: 13px; max-width: 100%; min-width: 0; }
+.model-picker select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.model-picker-pending { font-size: 12px; color: var(--warn); }
+.budget-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; margin-bottom: 12px; }
+.budget-item { display: grid; gap: 2px; min-width: 200px; flex: 1 1 200px; }
+.budget-text, .budget-cost { font-size: 13px; font-variant-numeric: tabular-nums; }
+.budget-item progress { width: 100%; height: 8px; accent-color: var(--accent); }
+.budget-item[data-state="warn"] progress { accent-color: var(--warn); }
+.budget-item[data-state="warn"] .budget-text { color: var(--warn); }

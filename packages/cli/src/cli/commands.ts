@@ -18,7 +18,7 @@ import {
   trackReviewerSeat,
   type SeatInfo,
 } from "#assentor/engine/orchestrator/seat-events.js";
-import { EventLog } from "#assentor/engine/events/log.js";
+import { EventLog, acquireRunLock, type RunLock } from "#assentor/engine/events/log.js";
 import { estimateRun } from "#assentor/engine/estimate/cost.js";
 import { observedPricing } from "#assentor/engine/usage/observed.js";
 import type { EngineEvent, RunEstimate } from "#assentor/protocol/events.js";
@@ -920,6 +920,7 @@ export async function runAssentorTask(input: RunAssentorInput): Promise<SoloRun 
   const seatEvents = new RunSeatEvents(
     seatEventListener(reporter, input.onEngineEvent),
   );
+  let runLock: RunLock | undefined;
   const detachInterrupt = attachRunInterrupt({
     reporter,
     getExecutor: () => executor,
@@ -930,6 +931,9 @@ export async function runAssentorTask(input: RunAssentorInput): Promise<SoloRun 
   try {
     return await runAssentorTaskBody(input, projectPath, reporter, {
       seatEvents,
+      setRunLock: (value) => {
+        runLock = value;
+      },
       setExecutor: (value) => {
         executor = value;
       },
@@ -943,6 +947,7 @@ export async function runAssentorTask(input: RunAssentorInput): Promise<SoloRun 
   } finally {
     detachInterrupt();
     await seatEvents.close();
+    await runLock?.release().catch(() => undefined);
     reporter.dispose();
   }
 }
@@ -953,6 +958,7 @@ async function runAssentorTaskBody(
   reporter: RunReporter,
   slots: {
     seatEvents: RunSeatEvents;
+    setRunLock: (lock: RunLock) => void;
     setExecutor: (executor: Executor) => void;
     setSupervisor: (supervisor: Supervisor) => void;
     setTaskId: (taskId: string) => void;
@@ -1089,6 +1095,7 @@ async function runAssentorTaskBody(
 
   const taskId = createTaskId();
   slots.setTaskId(taskId);
+  slots.setRunLock(await acquireRunLock(projectPath, taskId));
   const conversationId = createConversationId();
   const store = await TaskStore.create({
     projectPath,
@@ -1225,6 +1232,7 @@ export async function resumeAssentorTask(input: {
   let executor: Executor | undefined;
   let supervisor: Supervisor | undefined;
   let taskId: string | undefined;
+  let runLock: RunLock | undefined;
   const detachInterrupt = attachRunInterrupt({
     reporter,
     getExecutor: () => executor,
@@ -1252,9 +1260,14 @@ export async function resumeAssentorTask(input: {
     // prompts carry no style). `--style` here restyles reviewers and the Lead only.
     reporter.setStyle(config.output.style);
 
-    const resume = input.taskId
+    let resume = input.taskId
       ? await loadTaskForResume(projectPath, input.taskId)
       : await findLatestResumableTask(projectPath);
+    if (resume?.resumable) {
+      runLock = await acquireRunLock(projectPath, resume.snapshot.taskId);
+      // Re-read under the lock: a run that held it until now may have changed (or finished) the task.
+      resume = await loadTaskForResume(projectPath, resume.snapshot.taskId);
+    }
     if (!resume || !resume.resumable) {
       throw new Error(
         resume?.reason ??
@@ -1411,6 +1424,7 @@ export async function resumeAssentorTask(input: {
   } finally {
     detachInterrupt();
     await seatEvents.close();
+    await runLock?.release().catch(() => undefined);
     reporter.dispose();
   }
 }

@@ -6,7 +6,7 @@ import { PassThrough, Writable } from "node:stream";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addYarnLock, fakePackageManagers } from "./fake-package-managers.js";
-import { readSessionEvents, type EngineEvent } from "../../packages/engine/src/index.js";
+import { acquireRunLock, isSessionRunLocked, readSessionEvents, type EngineEvent } from "../../packages/engine/src/index.js";
 import { createMockLead, type MockLeadStep } from "../../packages/engine/src/modes/lead/mock.js";
 import type { RosterEntry } from "../../packages/engine/src/modes/roster.js";
 import type { Executor, ExecutorTask } from "../../packages/engine/src/providers/executors/types.js";
@@ -166,6 +166,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     expect(of("mode.selected")[0]?.data).toMatchObject({ mode: "review", kind: "static" });
     // The session log is the one the run wrote.
     expect((await readSessionEvents(repo, result.taskId)).map((e) => e.type)).toContain("session.completed");
+    expect(await isSessionRunLocked(repo, result.taskId)).toBe(false);
   });
 
   it("negotiate: each step renders the library prompt for a seat and parses its JSON reply", async () => {
@@ -269,6 +270,15 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     // The lead seat fails after planning: the session ends blocked with the board saved.
     const first = await run("lead", { askSeat: createMockLead([LEAD_SCRIPT[0]!]).askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts") });
     expect(first.result.status).toBe("blocked");
+    expect(await isSessionRunLocked(repo, first.result.taskId)).toBe(false);
+    // FU-15: while another run holds the task, a resume is refused before any work.
+    const held = await acquireRunLock(repo, first.result.taskId);
+    const logged = await readSessionEvents(repo, first.result.taskId);
+    await expect(resumeAssentorTask({ projectPath: repo, taskId: first.result.taskId, modeHooks: { questions: noTerminal() } })).rejects.toThrow(
+      `Task ${first.result.taskId} is already running in process ${process.pid}`,
+    );
+    expect(await readSessionEvents(repo, first.result.taskId)).toEqual(logged);
+    await held.release();
     const lead = createMockLead(LEAD_SCRIPT.slice(1));
     const resumed = await resumeAssentorTask({
       projectPath: repo,
@@ -277,6 +287,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     });
     expect(resumed).toMatchObject({ taskId: first.result.taskId, status: "completed", reason: "x added" });
     expect(lead.prompts[0]).toContain("T1");
+    expect(await isSessionRunLocked(repo, first.result.taskId)).toBe(false);
 
     const review = await run("review");
     await expect(resumeAssentorTask({ projectPath: repo, taskId: review.result.taskId })).rejects.toThrow(/Mode review cannot resume/);
@@ -365,6 +376,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     await writeConfig({ teams: PLAYBOOK_TEAMS });
     const { result } = await run("pipeline", { askSeat: async () => STEP_REPLY });
     expect(result.status).toBe("cancelled");
+    expect(await isSessionRunLocked(repo, result.taskId)).toBe(false);
   });
 
   it.each(["explore", "plan"])("%s: read-only playbook runs its debates on the seats", async (mode) => {
@@ -472,6 +484,23 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     await expectInstallBeforeGate();
   });
 
+  it("race: two candidates from the executor seat, the judge picks one, the apply is asked", async () => {
+    await writeConfig({ modes: { race: { seats: 2 } } });
+    const cwds: string[] = [];
+    const { result, of } = await run("race", {
+      seatExecutor: (seat) => ({ ...writer(`a/${seat.id}.ts`), run: (task: ExecutorTask) => (cwds.push(task.projectPath), writer(`a/${seat.id}.ts`).run(task)) }),
+      askSeat: async () => '{"winner": "B", "reason": "fine"}',
+      questions: terminal(["y"]),
+    });
+    expect(result.status).toBe("completed");
+    expect(of("mode.selected")[0]?.data).toMatchObject({ mode: "race", kind: "dynamic" });
+    expect(new Set(cwds).size).toBe(2);
+    for (const cwd of cwds) expect(cwd).not.toBe(repo);
+    expect(of("negotiation.decided")[0]?.data).toMatchObject({ winner: "race-2" });
+    expect(await git(repo, "show", "HEAD:a/race-2.ts")).toBe("export const x = 1;");
+    await expect(git(repo, "show", "HEAD:a/race-1.ts")).rejects.toThrow();
+  });
+
   it("--retro appends the retro seat's lessons to .assentor/memory/lessons.md", async () => {
     await writeConfig({});
     const { result } = await run("review", { askSeat: async () => "- Worked: the mock reviewer passed at once.\nnot a bullet" }, { retro: true });
@@ -482,9 +511,9 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     expect(lessons).not.toContain("not a bullet");
   });
 
-  it("race, interactive and watch are refused by the CLI", async () => {
+  it("interactive and watch are refused by the CLI", async () => {
     await writeConfig({});
-    for (const id of ["race", "interactive", "watch"]) {
+    for (const id of ["interactive", "watch"]) {
       await expect(run(id)).rejects.toThrow(`Mode ${id} is not available yet.`);
     }
   });
@@ -522,5 +551,8 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     await expect(run("negotiate")).rejects.toThrow(/modes\.negotiate/);
     const sessions = await fs.readdir(path.join(repo, ".assentor", "sessions")).catch(() => []);
     for (const id of sessions) await expect(fs.stat(path.join(repo, ".assentor", "sessions", id, "mode-run.json"))).rejects.toThrow();
+    // The failed run released its run lock.
+    for (const id of sessions) expect(await isSessionRunLocked(repo, id)).toBe(false);
+    expect(sessions.length).toBeGreaterThan(0);
   });
 });

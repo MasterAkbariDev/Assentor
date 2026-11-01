@@ -1,7 +1,7 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { RpcResult } from "#assentor/protocol/rpc.js";
 import { useEngine } from "../../store/context.js";
-import { selectSeats } from "../../store/selectors.js";
+import { groupSeats, selectSeats } from "../../store/selectors.js";
 import { useRpc } from "../../transport/context.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { parseUnifiedDiff } from "./diffModel.js";
@@ -24,9 +24,39 @@ const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const NO_WORKTREE = "No worktree for this seat.";
 const sameDiff = (a: Diff, b: Diff) => a.head === b.head && a.baseSha === b.baseSha && a.dirty === b.dirty && a.truncated === b.truncated && a.diff === b.diff && a.files.length === b.files.length && a.files.every((f, i) => f === b.files[i]);
 
+const subscribeHash = (fn: () => void) => {
+  window.addEventListener("hashchange", fn);
+  return () => window.removeEventListener("hashchange", fn);
+};
+
+/** The file a `#/sessions?diff=<path>[&seat=<id>]` link (review view, seat drawer) asks for. */
+function useDiffTarget(): string | undefined {
+  return useHashParam("diff");
+}
+
+/** The seat whose worktree such a link names; without one the executor's is shown. */
+function useDiffSeat(): string | undefined {
+  return useHashParam("seat");
+}
+
+function useHashParam(name: string): string | undefined {
+  const hash = useSyncExternalStore(subscribeHash, () => window.location.hash);
+  const raw = new RegExp(`[?&]${name}=([^&]*)`).exec(hash)?.[1];
+  try {
+    return raw ? decodeURIComponent(raw) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Collapsed section of the session panel: per-seat worktrees, their diff, apply and discard. */
 export function DiffView() {
-  const [open, setOpen] = useState(false);
+  const target = useDiffTarget();
+  const targetSeat = useDiffSeat();
+  const [open, setOpen] = useState(target !== undefined);
+  useEffect(() => {
+    if (target) setOpen(true);
+  }, [target]);
   return (
     <section className="diff-view" aria-label="Diff and worktrees">
       <h2 className="diff-heading">
@@ -34,17 +64,18 @@ export function DiffView() {
           Diff &amp; worktrees
         </button>
       </h2>
-      {open ? <DiffBody /> : null}
+      {open ? <DiffBody target={target} targetSeat={targetSeat} /> : null}
     </section>
   );
 }
 
-function DiffBody() {
+function DiffBody({ target, targetSeat }: { target: string | undefined; targetSeat: string | undefined }) {
   const rpc = useRpc();
   const connection = useEngine((s) => s.connection);
   const sessionId = useEngine((s) => s.session?.id);
   const state = useEngine((s) => s.session?.state);
   const seats = useEngine(selectSeats);
+  const seatInfo = useEngine((s) => s.session?.seatInfo);
   const [canWrite, setCanWrite] = useState(false);
   // undefined = not known yet (treated as blocked), null = not live here.
   const [live, setLive] = useState<string | null | undefined>();
@@ -105,6 +136,24 @@ function DiffBody() {
     if (live !== undefined) wasLive.current = Boolean(live);
   }, [live, seatId, load]);
 
+  // A file link: show the named seat's worktree (else the executor's, else a seat that can edit, so has one) at that file.
+  const firstSeat =
+    groupSeats(seats ?? {}).find((g) => g.key === "executor")?.seats[0]?.seatId ??
+    Object.values(seats ?? {}).find((s) => seatInfo?.[s.seatId]?.permissions === "edit")?.seatId;
+  const linkedSeat = targetSeat && seats?.[targetSeat] ? targetSeat : firstSeat;
+  const opened = useRef<string | undefined>();
+  useEffect(() => {
+    // Once per link: picking another seat by hand afterwards must stick.
+    const key = target && linkedSeat ? `${linkedSeat}\n${target}` : undefined;
+    if (key && opened.current !== key) {
+      opened.current = key;
+      void load(linkedSeat as string);
+    }
+  }, [target, linkedSeat, load]);
+  useEffect(() => {
+    if (target && diff?.files.includes(target)) setFile(target);
+  }, [target, diff]);
+
   const blocked = !canWrite
     ? WRITE_REASON
     : live === undefined
@@ -148,6 +197,11 @@ function DiffBody() {
             </button>
           </div>
           {blocked ? <p className="diff-meta" role="note">{blocked}</p> : null}
+          {target && !diff.files.includes(target) ? (
+            <p className="notice warn" role="status">
+              {target}: file not in this diff.
+            </p>
+          ) : null}
           <DiffViewer diff={diff} file={file} onFile={setFile} />
         </>
       ) : null}

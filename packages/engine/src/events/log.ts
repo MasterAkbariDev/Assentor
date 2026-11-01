@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { promises as fs, readFileSync, unlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { ensureAssentorGitignored, sessionPaths } from "../persistence/paths.js";
 import {
   parseEngineEvent,
@@ -68,7 +70,10 @@ export class EventLog {
     await fs.mkdir(paths.root, { recursive: true });
     await ensureAssentorGitignored(projectPath);
 
-    const lock = await acquireWriterLock(sessionId, path.join(paths.root, WRITER_LOCK));
+    const lock = await acquireLockFile(
+      path.join(paths.root, WRITER_LOCK),
+      (owner, file) => new EventLogLockedError(sessionId, owner, file),
+    );
     await removeOldAsideFiles(paths.root);
     const log = new EventLog(
       sessionId,
@@ -238,6 +243,56 @@ export class EventLogLockedError extends Error {
   }
 }
 
+/**
+ * Task-level run lock (FU-15): `.assentor/sessions/<id>/run.lock`, held for a whole run or
+ * resume of one task/session (solo, mode session or serve), so two processes never drive
+ * the same task state. Same file format, stale-pid takeover and exit cleanup as the writer
+ * lock; the writer lock alone guards only the event log.
+ */
+export class RunLockedError extends Error {
+  constructor(
+    readonly sessionId: string,
+    readonly owner: LockOwner | undefined,
+    readonly lockFile: string,
+  ) {
+    super(
+      `${
+        owner
+          ? `Task ${sessionId} is already running in process ${owner.pid} on ${owner.host} (since ${owner.startedAt})`
+          : `Task ${sessionId} is already running in another process`
+      }. Wait for that run to finish, or stop it. It is safe to delete ${lockFile} only when ${
+        owner ? `process ${owner.pid} on ${owner.host} is no longer running` : "no process is running"
+      } an Assentor run or resume of this task (for example it crashed); never delete it while one is.`,
+    );
+    this.name = "RunLockedError";
+  }
+}
+
+export interface RunLock {
+  /** Release the lock (only if still ours). Safe to call twice. */
+  release(): Promise<void>;
+}
+
+const RUN_LOCK = "run.lock";
+
+/** Take the run lock for a task/session, or throw `RunLockedError` naming the live holder. */
+export async function acquireRunLock(projectPath: string, sessionId: string): Promise<RunLock> {
+  const paths = sessionPaths(projectPath, sessionId);
+  await fs.mkdir(paths.root, { recursive: true });
+  await ensureAssentorGitignored(projectPath);
+  const lock = await acquireLockFile(
+    path.join(paths.root, RUN_LOCK),
+    (owner, file) => new RunLockedError(sessionId, owner, file),
+  );
+  return { release: () => releaseWriterLock(lock) };
+}
+
+/** True when a live process holds the task's run lock. Read-only, like `isSessionLogLocked`. */
+export async function isSessionRunLocked(projectPath: string, sessionId: string): Promise<boolean> {
+  const file = path.join(sessionPaths(projectPath, sessionId).root, RUN_LOCK);
+  return !(await isStaleLock(file, await readOwner(file)));
+}
+
 interface LockOwner {
   pid: number;
   host: string;
@@ -274,7 +329,10 @@ function installExitHook(): void {
   });
 }
 
-async function acquireWriterLock(sessionId: string, file: string): Promise<HeldLock> {
+async function acquireLockFile(
+  file: string,
+  lockedError: (owner: LockOwner | undefined, file: string) => Error,
+): Promise<HeldLock> {
   const owner: LockOwner = {
     pid: process.pid,
     host: os.hostname(),
@@ -297,13 +355,13 @@ async function acquireWriterLock(sessionId: string, file: string): Promise<HeldL
       }
       const current = await readOwner(file);
       if (!(await isStaleLock(file, current))) {
-        throw new EventLogLockedError(sessionId, current, file);
+        throw lockedError(current, file);
       }
       if (!(await takeOverStaleLock(file, current))) {
-        throw new EventLogLockedError(sessionId, await readOwner(file), file);
+        throw lockedError(await readOwner(file), file);
       }
     }
-    throw new EventLogLockedError(sessionId, await readOwner(file), file);
+    throw lockedError(await readOwner(file), file);
   } catch (error) {
     ownTokens.delete(owner.token);
     throw error;
@@ -357,12 +415,12 @@ async function takeOverStaleLock(file: string, stale: LockOwner | undefined): Pr
   return false;
 }
 
-/** Delete `writer.lock.stale-*` files a crashed takeover left behind (best effort). */
+/** Delete `writer.lock.stale-*` / `run.lock.stale-*` files a crashed takeover left behind (best effort). */
 async function removeOldAsideFiles(dir: string): Promise<void> {
   try {
     for (const name of await fs.readdir(dir)) {
       const file = path.join(dir, name);
-      if (name.startsWith(`${WRITER_LOCK}.stale-`) && (await isOldFile(file))) {
+      if (/^(writer|run)\.lock\.stale-/.test(name) && (await isOldFile(file))) {
         await fs.rm(file, { force: true });
       }
     }
@@ -404,7 +462,32 @@ async function isStaleLock(file: string, owner: LockOwner | undefined): Promise<
     // containers that always run as pid 1): stale.
     return !ownTokens.has(owner.token);
   }
-  return !isProcessAlive(owner.pid);
+  if (!isProcessAlive(owner.pid)) {
+    return true;
+  }
+  // A live pid whose process started after the lock was taken is a different process (pid reuse).
+  const started = await processStartMs(owner.pid);
+  const locked = Date.parse(owner.startedAt);
+  return started !== undefined && !Number.isNaN(locked) && started > locked + 1_000;
+}
+
+const execFileAsync = promisify(execFile);
+
+/** When process `pid` started, from POSIX `ps` (second resolution); undefined on Windows or when unknown. */
+async function processStartMs(pid: number): Promise<number | undefined> {
+  if (process.platform === "win32") {
+    return undefined;
+  }
+  try {
+    const { stdout } = await execFileAsync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      env: { ...process.env, LC_ALL: "C" },
+      timeout: 2_000,
+    });
+    const ms = Date.parse(stdout.trim());
+    return Number.isNaN(ms) ? undefined : ms;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Resolve when `work` settles, or after `ms` (no limit when undefined). Never rejects. */

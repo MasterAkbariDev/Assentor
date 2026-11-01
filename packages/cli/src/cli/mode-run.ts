@@ -5,7 +5,7 @@ import { loadAssentorConfig, type AssentorConfig } from "#assentor/engine/config
 import { applyRunProfile, profileNote } from "#assentor/engine/config/profile.js";
 import { resolveTeams } from "#assentor/engine/config/teams.js";
 import { createId, isId } from "#assentor/engine/core/ids.js";
-import { EventLog } from "#assentor/engine/events/log.js";
+import { EventLog, acquireRunLock, type RunLock } from "#assentor/engine/events/log.js";
 import { buildExecutorRegistry } from "#assentor/engine/executors/adapters.js";
 import { locateBinary, type BinaryTool } from "#assentor/engine/executors/cli-locator.js";
 import { isSelectableExecutorProvider, normalizeExecutorProvider } from "#assentor/engine/executors/providers.js";
@@ -40,6 +40,7 @@ import { cliUsage, type CliUsage } from "#assentor/engine/usage/cli-usage.js";
 import type { EngineEvent, EngineEventDraft } from "#assentor/protocol/events.js";
 import { extractJsonCandidate } from "#assentor/protocol/parse.js";
 import { estimateRun } from "#assentor/engine/estimate/cost.js";
+import { raceSeatCount } from "#assentor/engine/modes/race.js";
 import { observedPricing } from "#assentor/engine/usage/observed.js";
 import { expandSeatSpecs, SEAT_CLI_PROVIDERS, type Seat, type StageSpec } from "#assentor/protocol/seats.js";
 import {
@@ -100,7 +101,10 @@ export async function runModeTask(input: ModeTaskInput) {
   });
   let log: EventLog | undefined;
   let sink: SeatEventSink | undefined;
+  let runLock: RunLock | undefined;
   try {
+    // A resume takes the task's run lock before any work: a second resume, or one racing the live run, stops here.
+    if (input.resumeSessionId) runLock = await acquireRunLock(projectPath, input.resumeSessionId);
     const loaded = await loadAssentorConfig(projectPath, {
       executor: input.executor,
       reviewer: input.reviewer,
@@ -117,7 +121,9 @@ export async function runModeTask(input: ModeTaskInput) {
     const autonomy = config.run.autonomy ?? config.run.mode;
     const pricing = await observedPricing(projectPath).catch(() => ({}));
     const estimate = estimateRun(config, { prompt: input.prompt, modeId: mode.id, pricing });
-    reporter.note(formatRunEstimate(estimate, config, `mode ${mode.id}`, { excludesExecutor: true }));
+    // Race counts its candidates (N× one build); other modes leave the executor out.
+    const label = mode.id === "race" ? `mode race (${raceSeatCount(config)}× build)` : `mode ${mode.id}`;
+    reporter.note(formatRunEstimate(estimate, config, label, { excludesExecutor: mode.id !== "race" }));
     // Resume has no --yes and the run was already started: no gate.
     if (!input.resumeSessionId) {
       await confirmRunEstimate({
@@ -145,6 +151,7 @@ export async function runModeTask(input: ModeTaskInput) {
     }
 
     const sessionId = input.resumeSessionId ?? createId();
+    runLock ??= await acquireRunLock(projectPath, sessionId);
     const goal = input.prompt;
     const events: EngineEvent[] = [];
     let onQuestionEvent: (event: EngineEvent) => void = () => undefined;
@@ -260,6 +267,7 @@ export async function runModeTask(input: ModeTaskInput) {
     detachInterrupt();
     await sink?.close();
     await log?.close({ timeoutMs: 5_000 }).catch(() => undefined);
+    await runLock?.release().catch(() => undefined);
     reporter.dispose();
   }
 }
