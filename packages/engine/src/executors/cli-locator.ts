@@ -415,12 +415,16 @@ export function isWindowsCmdShim(command: string): boolean {
   return process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
 }
 
-/** Throws for an argument cmd.exe would alter (`%VAR%` expansion) or cut short (newline). */
+/**
+ * Throws for an argument cmd.exe would alter (`%VAR%` expansion), cut short
+ * (newline), or that would re-split argv once the shim's `%*` reaches node.exe
+ * (a `"`, or a trailing `\` that turns the closing quote into `\"`).
+ */
 export function assertCmdSafeArgs(args: readonly string[]): void {
   for (const arg of args) {
-    if (/[%\r\n]/.test(arg)) {
+    if (/[%"\r\n]/.test(arg) || arg.endsWith("\\")) {
       throw new Error(
-        `Refusing to run a .cmd/.bat CLI with an argument containing "%" or a newline (cmd.exe would expand or truncate it): ${JSON.stringify(arg.slice(0, 120))}`,
+        `Refusing to run a .cmd/.bat CLI with an argument containing "%", a double quote, a newline or a trailing backslash (cmd.exe would expand, split or truncate it): ${JSON.stringify(arg.slice(0, 120))}`,
       );
     }
   }
@@ -431,16 +435,30 @@ export function assertCmdSafeArgs(args: readonly string[]): void {
  * reads the prompt from stdin when none is given (claude -p). `stdin-dash`: a
  * `-` prompt reads stdin (codex exec). `file`: no confirmed stdin support, so
  * the prompt goes in a private temp file and the CLI is told to read it;
- * `addDir` makes that file's directory readable to the agent.
+ * `addDir` makes that file's directory readable to the agent. `refuse`: no
+ * transport verified, so the run fails closed.
  */
-const CMD_PROMPT: Record<BinaryTool, { mode: "stdin" | "stdin-dash" | "file"; addDir?: string }> = {
+const CMD_PROMPT: Record<BinaryTool, { mode: "stdin" | "stdin-dash" | "file" | "refuse"; addDir?: string }> = {
   claude: { mode: "stdin" },
   codex: { mode: "stdin-dash" },
   cursor: { mode: "file", addDir: "--add-dir" },
   agy: { mode: "file", addDir: "--add-dir" },
-  qwen: { mode: "file", addDir: "--include-directories" },
-  opencode: { mode: "file" },
+  qwen: { mode: "refuse" },
+  opencode: { mode: "refuse" },
 };
+
+/** Prompt temp dirs still on disk; removed on process exit if a run never reached its `finally`. */
+const pendingPromptDirs = new Set<string>();
+let promptDirExitHook = false;
+
+function removePromptDir(dir: string): void {
+  pendingPromptDirs.delete(dir);
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // Windows may hold the file briefly after a kill; the OS temp cleaner gets it.
+  }
+}
 
 export interface CliPromptInvocation {
   args: string[];
@@ -473,6 +491,9 @@ export function cliPromptInvocation(
   }
   const base = args.slice(0, -1);
   const how = CMD_PROMPT[tool];
+  if (how.mode === "refuse") {
+    throw new Error(`prompt transport unverified for ${tool} via .cmd shim; use the native binary or WSL`);
+  }
   if (how.mode === "stdin") {
     return { args: base, stdin: prompt, cleanup: noop };
   }
@@ -481,13 +502,12 @@ export function cliPromptInvocation(
   }
   // mkdtemp makes a fresh 0700 dir per run; the file itself is 0600.
   const dir = mkdtempSync(path.join(os.tmpdir(), "assentor-prompt-"));
-  const cleanup = () => {
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch {
-      // Windows may hold the file briefly after a kill; the OS temp cleaner gets it.
-    }
-  };
+  pendingPromptDirs.add(dir);
+  if (!promptDirExitHook) {
+    promptDirExitHook = true;
+    process.once("exit", () => [...pendingPromptDirs].forEach(removePromptDir));
+  }
+  const cleanup = () => removePromptDir(dir);
   const file = path.join(dir, "prompt.md");
   try {
     writeFileSync(file, prompt, { encoding: "utf8", mode: 0o600, flag: "wx" });
@@ -521,11 +541,13 @@ export function spawnCliProcess(
     assertCmdSafeArgs([command, ...args]);
     const comspec = process.env.ComSpec || "cmd.exe";
     // /v:off: no `!VAR!` delayed expansion even if the registry turns it on.
-    child = spawn(
-      comspec,
-      ["/d", "/v:off", "/s", "/c", quoteCmdArg(command), ...args.map(quoteCmdArg)],
-      opts,
-    );
+    // Verbatim: libuv would otherwise re-escape each quoted arg as `"\"x\""`,
+    // which cmd ignores, letting `&` etc. escape. /s strips the outer quotes.
+    const line = `"${[command, ...args].map(quoteCmdArg).join(" ")}"`;
+    child = spawn(comspec, ["/d", "/v:off", "/s", "/c", line], {
+      ...opts,
+      windowsVerbatimArguments: true,
+    });
   } else {
     child = spawn(command, args, opts);
   }

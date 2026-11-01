@@ -106,20 +106,76 @@ describe("spawnCliProcess for .cmd shims", () => {
     return written;
   }
 
-  it("disables delayed expansion and pipes the prompt to stdin", () => {
+  it("spawns cmd.exe verbatim with one quoted line, no delayed expansion, prompt on stdin", () => {
     const written = fakeChild();
     spawnCliProcess("C:\\npm\\claude.cmd", ["-p", "--model", "opus"], { stdio: ["ignore", "pipe", "pipe"] }, PROMPT);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
     const [command, argv, opts] = spawnMock.mock.calls[0]!;
     expect(command).toMatch(/cmd\.exe$/i);
-    expect(argv).toEqual(["/d", "/v:off", "/s", "/c", "C:\\npm\\claude.cmd", "-p", "--model", "opus"]);
+    expect(argv).toEqual(["/d", "/v:off", "/s", "/c", '"C:\\npm\\claude.cmd -p --model opus"']);
+    expect(opts).toEqual({ stdio: ["pipe", "pipe", "pipe"], windowsHide: true, windowsVerbatimArguments: true });
     expectNoPrompt(argv);
-    expect(opts.stdio).toEqual(["pipe", "pipe", "pipe"]);
     expect(written).toEqual([PROMPT]);
   });
 
-  it.each(["%PATH%", "C:\\w\\100%", "a\nb", "a\rb"])("refuses a non-prompt arg %j", (bad) => {
+  /**
+   * Model of how the line is read (cmd.exe and MSVCRT rules):
+   * 1. `cmd /s /c "<line>"`: /s removes the first and the last `"` after /c.
+   * 2. cmd scans the rest; each `"` toggles quote mode, and outside quotes
+   *    `& | < > ( ) ^` are operators or the escape char (collected as `bare`).
+   * 3. The shim's `%*` reaches node.exe, whose CRT splits on spaces/tabs
+   *    outside quotes and drops the quote characters (args hold no `"`).
+   */
+  function cmdParse(line: string): { argv: string[]; bare: string[] } {
+    expect(line.startsWith('"') && line.endsWith('"')).toBe(true);
+    const argv: string[] = [];
+    const bare: string[] = [];
+    let cur = "";
+    let inQuotes = false;
+    let started = false;
+    for (const ch of line.slice(1, -1)) {
+      if (ch === '"') {
+        inQuotes = !inQuotes;
+        started = true;
+      } else if (!inQuotes && /[ \t]/.test(ch)) {
+        if (started) argv.push(cur);
+        cur = "";
+        started = false;
+      } else {
+        if (!inQuotes && /[&|<>()^]/.test(ch)) bare.push(ch);
+        cur += ch;
+        started = true;
+      }
+    }
+    if (started) argv.push(cur);
+    return { argv, bare };
+  }
+
+  it("R&D paths, ^ and parens survive cmd /s /c parsing intact", () => {
     fakeChild();
-    expect(() => spawnCliProcess("C:\\npm\\agent.cmd", ["--workspace", bad], {})).toThrow(/"%" or a newline/);
+    const command = "C:\\Program Files\\R&D (x)\\agent.cmd";
+    const args = [
+      "-p",
+      "--workspace",
+      "C:\\work\\R&D\\a^b (1)|c<d>",
+      "--model",
+      "claude-opus-4[effort=high,fast=false]",
+      "--add-dir",
+      "C:\\Users\\A B\\Temp\\assentor-prompt-x1",
+      "-p=Your full task is in the file C:\\Users\\A B\\Temp\\assentor-prompt-x1\\prompt.md - read it",
+      "",
+    ];
+    spawnCliProcess(command, args, {});
+    const argv = spawnMock.mock.calls[0]![1] as string[];
+    expect(argv).toHaveLength(5);
+    expect(cmdParse(argv[4]!)).toEqual({ argv: [command, ...args], bare: [] });
+  });
+
+  it.each(["%PATH%", "C:\\w\\100%", "a\nb", "a\rb", 'say "hi"', "C:\\w\\"])("refuses a non-prompt arg %j", (bad) => {
+    fakeChild();
+    expect(() => spawnCliProcess("C:\\npm\\agent.cmd", ["--workspace", bad], {})).toThrow(
+      /cmd\.exe would expand, split or truncate it/,
+    );
     expect(spawnMock).not.toHaveBeenCalled();
   });
 
@@ -177,11 +233,23 @@ describe("executors and reviewers route through the helper", () => {
     expect(existsSync(path.dirname(file))).toBe(false);
   });
 
+  it.each([
+    ["qwen", "C:\\npm\\qwen.cmd"],
+    ["opencode", "C:\\npm\\opencode.cmd"],
+  ] as const)("%s via .cmd fails closed", async (id, binary) => {
+    const spawnFn = vi.fn();
+    const executor = new PrintCliExecutor({ recipe: PRINT_CLI_RECIPES[id]!, binary, spawnFn });
+    const result = await executor.run(task(PROMPT));
+    expect(result.status).toBe("failed");
+    expect(result.error).toBe(`prompt transport unverified for ${id} via .cmd shim; use the native binary or WSL`);
+    expect(spawnFn).not.toHaveBeenCalled();
+  });
+
   it("PrintCliExecutor: temp file removed on spawn throw and on cancel", async () => {
     let file = "";
     const throwing = new PrintCliExecutor({
-      recipe: PRINT_CLI_RECIPES.qwen!,
-      binary: "C:\\npm\\qwen.cmd",
+      recipe: PRINT_CLI_RECIPES.antigravity!,
+      binary: "C:\\npm\\agy.cmd",
       spawnFn: async (req) => {
         file = promptFile(req.args);
         throw new Error("spawn EINVAL");
@@ -193,8 +261,8 @@ describe("executors and reviewers route through the helper", () => {
     let started!: () => void;
     const spawned = new Promise<void>((resolve) => (started = resolve));
     const hanging = new PrintCliExecutor({
-      recipe: PRINT_CLI_RECIPES.opencode!,
-      binary: "C:\\npm\\opencode.cmd",
+      recipe: PRINT_CLI_RECIPES.antigravity!,
+      binary: "C:\\npm\\agy.cmd",
       spawnFn: (req) => {
         file = promptFile(req.args);
         req.onSpawn?.({ kill: () => true });
