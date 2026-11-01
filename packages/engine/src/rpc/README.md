@@ -9,7 +9,7 @@ JSON-RPC 2.0 between the engine and its clients (CLI/TUI in process, the Tauri s
 | `server.ts` | `RpcServer` (method registry, `register` / `registerAll`) and `RpcConnection` (one per client: write gate, validation, error mapping, serialized writer). |
 | `engine.ts` | `createEngineRpcServer({ projectPath })` — registers every engine method (the core ones with `registerAll`: the example to copy). |
 | `handlers/` | `registerHandlerMethods` (T04-04): `prompts.ts`, `teams.ts`, `playbooks.ts`, `settings.ts`, `env.ts`. |
-| `library.ts` | `registerLibraryMethods` — read-only `prompt.list`, `prompt.get`, `team.list`, `models.catalog`. |
+| `library.ts` | `registerLibraryMethods` — read-only `prompt.list`, `prompt.get`, `skill.list`, `skill.get`, `team.list`, `models.catalog`. |
 | `session-control.ts` | `registerSessionControlMethods` — `session.*`, `seat.*`, `worktree.*` (see **Session control**). |
 | `sessions.ts` | `sessions.list`, `events.subscribe` / `events.unsubscribe` (read-only; never locks or repairs the log). |
 | `engine.ts` → `usage.get` | `{ sessionId }` → the session's usage ledger (`UsageReportSchema`, TE-01): totals by seat / stage / model, retries, budget warnings. Streams the log (`usage/read.ts`): unreadable lines are skipped and counted (`skippedLines`), reading stops after 1,000,000 lines (`truncated`); a missing log is an all-zero report. Token counts come from `seat.tokens`: scheduler jobs that report usage, solo-run executor turns (seat sink) and mode-run executor turns and asks (`cli/mode-run.ts`) whose CLI prints a usage line (Claude Code stream-json; see `usage/cli-usage.ts`), interrupted turns included. Text-format output (codex, opencode, the reviewer transport's `--output-format text`) and API seats report nothing yet (API usage is TE-05). |
@@ -52,6 +52,8 @@ Default-deny. A connection runs a method whose `access` is not exactly `"read"` 
 |---|---|---|
 | `prompt.list` | none | `prompts` (id, title, role, description?, source `builtin`/`user`/`project`, `overridden`) and `errors` (file relative to its layer directory, message) |
 | `prompt.get` | `{ id }` | id, title, role, source, `frontMatter`, `body`. Unknown id: `InvalidParams` |
+| `skill.list` | none | `skills` (name, description, source, `overridden`, roles?/modes?/profiles?, `tokens` = estimated body size) and `errors` (file relative to its layer's skills directory, message) |
+| `skill.get` | `{ name }` | the summary plus `frontMatter` and `body`. Unknown name: `InvalidParams` |
 | `team.list` | none | `teams` (config teams expanded to seats, plus `legacy-review` when `modes.review` is unset) and `modes` (team names) |
 | `models.catalog` | `{ provider }` | `entries` (id, label, source) from the model cache only; never runs discovery |
 

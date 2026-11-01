@@ -30,7 +30,11 @@ export type SessionLaunch = Omit<ModeSessionInput, "mode" | "sessionId" | "goal"
 };
 
 export interface SessionHost {
-  /** Builds deps/config for one session. May lower, never raise, the requested autonomy. */
+  /**
+   * Builds deps/config for one session. May lower, never raise, the requested autonomy.
+   * Skills (TE-07): serve's host should return `skills: await SkillLibrary.load({ projectPath })`
+   * here (a library: the session id does not exist yet, `prepareModeSession` makes the session).
+   */
   launch(request: { mode: string; goal: string; autonomy?: Autonomy }): SessionLaunch | Promise<SessionLaunch>;
 }
 
