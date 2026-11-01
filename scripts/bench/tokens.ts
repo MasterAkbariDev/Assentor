@@ -10,7 +10,6 @@ import type { PromptLibrary } from "#assentor/engine/prompts/library.js";
 import { templateVariables } from "#assentor/engine/prompts/template.js";
 import { UsageLedger } from "#assentor/engine/usage/ledger.js";
 import { estimateTokens } from "#assentor/engine/usage/tokens.js";
-import { DEFAULT_BUDGET_TOKENS, roleOfPrompt } from "#assentor/engine/context/budget.js";
 import { packPromptVariables } from "#assentor/engine/context/vars.js";
 import { cliUsage } from "#assentor/engine/usage/cli-usage.js";
 import { BENCH_TASKS, type BenchTask, type TaskResult } from "./tasks.js";
@@ -63,7 +62,8 @@ export interface Variant {
   mock?: MockScript;
   /**
    * Task context goes through the engine's context packer (TE-03) before it is rendered into the role prompt:
-   * the same `packPromptVariables` the engine uses, with the role's default budget or this many tokens.
+   * the same `packPromptVariables` the engine uses. Without `budgetTokens` only the lossless part runs (identical
+   * proposals / repeated test-output blocks once, which ships ON); with it, the budget cuts too (ships OFF).
    */
   packContext?: { budgetTokens?: number };
 }
@@ -160,8 +160,7 @@ export function rolePrompt(library: PromptLibrary, task: BenchTask, contextScale
     vars[name] = value.slice(0, Math.round(value.length * contextScale));
   }
   if (!pack) return library.render(task.role, vars);
-  const budgetTokens = pack.budgetTokens ?? DEFAULT_BUDGET_TOKENS[roleOfPrompt(task.role)] ?? Infinity;
-  return library.render(task.role, packPromptVariables(vars, { budgetTokens }));
+  return library.render(task.role, packPromptVariables(vars, pack.budgetTokens ? { budgetTokens: pack.budgetTokens } : {}));
 }
 
 /** The always-on part of a prompt: its text with every variable empty, after `extra` (style + skills index). */

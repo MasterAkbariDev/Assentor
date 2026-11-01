@@ -15,7 +15,7 @@ import {
 } from "#assentor/protocol/seats.js";
 import { createEmptyContract } from "../../core/task-contract.js";
 import { sessionPaths, writeJsonAtomic } from "../../persistence/paths.js";
-import { contextBudget } from "../../context/budget.js";
+import { roleBudget } from "../../context/budget.js";
 import { packContext, type ContextSection } from "../../context/pack.js";
 import { PromptLibrary, renderPrompt, type TemplateVariables } from "../../prompts/index.js";
 import { extractJsonCandidate } from "#assentor/protocol/parse.js";
@@ -1084,8 +1084,8 @@ class LeadController implements ModeController {
       { id: "summary", kind: "summary", title: "Earlier (summary):", text: state.summary || "(none)" },
       { id: "log", kind: "history", title: "Recent log:", text: state.log.join("\n") || "(none)" },
     ];
-    // The caps above stay the outer bound; the budget (if any) shrinks the log, then the summary, first.
-    const budgetTokens = contextBudget("lead");
+    // The caps above stay the outer bound. `context.budgetTokens.lead` (off unless set) shrinks the log, then the summary, first.
+    const budgetTokens = roleBudget(this.input.config.context?.budgetTokens, "lead");
     return data(budgetTokens === undefined ? sections.map((x) => (x.title ? `${x.title}\n${x.text}` : x.text)).join("\n\n") : packContext(sections, { budgetTokens }).text);
   }
 

@@ -7,7 +7,6 @@ import {
   type AssentorConfig,
 } from "./schema.js";
 import { defaultTransportForProvider } from "../review/backends.js";
-import { setContextBudgets } from "../context/budget.js";
 import {
   AutonomySchema,
   blankToUndefined,
@@ -182,7 +181,6 @@ export async function loadAssentorConfig(
   }
 
   parsed.project.path = projectRoot;
-  setContextBudgets(parsed.context?.budgetTokens);
   return parsed;
 }
 

@@ -1,58 +1,39 @@
 import { z } from "zod";
 import { packContext } from "./pack.js";
 
-/** Roles whose prompts the context packer budgets (`context.budgetTokens.<role>`). */
+/** Roles whose prompts the context packer can budget (`context.budgetTokens.<role>`). */
 export const CONTEXT_ROLES = ["reviewer", "negotiation", "lead", "coder"] as const;
 export type ContextRole = (typeof CONTEXT_ROLES)[number];
+export type ContextBudgets = Partial<Record<ContextRole, number>>;
 
-/**
- * Optional `context.budgetTokens` per role: the most tokens of task context (diffs, test
- * output, excerpts, proposals, history) a seat in that role is sent. 0 turns packing off for
- * the role. Nothing is written on save: unset roles use DEFAULT_BUDGET_TOKENS.
- */
 const budget = z.number().int().min(0).optional();
+/**
+ * Optional `context.budgetTokens` per role: the most tokens of task context (diffs, test output, excerpts,
+ * proposals, history) a seat in that role is sent. Unset or 0 = no budget cuts for the role (the lossless
+ * merging of identical blocks and the old hard caps always apply). Nothing is written on save.
+ *
+ * Budget cuts ship OFF: they need the owner's live A/B (`bench:tokens --live`) before any default is set.
+ * The budgets are passed to each call site from the loaded config; there is no process-wide state.
+ */
 export const ContextConfigSchema = z.object({ budgetTokens: z.object({ reviewer: budget, negotiation: budget, lead: budget, coder: budget }).optional() });
 
-/**
- * Defaults chosen from `pnpm bench:tokens --variants context:packed`: above what the fixture
- * tasks need (success unchanged, nothing cut) and below what a runaway pack costs.
- */
-export const DEFAULT_BUDGET_TOKENS: Readonly<Partial<Record<ContextRole, number>>> = {
-  reviewer: 12_000,
-  negotiation: 8_000,
-  lead: 6_000,
-  coder: 2_000,
+/** The token budget for `role`, or undefined when cuts are off for it. */
+export const roleBudget = (budgets: ContextBudgets | undefined, role: ContextRole): number | undefined => {
+  const value = budgets?.[role];
+  return value && value > 0 ? value : undefined;
 };
 
-// shortcut: one process-wide setting, written by loadAssentorConfig (the last project loaded wins);
-// pass budgets explicitly if a daemon ever serves several projects with different values.
-let configured: Partial<Record<ContextRole, number>> = {};
-
-export function setContextBudgets(budgets: Partial<Record<ContextRole, number>> | undefined): void {
-  configured = { ...budgets };
-}
-
-/** Tokens of task context for `role`, or undefined when packing is off for it. */
-export function contextBudget(role: ContextRole): number | undefined {
-  const value = configured[role] ?? DEFAULT_BUDGET_TOKENS[role];
-  return value && value > 0 ? value : undefined;
-}
-
-/** The role a built-in prompt belongs to for budgeting. */
-export function roleOfPrompt(promptId: string): ContextRole {
-  if (/^(negotiate-|judge$|moderator$|divide-plan$)/.test(promptId)) return "negotiation";
-  if (/^lead/.test(promptId)) return "lead";
-  if (/(reviewer|devils-advocate)$/.test(promptId)) return "reviewer";
-  return "coder";
-}
-
 /**
- * Failing test or gate output sent to a coder, within `maxChars` (the caller's existing hard cap) and the role's
- * token budget: its first error and its tail, repeated blocks once, a marker for the cut. Undefined when packing
- * is off for the role: the caller keeps its own cut.
+ * Failing test or gate output sent to a coder, at most `maxChars` (the caller's hard cap). Always: identical repeated
+ * blocks once, then the caller's own cut (`keep` the end or the start). With a coder budget: its first error and its
+ * tail within the cap and the budget instead.
  */
-export function packFailureOutput(output: string, maxChars: number, role: ContextRole = "coder"): string | undefined {
-  const budgetTokens = contextBudget(role);
-  if (budgetTokens === undefined) return undefined;
-  return packContext([{ id: "output", kind: "failing-test", text: output }], { budgetTokens: Math.min(budgetTokens, Math.floor(maxChars / 4)) }).text;
+export function fitFailureOutput(output: string, maxChars: number, coderBudget: number | undefined, keep: "start" | "end" = "end"): string {
+  if (coderBudget && coderBudget > 0) {
+    return packContext([{ id: "output", kind: "failing-test", text: output }], { budgetTokens: Math.min(coderBudget, Math.floor(maxChars / 4)) }).text;
+  }
+  // Merging looks at the part the cut would keep, with room for the repeats that make it shrink.
+  const window = maxChars * 8;
+  const merged = packContext([{ id: "output", kind: "failing-test", text: keep === "end" ? output.slice(-window) : output.slice(0, window) }]).text;
+  return keep === "end" ? merged.slice(-maxChars) : merged.slice(0, maxChars);
 }

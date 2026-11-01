@@ -13,8 +13,7 @@ import type { ProjectReviewEvidencePack } from "../../../review/evidence-pack.js
 import { evidencePackToMarkdown } from "../../../review/persist.js";
 import type { AIImagePart } from "../../ai/types.js";
 import { ArtifactType } from "../../../artifacts/types.js";
-import { contextBudget } from "../../../context/budget.js";
-import { compactDiff, packContext, type ContextSection } from "../../../context/pack.js";
+import { closeOpenFence, compactDiff, packContext, type ContextSection } from "../../../context/pack.js";
 
 export function buildReviewPrompt(input: {
   contract: TaskContract;
@@ -25,9 +24,11 @@ export function buildReviewPrompt(input: {
   specialtyAddendum?: string;
   phaseProgress?: PhaseProgress;
   autopilot?: boolean;
+  /** `context.budgetTokens.reviewer` (TE-03); unset = no budget cuts. */
+  contextBudgetTokens?: number;
 }): string {
   const packBlock = input.evidencePack
-    ? formatEvidencePackForPrompt(input.evidencePack)
+    ? formatEvidencePackForPrompt(input.evidencePack, undefined, input.contextBudgetTokens)
     : "";
 
   const artifactBlock = input.artifacts
@@ -171,9 +172,13 @@ const OMITTED_LABEL = "Not delivered (request via evidenceRequests if needed): "
 export function formatEvidencePackForPrompt(
   pack: ProjectReviewEvidencePack,
   maxChars = 48_000,
+  /** `context.budgetTokens.reviewer`: pack the evidence by priority under it. Unset: the character cut below. */
+  budgetTokens?: number,
 ): string {
   const md = evidencePackToMarkdown(pack);
   const files = [...pack.relevantFiles, ...pack.unchangedImportant];
+  if (budgetTokens) return packedEvidence({ pack, md, files, maxChars, budgetTokens });
+
   const sections = files.slice(0, MAX_INLINED_FILES).map((f) => {
     if (!f.content) return `- \`${f.path}\` (${f.role}) — content not inlined`;
     return [
@@ -189,13 +194,8 @@ export function formatEvidencePackForPrompt(
     : "";
 
   const gitDiff = pack.git.diff
-    ? `### Diff\n\`\`\`\n${truncate(pack.git.diff, 12_000)}\n\`\`\``
+    ? `### Diff\n\`\`\`\n${fitDiffChars(pack.git.diff, MAX_DIFF_CHARS)}\n\`\`\``
     : "";
-
-  const budgetTokens = contextBudget("reviewer");
-  if (budgetTokens !== undefined) {
-    return packedEvidence({ pack, md, files, sections, depExcerpt, gitDiff, maxChars, budgetTokens });
-  }
 
   const beforeFiles = [md, "", "## File contents", ""].join("\n");
   const evidence = [
@@ -237,69 +237,78 @@ export function formatEvidencePackForPrompt(
     if (section !== undefined) offset += section.length + 2;
   });
 
-  const evidenceBlock = evidenceTruncated ? truncate(evidence, budget) : evidence;
+  // A cut inside a file body must not leave its fence open over the sections that follow.
+  const evidenceBlock = evidenceTruncated ? closeOpenFence(truncate(evidence, budget)) : evidence;
   return `${evidenceBlock}\n${decisionSections(pack, files.length, partial, omitted, evidenceTruncated)}`;
 }
 
+const MAX_DIFF_CHARS = 12_000;
+const EVIDENCE_HINT = "request via evidenceRequests";
 const FILE_PRIORITY: Record<string, number> = { changed: 70, test: 60, unchanged_important: 40 };
 
 /**
- * `formatEvidencePackForPrompt` with the context packer (TE-03): the diff outranks file bodies,
- * which shrink from the least important up, instead of everything after the character budget
- * being cut off. The decision sections stay outside the budget exactly as before, and the
- * coverage report is built from what the packer actually delivered.
+ * `formatEvidencePackForPrompt` under `context.budgetTokens.reviewer` (TE-03, off unless set): the diff outranks
+ * file bodies, which shrink from the least important up, instead of everything after the character budget
+ * being cut off. The decision sections stay outside the budget exactly as before, and the coverage report is
+ * built from what the packer actually delivered.
  */
 function packedEvidence(input: {
   pack: ProjectReviewEvidencePack;
   md: string;
   files: Array<ProjectReviewEvidencePack["relevantFiles"][number]>;
-  sections: string[];
-  depExcerpt: string;
-  gitDiff: string;
   maxChars: number;
   budgetTokens: number;
 }): string {
-  const { pack, md, files, sections, depExcerpt } = input;
-  const diff = pack.git.diff ? `### Diff\n\`\`\`\n${fitDiffChars(pack.git.diff, 12_000)}\n\`\`\`` : "";
+  const { pack, md, files } = input;
   const reserve =
     decisionSections(pack, files.length, [], files.map((f) => f.path), true).length + PARTIAL_LABEL.length + 32;
   const budget = Math.min(input.budgetTokens, Math.floor(Math.max(0, input.maxChars - reserve) / 4));
   const inlined = files.slice(0, MAX_INLINED_FILES);
+  const fileSections = inlined.map(
+    (f, i): ContextSection =>
+      f.content
+        ? { id: `file${i}`, kind: "excerpt", priority: FILE_PRIORITY[f.role] ?? 50, keep: "start", title: `### ${f.path} [${f.role}]`, fence: true, text: truncate(f.content, MAX_INLINED_FILE_CHARS) }
+        : { id: `file${i}`, kind: "excerpt", priority: FILE_PRIORITY[f.role] ?? 50, text: `- \`${f.path}\` (${f.role}) — content not inlined` },
+  );
+  const manifest = pack.dependencies.manifestExcerpt;
   const packSections: ContextSection[] = [
     { id: "pack", kind: "summary", priority: 90, keep: "start", text: md },
-    { id: "files", kind: "task", text: `## File contents\n${sections.length ? "" : "\n(none)"}` },
-    ...inlined.map((f, i): ContextSection => ({ id: `file${i}`, kind: "excerpt", priority: FILE_PRIORITY[f.role] ?? 50, keep: "start", text: sections[i]! })),
-    { id: "manifest", kind: "excerpt", priority: 30, keep: "start", text: depExcerpt },
-    { id: "diff", kind: "diff", priority: 85, text: diff },
+    { id: "files", kind: "task", text: `## File contents${inlined.length ? "" : "\n\n(none)"}` },
+    ...fileSections,
+    ...(manifest ? [{ id: "manifest", kind: "excerpt", priority: 30, keep: "start", title: "### package.json", fence: true, text: truncate(manifest, 3_000) } satisfies ContextSection] : []),
+    ...(pack.git.diff ? [{ id: "diff", kind: "diff", priority: 85, title: "### Diff", fence: true, text: fitDiffChars(pack.git.diff, MAX_DIFF_CHARS) } satisfies ContextSection] : []),
   ];
-  const packed = packContext(packSections, { budgetTokens: budget });
+  const packed = packContext(packSections, { budgetTokens: budget, hint: EVIDENCE_HINT });
 
   const lineCount = (text: string) => text.split("\n").length;
   const partial: string[] = [];
   const omitted: string[] = [];
   files.forEach((f, i) => {
-    const section = sections[i];
+    const section = packSections.find((x) => x.id === `file${i}`);
     const cut = packed.omitted.find((o) => o.id === `file${i}`);
     if (section === undefined || !f.content) omitted.push(f.path);
-    else if (cut && cut.lines >= lineCount(section)) omitted.push(f.path);
+    else if (cut && cut.lines >= lineCount(section.text)) omitted.push(f.path);
     else if (cut || f.truncated || f.content.length > MAX_INLINED_FILE_CHARS) partial.push(f.path);
   });
-  const evidenceTruncated = packed.omitted.length > 0 || packed.clipped || (pack.git.diff ?? "").length > 12_000;
+  const evidenceTruncated = packed.omitted.length > 0 || packed.clipped || (pack.git.diff ?? "").length > MAX_DIFF_CHARS;
   const inPack = !packed.omitted.some((o) => o.id === "pack") && !packed.clipped;
   return `${packed.text}\n${decisionSections(pack, files.length, partial, omitted, evidenceTruncated, inPack)}`;
 }
 
-/** A diff of at most `maxChars`: past that, only the changed lines and their context are kept. */
+/**
+ * A diff of at most `maxChars`. Past that the old cap cut off the end; now only the changed lines and their
+ * context are kept first (lossless for the review: the unchanged lines are the ones left out), then the cap.
+ */
 export function fitDiffChars(diff: string, maxChars: number): string {
   if (diff.length <= maxChars) return diff;
-  return truncate(compactDiff(diff), maxChars);
+  return truncate(compactDiff(diff, 3, EVIDENCE_HINT), maxChars);
 }
 
-/** An artifact body of at most `limit` characters: diffs keep their hunks, anything else is cut at the end. */
+/** An artifact body of at most `limit` characters: diffs keep their changed lines, anything else is cut at the end. */
 function fitArtifact(artifact: ReviewArtifactRef, limit: number): string {
   const content = artifact.content ?? "";
   if (content.length <= limit) return content;
-  return contextBudget("reviewer") !== undefined && (artifact.type === ArtifactType.GitDiff || artifact.type === "diff") ? fitDiffChars(content, limit) : truncate(content, limit);
+  return artifact.type === ArtifactType.GitDiff || artifact.type === "diff" ? fitDiffChars(content, limit) : truncate(content, limit);
 }
 
 function decisionSections(
@@ -365,6 +374,7 @@ export function asReviewInput(
     evidencePack: "evidencePack" in input ? input.evidencePack : undefined,
     phaseProgress: "phaseProgress" in input ? input.phaseProgress : undefined,
     autopilot: "autopilot" in input ? input.autopilot : undefined,
+    contextBudgetTokens: input.contextBudgetTokens,
   };
 }
 

@@ -13,7 +13,7 @@ import { runShellCommand } from "../process/run-shell.js";
 import { prepareWorktree } from "../worktrees/prepare.js";
 import { redactSecrets } from "../security/redact.js";
 import { WorktreeError, type SeatKey, type WorktreeDiff } from "../worktrees/manager.js";
-import { packFailureOutput } from "../context/budget.js";
+import { fitFailureOutput, roleBudget } from "../context/budget.js";
 import { classifyRisk } from "./danger.js";
 import { ApprovalDeniedError, type ModeController, type ModeControllerInput, type ModeControllerResult } from "./registry.js";
 
@@ -57,8 +57,6 @@ export const DEBUG_MARKER = "ASSENTOR-DEBUG";
 const MAX_HYPOTHESIS_SEATS = 8;
 const EVIDENCE_PART_CHARS = 3_000;
 const EVIDENCE_TOTAL_CHARS = 8_000;
-/** One command's output in the evidence: first error and tail within the cap when the context packer is on, else its first characters. */
-const partOf = (output: string) => packFailureOutput(output, EVIDENCE_PART_CHARS) ?? output.slice(0, EVIDENCE_PART_CHARS);
 const DIFF_LIMIT = 40_000;
 
 export const DebugConfigSchema = z
@@ -278,6 +276,7 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
   const problems = debugProblems(input.config);
   if (problems.length > 0) throw new Error(problems.join("; "));
   const settings = (parseConfig(input.config) as { ok: true; value: DebugConfig }).value;
+  const coderBudget = roleBudget(input.config.context?.budgetTokens, "coder");
   if (!manager) throw new Error("debug mode needs a worktree manager from the host");
   // Fail before any work: manual is not supported.
   if (input.autonomy === "manual") {
@@ -402,10 +401,10 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
         throw new Stop({ status: "blocked", reason: `could not reproduce: \`${reproCommand}\` passed ${settings.reproRuns} time(s); nothing was changed` });
       }
       baselineOutput = first.output;
-      const parts = [`$ ${reproCommand}\n${partOf(first.output)}`];
+      const parts = [`$ ${reproCommand}\n${fitFailureOutput(first.output, EVIDENCE_PART_CHARS, coderBudget, "start")}`];
       for (const command of settings.evidenceCommands) {
         const r = await guard(runCommand(command, base, commandOptions));
-        parts.push(`$ ${command} (exit ${r.code})\n${partOf(await scrub([r.stdout, r.stderr].filter(Boolean).join("\n"), base, baseKey))}`);
+        parts.push(`$ ${command} (exit ${r.code})\n${fitFailureOutput(await scrub([r.stdout, r.stderr].filter(Boolean).join("\n"), base, baseKey), EVIDENCE_PART_CHARS, coderBudget, "start")}`);
       }
       evidence = redactSecrets(parts.join("\n\n").slice(0, EVIDENCE_TOTAL_CHARS)).text;
     } finally {
@@ -487,7 +486,7 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
         runVerificationGates({ projectPath: root, commands, skipReviewOnFailure: input.config.verification.skipReviewOnFailure, runCommand }),
       );
       const failed = result.runs.filter((r) => r.status === "FAILED");
-      return { passed: failed.length === 0, text: failed.map((r) => `${r.slot}: FAILED (exit ${r.exitCode ?? "?"})\n${packFailureOutput(r.output ?? "", 1500) ?? (r.output ?? "").slice(0, 1500)}`).join("\n") };
+      return { passed: failed.length === 0, text: failed.map((r) => `${r.slot}: FAILED (exit ${r.exitCode ?? "?"})\n${fitFailureOutput(r.output ?? "", 1500, coderBudget, "start")}`).join("\n") };
     };
     let failure: string | undefined;
     let reviewed: WorktreeDiff | undefined;
@@ -512,7 +511,7 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
       }
       const after = await repro(root, fixKey);
       if (after.failed) {
-        failure = `The reproduction still fails:\n${redactSecrets(packFailureOutput(after.output, 1500) ?? after.output.slice(0, 1500)).text}`;
+        failure = `The reproduction still fails:\n${redactSecrets(fitFailureOutput(after.output, 1500, coderBudget, "start")).text}`;
         continue;
       }
       const gates = await fixGates();

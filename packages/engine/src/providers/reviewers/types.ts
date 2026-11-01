@@ -17,6 +17,8 @@ export interface ReviewInput {
   phaseProgress?: PhaseProgress;
   /** When true, reviewer should steer multi-phase work autonomously. */
   autopilot?: boolean;
+  /** `context.budgetTokens.reviewer` (TE-03), set by the host from the config; unset = no budget cuts. */
+  contextBudgetTokens?: number;
 }
 
 export interface ReviewContinuation {
@@ -29,6 +31,7 @@ export interface ReviewContinuation {
   evidencePack?: ProjectReviewEvidencePack;
   phaseProgress?: PhaseProgress;
   autopilot?: boolean;
+  contextBudgetTokens?: number;
 }
 
 export interface ReviewArtifactRef {

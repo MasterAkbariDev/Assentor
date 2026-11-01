@@ -54,6 +54,8 @@ import { GeminiReviewer } from "#assentor/engine/providers/reviewers/gemini/inde
 import { MockReviewer } from "#assentor/engine/providers/reviewers/mock/index.js";
 import { OpenAICompatibleReviewer } from "#assentor/engine/providers/reviewers/openai/index.js";
 import type { Reviewer } from "#assentor/engine/providers/reviewers/types.js";
+import { withReviewBudget } from "#assentor/engine/providers/reviewers/budget.js";
+import { roleBudget } from "#assentor/engine/context/budget.js";
 import {
   PanelReviewer,
   TaskComplexityAnalyzer,
@@ -540,7 +542,13 @@ export function panelPolicyOptions(
 }
 
 /** Exported for `run --mode` (mode-run.ts). */
-export async function createMembersFromBackends(input: {
+export async function createMembersFromBackends(input: Parameters<typeof buildMembersFromBackends>[0]): ReturnType<typeof buildMembersFromBackends> {
+  const built = await buildMembersFromBackends(input);
+  const budget = roleBudget(input.config.context?.budgetTokens, "reviewer");
+  return budget ? { ...built, members: built.members.map((member) => withReviewBudget(member, budget)) } : built;
+}
+
+async function buildMembersFromBackends(input: {
   config: AssentorConfig;
   projectPath: string;
   prompt: string;

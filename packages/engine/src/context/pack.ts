@@ -2,10 +2,16 @@ import { estimateTokens } from "../usage/tokens.js";
 
 /**
  * Context packer (TE-03): builds what a seat sees from typed, prioritised
- * sections under a token budget. Lower priority sections shrink first and every
- * cut leaves an explicit marker, so the seat knows what it did not get. Blocks
- * that are identical across sections are sent once. The token count is the
- * shared estimator from `usage/tokens.ts` (the one `bench:tokens` uses).
+ * sections. Two independent parts:
+ *
+ * - Lossless: blocks that are identical across sections (or repeated in test
+ *   output / history) are sent once, with a marker that shows the count.
+ * - Budget cuts, only when `budgetTokens` is set: lower priority sections shrink
+ *   first and every cut leaves an explicit `[… N lines omitted]` marker. Code
+ *   fences are always closed and reopened around a cut.
+ *
+ * The token count is the shared estimator from `usage/tokens.ts` (the one
+ * `bench:tokens` uses).
  */
 
 export type SectionKind = "task" | "constraints" | "diff" | "failing-test" | "excerpt" | "summary" | "history";
@@ -24,6 +30,8 @@ export interface ContextSection {
   keep?: Keep;
   /** Heading line rendered above the text (counted against the budget). */
   title?: string;
+  /** Render the text inside a code fence (the fence lines are never cut). */
+  fence?: boolean;
   /**
    * Send a block that another section already carries only once. Default: yes, except for `diff` and
    * `excerpt` sections, where two copies of the same code can be a finding the reader must see.
@@ -42,22 +50,25 @@ const KIND_DEFAULTS: Record<SectionKind, { priority: number; keep: Keep }> = {
 };
 
 export interface PackOptions {
-  budgetTokens: number;
+  /** Cut to at most this many tokens. Unset: nothing is cut, only identical blocks are merged. */
+  budgetTokens?: number;
   /** Model id for the estimator's per-model factor. */
   model?: string;
   /** Unchanged lines kept around each changed line when a diff section has to shrink. Default 3. */
   diffContext?: number;
+  /** Added to every omission marker, e.g. "request via evidenceRequests". */
+  hint?: string;
 }
 
 export interface PackedContext {
-  /** All sections in the order given, separated by a blank line. At most `budgetTokens`. */
+  /** All sections in the order given, separated by a blank line. At most `budgetTokens` when one is set. */
   text: string;
   tokens: number;
   /** Final text of each section by id (without its title); `""` when a section was empty. */
   parts: Record<string, string>;
   /** Sections that were cut, with the lines dropped. */
   omitted: Array<{ id: string; lines: number }>;
-  /** Sections that lost a block because the same block is already in another section. */
+  /** Sections that lost a block because the same block is already sent. */
   deduped: string[];
   /** True only when the budget is smaller than the headings and markers: `text` was cut mid-way. */
   clipped: boolean;
@@ -65,11 +76,19 @@ export interface PackedContext {
 
 /** Blocks shorter than this are not worth a pointer (`none`, `ok`, a bare heading). */
 const MIN_DEDUPE_CHARS = 60;
+const FENCE = "```";
 
-export const omissionMarker = (lines: number) => `[… ${lines} ${lines === 1 ? "line" : "lines"} omitted — ask to see more]`;
+export const omissionMarker = (lines: number, hint?: string) =>
+  `[… ${lines} ${lines === 1 ? "line" : "lines"} omitted${hint ? ` — ${hint}` : ""}]`;
+
+const isFence = (line: string) => line.trimStart().startsWith(FENCE);
+/** Whether `lines[0..upto)` end inside a code fence. */
+const insideFence = (lines: readonly string[], upto: number) => lines.slice(0, upto).filter(isFence).length % 2 === 1;
+/** Text with a fence left open gets it closed. */
+export const closeOpenFence = (text: string) => (text.split("\n").filter(isFence).length % 2 === 1 ? `${text}\n${FENCE}` : text);
 
 /** Keep the changed lines of a unified diff and `context` lines around them; skipped runs become markers. */
-export function compactDiff(diff: string, context = 3): string {
+export function compactDiff(diff: string, context = 3, hint?: string): string {
   const lines = diff.split("\n");
   const isChange = (line: string) => /^[+-]/.test(line) && !/^(\+\+\+|---)( |$)/.test(line);
   const isHeader = (line: string) => /^(diff --git|index |--- |\+\+\+ |@@)/.test(line);
@@ -81,7 +100,7 @@ export function compactDiff(diff: string, context = 3): string {
   const out: string[] = [];
   let skipped = 0;
   const flush = () => {
-    if (skipped > 0) out.push(omissionMarker(skipped));
+    if (skipped > 0) out.push(omissionMarker(skipped, hint));
     skipped = 0;
   };
   lines.forEach((line, i) => {
@@ -104,33 +123,33 @@ interface Working {
   /** Lines kept from the start / end. */
   head: number;
   tail: number;
-  /** Lines dropped by diff compaction (they left a marker in `lines`). */
+  /** Lines dropped by diff compaction or a character cut (they left a marker in `lines`). */
   compacted: number;
   index: number;
 }
 
-function renderBody(w: Working): string {
-  const cut = w.lines.length - w.head - w.tail;
+function renderBody(w: Working, hint?: string): string {
+  const n = w.lines.length;
+  const cut = n - w.head - w.tail;
   if (cut <= 0) return w.lines.join("\n");
-  const marker = omissionMarker(cut);
-  return [...w.lines.slice(0, w.head), marker, ...w.lines.slice(w.lines.length - w.tail)].join("\n");
+  const out = w.lines.slice(0, w.head);
+  // A fence left open by the cut is closed before the marker and reopened before the tail.
+  if (!w.section.fence && insideFence(w.lines, w.head)) out.push(FENCE);
+  out.push(omissionMarker(cut, hint));
+  if (!w.section.fence && w.tail > 0 && insideFence(w.lines, n - w.tail)) out.push(FENCE);
+  out.push(...w.lines.slice(n - w.tail));
+  return out.join("\n");
 }
 
-function renderSection(w: Working): string {
-  const body = renderBody(w);
-  return w.section.title ? `${w.section.title}\n${body}` : body;
+function renderSection(w: Working, hint?: string): string {
+  const body = renderBody(w, hint);
+  const inner = w.section.fence ? `${FENCE}\n${body}\n${FENCE}` : body;
+  return w.section.title ? `${w.section.title}\n${inner}` : inner;
 }
-
-const join = (works: Working[]) =>
-  works
-    .map(renderSection)
-    .filter((part) => part !== "")
-    .join("\n\n");
 
 /** Set how many lines of `w` to keep (`keep` decides from which end). */
 function setKept(w: Working, kept: number): void {
-  const n = w.lines.length;
-  const k = Math.max(0, Math.min(n, kept));
+  const k = Math.max(0, Math.min(w.lines.length, kept));
   if (w.keep === "end") {
     w.head = 0;
     w.tail = k;
@@ -144,15 +163,14 @@ function setKept(w: Working, kept: number): void {
 }
 
 /**
- * Pack `sections` into at most `budgetTokens`. Order of work: dedupe identical
- * blocks; if still over budget, shrink sections from the lowest priority up
- * (diffs first lose context lines around their changes, then lines like any
- * other section); sections marked `keep: "all"` are cut last, as a last resort.
- * The result never exceeds the budget.
+ * Pack `sections`. Always: merge identical blocks. With `budgetTokens`: shrink sections from the lowest
+ * priority up (diffs first lose context lines around their changes, then lines like any other section; a
+ * section whose lines do not fit is cut by characters, keeping its tail); sections marked `keep: "all"` are
+ * cut last, as a last resort. The result never exceeds the budget.
  */
-export function packContext(sections: readonly ContextSection[], options: PackOptions): PackedContext {
-  const { model = "" } = options;
-  const budget = Math.max(0, Math.floor(options.budgetTokens));
+export function packContext(sections: readonly ContextSection[], options: PackOptions = {}): PackedContext {
+  const { model = "", hint } = options;
+  const budget = options.budgetTokens === undefined ? Infinity : Math.max(0, Math.floor(options.budgetTokens));
   const tokensOf = (text: string) => estimateTokens(text, model);
   const ids = new Set<string>();
   const works: Working[] = sections.map((section, index) => {
@@ -162,32 +180,46 @@ export function packContext(sections: readonly ContextSection[], options: PackOp
     const lines = section.text.length ? section.text.split("\n") : [];
     return { section, priority: section.priority ?? defaults.priority, keep: section.keep ?? defaults.keep, lines, head: lines.length, tail: 0, compacted: 0, index };
   });
+  const dedupes = (w: Working) => w.section.dedupe ?? (w.section.kind !== "diff" && w.section.kind !== "excerpt");
 
-  // 1. Dedupe: the highest priority copy of a block keeps it (ties: the earlier section). Test output and
-  // history also lose their own repeats (warnings and stack frames repeat verbatim); code never does.
+  // 1. Merge identical blocks: the highest priority copy keeps the text (ties: the earlier section). Test output
+  // and history also lose their own repeats (output repeats verbatim); code is never merged unless asked for.
   const deduped: string[] = [];
-  const seen = new Map<string, string>();
-  for (const w of [...works].sort((a, b) => b.priority - a.priority || a.index - b.index)) {
-    const kind = w.section.kind;
-    if (!(w.section.dedupe ?? (kind !== "diff" && kind !== "excerpt"))) continue;
+  const blocksOf = (w: Working) => w.section.text.split(/\n{2,}/);
+  const total = new Map<string, number>();
+  for (const w of works.filter(dedupes)) {
+    for (const block of blocksOf(w)) {
+      const key = block.trim();
+      if (key.length >= MIN_DEDUPE_CHARS) total.set(key, (total.get(key) ?? 0) + 1);
+    }
+  }
+  const owners = new Map<string, string>();
+  for (const w of [...works].filter(dedupes).sort((a, b) => b.priority - a.priority || a.index - b.index)) {
+    const within = w.section.kind === "failing-test" || w.section.kind === "history";
+    const blocks: Array<string | undefined> = blocksOf(w);
+    const firstRepeat = new Map<string, number>();
+    const repeats = new Map<string, number>();
     const own = new Set<string>();
     let changed = false;
-    const next = w.section.text.split(/\n{2,}/).map((block) => {
-      const key = block.trim();
-      if (key.length < MIN_DEDUPE_CHARS) return block;
-      const owner = seen.get(key);
+    blocks.forEach((block, i) => {
+      const key = block!.trim();
+      if (key.length < MIN_DEDUPE_CHARS) return;
+      const owner = owners.get(key);
       if (owner !== undefined && owner !== w.section.id) {
+        blocks[i] = `[… same text as "${owner}" (${total.get(key)} copies)]`;
         changed = true;
-        return `[… same text as "${owner}" omitted]`;
-      }
-      if (own.has(key) && (kind === "failing-test" || kind === "history")) {
+      } else if (own.has(key) && within) {
+        if (!firstRepeat.has(key)) firstRepeat.set(key, i);
+        repeats.set(key, (repeats.get(key) ?? 0) + 1);
+        blocks[i] = undefined;
         changed = true;
-        return "[… repeated block omitted]";
+      } else {
+        own.add(key);
+        owners.set(key, w.section.id);
       }
-      own.add(key);
-      seen.set(key, w.section.id);
-      return block;
     });
+    for (const [key, i] of firstRepeat) blocks[i] = `[… the block above repeats ${repeats.get(key)} more ${repeats.get(key) === 1 ? "time" : "times"}]`;
+    const next = blocks.filter((block): block is string => block !== undefined);
     if (changed) {
       deduped.push(w.section.id);
       w.lines = next.join("\n\n").split("\n");
@@ -195,41 +227,70 @@ export function packContext(sections: readonly ContextSection[], options: PackOp
     }
   }
 
-  // 2. Shrink, lowest priority first (ties: the larger, then the later section), until it fits.
-  const fits = () => tokensOf(join(works)) <= budget;
-  const order = [...works].sort((a, b) => a.priority - b.priority || b.section.text.length - a.section.text.length || b.index - a.index);
-  const shrink = (w: Working) => {
-    if (fits() || w.lines.length === 0) return;
-    if (w.section.kind === "diff") {
-      const compact = compactDiff(w.lines.join("\n"), options.diffContext ?? 3);
-      if (compact.split("\n").length < w.lines.length) {
-        const kept = compact.split("\n");
-        w.compacted = w.lines.length - kept.filter((line) => !line.startsWith("[… ")).length;
-        w.lines = kept;
-        w.head = w.lines.length;
-        w.tail = 0;
-        if (fits()) return;
-      }
-    }
-    // Largest number of kept lines that fits (tokens only grow with kept lines).
-    const whole = renderSection(w).length;
-    let low = 0;
-    let high = w.lines.length;
-    while (low < high) {
-      const mid = Math.ceil((low + high) / 2);
-      setKept(w, mid);
-      if (fits()) low = mid;
-      else high = mid - 1;
-    }
-    setKept(w, low);
-    // A marker longer than the text it replaces saves nothing.
-    if (renderSection(w).length >= whole) setKept(w, w.lines.length);
-  };
-  for (const w of order.filter((x) => x.keep !== "all")) shrink(w);
-  for (const w of order.filter((x) => x.keep === "all")) shrink(w);
+  const join = () =>
+    works
+      .map((w) => renderSection(w, hint))
+      .filter((part) => part !== "")
+      .join("\n\n");
 
-  let text = join(works);
-  // Titles and markers alone can exceed a tiny budget: the budget still wins.
+  // 2. Shrink, lowest priority first (ties: the larger, then the later section), until it fits.
+  if (budget !== Infinity) {
+    const fits = () => tokensOf(join()) <= budget;
+    const order = [...works].sort((a, b) => a.priority - b.priority || b.section.text.length - a.section.text.length || b.index - a.index);
+    const shrink = (w: Working) => {
+      if (fits() || w.lines.length === 0) return;
+      const whole = renderSection(w, hint).length;
+      const snapshot = { lines: w.lines, head: w.head, tail: w.tail, compacted: w.compacted };
+      if (w.section.kind === "diff") {
+        const compact = compactDiff(w.lines.join("\n"), options.diffContext ?? 3, hint);
+        if (compact.split("\n").length < w.lines.length) {
+          const kept = compact.split("\n");
+          w.compacted = w.lines.length - kept.filter((line) => !line.startsWith("[… ")).length;
+          w.lines = kept;
+          w.head = w.lines.length;
+          w.tail = 0;
+          if (fits()) return;
+        }
+      }
+      // Largest number of kept lines that fits (tokens only grow with kept lines).
+      let low = 0;
+      let high = w.lines.length;
+      while (low < high) {
+        const mid = Math.ceil((low + high) / 2);
+        setKept(w, mid);
+        if (fits()) low = mid;
+        else high = mid - 1;
+      }
+      setKept(w, low);
+      if (low === 0) {
+        // Not even one line fits (one very long line): cut by characters and keep the tail.
+        const text = w.lines.join("\n");
+        const original = w.lines.length;
+        const attempt = (chars: number) => {
+          w.lines = [`[… ${text.length - chars} characters omitted, tail kept${hint ? ` — ${hint}` : ""}]`, text.slice(text.length - chars)];
+          w.head = w.lines.length;
+          w.tail = 0;
+        };
+        let lo = 0;
+        let hi = text.length;
+        while (lo < hi) {
+          const mid = Math.ceil((lo + hi) / 2);
+          attempt(mid);
+          if (fits()) lo = mid;
+          else hi = mid - 1;
+        }
+        attempt(lo);
+        w.compacted = original;
+      }
+      // A marker longer than the text it replaces saves nothing.
+      if (renderSection(w, hint).length >= whole) Object.assign(w, snapshot);
+    };
+    for (const w of order.filter((x) => x.keep !== "all")) shrink(w);
+    for (const w of order.filter((x) => x.keep === "all")) shrink(w);
+  }
+
+  let text = join();
+  // Titles and markers alone can exceed a tiny budget: the budget still wins (and no fence is left open).
   let clipped = false;
   if (tokensOf(text) > budget) {
     clipped = true;
@@ -237,10 +298,10 @@ export function packContext(sections: readonly ContextSection[], options: PackOp
     let high = text.length;
     while (low < high) {
       const mid = Math.ceil((low + high) / 2);
-      if (tokensOf(text.slice(0, mid)) <= budget) low = mid;
+      if (tokensOf(closeOpenFence(text.slice(0, mid))) <= budget) low = mid;
       else high = mid - 1;
     }
-    text = text.slice(0, low);
+    text = closeOpenFence(text.slice(0, low));
   }
 
   const dropped = (w: Working) => w.compacted + Math.max(0, w.lines.length - w.head - w.tail);
@@ -248,7 +309,7 @@ export function packContext(sections: readonly ContextSection[], options: PackOp
     text,
     tokens: tokensOf(text),
     // Best effort when `clipped` (only a budget smaller than the headings and markers): sections shrink to a marker.
-    parts: Object.fromEntries(works.map((w) => [w.section.id, clipped && w.lines.length ? omissionMarker(w.lines.length) : renderBody(w)])),
+    parts: Object.fromEntries(works.map((w) => [w.section.id, clipped && w.lines.length ? omissionMarker(w.lines.length, hint) : renderBody(w, hint)])),
     omitted: works.flatMap((w) => (dropped(w) > 0 || (clipped && w.lines.length) ? [{ id: w.section.id, lines: clipped ? w.lines.length : dropped(w) }] : [])),
     deduped,
     clipped,

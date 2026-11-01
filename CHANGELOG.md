@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Context packer (TE-03)** — Prompts that carry task context (review evidence packs and diffs, negotiation proposals/critiques, the Lead's engine state, failing-test output sent to coders and debug fixers) are built by one packer under a token budget: lower priority parts shrink first with an explicit `[… N lines omitted — ask to see more]` marker, diffs keep changed lines plus context, repeated blocks are sent once. Optional `context.budgetTokens.{reviewer,negotiation,lead,coder}` in the config (0 turns it off for a role); nothing is written on save. `pnpm bench:tokens --variants context:packed` measures it.
+- **Context packer (TE-03)** — Prompts that carry task context (review evidence packs and diffs, negotiation proposals, the Lead's engine state, failing-test output sent to coders and debug fixers) are built by one packer. On by default and lossless: identical proposals and repeated test-output blocks are sent once (with a count), an over-cap diff keeps its changed lines, and a cut never leaves a code fence open. Off by default: `context.budgetTokens.{reviewer,negotiation,lead,coder}` in the config shrink the lowest priority context first with `[… N lines omitted]` markers (0 or unset = no cuts; nothing is written on save). `pnpm bench:tokens --variants context:packed[@<tokens>] [--fixtures large]` measures it.
 
 ### Changed
 
