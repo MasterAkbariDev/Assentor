@@ -219,4 +219,38 @@ describe("DiffView", () => {
     fireEvent.click((await v.findAllByRole("button", { name: "View diff" }))[0]!);
     expect((await v.findByRole("alert")).textContent).toBe("No worktree for this seat.");
   });
+
+  it("refuses an apply when only the diff text changed", async () => {
+    let n = 0;
+    const v = setup({
+      write: true,
+      handlers: {
+        "worktree.diff": () => ({ baseSha: "abcdef0123", head: "0123abcdef", dirty: false, files: ["src/a.ts", "src/b.ts"], diff: ++n > 1 ? `${DIFF}\n+more` : DIFF, truncated: false }),
+      },
+    });
+    const dialog = await openApply(v);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Apply" }));
+    expect((await within(dialog).findByRole("alert")).textContent).toMatch(/changed since/);
+    expect(applyCalls(v)).toHaveLength(0);
+  });
+
+  it("reloads the diff once the session stops being live", async () => {
+    let gets = 0;
+    let diffs = 0;
+    const v = setup({
+      write: true,
+      handlers: {
+        "session.get": () => ({ session: { id: sessionFixture.id, title: "t", hasLiveLog: true, lastSeq: 1, ...(++gets === 1 ? { live: "running" as const } : {}) }, pendingApprovals: [] }),
+        "worktree.diff": () => ({ baseSha: "abcdef0123", head: "0123abcdef", dirty: false, files: ["src/a.ts"], diff: `${DIFF}\n${++diffs}`, truncated: false }),
+      },
+    });
+    await openDiff(v);
+    await v.findByText(/session is running/);
+    expect(diffs).toBe(1);
+    const last = sessionFixture.events.at(-1)!;
+    act(() => {
+      v.store.getState().applyEvents(sessionFixture.id, [{ ...last, seq: last.seq + 1, type: "session.state", data: { to: "STOPPED_FOR_TEST" } } as never]);
+    });
+    await waitFor(() => expect(diffs).toBe(2));
+  });
 });

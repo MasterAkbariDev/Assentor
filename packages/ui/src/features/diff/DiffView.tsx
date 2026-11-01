@@ -22,7 +22,7 @@ const WRITE_REASON = "This connection is read-only. Run `assentor serve --allow-
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const NO_WORKTREE = "No worktree for this seat.";
-const sameDiff = (a: Diff, b: Diff) => a.head === b.head && a.baseSha === b.baseSha && a.dirty === b.dirty && a.files.length === b.files.length && a.files.every((f, i) => f === b.files[i]);
+const sameDiff = (a: Diff, b: Diff) => a.head === b.head && a.baseSha === b.baseSha && a.dirty === b.dirty && a.truncated === b.truncated && a.diff === b.diff && a.files.length === b.files.length && a.files.every((f, i) => f === b.files[i]);
 
 /** Collapsed section of the session panel: per-seat worktrees, their diff, apply and discard. */
 export function DiffView() {
@@ -102,7 +102,7 @@ function DiffBody() {
   const wasLive = useRef(false);
   useEffect(() => {
     if (wasLive.current && live === null && seatId) void load(seatId);
-    wasLive.current = Boolean(live);
+    if (live !== undefined) wasLive.current = Boolean(live);
   }, [live, seatId, load]);
 
   const blocked = !canWrite
