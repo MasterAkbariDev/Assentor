@@ -4,6 +4,7 @@ import { EngineStoreProvider } from "../../../store/context.js";
 import { SessionBoard } from "../../session-board/SessionBoard.js";
 import { measureCase, supports, type CaseResult } from "./run.js";
 import { parsePerfParams } from "./stats.js";
+import { summarizeRuns, type CaseSummary } from "./summary.js";
 
 /**
  * Dev-only streaming perf harness (T05-02), inside `#/dev/fixtures?perf=1&seats=6&rate=50&duration=10`
@@ -14,7 +15,7 @@ import { parsePerfParams } from "./stats.js";
 
 declare global {
   interface Window {
-    __perfResults?: { done: boolean; userAgent: string; supports: ReturnType<typeof supports>; results: CaseResult[]; error?: string };
+    __perfResults?: { done: boolean; userAgent: string; supports: ReturnType<typeof supports>; results: CaseResult[]; summary: CaseSummary[]; error?: string };
   }
 }
 
@@ -47,14 +48,16 @@ export function PerfHarness() {
     setResults([]);
     const out: CaseResult[] = [];
     const publish = (done: boolean, error?: string) => {
-      window.__perfResults = { done, userAgent: navigator.userAgent, supports: supports(), results: [...out], ...(error ? { error } : {}) };
+      window.__perfResults = { done, userAgent: navigator.userAgent, supports: supports(), results: [...out], summary: summarizeRuns(out), ...(error ? { error } : {}) };
     };
     publish(false);
     try {
       for (const c of params.cases) {
-        out.push(await measureCase(c, params, mount));
-        setResults([...out]);
-        publish(false);
+        for (let i = 0; i < params.repeat; i += 1) {
+          out.push(await measureCase(c, params, mount));
+          setResults([...out]);
+          publish(false);
+        }
       }
       publish(true);
     } catch (e) {
@@ -82,7 +85,7 @@ export function PerfHarness() {
   return (
     <div className="perf-harness">
       <p>
-        {params ? `${params.cases.length} case(s) x ${params.durationMs / 1000}s, seed ${params.seed}. ` : ""}
+        {params ? `${params.cases.length} case(s) x ${params.repeat} run(s) x ${params.durationMs / 1000}s, seed ${params.seed}. ` : ""}
         {paramError ? <span className="notice error">{paramError}</span> : null}
         <button type="button" onClick={() => void run()} disabled={!params || running}>{running ? "Running…" : "Run"}</button>{" "}
         <button type="button" onClick={download} disabled={results.length === 0}>Export JSON</button>

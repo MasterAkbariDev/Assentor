@@ -81,7 +81,9 @@ export interface PerfCase {
 }
 
 export interface PerfParams {
+  /** Each case, `repeat` times in a row. */
   cases: PerfCase[];
+  repeat: number;
   durationMs: number;
   seed: number;
   autorun: boolean;
@@ -106,5 +108,21 @@ export function parsePerfParams(search: string): PerfParams {
   for (const seats of list(q.get("seats"), [6]))
     for (const rate of list(q.get("rate"), [50]))
       for (const c of coalesce) cases.push({ seats, rate, coalesce: c });
-  return { cases, durationMs: list(q.get("duration"), [10])[0]! * 1000, seed: list(q.get("seed"), [1])[0]!, autorun: q.get("autorun") === "1" };
+  return { cases, repeat: list(q.get("repeat"), [1])[0]!, durationMs: list(q.get("duration"), [10])[0]! * 1000, seed: list(q.get("seed"), [1])[0]!, autorun: q.get("autorun") === "1" };
+}
+
+export function median(values: readonly number[]): number {
+  return percentile(values, 50);
+}
+
+export interface Spread {
+  median: number;
+  min: number;
+  max: number;
+}
+
+/** Median and range of one metric over repeated runs of the same case. `n` is shown next to it so n=1 is visible. */
+export function spread(values: readonly number[]): Spread {
+  const r = (n: number) => Math.round(n * 10) / 10;
+  return values.length === 0 ? { median: 0, min: 0, max: 0 } : { median: r(median(values)), min: r(Math.min(...values)), max: r(Math.max(...values)) };
 }

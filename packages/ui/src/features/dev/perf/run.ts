@@ -51,7 +51,15 @@ export async function measureCase(
   const pendingSince: number[] = [];
   const batches: number[] = [];
   const waits: number[] = [];
-  const schedule = c.coalesce === "raf" ? (f: () => void) => void requestAnimationFrame(f) : (f: () => void) => void setTimeout(f, c.coalesce as number);
+  // The batcher cancels the pending callback on a manual flush, so these return their cancellers.
+  const schedule = (f: () => void) => {
+    if (c.coalesce === "raf") {
+      const id = requestAnimationFrame(f);
+      return () => cancelAnimationFrame(id);
+    }
+    const id = setTimeout(f, c.coalesce);
+    return () => clearTimeout(id);
+  };
   const batcher = createFrameBatcher(store, schedule);
   let lastCount = 0;
   const offApply = store.subscribe((s) => {

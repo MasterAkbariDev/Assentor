@@ -203,14 +203,16 @@ export function createEngineStore(): EngineStore {
 /** Pending events past this are applied at once, so a hidden tab can't build an unbounded backlog. */
 export const MAX_PENDING_EVENTS = 1_000;
 
-function defaultSchedule(flush: () => void): void {
+/** Returns a canceller, which the batcher calls when a manual `flush()` makes the scheduled one redundant. */
+function defaultSchedule(flush: () => void): () => void {
   // Hidden tabs pause animation frames; fall back to a timer so the backlog keeps draining.
   const hidden = typeof document !== "undefined" && document.hidden;
   if (!hidden && typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(flush);
-  } else {
-    setTimeout(flush, hidden ? 250 : 16);
+    const id = requestAnimationFrame(flush);
+    return () => cancelAnimationFrame(id);
   }
+  const id = setTimeout(flush, hidden ? 250 : 16);
+  return () => clearTimeout(id);
 }
 
 /**
@@ -220,12 +222,21 @@ function defaultSchedule(flush: () => void): void {
  */
 export function createFrameBatcher(
   store: EngineStore,
-  schedule: (flush: () => void) => void = defaultSchedule,
+  /** Arms one callback. May return a canceller (a function); any other return value is ignored. */
+  schedule: (flush: () => void) => unknown = defaultSchedule,
   maxPending: number = MAX_PENDING_EVENTS,
 ): { push(sessionId: string, event: EngineEvent): void; flush(): void } {
   let pending: Array<{ sessionId: string; event: EngineEvent }> = [];
   let scheduled = false;
+  let cancel: (() => void) | undefined;
+  let token = 0;
   const flush = () => {
+    // A manual flush disarms the callback still waiting, or it would fire later and start a second chain.
+    if (scheduled) {
+      token += 1;
+      cancel?.();
+      cancel = undefined;
+    }
     scheduled = false;
     if (pending.length === 0) {
       return;
@@ -254,7 +265,11 @@ export function createFrameBatcher(
       }
       if (!scheduled) {
         scheduled = true;
-        schedule(flush);
+        const mine = token;
+        const result = schedule(() => {
+          if (token === mine) flush(); // a schedule that can't cancel still can't fire a stale callback
+        });
+        cancel = typeof result === "function" ? (result as () => void) : undefined;
       }
     },
     flush,

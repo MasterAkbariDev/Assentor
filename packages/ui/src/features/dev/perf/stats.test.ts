@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { coalescerStats, frameStats, heapStats, longTaskStats, parsePerfParams, percentile } from "./stats.js";
+import { spread, coalescerStats, frameStats, heapStats, longTaskStats, parsePerfParams, percentile } from "./stats.js";
 
 describe("percentile", () => {
   it("uses nearest rank", () => {
@@ -40,7 +40,7 @@ describe("other stats", () => {
 
 describe("parsePerfParams", () => {
   it("defaults to 6 seats at 50/s, rAF, 10 s", () => {
-    expect(parsePerfParams("")).toEqual({ cases: [{ seats: 6, rate: 50, coalesce: "raf" }], durationMs: 10_000, seed: 1, autorun: false });
+    expect(parsePerfParams("")).toEqual({ cases: [{ seats: 6, rate: 50, coalesce: "raf" }], repeat: 1, durationMs: 10_000, seed: 1, autorun: false });
   });
   it("builds the cartesian product", () => {
     const p = parsePerfParams("?seats=6,12&rate=50&coalesce=raf,100&duration=3&seed=9&autorun=1");
@@ -53,5 +53,16 @@ describe("parsePerfParams", () => {
   it("rejects junk instead of running the default", () => {
     expect(() => parsePerfParams("?rate=fast")).toThrow(/bad number list/);
     expect(() => parsePerfParams("?seats=0")).toThrow();
+  });
+});
+
+describe("spread", () => {
+  it("is median and range", () => {
+    expect(spread([58, 60, 60.04])).toEqual({ median: 60, min: 58, max: 60 });
+    expect(spread([3, 1, 2, 10, 4])).toEqual({ median: 3, min: 1, max: 10 });
+    expect(spread([])).toEqual({ median: 0, min: 0, max: 0 });
+  });
+  it("parses repeat", () => {
+    expect(parsePerfParams("?repeat=3").repeat).toBe(3);
   });
 });
