@@ -317,6 +317,41 @@ describe("race mode", { timeout: 60_000 }, () => {
     expect(approve.mock.calls[0]![0]).toContain("[changes tests or test runner config: conftest.py]");
   });
 
+  it("package.json: runner-key changes and a symlink are suspect; a description edit is not", async () => {
+    const pkg = (over: Record<string, unknown> = {}) => `${JSON.stringify({ name: "x", version: "1.0.0", scripts: { test: "t" }, ...over })}\n`;
+    const commitPkg = async (s: Setup) => {
+      await fs.writeFile(path.join(s.repo, "package.json"), pkg());
+      await git(s.repo, "add", ".");
+      await git(s.repo, "commit", "-q", "-m", "pkg");
+    };
+    const alone = (build: Build) => [build, writes("broken\n")];
+
+    const linked = await setup({
+      builds: alone(async (task) => {
+        // Same runner keys behind the link: only the symlink itself gives it away.
+        await fs.writeFile(path.join(task.projectPath, "pkg.json"), pkg());
+        await fs.rm(path.join(task.projectPath, "package.json"));
+        await fs.symlink("pkg.json", path.join(task.projectPath, "package.json"));
+        return writes("works\n")(task);
+      }),
+    });
+    await commitPkg(linked);
+    const r1 = await linked.run();
+    expect(r1.status).toBe("blocked");
+    expect(r1.reason).toContain("changes tests or test runner config: package.json");
+
+    const scripts = await setup({ builds: alone(async (task) => (await fs.writeFile(path.join(task.projectPath, "package.json"), pkg({ scripts: { test: "true" } })), writes("works\n")(task))) });
+    await commitPkg(scripts);
+    expect((await scripts.run()).reason).toContain("changes tests or test runner config: package.json");
+
+    const bump = await setup({ builds: alone(async (task) => (await fs.writeFile(path.join(task.projectPath, "package.json"), pkg({ description: "a note" })), writes("works\n")(task))) });
+    await commitPkg(bump);
+    // Any package.json change is already a release danger area (T02B-07); it is just not a runner change.
+    const r3 = await bump.run();
+    expect(r3.reason).toContain("danger area: release");
+    expect(r3.reason).not.toContain("changes tests or test runner config");
+  });
+
   it("deleting an existing test is suspect: full review and an ask, never a silent landing", async () => {
     const s = await setup({
       builds: [

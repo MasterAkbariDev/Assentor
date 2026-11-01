@@ -218,7 +218,7 @@ export async function hasSymlink(root: string, rel: string): Promise<boolean> {
 }
 
 /** Reads a file without following a symlink at the leaf (callers check the parents with `hasSymlink`). */
-function readNoFollow(abs: string): Promise<string> {
+export function readNoFollow(abs: string): Promise<string> {
   return fs.readFile(abs, { encoding: "utf8", flag: fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) });
 }
 

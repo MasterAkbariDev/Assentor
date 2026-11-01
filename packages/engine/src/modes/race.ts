@@ -1,4 +1,3 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { resolveVerificationCommands } from "../config/detect-commands.js";
@@ -17,7 +16,7 @@ import { WorktreeError, type SeatKey, type WorktreeDiff } from "../worktrees/man
 import { fitFailureOutput, roleBudget } from "../context/budget.js";
 import { binaryFiles } from "./debug.js";
 import { classifyRisk } from "./danger.js";
-import { hasSymlink, runnerKeys } from "./redteam.js";
+import { hasSymlink, readNoFollow, runnerKeys } from "./redteam.js";
 import { isRunnerFile, isTestFile } from "./tdd/tamper.js";
 import { ApprovalDeniedError, type ModeController, type ModeControllerInput, type ModeControllerResult } from "./registry.js";
 
@@ -291,8 +290,9 @@ async function runRace(input: ModeControllerInput, extras: RaceExtras): Promise<
     for (const file of files) {
       if (isRunnerFile(file)) out.push(file);
       else if (path.posix.basename(file) === "package.json") {
-        const now = (await hasSymlink(c.root!, file)) ? "<symlink>" : await fs.readFile(path.join(c.root!, file), "utf8").catch(() => undefined);
-        if (runnerKeys(now) !== runnerKeys(await manager!.readAtBase(c.key, file))) out.push(file);
+        // A symlinked package.json (or parent) is suspect outright; otherwise read without following a leaf link.
+        if (await hasSymlink(c.root!, file)) out.push(file);
+        else if (runnerKeys(await readNoFollow(path.join(c.root!, file)).catch(() => undefined)) !== runnerKeys(await manager!.readAtBase(c.key, file))) out.push(file);
       } else if (isTestFile(file) && (await manager!.readAtBase(c.key, file)) !== undefined) out.push(file);
     }
     return out;
