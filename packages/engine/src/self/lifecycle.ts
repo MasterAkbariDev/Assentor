@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { resolvePackageRoot } from "./package-root.js";
 import { resetTerminalForRelaunch } from "./terminal.js";
-import { findOnPath } from "../executors/cli-locator.js";
+import { assertCmdSafeArgs, findOnPath, quoteCmdArg } from "../executors/cli-locator.js";
 
 export type LifecycleScript = "update" | "uninstall" | "install";
 
@@ -165,11 +165,14 @@ export function buildAssentorLaunchCommand(
   binary: string,
   args: string[],
   platform: NodeJS.Platform = process.platform,
-): { command: string; args: string[] } {
+): { command: string; args: string[]; windowsVerbatimArguments?: true } {
   if (platform === "win32") {
     const lower = binary.toLowerCase();
     if (lower.endsWith(".cmd") || lower.endsWith(".bat")) {
-      return { command: "cmd.exe", args: ["/d", "/s", "/c", binary, ...args] };
+      // Same rule as spawnCliProcess: refuse what cmd would alter, pass one verbatim line.
+      assertCmdSafeArgs([binary, ...args]);
+      const line = `"${[binary, ...args].map(quoteCmdArg).join(" ")}"`;
+      return { command: "cmd.exe", args: ["/d", "/v:off", "/s", "/c", line], windowsVerbatimArguments: true };
     }
     if (lower.endsWith(".ps1")) {
       return lifecycleProcessArgs(binary, args);
@@ -194,6 +197,7 @@ export async function relaunchAssentor(
     env: process.env,
     cwd: process.cwd(),
     windowsHide: false,
+    ...(launch.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
   });
   child.unref();
   process.exit(0);
@@ -210,6 +214,7 @@ export async function runAssentorSubcommand(
     env: process.env,
     cwd: process.cwd(),
     stdio: ["ignore", "pipe", "pipe"],
+    ...(launch.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
   });
   return {
     code: result.status,

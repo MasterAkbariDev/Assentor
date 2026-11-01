@@ -1,12 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import {
+
+const spawnMock = vi.hoisted(() => vi.fn(() => ({ unref: () => {} })));
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  spawn: spawnMock,
+}));
+
+const {
   buildAssentorLaunchCommand,
   defaultBinDir,
   defaultInstallHome,
   lifecycleProcessArgs,
   lifecycleScriptName,
-} from "../../packages/engine/src/self/lifecycle.js";
+  relaunchAssentor,
+} = await import("../../packages/engine/src/self/lifecycle.js");
 
 describe("lifecycle scripts", () => {
   it("runs PowerShell scripts on Windows instead of bash", () => {
@@ -49,14 +59,60 @@ describe("assentor relaunch", () => {
       ["version"],
       "win32",
     );
-    expect(launch.command).toBe("cmd.exe");
-    expect(launch.args).toEqual([
-      "/d",
-      "/s",
-      "/c",
-      "C:\\Users\\sam\\.local\\bin\\assentor.cmd",
-      "version",
-    ]);
+    expect(launch).toEqual({
+      command: "cmd.exe",
+      args: ["/d", "/v:off", "/s", "/c", '"C:\\Users\\sam\\.local\\bin\\assentor.cmd version"'],
+      windowsVerbatimArguments: true,
+    });
+  });
+
+  it("quotes cmd specials and refuses % / quotes / newlines for a Windows shim", () => {
+    const bin = "C:\\Users\\R&D\\assentor.cmd";
+    expect(buildAssentorLaunchCommand(bin, ["ui", "-p", "C:\\w\\a^b (1)"], "win32").args[4]).toBe(
+      '""C:\\Users\\R&D\\assentor.cmd" ui -p "C:\\w\\a^b (1)""',
+    );
+    for (const bad of ["%PATH%", 'a"b', "a\nb", "C:\\w\\"]) {
+      expect(() => buildAssentorLaunchCommand(bin, ["ui", "-p", bad], "win32")).toThrow(/cmd\.exe would/);
+    }
+  });
+
+  describe("relaunchAssentor spawn options", () => {
+    const realPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const realBin = process.env.ASSENTOR_BIN;
+    let dir = "";
+    afterEach(() => {
+      Object.defineProperty(process, "platform", realPlatform);
+      if (realBin === undefined) delete process.env.ASSENTOR_BIN;
+      else process.env.ASSENTOR_BIN = realBin;
+      rmSync(dir, { recursive: true, force: true });
+      spawnMock.mockClear();
+      vi.restoreAllMocks();
+    });
+
+    it("relaunches a .cmd shim detached, inherited stdio, verbatim cmd line", async () => {
+      dir = mkdtempSync(path.join(os.tmpdir(), "assentor-relaunch-"));
+      writeFileSync(path.join(dir, "assentor.cmd"), "");
+      process.env.ASSENTOR_BIN = dir;
+      Object.defineProperty(process, "platform", { value: "win32" });
+      vi.spyOn(process, "exit").mockImplementation((() => {
+        throw new Error("exit");
+      }) as never);
+
+      await expect(relaunchAssentor(["ui", "-p", "R&D"])).rejects.toThrow("exit");
+      const bin = path.join(dir, "assentor.cmd");
+      expect(spawnMock).toHaveBeenCalledWith(
+        "cmd.exe",
+        ["/d", "/v:off", "/s", "/c", `"${bin} ui -p "R&D""`],
+        {
+          detached: true,
+          stdio: "inherit",
+          env: process.env,
+          cwd: process.cwd(),
+          windowsHide: false,
+          windowsVerbatimArguments: true,
+        },
+      );
+    });
   });
 
   it("builds bash launch on Unix", () => {
