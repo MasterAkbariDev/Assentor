@@ -249,6 +249,18 @@ describe("Lead controller", () => {
     expect(state.tasks.t1?.integrated).toBe(true);
   });
 
+  it("autopilot: the same integrate asks nothing (FU-16: one owner per apply question)", async () => {
+    const s = await setup({
+      autonomy: "autopilot",
+      lead: { policy: { reviewBeforeAccept: false, integrate: "auto" } },
+      script: [turn(plan(T1), assign("T1")), turn({ action: "accept", taskId: "T1" }, { action: "integrate", taskIds: ["T1"] }), turn({ action: "finish", summary: "x added" })],
+      agents: { cheap: writes("a/x.ts") },
+    });
+    expect(await s.run()).toMatchObject({ status: "completed" });
+    expect(await git(s.repo, "show", "HEAD:a/x.ts")).toBe("export const x = 1;");
+    expect(s.questions).toEqual([]);
+  });
+
   it("an agent's false claims are caught: accept is refused and the lead sees why", async () => {
     const config = parseAssentorConfig({ verification: { commands: { test: "pnpm test" } } });
     const s = await setup({
