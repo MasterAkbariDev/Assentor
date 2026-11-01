@@ -75,6 +75,8 @@ async function failure(promise: Promise<unknown>): Promise<RpcRemoteError> {
 const ROSTER: RosterEntry[] = [
   { provider: "mock", model: "cheap", label: "cheap", strengths: ["coding"], speed: "fast", cost: "low", freeSlots: 4 },
   { provider: "mock", model: "strong", label: "strong", strengths: ["coding"], speed: "slow", cost: "high", freeSlots: 4 },
+  // Another provider's model: never valid on a mock seat.
+  { provider: "codex", model: "other", label: "other", strengths: ["coding"], speed: "fast", cost: "low", freeSlots: 4 },
 ];
 const task = (id: string, dir: string) => ({ id, title: `Task ${id}`, ownedPaths: [dir], acceptance: ["done"] });
 const plan = (...tasks: unknown[]) => ({ action: "plan_tasks", tasks });
@@ -251,6 +253,32 @@ describe("lead.pin", () => {
     const view = events.reduce(reduceLeadEvents, emptyLeadBoardView());
     expect(view.tasks.find((t) => t.id === "T1")?.pinnedModel).toBe("strong");
     expect(view.tasks.find((t) => t.id === "T2")?.pinnedModel).toBeUndefined();
+  });
+});
+
+describe("lead.pin roster check", () => {
+  it("refuses a model not on the roster or of another provider, now and when the run starts", async () => {
+    const s = await setup([turn(plan(task("T1", "t1"), task("T2", "t2")), assign("T1")), turn(assign("T2")), turn({ action: "retire", seatId: "agent-9" })]);
+    const second = s.hold(1);
+    const id = await s.start();
+    await until(() => second.reached);
+    // T1 is on agent-1 (mock): an unknown model and codex's model are refused right away.
+    for (const model of ["nope", "other"]) {
+      const error = await failure(s.client.call("lead.pin", { sessionId: id, taskId: "T1", model }));
+      expect(error.code).toBe(RpcErrorCode.Rejected);
+      expect(error.message).toMatch(/not on the roster/);
+    }
+    expect(await s.client.call("lead.pin", { sessionId: id, taskId: "T1", model: "strong" })).toEqual({ ok: true });
+    // T2 has no seat yet: "other" is on the roster, so the pin is taken, but the mock seat that gets it cannot run it.
+    expect(await s.client.call("lead.pin", { sessionId: id, taskId: "T2", model: "other" })).toEqual({ ok: true });
+    second.release();
+    await s.ended(id);
+    const assigned = (await s.events(id)).filter((e) => e.type === "lead.action" && (e.data as { action: string }).action === "assign");
+    expect(assigned.map((e) => e.data)).toEqual([
+      expect.objectContaining({ accepted: true }),
+      expect.objectContaining({ accepted: false, reason: expect.stringMatching(/mock\/other is not on the roster/) }),
+    ]);
+    expect(s.runs.map((r) => r.taskId)).toEqual(["T1"]);
   });
 });
 

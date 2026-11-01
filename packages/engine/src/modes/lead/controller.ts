@@ -131,6 +131,8 @@ const LeadStateSchema = z.object({
   lastResults: z.array(ResultSchema),
   /** FU-18b: models the user pinned per task (lower-cased task id); the task's next runs use them. */
   pins: z.record(ModelIdSchema).default({}),
+  /** FU-18b: the user paused the lead; a resumed session starts paused. */
+  paused: z.boolean().default(false),
 });
 type LeadState = z.infer<typeof LeadStateSchema>;
 
@@ -209,6 +211,7 @@ class LeadController implements ModeController {
   /** Log lines about user commands, added to the lead's log at the next decision point. */
   private readonly userNotes: string[] = [];
   private woken = false;
+  private saving: Promise<void> = Promise.resolve();
   private nudge: (() => void) | undefined;
 
   constructor(private readonly input: ModeControllerInput) {
@@ -233,6 +236,7 @@ class LeadController implements ModeController {
     if (!host.roster) throw new Error("lead mode needs host.roster (who it may hire)");
     if (!worktrees) throw new Error("lead mode needs a worktree manager (agents work in their own worktrees)");
     this.state = await this.load();
+    this.paused ||= this.state.paused; // a resumed session stays paused until lead.resume, as its log says
     this.library = host.prompts ?? (await PromptLibrary.load({ projectPath: this.input.deps.projectPath }).catch(() => undefined));
 
     const onAbort = () => this.stop.abort();
@@ -366,15 +370,35 @@ class LeadController implements ModeController {
     }
     if (command.kind === "pin") {
       if (command.model === null) delete this.state.pins[key(task.id)];
-      else if (!ModelIdSchema.safeParse(command.model).success) return `invalid model id ${JSON.stringify(command.model)}`;
-      else this.state.pins[key(task.id)] = command.model;
+      else {
+        if (!ModelIdSchema.safeParse(command.model).success) return `invalid model id ${JSON.stringify(command.model)}`;
+        const refused = this.pinProblem(task, command.model);
+        if (refused) return refused;
+        this.state.pins[key(task.id)] = command.model;
+      }
       const reason = command.model === null ? `${task.id} is no longer pinned` : `${task.id}'s next runs use model ${command.model}`;
       this.userAction("pin", true, reason, { taskId: task.id, model: command.model });
+      void this.save().catch(() => undefined);
       return undefined;
     }
     if (!this.state.seats.some((s) => s.id === command.seatId)) return `unknown seat ${command.seatId}`;
     this.overrides.set(key(task.id), { taskId: task.id, seatId: command.seatId });
     this.poke();
+    return undefined;
+  }
+
+  /**
+   * The roster check of a pin now: on the task's current seat (its provider), else any roster entry with that
+   * model. `startRun` checks the pinned model on the seat that actually runs, rate limits included.
+   */
+  private pinProblem(task: LeadTask, model: string): string | undefined {
+    const seat = this.state.seats.find((s) => s.id === task.assignee);
+    try {
+      if (seat) this.checkRoster({ ...seat, model });
+      else if (model !== "AUTO" && !this.roster.some((e) => e.model === model)) throw new Refused(`${model} is not on the roster`);
+    } catch (error) {
+      return error instanceof Refused ? error.message : message(error);
+    }
     return undefined;
   }
 
@@ -666,7 +690,10 @@ class LeadController implements ModeController {
     }
     this.checkDependencies(task);
     this.checkOverlaps(task);
-    this.checkRoster(seat);
+    // A user pin (FU-18b) is the model of this task's runs; the host builds each run's executor from this seat.
+    const pinned = this.state.pins[key(task.id)];
+    const runRecord = pinned ? { ...seat, model: pinned } : seat;
+    this.checkRoster(runRecord);
     let next = this.state.board;
     for (const op of [...ops, ...(ops.some((o) => o.op === "status") ? [] : [{ op: "status", taskId: task.id, status: "in_progress" } as const])]) {
       const applied = applyBoardOp(next, op);
@@ -678,9 +705,7 @@ class LeadController implements ModeController {
     // The hash keeps ids apart that sanitise alike (T.1, T-1, T_1).
     const hash = createHash("sha256").update(key(task.id)).digest("hex").slice(0, 6);
     const stageId = `task-${key(task.id).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "x"}-${hash}-r${record.runs + 1}`;
-    // A user pin (FU-18b) is the model of this task's runs; the host builds each run's executor from this seat.
-    const pinned = this.state.pins[key(task.id)];
-    const runSeat = pinned ? { ...this.toSeat(seat), model: pinned } : this.toSeat(seat);
+    const runSeat = this.toSeat(runRecord);
     if (this.input.autonomy === "manual") {
       const gates = this.gatesEnabled() ? "; its verification gates then run in its worktree" : "";
       const question = `Start task ${task.id} "${clip(task.title, 80)}" on ${runSeat.displayName} (${seat.provider}/${runSeat.model}, ${seat.permissions})${gates}?`;
@@ -1300,6 +1325,7 @@ class LeadController implements ModeController {
         summary: "",
         lastResults: [],
         pins: {},
+        paused: false,
       };
     }
     if (raw === undefined) throw new Error("nothing to resume: this session has no lead state");
@@ -1346,8 +1372,11 @@ class LeadController implements ModeController {
     return state;
   }
 
-  private async save(): Promise<void> {
-    await writeJsonAtomic(this.stateFile, this.state);
+  /** Serialized: `control()` saves a pin outside the loop's own saves. */
+  private save(): Promise<void> {
+    const next = this.saving.then(() => writeJsonAtomic(this.stateFile, { ...this.state, paused: this.paused }));
+    this.saving = next.catch(() => undefined);
+    return next;
   }
 }
 
