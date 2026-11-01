@@ -129,8 +129,8 @@ describe("lean preset", () => {
     }
   });
 
-  it("enabling all eight is the owner's failure mode: net tokens up by more than 80% even at 3 bodies per seat, and the gate fails", () => {
-    expect(net("skills:all") / net("baseline")).toBeGreaterThan(1.8);
+  it("enabling all eight is the owner's failure mode: net tokens up by more than 70% even at 3 bodies per seat, and the gate fails", () => {
+    expect(net("skills:all") / net("baseline")).toBeGreaterThan(1.7);
     expect(gateVariant(report, "skills:all").pass).toBe(false);
     expect(report.variants.every((v) => v.successRate === 1)).toBe(true);
   });

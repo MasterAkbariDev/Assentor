@@ -92,7 +92,8 @@ describe("mock runner", () => {
   it("a reply too short to keep its handoff costs a follow-up turn, counted as a retry", () => {
     const report = bench(variant("drops-handoff", { outputScale: 0.5, dropHandoff: true }));
     const v = result(report, "drops-handoff");
-    expect(v.retries).toBe(BENCH_TASKS.length);
+    // One follow-up per seat run: a panel task runs once per member.
+    expect(v.retries).toBe(BENCH_TASKS.reduce((n, t) => n + (t.panel?.length ?? 1), 0));
     expect(v.successRate).toBe(1);
     expect(gateVariant(report, "drops-handoff").pass).toBe(false);
   });
@@ -113,6 +114,18 @@ describe("mock runner", () => {
     const report = bench(variant("small", {}, small), variant("small-extra-turn", { extraTurns: 1 }, small));
     expect(gateVariant(report, "small")).toEqual({ pass: true, reasons: [] });
     expect(gateVariant(report, "small-extra-turn").reasons).toEqual([expect.stringMatching(/^net tokens per successful task \+/)]);
+  });
+
+  it("prompt order (TE-05): the shipped stable order keeps panel prefixes cached; the pre-TE-05 order loses them", () => {
+    const report = bench(resolveVariant("cache:stable"), resolveVariant("cache:legacy"));
+    const [base, stable, legacy] = (["baseline", "cache:stable", "cache:legacy"] as const).map((name) => result(report, name)) as [VariantResult, VariantResult, VariantResult];
+    expect({ ...stable, name: "baseline", notes: [] }).toEqual({ ...base, notes: [] });
+    // Same tokens, only where the cache can serve them differs.
+    expect(legacy.promptTokens).toBe(base.promptTokens);
+    expect(legacy.netPerSuccess).toEqual(base.netPerSuccess);
+    expect(legacy.cachedShare).toBeLessThan(base.cachedShare - 0.05);
+    expect(gateVariant(report, "cache:stable")).toEqual({ pass: true, reasons: [] });
+    expect(gateVariant(report, "cache:legacy").reasons).toEqual([expect.stringMatching(/^cached share of prompt tokens fell/)]);
   });
 
   it("a no-op variant passes the mock gate", () => {

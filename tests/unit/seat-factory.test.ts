@@ -89,7 +89,7 @@ describe("createReviewerSeats", () => {
     }
     expect(spawned).toHaveLength(3);
     for (const { args } of spawned) {
-      expect(args.slice(0, 5)).toEqual(["-p", "--output-format", "text", "--model", "opus"]);
+      expect(args.slice(0, 5)).toEqual(["-p", "--output-format", "json", "--model", "opus"]);
     }
   });
 

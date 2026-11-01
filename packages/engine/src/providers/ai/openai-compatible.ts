@@ -26,6 +26,11 @@ interface ChatCompletionResponse {
     message?: { content?: string | Array<{ type?: string; text?: string }> };
   }>;
   error?: { message?: string };
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    prompt_tokens_details?: { cached_tokens?: number };
+  };
 }
 
 interface ModelsListResponse {
@@ -157,7 +162,7 @@ export class OpenAICompatibleProvider implements AIProvider {
             ...(request.system
               ? [{ role: "system", content: request.system }]
               : []),
-            { role: "user", content: request.prompt },
+            { role: "user", content: userContent(request, this.baseUrl) },
           ],
         }),
         signal: AbortSignal.timeout(request.timeoutMs ?? this.timeoutMs),
@@ -199,11 +204,21 @@ export class OpenAICompatibleProvider implements AIProvider {
           raw: rawText,
         });
       }
+      const usage = payload.usage;
       return {
         text,
         model: request.model,
         provider: this.id,
         raw: rawText,
+        ...(typeof usage?.prompt_tokens === "number"
+          ? {
+              tokens: {
+                tokensIn: usage.prompt_tokens,
+                tokensOut: usage.completion_tokens ?? 0,
+                cachedTokens: usage.prompt_tokens_details?.cached_tokens ?? 0,
+              },
+            }
+          : {}),
       };
     } catch (error) {
       if (error instanceof ProviderRequestError) {
@@ -220,6 +235,34 @@ export class OpenAICompatibleProvider implements AIProvider {
       });
     }
   }
+}
+
+/**
+ * Claude behind an Anthropic endpoint, or behind OpenRouter with an `anthropic/`
+ * model, caches only up to explicit `cache_control` breakpoints (TE-05). One
+ * breakpoint after the static block: it is the part reused across calls; a
+ * second after the shared block costs a 1.25x cache write that concurrent panel
+ * members rarely read back. Every other endpoint gets the plain string, whose
+ * byte-stable prefix it caches on its own; unknown content fields are never sent
+ * to an endpoint that may reject them.
+ */
+function userContent(request: AIRequest, baseUrl: string): string | Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }> {
+  const blocks = (request.promptBlocks ?? []).filter((block) => block !== "");
+  if (blocks.length < 2 || !acceptsCacheControl(baseUrl, request.model) || blocks.join("") !== request.prompt) {
+    return request.prompt;
+  }
+  return [{ type: "text", text: blocks[0]!, cache_control: { type: "ephemeral" } }, { type: "text", text: blocks.slice(1).join("") }];
+}
+
+function acceptsCacheControl(baseUrl: string, model: string): boolean {
+  let host: string;
+  try {
+    host = new URL(baseUrl).hostname;
+  } catch {
+    return false;
+  }
+  if (host === "api.anthropic.com") return true;
+  return host === "openrouter.ai" && model.startsWith("anthropic/");
 }
 
 function extractContent(payload: ChatCompletionResponse): string | undefined {

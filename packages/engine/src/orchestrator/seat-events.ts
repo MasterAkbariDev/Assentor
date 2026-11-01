@@ -434,7 +434,8 @@ function redactStrings<T>(value: T): T {
  * Wrap a reviewer so each turn reports `starting` → `done`/`error` on its own
  * seat. The reviewer's behaviour and name are unchanged. A panel member
  * (`panelMember`) also reports its own `review.verdict`; a lone reviewer does
- * not, because the supervisor's verdict is already scoped to its seat.
+ * not, because the supervisor's verdict is already scoped to its seat. A turn
+ * that reports its token use emits `seat.tokens` on the seat.
  */
 export function trackReviewerSeat(
   reviewer: Reviewer,
@@ -449,6 +450,10 @@ export function trackReviewerSeat(
     try {
       const result = await call();
       const sink = getSink();
+      // This member's tokens (TE-05: API seats and Claude Code report them); a panel's own result carries none.
+      if (result.usage && sink) {
+        sink.emit({ type: "seat.tokens", sessionId: sink.sessionId, seatId, data: { ...result.usage } });
+      }
       if (result.error) {
         sink?.error(seatId, result.error);
       } else {

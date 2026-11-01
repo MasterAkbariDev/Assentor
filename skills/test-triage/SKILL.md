@@ -1,6 +1,6 @@
 ---
 name: test-triage
-description: Use when tests fail, first error, rerun one test. Off, mock bench +17% tokens.
+description: Use when tests fail, first error, rerun one test. Off, mock bench +12% tokens.
 roles: [engineer, debugger, test-writer]
 optIn: true
 version: 1

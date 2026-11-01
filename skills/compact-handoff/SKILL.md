@@ -1,6 +1,6 @@
 ---
 name: compact-handoff
-description: Use when finishing, short fixed-shape handoff. Off, mock bench +28% tokens.
+description: Use when finishing, short fixed-shape handoff. Off, mock bench +20% tokens.
 roles: [engineer, refactorer, debugger, test-writer, docs-writer, devops, db-migrations]
 optIn: true
 version: 1

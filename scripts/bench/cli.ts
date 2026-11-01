@@ -5,7 +5,7 @@ import { PromptLibrary } from "#assentor/engine/prompts/library.js";
 import { BENCH_TASKS, BENCH_TASKS_LARGE } from "./tasks.js";
 import { gateVariant, renderReport, resolveVariant, runLive, runMock, type BenchReport } from "./tokens.js";
 
-const USAGE = `pnpm bench:tokens [--variants baseline,style:concise,profile:economy,skills:<a>+<b>,context:packed[@<tokens>]] [--runs N]
+const USAGE = `pnpm bench:tokens [--variants baseline,style:concise,profile:economy,cache:stable,cache:legacy,skills:<a>+<b>,context:packed[@<tokens>]] [--runs N]
                   [--gate <variant>] [--fixtures original|large] [--json] [--out <file.md>] [--model <id for the token estimate>]
                   [--live --budget <tokens> --executor <provider> [--executor-model <model>]]`;
 
@@ -16,6 +16,7 @@ Net tokens per successful task = all prompt + output tokens of every call, follo
 - \`context:packed\` (TE-03) sends the task context through the engine's context packer (\`packPromptVariables\`): lossless merging of repeats only, or with budget cuts as \`context:packed@<tokens>\`; \`baseline\` sends it unpacked. \`--fixtures large\` swaps in the bulkier review and refactor contexts. A mock seat is blind when a line its task needs (\`needs\` in the fixtures) is cut, so a variant that over-cuts fails instead of looking small.
 - **Mock** numbers (below, regenerated with \`--out\`) measure prompt structure only: replies are scripted, so they cannot show behavioural savings.
 - **Live** numbers come from real CLIs, run by the owner: \`pnpm bench:tokens --live --budget 300000 --executor claude-code --variants <v> --gate <v>\`. Paste the output under a dated heading; it is the evidence for turning a variant on by default (gate: net tokens per success down ≥ 10%, no success-rate drop, always-on text ≤ 300 tokens).
+- **Caching (TE-05)** saves billed cost, not tokens: cached input is billed at a lower rate, but net tokens per success are unchanged (\`cache:stable\` and \`cache:legacy\` have the same net column; only \`cached\` differs). The mock's fresh (uncached) input drop for \`cache:stable\` over \`cache:legacy\` (about −30%) is a best case: sequential calls to a provider with prefix caching and a warm cache. It is unverified on live runs.
 
 `;
 

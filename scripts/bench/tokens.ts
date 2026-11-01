@@ -8,6 +8,8 @@ import { parseAssentorConfig } from "#assentor/engine/config/load.js";
 import { splitPromptFile } from "#assentor/engine/prompts/format.js";
 import type { PromptLibrary } from "#assentor/engine/prompts/library.js";
 import { templateVariables } from "#assentor/engine/prompts/template.js";
+import { assembleSeatPrompt } from "#assentor/engine/prompts/assemble.js";
+import { specialtyAddendum } from "#assentor/engine/review/specialty-prompts.js";
 import { UsageLedger } from "#assentor/engine/usage/ledger.js";
 import { estimateTokens } from "#assentor/engine/usage/tokens.js";
 import { packPromptVariables } from "#assentor/engine/context/vars.js";
@@ -60,6 +62,12 @@ export interface MockScript {
   extraTurns?: number;
   /** The prompt prefix changes per call, so nothing is served from the cache. */
   unstablePrefix?: boolean;
+  /**
+   * Seat prompt order (TE-05). `stable` (default, what the engine ships): `assembleSeatPrompt`'s
+   * static → shared → per-seat delta. `legacy`: the per-seat text before the shared task, as review
+   * prompts were before TE-05, so panel members share only the always-on text.
+   */
+  promptOrder?: "stable" | "legacy";
 }
 
 export interface Variant {
@@ -163,7 +171,7 @@ function skillsVariant(name: string, styleName: string, skillNames: string[], ro
 }
 
 /**
- * `baseline`, `style:<name>`, `profile:<name>`, `skills:<a>+<b>` or `context:packed[@<tokens>]`, each on top
+ * `baseline`, `style:<name>`, `profile:<name>`, `cache:stable|legacy`, `skills:<a>+<b>` or `context:packed[@<tokens>]`, each on top
  * of the default config. Features that are not built yet resolve to a no-op
  * with a note, so the harness never depends on them.
  */
@@ -189,6 +197,15 @@ export function resolveVariant(name: string, root = REPO_ROOT): Variant {
       overlay: { profile: value, style: effective.output.style, skills },
     };
   }
+  if (kind === "cache" && (value === "stable" || value === "legacy")) {
+    notes.push(
+      value === "stable"
+        ? "TE-05 prompt order (static → shared → per-seat delta), the shipped default: the same as baseline"
+        : "pre-TE-05 order: each panel member's specialty before the shared task, so members share only the always-on text",
+      "mock panels assume a warm cache (same model, after the first member's call); live runs use the engine's order",
+    );
+    return { name, overlay: {}, alwaysOn: defaultAlwaysOn(root), notes, mock: { promptOrder: value } };
+  }
   if (kind === "skills" && value) {
     return skillsVariant(name, base.style, [...base.skills, ...value.split("+")], root, notes);
   }
@@ -196,7 +213,7 @@ export function resolveVariant(name: string, root = REPO_ROOT): Variant {
     const budgetTokens = value.includes("@") ? Number(value.split("@")[1]) : undefined;
     return { name, overlay: { context: value }, alwaysOn: defaultAlwaysOn(root), notes, packContext: budgetTokens ? { budgetTokens } : {} };
   }
-  throw new Error(`Unknown variant "${name}" (use baseline, style:<name>, profile:<name>, skills:<a>+<b> or context:packed[@<tokens>])`);
+  throw new Error(`Unknown variant "${name}" (use baseline, style:<name>, profile:<name>, cache:stable|legacy, skills:<a>+<b> or context:packed[@<tokens>])`);
 }
 
 // ---------------------------------------------------------------------------
@@ -323,6 +340,12 @@ function noise(key: string): number {
   return ((h ^ (h >>> 16)) >>> 0) / 2 ** 32;
 }
 
+function commonPrefix(a: string, b: string): string {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i += 1;
+  return a.slice(0, i);
+}
+
 function mockReply(task: BenchTask, script: MockScript, u: number, blind = false): string {
   if (blind) return "I could not find the code or output this task refers to in the context I was given.";
   const full = task.mock.output;
@@ -335,7 +358,7 @@ function mockReply(task: BenchTask, script: MockScript, u: number, blind = false
   return prose.slice(0, Math.round(prose.length * scale)) + extra + (script.dropHandoff ? "" : block);
 }
 
-/** One task attempt with a scripted seat; usage goes through the TE-01 ledger as `seat.tokens` events. */
+/** One task attempt with a scripted seat (each member of a panel task in turn); usage goes through the TE-01 ledger as `seat.tokens` events. */
 function mockAttempt(library: PromptLibrary, task: BenchTask, variant: Variant, run: number, model: string): Attempt {
   const script = variant.mock ?? {};
   const sessionId = `${variant.name}/${task.id}/${run}`;
@@ -346,40 +369,55 @@ function mockAttempt(library: PromptLibrary, task: BenchTask, variant: Variant, 
 
   const contextScale = script.contextScale ?? 1;
   const prefix = seatExtra(variant, task.role);
-  const base = (prefix ? `${prefix}\n\n` : "") + rolePrompt(library, task, contextScale, variant.packContext);
+  const role = rolePrompt(library, task, contextScale, variant.packContext);
   // A seat that was not given what the task needs cannot answer it.
-  const blind = !(task.needs ?? []).every((text) => base.includes(text));
+  const blind = !(task.needs ?? []).every((text) => role.includes(text) || prefix.includes(text));
+  // A panel task runs once per member, each with its own specialty (the per-seat delta).
+  const deltas = task.panel?.map((specialty) => specialtyAddendum(specialty)) ?? [""];
+  const bases = deltas.map((delta) =>
+    script.promptOrder === "legacy"
+      ? [prefix, delta, role].filter(Boolean).join("\n\n")
+      : assembleSeatPrompt({ static: [prefix], shared: [role], delta: [delta] }).text,
+  );
   // The seat reads each project file in its own tool turn; extra turns re-read the first one.
   const reads = Object.values(task.files);
   const extra = reads.length ? Array.from({ length: script.extraTurns ?? 0 }, () => reads[0]!) : [];
-  let history = "";
-  let previous = "";
-  const call = (prompt: string, output: string) => {
-    emit("seat.tokens", {
-      tokensIn: estimateTokens(prompt, model),
-      tokensOut: estimateTokens(output, model),
-      // The previous call (prompt + reply) is a prefix of this one, so a cache serves it.
-      cachedTokens: previous && !script.unstablePrefix ? estimateTokens(previous, model) : 0,
-    });
-    previous = prompt + output;
-  };
-
-  for (const file of [...reads, ...extra]) {
-    call(base + history, STEP);
-    history += STEP + file.slice(0, Math.round(file.length * contextScale));
-  }
   const u = noise(`${task.id}:${run}`);
-  let output = mockReply(task, script, u, blind);
-  call(base + history, output);
-  history += output;
   const files = { ...task.files, ...task.mock.edits };
-  let success = task.check({ output, files });
-  for (let followUp = 1; !success && followUp <= MAX_FOLLOW_UPS; followUp += 1) {
-    emit("seat.retry", { attempt: followUp + 1, maxAttempts: MAX_FOLLOW_UPS + 1, delayMs: 0, reason: "reply failed the task check" });
-    output = mockReply(task, { ...script, dropHandoff: false }, u, blind);
-    call(base + history + FOLLOW_UP, output);
-    history += FOLLOW_UP + output;
-    success = task.check({ output, files });
+  /** The first member's first prompt: what a warm cache holds when the next member starts. */
+  let first = "";
+  let success = true;
+  for (const base of bases) {
+    let history = "";
+    let previous = "";
+    const call = (prompt: string, output: string) => {
+      emit("seat.tokens", {
+        tokensIn: estimateTokens(prompt, model),
+        tokensOut: estimateTokens(output, model),
+        // The previous call (prompt + reply) is a prefix of this one, so a cache serves it; a later
+        // panel member's first call gets the prefix it shares with the first member's.
+        cachedTokens: script.unstablePrefix ? 0 : estimateTokens(previous || commonPrefix(prompt, first), model),
+      });
+      previous = prompt + output;
+      first ||= prompt;
+    };
+
+    for (const file of [...reads, ...extra]) {
+      call(base + history, STEP);
+      history += STEP + file.slice(0, Math.round(file.length * contextScale));
+    }
+    let output = mockReply(task, script, u, blind);
+    call(base + history, output);
+    history += output;
+    let passed = task.check({ output, files });
+    for (let followUp = 1; !passed && followUp <= MAX_FOLLOW_UPS; followUp += 1) {
+      emit("seat.retry", { attempt: followUp + 1, maxAttempts: MAX_FOLLOW_UPS + 1, delayMs: 0, reason: "reply failed the task check" });
+      output = mockReply(task, { ...script, dropHandoff: false }, u, blind);
+      call(base + history + FOLLOW_UP, output);
+      history += FOLLOW_UP + output;
+      passed = task.check({ output, files });
+    }
+    success &&= passed;
   }
 
   const usage = ledger.snapshot();
@@ -566,8 +604,8 @@ export function gateVariant(report: BenchReport, name: string): { pass: boolean;
     }
   } else {
     // The variant may cost what its own extra always-on text costs on every call (+1 per call for the joining
-    // newlines), nothing more. Note: the mock adds that text itself; it does not call the engine's prompt
-    // assembly yet, so TE-03/04/05 must hook their packer, summaries and cache order into mockAttempt.
+    // newlines), nothing more. Note: the mock orders prompts with the engine's `assembleSeatPrompt` (TE-05);
+    // TE-03/04 must still hook their packer and summaries into mockAttempt.
     const successes = base.successRate * report.tasks.length;
     const extraPerCall = Math.max(0, variant.alwaysOnTokens - base.alwaysOnTokens) + 1;
     const allowance = successes > 0 ? (extraPerCall * base.calls) / successes : 0;

@@ -129,6 +129,9 @@ export class PrintCliExecutor implements Executor {
   }
 
   async run(task: ExecutorTask): Promise<ExecutorResult> {
+    if (task.newSession) {
+      this.sessionId = undefined;
+    }
     return this.execute(task.taskId, task.projectPath, task.prompt, {
       isContinuation: false,
     });
