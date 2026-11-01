@@ -9,6 +9,7 @@ import { ReviewStatus } from "../core/types.js";
 import type { EngineEventDraft } from "#assentor/protocol/events.js";
 import { extractJsonCandidate } from "#assentor/protocol/parse.js";
 import type { Executor, ExecutorResult } from "../providers/executors/types.js";
+import { runFollowUp } from "../providers/executors/follow-up.js";
 import { runVerificationGates, type RunVerificationCommand } from "../review/verification-gates.js";
 import { redactSecrets } from "../security/redact.js";
 import { runShellCommand } from "../process/run-shell.js";
@@ -283,6 +284,11 @@ function attackerPrompt(goal: string, round: number, maxRounds: number, patterns
     .join("\n\n");
 }
 
+/** What a fix attempt hears after failing the checks: the tail of a fresh prompt, or the whole follow-up turn. */
+function retryText(failure: string): string {
+  return `Your previous attempt failed the checks:\n${dataBlock("gate-output", failure)}`;
+}
+
 function builderPrompt(goal: string, round: number, attacks: readonly Attack[], locked: readonly string[], failure?: string): string {
   const report = attacks
     .map((a, i) =>
@@ -302,7 +308,7 @@ function builderPrompt(goal: string, round: number, attacks: readonly Attack[], 
     DATA_RULE,
     `Do not modify, delete or rename these locked test files: ${locked.length > 0 ? locked.join(", ") : "(none)"}. You may add tests of your own.`,
     dataBlock("attacker-report", report),
-    failure ? `Your previous attempt failed the checks:\n${dataBlock("gate-output", failure)}` : "",
+    failure ? retryText(failure) : "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -385,8 +391,8 @@ async function runRedteam(input: ModeControllerInput, extras: RedteamExtras): Pr
   const seatEvent = (seat: Seat, type: "seat.status" | "seat.done" | "seat.error", data: Record<string, unknown>) =>
     emit({ type, sessionId, seatId: seat.id, data } as EngineEventDraft);
 
-  /** One seat turn through the scheduler; always ends with seat.done or seat.error. */
-  async function runSeat(seat: Seat, executor: Executor, taskId: string, prompt: string, cwd: string, timeoutMs?: number): Promise<ExecutorResult> {
+  /** One seat turn through the scheduler; always ends with seat.done or seat.error. With `previous`, a follow-up turn: `followUp` alone into the seat's session when it can continue (`runFollowUp`). */
+  async function runSeat(seat: Seat, executor: Executor, taskId: string, prompt: string, cwd: string, timeoutMs?: number, previous?: ExecutorResult, followUp = ""): Promise<ExecutorResult> {
     seatEvent(seat, "seat.status", { status: seat.permissions === "edit" ? "editing" : "thinking", detail: "redteam" });
     const outcome = await deps.scheduler.run(
       seat,
@@ -395,7 +401,7 @@ async function runRedteam(input: ModeControllerInput, extras: RedteamExtras): Pr
         if (job.signal.aborted) stop();
         else job.signal.addEventListener("abort", stop, { once: true });
         try {
-          return await executor.run({ taskId, projectPath: cwd, contract, prompt });
+          return await runFollowUp(executor, { taskId, projectPath: cwd, contract, prompt }, previous, followUp);
         } finally {
           job.signal.removeEventListener("abort", stop);
         }
@@ -568,9 +574,10 @@ async function runRedteam(input: ModeControllerInput, extras: RedteamExtras): Pr
       // 4. builder fixes; tests and the test runner locked; the checks decide.
       let failure: string | undefined;
       let fixed = false;
+      let previous: ExecutorResult | undefined;
       for (let attempt = 1; attempt <= settings.fixAttempts && !fixed; attempt += 1) {
         checkAbort();
-        await runSeat(builder, builderExecutor, `${sessionId}.fix-${round}-${attempt}`, builderPrompt(goal, round, live, [...lockedContent.keys()], failure), root, settings.builderTimeoutMs);
+        previous = await runSeat(builder, builderExecutor, `${sessionId}.fix-${round}-${attempt}`, builderPrompt(goal, round, live, [...lockedContent.keys()], failure), root, settings.builderTimeoutMs, previous, failure ? retryText(failure) : "");
         const tampered: string[] = [];
         for (const [file, content] of lockedContent) {
           if (await hasSymlink(root, file)) {

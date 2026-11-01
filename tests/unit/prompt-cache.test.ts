@@ -3,7 +3,6 @@ import type { EngineEvent } from "../../packages/protocol/src/events.js";
 import {
   CliReviewer,
   GeminiProvider,
-  OpenAICompatibleProvider,
   OpenAICompatibleReviewer,
   PanelReviewer,
   SeatEventSink,
@@ -15,7 +14,10 @@ import {
   type Reviewer,
   type ReviewerTurnResult,
 } from "../../packages/engine/src/index.js";
+import { OpenAICompatibleProvider } from "../../packages/engine/src/providers/ai/openai-compatible.js";
 import { unwrapClaudeJson } from "../../packages/engine/src/providers/reviewers/cli/index.js";
+import { runFollowUp } from "../../packages/engine/src/providers/executors/follow-up.js";
+import type { Executor } from "../../packages/engine/src/providers/executors/types.js";
 
 const key = { id: "k", provider: "openai", name: "test", secret: "sk-test" };
 
@@ -187,5 +189,43 @@ describe("reviewer token reports reach seat.tokens (TE-05)", () => {
     });
     const turn = await panel.review(reviewInput());
     expect(turn.memberUsage).toEqual([{ seatId: "review.a", usage }]);
+  });
+});
+
+describe("follow-up turns continue the CLI session (TE-05)", () => {
+  function fakeExecutor(canContinueSession: boolean) {
+    const calls: Array<{ kind: "run" | "continue"; prompt?: string; sessionId?: string; message?: unknown }> = [];
+    const executor: Executor = {
+      name: "fake",
+      capabilities: () => ({ canEditFiles: true, canRunCommands: true, canContinueSession, supportsScreenshots: false }),
+      run: async (task) => (calls.push({ kind: "run", prompt: task.prompt }), { status: "completed", summary: "ok", sessionId: "s-2" }),
+      continue: async (input) => (
+        calls.push({ kind: "continue", sessionId: input.sessionId, message: input.messages[0]?.content }),
+        { status: "completed", summary: "ok", sessionId: "s-2" }
+      ),
+      cancel: async () => undefined,
+    };
+    return { calls, executor };
+  }
+  const task = { taskId: "t", projectPath: "/tmp/p", contract: createEmptyContract("fix it"), prompt: "FULL PROMPT\n\nretry: tests fail" };
+  const done = { status: "completed" as const, summary: "", sessionId: "s-1" };
+
+  it("sends only the follow-up into the previous session when the executor can continue", async () => {
+    const { calls, executor } = fakeExecutor(true);
+    await runFollowUp(executor, task, done, "retry: tests fail");
+    expect(calls).toEqual([{ kind: "continue", sessionId: "s-1", message: { message: "retry: tests fail", code: "follow_up" } }]);
+  });
+
+  it("runs the full prompt fresh on a first turn, without a session, a failed turn or continue support", async () => {
+    for (const [canContinue, previous] of [
+      [true, undefined],
+      [true, { ...done, sessionId: undefined }],
+      [true, { ...done, status: "failed" as const }],
+      [false, done],
+    ] as const) {
+      const { calls, executor } = fakeExecutor(canContinue);
+      await runFollowUp(executor, task, previous, "retry: tests fail");
+      expect(calls).toEqual([{ kind: "run", prompt: task.prompt }]);
+    }
   });
 });

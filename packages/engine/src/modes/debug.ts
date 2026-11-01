@@ -8,6 +8,7 @@ import { ReviewStatus } from "../core/types.js";
 import type { EngineEventDraft } from "#assentor/protocol/events.js";
 import { extractJsonCandidate } from "#assentor/protocol/parse.js";
 import type { Executor, ExecutorResult } from "../providers/executors/types.js";
+import { runFollowUp } from "../providers/executors/follow-up.js";
 import { runVerificationGates, type RunVerificationCommand } from "../review/verification-gates.js";
 import { runShellCommand } from "../process/run-shell.js";
 import { redactSecrets } from "../security/redact.js";
@@ -200,6 +201,11 @@ function hypothesisPrompt(goal: string, evidence: string, round: number, maxRoun
     .join("\n\n");
 }
 
+/** What a fix attempt hears after failing the checks: the tail of a fresh prompt, or the whole follow-up turn. */
+function retryText(failure: string): string {
+  return `Your previous attempt failed the checks:\n${dataBlock("gate-output", failure)}`;
+}
+
 function fixPrompt(goal: string, evidence: string, winner: Finding, failure?: string): string {
   return [
     `Goal:\n${goal}`,
@@ -208,7 +214,7 @@ function fixPrompt(goal: string, evidence: string, winner: Finding, failure?: st
     dataBlock("evidence", evidence),
     dataBlock("hypothesis-report", `Cause: ${winner.hypothesis}\nExperiment: ${winner.experiment}\nEvidence: ${winner.evidence}`),
     `You work in a clean checkout. Do not add logging or other temporary instrumentation; any line containing ${DEBUG_MARKER} will be rejected.`,
-    failure ? `Your previous attempt failed the checks:\n${dataBlock("gate-output", failure)}` : "",
+    failure ? retryText(failure) : "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -319,8 +325,8 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
   const seatEvent = (seat: Seat, type: "seat.status" | "seat.done" | "seat.error", data: Record<string, unknown>) =>
     emit({ type, sessionId, seatId: seat.id, data } as EngineEventDraft);
 
-  /** One seat turn through the scheduler; always ends with seat.done or seat.error. */
-  async function runSeat(seat: Seat, executor: Executor, taskId: string, detail: string, prompt: string, cwd: string, timeoutMs?: number): Promise<ExecutorResult> {
+  /** One seat turn through the scheduler; always ends with seat.done or seat.error. With `previous`, a follow-up turn: `followUp` alone into the seat's session when it can continue (`runFollowUp`). */
+  async function runSeat(seat: Seat, executor: Executor, taskId: string, detail: string, prompt: string, cwd: string, timeoutMs?: number, previous?: ExecutorResult, followUp = ""): Promise<ExecutorResult> {
     seatEvent(seat, "seat.status", { status: "editing", detail });
     const outcome = await deps.scheduler.run(
       seat,
@@ -329,7 +335,7 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
         if (job.signal.aborted) stop();
         else job.signal.addEventListener("abort", stop, { once: true });
         try {
-          return await executor.run({ taskId, projectPath: cwd, contract, prompt });
+          return await runFollowUp(executor, { taskId, projectPath: cwd, contract, prompt }, previous, followUp);
         } finally {
           job.signal.removeEventListener("abort", stop);
         }
@@ -478,9 +484,10 @@ async function runDebug(input: ModeControllerInput, extras: DebugExtras): Promis
     };
     let failure: string | undefined;
     let reviewed: WorktreeDiff | undefined;
+    let previous: ExecutorResult | undefined;
     for (let attempt = 1; attempt <= settings.fixAttempts && !reviewed; attempt += 1) {
       checkAbort();
-      await runSeat(fixer, fixExecutor, `${sessionId}.fix-${attempt}`, "debug fix", fixPrompt(goal, evidence, winner, failure), root, settings.fixTimeoutMs);
+      previous = await runSeat(fixer, fixExecutor, `${sessionId}.fix-${attempt}`, "debug fix", fixPrompt(goal, evidence, winner, failure), root, settings.fixTimeoutMs, previous, failure ? retryText(failure) : "");
       // The diff is taken now, before the repro and the gates run: what they leave behind is not part of the reviewed fix.
       const snapshot = await manager.diff(fixKey);
       const left = instrumentationLines(snapshot.diff);
