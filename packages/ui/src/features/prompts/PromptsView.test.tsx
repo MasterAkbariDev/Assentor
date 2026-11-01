@@ -103,6 +103,27 @@ describe("PromptsView", () => {
     expect((await findByText("Save")).getAttribute("aria-describedby")).toBeTruthy();
   });
 
+  it("drops extends on load (no duplicated parent body), says so, and defaults the scope to the prompt's own", async () => {
+    const transport = mockTransport({
+      handlers: {
+        "prompt.list": () => ({ prompts: [summary("kid", "project")], errors: [] }),
+        "prompt.get": () => ({ ...detail("kid", "project"), frontMatter: { id: "kid", role: "reviewer", title: "Title kid", version: 1, extends: "alpha" } }),
+        "prompt.validate": () => ({ ok: true, problems: [], variables: [], undeclared: [] }),
+        "prompt.save": (p) => ({ id: "kid", scope: p!.scope }),
+      },
+    });
+    const { findByText, findByLabelText } = renderWithStore(<PromptsView />, createEngineStore(), transport);
+    fireEvent.click(await findByText("Title kid"));
+    expect(await findByText(/extends alpha\. Saving writes a full copy/)).toBeTruthy();
+    expect(((await findByLabelText("Extends (prompt id)")) as HTMLInputElement).value).toBe("");
+    expect(((await findByLabelText("Save to")) as HTMLSelectElement).value).toBe("project");
+    expect(((await findByLabelText("Body")) as HTMLTextAreaElement).maxLength).toBe(256 * 1024);
+    fireEvent.click(await findByText("Save"));
+    await findByText("Saved kid to the project prompts.");
+    const saved = transport.calls.find((c) => c.method === "prompt.save")!.params as { frontMatter: Record<string, unknown> };
+    expect(saved.frontMatter).not.toHaveProperty("extends");
+  });
+
   it("offers Reset to built-in only as a disabled control with the reason", async () => {
     const { findByText } = setup();
     fireEvent.click(await findByText("Title beta"));

@@ -2,7 +2,7 @@ import path from "node:path";
 import { loadAssentorConfig } from "../config/load.js";
 import { userAssentorDir } from "../config/paths.js";
 import { resolveTeams } from "../config/teams.js";
-import { expandSeatSpecs, type Seat } from "#assentor/protocol/seats.js";
+import { expandSeatSpecs, type Seat, type Team } from "#assentor/protocol/seats.js";
 import { CliModelCatalog } from "../models/cli-catalog.js";
 import { PromptLibrary, promptLayerDirs } from "../prompts/library.js";
 import { RpcErrorCode } from "#assentor/protocol/rpc.js";
@@ -90,11 +90,13 @@ export function registerLibraryMethods(server: RpcServer, options: LibraryMethod
         description?: string;
         source: "config" | "legacy-review";
         seats: ReturnType<typeof publicSeats>;
+        spec?: Team;
       }> = Object.entries(config.teams).map(([name, team]) => ({
         name,
         ...(team.description ? { description: team.description } : {}),
         source: "config",
         seats: publicSeats(expandSeatSpecs(team.seats, { teamName: name })),
+        spec: team,
       }));
 
       // Without modes.review, the review team is the legacy one built from config.reviewers.

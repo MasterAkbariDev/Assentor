@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { RpcRemoteError } from "#assentor/protocol/rpc-client.js";
 import type { RpcResult } from "#assentor/protocol/rpc.js";
 import { SEAT_MAX_COUNT, SEAT_PROVIDERS } from "#assentor/protocol/seats.js";
@@ -6,7 +6,8 @@ import { useCanWrite, useRpc } from "../../transport/context.js";
 import { errorText, Outcome, useDebounced, useUnsavedGuard, WriteNote } from "../prompts/shared.js";
 
 type TeamList = RpcResult<"team.list">;
-type Seats = TeamList["teams"][number]["seats"];
+type TeamEntry = TeamList["teams"][number];
+type SpecSeat = NonNullable<TeamEntry["spec"]>["seats"][number];
 
 interface Row {
   key: number;
@@ -16,6 +17,8 @@ interface Row {
   role: string;
   count: number;
   permissions: "read-only" | "edit";
+  /** Spec fields the table has no column for (promptRef, name, budget); passed through unchanged. */
+  extra: Pick<SpecSeat, "promptRef" | "name" | "budget">;
 }
 interface Draft {
   name: string;
@@ -23,30 +26,26 @@ interface Draft {
   seats: Row[];
 }
 
+const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const clamp = (n: number) => Math.min(SEAT_MAX_COUNT, Math.max(1, Math.round(n) || 1));
 let nextKey = 1;
-const blankRow = (): Row => ({ key: nextKey++, provider: "mock", transport: "", model: "AUTO", role: "general", count: 1, permissions: "read-only" });
+const blankRow = (): Row => ({ key: nextKey++, provider: "mock", transport: "", model: "AUTO", role: "general", count: 1, permissions: "read-only", extra: {} });
 
-/**
- * `team.list` returns expanded seats, so equal neighbours are folded back into one row with a count.
- * shortcut: promptRef, seat name and budget are not in the list result, so saving an edited team drops them.
- */
-function rowsOf(seats: Seats): Row[] {
-  const rows: Row[] = [];
-  for (const s of seats) {
-    const last = rows.at(-1);
-    if (last && last.provider === s.provider && last.transport === s.transport && last.model === s.model && last.role === s.role && last.permissions === s.permissions) {
-      last.count = clamp(last.count + 1);
-    } else {
-      rows.push({ key: nextKey++, provider: s.provider, transport: s.transport, model: s.model, role: s.role, count: 1, permissions: s.permissions });
-    }
+/** One row per saved spec. A team without a spec (legacy-review, derived from config.reviewers) shows its seats and is read-only. */
+function rowsOf(team: TeamEntry): Row[] {
+  if (team.spec) {
+    return team.spec.seats.map(({ provider, transport, model, role, count, permissions, promptRef, name, budget }) => ({
+      key: nextKey++, provider, transport: transport ?? "", model, role, count, permissions,
+      extra: { ...(promptRef ? { promptRef } : {}), ...(name ? { name } : {}), ...(budget ? { budget } : {}) },
+    }));
   }
-  return rows;
+  return team.seats.map((s) => ({ key: nextKey++, provider: s.provider, transport: s.transport, model: s.model, role: s.role, count: 1, permissions: s.permissions, extra: {} }));
 }
 
 const teamOf = (d: Draft) => ({
   ...(d.description.trim() ? { description: d.description.trim() } : {}),
   seats: d.seats.map((r) => ({
+    ...r.extra,
     provider: r.provider, ...(r.transport ? { transport: r.transport } : {}), model: r.model, role: r.role, count: r.count, permissions: r.permissions,
   })),
 });
@@ -65,7 +64,7 @@ export function TeamsView() {
   const [listError, setListError] = useState<string>();
   const [roles, setRoles] = useState<string[]>([]);
   const [models, setModels] = useState<Record<string, string[]>>({});
-  const [loaded, setLoaded] = useState<{ draft: Draft; base: Draft; isNew: boolean; source?: string }>();
+  const [loaded, setLoaded] = useState<{ draft: Draft; base: Draft; isNew: boolean; source?: string; readOnly?: boolean }>();
   const [outcome, setOutcome] = useState<{ kind: "ok" | "error"; text: string; refs?: string[] }>();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const dirty = !!loaded && JSON.stringify(loaded.draft) !== JSON.stringify(loaded.base);
@@ -98,8 +97,8 @@ export function TeamsView() {
     if (!confirmLeave()) return;
     const team = data?.teams.find((t) => t.name === name);
     if (!team) return;
-    const draft: Draft = { name, description: team.description ?? "", seats: rowsOf(team.seats) };
-    setLoaded({ draft, base: draft, isNew: false, source: team.source });
+    const draft: Draft = { name, description: team.description ?? "", seats: rowsOf(team) };
+    setLoaded({ draft, base: draft, isNew: false, source: team.source, readOnly: !team.spec });
     setOutcome(undefined);
     setConfirmDelete(false);
   };
@@ -175,7 +174,7 @@ export function TeamsView() {
           ) : null}
           {!loaded ? <p className="empty">Pick a team to read or edit it.</p> : (
             <TeamEditor
-              uid={uid} draft={loaded.draft} isNew={loaded.isNew} source={loaded.source} dirty={dirty} roles={roles} models={models}
+              uid={uid} draft={loaded.draft} isNew={loaded.isNew} source={loaded.source} readOnly={loaded.readOnly} dirty={dirty} roles={roles} models={models}
               edit={edit} editRow={editRow} noteId={noteId}
               onSave={() => void save()}
               confirmDelete={confirmDelete} setConfirmDelete={setConfirmDelete} onDelete={() => void remove()}
@@ -188,12 +187,12 @@ export function TeamsView() {
 }
 
 interface EditorProps {
-  uid: string; draft: Draft; isNew: boolean; source?: string; dirty: boolean; roles: string[]; models: Record<string, string[]>;
+  uid: string; draft: Draft; isNew: boolean; source?: string; readOnly?: boolean; dirty: boolean; roles: string[]; models: Record<string, string[]>;
   edit(p: Partial<Draft>): void; editRow(key: number, p: Partial<Row>): void; noteId: string;
   onSave(): void; confirmDelete: boolean; setConfirmDelete(v: boolean): void; onDelete(): void;
 }
 
-function TeamEditor({ uid, draft, isNew, source, dirty, roles, models, edit, editRow, noteId, onSave, confirmDelete, setConfirmDelete, onDelete }: EditorProps) {
+function TeamEditor({ uid, draft, isNew, source, readOnly, dirty, roles, models, edit, editRow, noteId, onSave, confirmDelete, setConfirmDelete, onDelete }: EditorProps) {
   const rpc = useRpc();
   const canWrite = useCanWrite();
   const why = canWrite ? undefined : noteId;
@@ -208,17 +207,37 @@ function TeamEditor({ uid, draft, isNew, source, dirty, roles, models, edit, edi
     return () => void (live = false);
   }, [rpc, settled]);
 
+  const nameError = isNew && draft.name.trim() !== "" && !KEBAB.test(draft.name.trim()) ? "Use a kebab-case name: lowercase letters and digits separated by single hyphens (max 64)." : undefined;
+  const nameBlank = isNew && draft.name.trim() === "";
+  const saveBlock = nameError ? `${uid}-name-err` : nameBlank ? `${uid}-name-hint` : why;
+  // Keep keyboard focus on the button that replaces the one just pressed.
+  const deleteRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const wasConfirming = useRef(false);
+  useEffect(() => {
+    if (confirmDelete) confirmRef.current?.focus();
+    else if (wasConfirming.current) deleteRef.current?.focus();
+    wasConfirming.current = confirmDelete;
+  }, [confirmDelete]);
   const roleOptions = (current: string) => (roles.includes(current) ? roles : [current, ...roles]);
   return (
     <form className="lib-editor" onSubmit={(e) => e.preventDefault()} aria-label={isNew ? "New team" : `Team ${draft.name}`}>
+      {readOnly ? (
+        <p className="notice warn" role="note">This team is derived from <code>config.reviewers</code> and cannot be edited here. Define a team in the config to change it.</p>
+      ) : null}
+      <fieldset className="lib-readonly" disabled={readOnly}>
       <h2 className="lib-title">
         {draft.name || "New team"} {source ? <span className="badge">{source}</span> : null}
         {dirty ? <span className="badge badge-dirty">unsaved changes</span> : null}
       </h2>
       <div className="lib-field">
         <label htmlFor={`${uid}-name`}>Name</label>
-        <input id={`${uid}-name`} type="text" value={draft.name} readOnly={!isNew} onChange={(e) => edit({ name: e.target.value })} />
-        <small>kebab-case, e.g. review-panel</small>
+        <input
+          id={`${uid}-name`} type="text" value={draft.name} readOnly={!isNew} maxLength={64}
+          aria-invalid={nameError ? true : undefined} aria-describedby={nameError ? `${uid}-name-err` : `${uid}-name-hint`}
+          onChange={(e) => edit({ name: e.target.value })}
+        />
+        {nameError ? <small id={`${uid}-name-err`} role="alert" className="lib-name-err">{nameError}</small> : <small id={`${uid}-name-hint`}>kebab-case, e.g. review-panel</small>}
       </div>
       <div className="lib-field">
         <label htmlFor={`${uid}-desc`}>Description</label>
@@ -293,18 +312,19 @@ function TeamEditor({ uid, draft, isNew, source, dirty, roles, models, edit, edi
       </div>
 
       <div className="lib-actions">
-        <button type="button" onClick={onSave} disabled={!canWrite} aria-describedby={why}>Save</button>
+        <button type="button" onClick={onSave} disabled={!canWrite || !!nameError || nameBlank} aria-describedby={saveBlock}>Save</button>
         {!isNew ? (
           confirmDelete ? (
             <>
-              <button type="button" onClick={onDelete} disabled={!canWrite} aria-describedby={why}>Confirm delete {draft.name}</button>
+              <button ref={confirmRef} type="button" onClick={onDelete} disabled={!canWrite} aria-describedby={why}>Confirm delete {draft.name}</button>
               <button type="button" onClick={() => setConfirmDelete(false)}>Cancel</button>
             </>
           ) : (
-            <button type="button" onClick={() => setConfirmDelete(true)} disabled={!canWrite} aria-describedby={why}>Delete</button>
+            <button ref={deleteRef} type="button" onClick={() => setConfirmDelete(true)} disabled={!canWrite} aria-describedby={why}>Delete</button>
           )
         ) : null}
       </div>
+      </fieldset>
     </form>
   );
 }

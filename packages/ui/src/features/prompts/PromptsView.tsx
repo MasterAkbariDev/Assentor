@@ -46,7 +46,8 @@ function draftOf(d: Detail): Draft {
     id: d.id, title: d.title, role: d.role, description: str("description"), icon: str("icon"),
     permissions: str("permissions", "read-only"), output: str("output", "text"),
     version: f.version === undefined ? "1" : String(f.version),
-    variables: csv(f.variables), recommendedModels: csv(f.recommendedModels), extends: str("extends"),
+    // The body from the engine is the full text; keeping `extends` would save the parent's body twice.
+    variables: csv(f.variables), recommendedModels: csv(f.recommendedModels), extends: "",
     body: d.body,
     extra: Object.fromEntries(Object.entries(f).filter(([k]) => !KNOWN.includes(k))),
   };
@@ -96,6 +97,7 @@ export function PromptsView() {
       const detail = await rpc.call("prompt.get", { id });
       const draft = draftOf(detail);
       setLoaded({ detail, draft, base: draft });
+      setScope(detail.source === "project" ? "project" : "user");
       setForkId("");
     } catch (e) {
       setOutcome({ kind: "error", text: errorText(e) });
@@ -272,6 +274,11 @@ function Editor({ uid, isNew, detail, draft, dirty, set, scope, setScope, forkId
         {draft.title || draft.id || "New prompt"} {detail ? <SourceBadge source={detail.source} /> : null}
         {dirty ? <span className="badge badge-dirty">unsaved changes</span> : null}
       </h2>
+      {typeof detail?.frontMatter.extends === "string" ? (
+        <p className="notice warn" role="note">
+          This prompt extends {detail.frontMatter.extends}. Saving writes a full copy of the text without the extends link, as Fork does.
+        </p>
+      ) : null}
       <fieldset className="lib-fields">
         <legend>Front-matter</legend>
         {field("id", "Id", { readOnly: !isNew, hint: "kebab-case; the file is <id>.md" })}
@@ -288,7 +295,7 @@ function Editor({ uid, isNew, detail, draft, dirty, set, scope, setScope, forkId
       </fieldset>
       <div className="lib-field">
         <label htmlFor={`${uid}-body`}>Body</label>
-        <textarea id={`${uid}-body`} className="lib-body" rows={16} spellCheck={false} value={draft.body} onChange={(e) => set({ body: e.target.value })} />
+        <textarea id={`${uid}-body`} className="lib-body" rows={16} maxLength={256 * 1024} spellCheck={false} value={draft.body} onChange={(e) => set({ body: e.target.value })} />
       </div>
 
       <div className="lib-validation" aria-live="polite">

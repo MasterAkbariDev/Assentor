@@ -264,6 +264,8 @@ export const RpcMethods = {
           description: z.string().optional(),
           source: z.enum(["config", "legacy-review"]),
           seats: z.array(TeamSeatSchema),
+          /** The saved definition (counts, promptRef, name, budget) for editing; absent for `legacy-review`. */
+          spec: TeamSchema.optional(),
         }),
       ),
       /** Team names set in `modes.review` and `modes.negotiate`. */

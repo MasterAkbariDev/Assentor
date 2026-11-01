@@ -51,7 +51,7 @@ Default-deny. A connection runs a method whose `access` is not exactly `"read"` 
 |---|---|---|
 | `prompt.list` | none | `prompts` (id, title, role, description?, source `builtin`/`user`/`project`, `overridden`) and `errors` (file relative to its layer directory, message) |
 | `prompt.get` | `{ id }` | id, title, role, source, `frontMatter`, `body`. Unknown id: `InvalidParams` |
-| `team.list` | none | `teams` (config teams expanded to seats, plus `legacy-review` when `modes.review` is unset) and `modes` (team names) |
+| `team.list` | none | `teams` (config teams expanded to seats, each with its saved `spec` for editing; plus `legacy-review` when `modes.review` is unset) and `modes` (team names) |
 | `models.catalog` | `{ provider }` | `entries` (id, label, source) from the model cache only; never runs discovery |
 
 The library methods' results never contain absolute paths, key ids or vault data. (`settings.get` lists key ids by design, as `{ id, provider, name, healthy }`, read without touching the vault.)

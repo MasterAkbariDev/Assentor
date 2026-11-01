@@ -682,3 +682,5 @@ button.lead-task-open:focus-visible { outline: 2px solid var(--accent); outline-
 .lib-arrow { display: block; text-align: center; color: var(--muted); }
 .lib-stage-card { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
 .lib button:focus-visible, .lib input:focus-visible, .lib select:focus-visible, .lib textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lib-readonly { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: 12px; }
+.lib-name-err { color: var(--error) !important; }
