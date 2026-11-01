@@ -3,6 +3,7 @@ import type { SeatState } from "#assentor/ui-shared/status.js";
 import { useEngine } from "../../store/context.js";
 import { isLiveSeat } from "../../store/selectors.js";
 import { useNow } from "../session-board/useNow.js";
+import { SeatActions } from "../controls/SeatActions.js";
 import { SeatActivity } from "./SeatActivity.js";
 import { SeatInfo } from "./SeatInfo.js";
 import { SeatOutput } from "./SeatOutput.js";
@@ -102,6 +103,7 @@ function SeatDrawerPanel({ seat }: { seat: SeatState }) {
           Close
         </button>
       </div>
+      <SeatActions seat={seat} />
       <div role="tablist" aria-label="Seat details" className="seat-drawer-tabs" onKeyDown={onTabKeyDown}>
         {TABS.map((t, i) => {
           const selected = t.id === tab;

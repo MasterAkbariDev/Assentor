@@ -3,14 +3,15 @@ import { LEAD_STAGES, LEAD_STAGE_LABELS, leadStages, type LeadStage, type LeadTa
 import { STATUS_META, type SeatState } from "#assentor/ui-shared/status.js";
 import { useEngine } from "../../store/context.js";
 import { selectLeadBoard, selectSeats } from "../../store/selectors.js";
+import { ApprovalsPanel } from "../controls/ApprovalsPanel.js";
 import { LeadLog } from "./LeadLog.js";
 import { LeadOrgChart } from "./LeadOrgChart.js";
 
 /**
  * The lead team board of the selected run (T04-17, watch-only): task stages,
  * the org chart and the lead log. Shows nothing unless the run is in lead mode.
- * Read-only: approve, override, pin and pause need write RPCs the server does
- * not have yet. Cards open the owner's seat drawer.
+ * Write controls: the integration approval (`session.approve`). Override, pin and
+ * pause need RPCs the engine does not have. Cards open the owner's seat drawer.
  */
 export function LeadBoard() {
   const lead = useEngine(selectLeadBoard);
@@ -26,6 +27,7 @@ export function LeadBoard() {
         Team board
         {lead.turn > 0 ? <span className="lead-turn"> · turn {lead.turn}</span> : null}
       </h2>
+      <ApprovalsPanel scope="integration" />
       <div className="lead-stages">
         {LEAD_STAGES.map((stage) => (
           <LeadStageColumn key={stage} stage={stage} tasks={stages[stage]} seats={seats} onOpen={openSeat} />

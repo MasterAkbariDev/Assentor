@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useEngine } from "../../store/context.js";
-import { groupSeats, isLiveSeat, selectSeats } from "../../store/selectors.js";
+import { groupSeats, isLiveSeat, selectLeadBoard, selectSeats } from "../../store/selectors.js";
+import { ApprovalsPanel } from "../controls/ApprovalsPanel.js";
 import { SeatCard } from "./SeatCard.js";
 import { useNow } from "./useNow.js";
 
@@ -16,11 +17,13 @@ export function SessionBoard() {
   const seats = useEngine(selectSeats);
   const openSeat = useEngine((s) => s.openSeat);
   const groups = useMemo(() => groupSeats(seats ?? {}), [seats]);
+  const isLead = useEngine((s) => selectLeadBoard(s) !== undefined);
   const live = Object.values(seats ?? {}).some(isLiveSeat);
   const now = useNow(TICK_MS, live);
 
   return (
     <div className="seat-board">
+      <ApprovalsPanel scope={isLead ? "other" : "all"} />
       {groups.map((group) => (
         <section key={group.key} className="seat-group" aria-label={group.title}>
           <h2 className="seat-group-title">

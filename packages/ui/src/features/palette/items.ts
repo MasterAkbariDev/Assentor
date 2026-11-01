@@ -1,11 +1,15 @@
-import type { SessionSummary } from "#assentor/protocol/rpc.js";
+import type { RpcMethodName, SessionSummary } from "#assentor/protocol/rpc.js";
+import { parseCommand, type Command } from "./commands.js";
 
-/** Why a write action is listed but cannot run: the server has no write RPCs yet. */
+/** Why a write action is disabled when nothing more specific is known. */
 export const WRITE_REASON = "needs write access (not in the watch-only preview)";
 
 export type PaletteAction =
   | { kind: "session"; sessionId: string }
   | { kind: "view"; selector: string }
+  | { kind: "command"; command: Command }
+  /** Put `text` in the search box: the command needs arguments. */
+  | { kind: "fill"; text: string }
   | { kind: "blocked"; reason: string };
 
 export interface PaletteItem {
@@ -26,15 +30,26 @@ export interface PaletteInput {
   hasNegotiation: boolean;
   hasLeadBoard: boolean;
   hasReview: boolean;
+  /** Why a write method can't be used now (read-only link, session not live…); undefined when it can. Default: always `WRITE_REASON`. */
+  reasonFor?: (method: RpcMethodName) => string | undefined;
+  /** The search text; a complete `/command …` adds a "Run" entry at the top. */
+  query?: string;
 }
 
-/** Actions that need write RPCs. Listed disabled so the palette shows what the full UI will do. */
-export const WRITE_ACTIONS: ReadonlyArray<{ id: string; label: string; detail: string }> = [
-  { id: "model", label: "/model <seat> <model>", detail: "Change a seat's model" },
-  { id: "pause", label: "/pause", detail: "Pause the run" },
-  { id: "inject", label: "/inject <seat> …", detail: "Send a message to a seat" },
-  { id: "approve", label: "/approve", detail: "Approve the integration" },
+/**
+ * Write actions. `method` is the RPC behind it (its reason comes from `reasonFor`); `fill` is what
+ * selecting it puts in the search box when it needs arguments; `blocked` is a fixed reason (no RPC works yet).
+ */
+export const WRITE_ACTIONS: ReadonlyArray<{ id: string; label: string; detail: string; method?: RpcMethodName; fill?: string; command?: Command; blocked?: string }> = [
+  { id: "model", label: "/model <seat> <model>", detail: "Change a seat's model", method: "seat.setModel", fill: "/model " },
+  { id: "pause", label: "/pause", detail: "Pause the run", blocked: "the engine has no pause yet" },
+  { id: "inject", label: "/inject <seat> …", detail: "Send a message to a seat", blocked: "the engine can't send text to a running seat yet" },
+  { id: "approve", label: "/approve", detail: "Approve the pending approval", method: "session.approve", command: { name: "approve" } },
+  { id: "stop", label: "/stop <seat>", detail: "Stop a seat", method: "seat.stop", fill: "/stop " },
+  { id: "cancel", label: "/cancel", detail: "Cancel the session", method: "session.cancel", command: { name: "cancel" } },
 ];
+
+const COMMAND_METHOD: Record<Command["name"], RpcMethodName> = { approve: "session.approve", cancel: "session.cancel", model: "seat.setModel", stop: "seat.stop" };
 
 /** Views the UI renders, by the class of their root element. */
 export const VIEW_TARGETS: ReadonlyArray<{ label: string; selector: string; shown: "hasSeats" | "hasNegotiation" | "hasLeadBoard" | "hasReview" }> = [
@@ -66,8 +81,22 @@ export function buildPaletteItems(input: PaletteInput): PaletteItem[] {
       items.push({ id: `view:${view.selector}`, group: "View", label: view.label, action: { kind: "view", selector: view.selector } });
     }
   }
+  const reasonFor = input.reasonFor ?? (() => WRITE_REASON);
   for (const write of WRITE_ACTIONS) {
-    items.push({ id: `write:${write.id}`, group: "Action", label: write.label, detail: write.detail, action: { kind: "blocked", reason: WRITE_REASON } });
+    const reason = write.blocked ?? (write.method ? reasonFor(write.method) : WRITE_REASON);
+    const action: PaletteAction = reason
+      ? { kind: "blocked", reason }
+      : write.command
+        ? { kind: "command", command: write.command }
+        : { kind: "fill", text: write.fill ?? "" };
+    items.push({ id: `write:${write.id}`, group: "Action", label: write.label, detail: write.detail, action });
+  }
+  // A typed command is run from the top of the list; a malformed one says what is wrong.
+  const typed = input.query ? parseCommand(input.query) : undefined;
+  if (typed) {
+    const label = `Run ${input.query!.trim()}`;
+    const reason = typed.ok ? reasonFor(COMMAND_METHOD[typed.command.name]) : typed.error;
+    items.unshift({ id: "run:typed", group: "Action", label, action: reason ? { kind: "blocked", reason } : { kind: "command", command: (typed as { command: Command }).command } });
   }
   return items;
 }

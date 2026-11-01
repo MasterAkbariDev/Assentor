@@ -121,6 +121,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 
 ---
 
+> **T04-W (write controls for T04-07/08/14/17):** `claude/card-t04-w-ui-controls`, `packages/ui/src/features/controls/`: Cancel session, pending-approvals panel (Approve/Deny; integration approval on the Lead board), seat drawer Stop seat / Change model, palette `/approve` `/cancel` `/stop` `/model`. Uses only existing RPCs; `seat.stop`/`seat.setModel` show "not supported" until FU-12. Still open: `/pause`, `/inject`, Lead override/pin/pause.
+
 ### T04-07 · Session board + SeatCard
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T04-06
 

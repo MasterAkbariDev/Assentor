@@ -22,16 +22,18 @@ describe("buildPaletteItems", () => {
       "write:pause",
       "write:inject",
       "write:approve",
+      "write:stop",
+      "write:cancel",
     ]);
   });
 
   it("lists the write actions disabled: the command is the label, the reason is the action", () => {
     const writes = buildPaletteItems({ sessions, recentIds: [], ...none }).filter((i) => i.group === "Action");
-    expect(writes.map((i) => i.label)).toEqual(["/model <seat> <model>", "/pause", "/inject <seat> …", "/approve"]);
-    expect(writes.map((i) => i.detail)).toEqual(["Change a seat's model", "Pause the run", "Send a message to a seat", "Approve the integration"]);
-    for (const item of writes) {
-      expect(item.action).toEqual({ kind: "blocked", reason: WRITE_REASON });
-    }
+    expect(writes.map((i) => i.label)).toEqual(["/model <seat> <model>", "/pause", "/inject <seat> …", "/approve", "/stop <seat>", "/cancel"]);
+    expect(writes.map((i) => i.detail)).toEqual(["Change a seat's model", "Pause the run", "Send a message to a seat", "Approve the pending approval", "Stop a seat", "Cancel the session"]);
+    // Without a `reasonFor` (no write access known), the model, approve, stop and cancel actions say why; pause and inject have their own reasons.
+    expect(writes.map((i) => i.action.kind)).toEqual(Array(6).fill("blocked"));
+    expect(writes[0]!.action).toEqual({ kind: "blocked", reason: WRITE_REASON });
     expect(WRITE_REASON).toBe("needs write access (not in the watch-only preview)");
   });
 });

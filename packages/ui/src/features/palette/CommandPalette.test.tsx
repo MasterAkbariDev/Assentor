@@ -6,7 +6,7 @@ import { App } from "../../App.js";
 import { renderWithStore } from "../../test/render.js";
 import { sessionFixture } from "../../test/fixtures.js";
 import { MAX_RESULTS } from "./CommandPalette.js";
-import { WRITE_REASON } from "./items.js";
+const PAUSE_REASON = "the engine has no pause yet";
 
 afterEach(() => {
   cleanup();
@@ -193,9 +193,9 @@ describe("command palette: keyboard and results", () => {
 
     const listbox = getByRole("listbox");
     expect(within(listbox).getAllByRole("option")).toHaveLength(MAX_RESULTS);
-    // 60 runs and 4 write actions: 14 are not drawn.
+    // 60 runs and 6 write actions: 16 are not drawn.
     expect(within(getByRole("dialog", { name: "Command palette" })).getByRole("status").textContent).toBe(
-      "14 more — keep typing to narrow the results",
+      "16 more — keep typing to narrow the results",
     );
   });
 
@@ -210,7 +210,7 @@ describe("command palette: keyboard and results", () => {
 });
 
 describe("command palette: write actions and views", () => {
-  it("shows /model, /pause, /inject and /approve disabled with the reason, and does nothing on Enter", () => {
+  it("shows /pause disabled with its reason, and does nothing on Enter", () => {
     const { getByRole, store, getByText } = renderApp();
     openPalette(getByText("Old run").closest("button") as HTMLElement);
     const input = field();
@@ -218,14 +218,14 @@ describe("command palette: write actions and views", () => {
     fireEvent.change(input, { target: { value: "pause" } });
     const option = getByRole("option", { name: /Pause the run/ });
     expect(option.getAttribute("aria-disabled")).toBe("true");
-    expect(option.textContent).toContain(WRITE_REASON);
+    expect(option.textContent).toContain(PAUSE_REASON);
     const reason = document.getElementById(option.getAttribute("aria-describedby")!);
-    expect(reason?.textContent).toBe(WRITE_REASON);
+    expect(reason?.textContent).toBe(PAUSE_REASON);
 
     press(input, { key: "Enter" });
     expect(getByRole("dialog", { name: "Command palette" })).toBeTruthy();
     expect(store.getState().selectedId).toBeUndefined();
-    expect(within(getByRole("dialog", { name: "Command palette" })).getByRole("status").textContent).toContain(WRITE_REASON);
+    expect(within(getByRole("dialog", { name: "Command palette" })).getByRole("status").textContent).toContain(PAUSE_REASON);
 
     fireEvent.click(option);
     expect(getByRole("dialog", { name: "Command palette" })).toBeTruthy();
