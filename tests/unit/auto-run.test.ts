@@ -54,6 +54,17 @@ describe("assentor run --mode auto", () => {
     expect(await choose(terminal(["debug"]))).toBe("debug");
   });
 
+  it("picking solo returns solo", async () => {
+    expect(await choose(terminal(["solo"]))).toBe("solo");
+  });
+
+  it('typing "auto" is rejected and asked again', async () => {
+    const io = terminal(["auto", "y"]);
+    expect(await choose(io)).toBe("review");
+    expect(io.prompts()).toBe(2);
+    expect(io.text()).toContain("Not an available mode: auto");
+  });
+
   it("asks again after a mode that is not available, then cancel runs nothing", async () => {
     const io = terminal(["race", "n"]);
     await expect(choose(io)).rejects.toThrow("cancelled");

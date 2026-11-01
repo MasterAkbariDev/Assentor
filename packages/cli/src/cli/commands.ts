@@ -874,7 +874,9 @@ export async function runAssentorTask(input: RunAssentorInput): Promise<SoloRun 
   if (input.modeId === "auto" && getMode("auto")?.available) {
     // Not a second dispatcher: pick a mode, then run it through the normal --mode path below.
     const { chooseAutoMode } = await import("./auto-run.js");
-    return runAssentorTask({ ...input, modeId: await chooseAutoMode(input), selectedVia: "auto" });
+    const modeId = await chooseAutoMode(input);
+    if (modeId === "solo" && input.retro) console.error("Note: --retro only applies to a non-solo --mode run; ignored.");
+    return runAssentorTask({ ...input, modeId, selectedVia: "auto" });
   }
   if (input.modeId && !getMode(input.modeId)?.available) {
     throw new Error(`Mode ${input.modeId} is not available yet.`);
@@ -954,6 +956,8 @@ async function runAssentorTaskBody(
   reporter.setStyle(config.output.style);
   const profileLine = profileNote(config);
   if (profileLine) reporter.note(profileLine);
+  // solo emits no mode.selected, so the choice is only noted (no session log is open yet).
+  if (input.selectedVia === "auto") reporter.note("mode: solo (chosen by auto)");
   const pricing = await observedPricing(projectPath).catch(() => ({}));
   const estimate = estimateRun(config, {
     prompt: input.prompt,
