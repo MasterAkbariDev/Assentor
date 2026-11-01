@@ -23,7 +23,9 @@ describe("buildPaletteItems", () => {
       "nav:#/playbooks",
       "write:model",
       "write:pause",
+      "write:resume",
       "write:inject",
+      "write:restart",
       "write:approve",
       "write:stop",
       "write:cancel",
@@ -32,10 +34,10 @@ describe("buildPaletteItems", () => {
 
   it("lists the write actions disabled: the command is the label, the reason is the action", () => {
     const writes = buildPaletteItems({ sessions, recentIds: [], ...none }).filter((i) => i.group === "Action");
-    expect(writes.map((i) => i.label)).toEqual(["/model <seat> <model>", "/pause", "/inject <seat> …", "/approve", "/stop <seat>", "/cancel"]);
-    expect(writes.map((i) => i.detail)).toEqual(["Change a seat's model", "Pause the run", "Send a message to a seat", "Approve the pending approval", "Stop a seat", "Cancel the session"]);
-    // Without a `reasonFor` (no write access known), the model, approve, stop and cancel actions say why; pause and inject have their own reasons.
-    expect(writes.map((i) => i.action.kind)).toEqual(Array(6).fill("blocked"));
+    expect(writes.map((i) => i.label)).toEqual(["/model <seat> <model>", "/pause", "/resume", "/inject <seat> <text>", "/restart <seat>", "/approve", "/stop <seat>", "/cancel"]);
+    expect(writes.map((i) => i.detail)).toEqual(["Change a seat's model", "Pause the session: no new turn starts", "Resume a paused session", "Queue a message for a seat's next turn", "Kill a seat's turn and run it again", "Approve the pending approval", "Stop a seat", "Cancel the session"]);
+    // Without a `reasonFor` (no write access known), every write action says why.
+    expect(writes.map((i) => i.action.kind)).toEqual(Array(8).fill("blocked"));
     expect(writes[0]!.action).toEqual({ kind: "blocked", reason: WRITE_REASON });
     expect(WRITE_REASON).toBe("needs write access (not in the watch-only preview)");
   });

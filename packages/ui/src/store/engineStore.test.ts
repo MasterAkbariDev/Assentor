@@ -66,6 +66,7 @@ describe("engine store", () => {
       stages: [],
       pendingModels: {},
       controlTick: 0,
+      paused: false,
       negotiationEvents: [],
       lead: emptyLeadBoardView(),
       lastSeq: 0,

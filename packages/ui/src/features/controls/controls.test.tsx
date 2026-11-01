@@ -129,16 +129,16 @@ describe("Cancel session", () => {
   });
 
   it("is disabled with a reason on a read-only connection", async () => {
-    const { getByRole, getByText, transport } = mount(<App />, sessionFixture, { write: false });
+    const { getByRole, getAllByText, transport } = mount(<App />, sessionFixture, { write: false });
     await ready(transport);
     expect(getByRole("button", { name: "Cancel session" }).getAttribute("aria-disabled")).toBe("true");
-    await waitFor(() => expect(getByText(/read-only/)).toBeTruthy());
+    await waitFor(() => expect(getAllByText(/read-only/).length).toBeGreaterThan(0));
   });
 
   it("is disabled with a reason when the session is not live", async () => {
-    const { getByRole, getByText, transport } = mount(<App />, sessionFixture, { live: null });
+    const { getByRole, getAllByText, transport } = mount(<App />, sessionFixture, { live: null });
     await ready(transport);
-    await waitFor(() => expect(getByText("The session is not running on this engine.")).toBeTruthy());
+    await waitFor(() => expect(getAllByText("The session is not running on this engine.").length).toBeGreaterThan(0));
     expect(getByRole("button", { name: "Cancel session" }).getAttribute("aria-disabled")).toBe("true");
   });
 });
@@ -310,7 +310,7 @@ describe("Seat drawer actions", () => {
   it("is disabled with a reason without write access, and for a finished seat", async () => {
     const ro = openLive({ write: false });
     await ready(ro.transport);
-    await waitFor(() => expect(within(ro.getByRole("dialog", { name: "Executor" })).getAllByText(/read-only/)).toHaveLength(2));
+    await waitFor(() => expect(within(ro.getByRole("dialog", { name: "Executor" })).getAllByText(/read-only/)).toHaveLength(4));
     expect(within(ro.getByRole("dialog", { name: "Executor" })).getByRole("button", { name: "Stop seat" }).getAttribute("aria-disabled")).toBe("true");
     cleanup();
 
@@ -433,7 +433,7 @@ describe("Palette write commands", () => {
     expect(callsTo(transport, "seat.setModel")).toHaveLength(0);
   });
 
-  it("lists the commands disabled with a reason on a read-only connection; /pause and /inject stay disabled", async () => {
+  it("lists the commands disabled with a reason on a read-only connection; so do /pause, /resume, /inject and /restart", async () => {
     const { getByRole, transport } = palette({ write: false });
     await ready(transport);
     await waitFor(() => expect(document.querySelector(".palette-option .palette-reason")?.textContent).toMatch(/read-only/));
@@ -443,10 +443,12 @@ describe("Palette write commands", () => {
     enter();
     expect(callsTo(transport, "session.cancel")).toHaveLength(0);
 
-    fireEvent.change(input(), { target: { value: "/inject" } });
-    expect(getByRole("option", { name: /\/inject/ }).getAttribute("aria-disabled")).toBe("true");
-    fireEvent.change(input(), { target: { value: "/pause" } });
-    expect(getByRole("option", { name: /\/pause/ }).textContent).toContain("no pause");
+    for (const [typed, label] of [["/inject executor hi", /^Run \/inject/], ["/pause", /^Run \/pause/], ["/resume", /^Run \/resume/], ["/restart executor", /^Run \/restart/]] as const) {
+      fireEvent.change(input(), { target: { value: typed } });
+      const option = getByRole("option", { name: label });
+      expect(option.getAttribute("aria-disabled")).toBe("true");
+      expect(option.textContent).toMatch(/read-only/);
+    }
   });
 
   it("selecting the /model template fills the search box", async () => {

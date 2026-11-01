@@ -18,9 +18,22 @@ describe("parseCommand", () => {
     expect(parseCommand("/model executor bad;id")).toMatchObject({ ok: false });
   });
 
-  it("ignores anything else, including the disabled /pause and /inject", () => {
+  it("parses /pause, /resume and /restart <seat>", () => {
+    expect(parseCommand("/pause")).toEqual({ ok: true, command: { name: "pause" } });
+    expect(parseCommand("/resume")).toEqual({ ok: true, command: { name: "resume" } });
+    expect(parseCommand("/pause now")).toMatchObject({ ok: false });
+    expect(parseCommand("/restart executor")).toEqual({ ok: true, command: { name: "restart", seat: "executor" } });
+    expect(parseCommand("/restart")).toMatchObject({ ok: false });
+  });
+
+  it("parses /inject <seat> <text>, keeping the text's own spacing", () => {
+    expect(parseCommand("/inject executor  use  tabs, not spaces ")).toEqual({ ok: true, command: { name: "inject", seat: "executor", text: "use  tabs, not spaces" } });
+    expect(parseCommand("/inject executor")).toEqual({ ok: false, error: "Name a seat and a message. Usage: /inject <seat> <text>" });
+    expect(parseCommand("/inject")).toMatchObject({ ok: false });
+  });
+
+  it("ignores anything else", () => {
     expect(parseCommand("approve")).toBeUndefined();
-    expect(parseCommand("/pause")).toBeUndefined();
-    expect(parseCommand("/inject executor hi")).toBeUndefined();
+    expect(parseCommand("/nothing")).toBeUndefined();
   });
 });

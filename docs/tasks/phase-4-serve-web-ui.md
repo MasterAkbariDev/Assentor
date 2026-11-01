@@ -121,12 +121,14 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 
 ---
 
-> **T04-W (write controls for T04-07/08/14/17):** `claude/card-t04-w-ui-controls`, `packages/ui/src/features/controls/`: Cancel session, pending-approvals panel (Approve/Deny; integration approval on the Lead board), seat drawer Stop seat / Change model, palette `/approve` `/cancel` `/stop` `/model`. Uses only existing RPCs; `seat.stop`/`seat.setModel` show "not supported" until FU-12. Still open: `/pause`, `/inject`, Lead override/pin/pause.
+> **T04-W (write controls for T04-07/08/14/17):** `claude/card-t04-w-ui-controls`, `packages/ui/src/features/controls/`: Cancel session, pending-approvals panel (Approve/Deny; integration approval on the Lead board), seat drawer Stop seat / Change model, palette `/approve` `/cancel` `/stop` `/model`. Uses only existing RPCs; `seat.stop`/`seat.setModel` show "not supported" until FU-12. Wave 2 (`claude/card-t04-p4w2-controls`) adds pause/resume, inject, restart and the Lead override/pin/pause controls on the same pieces (`PauseToggle`, `SeatInject`, `LeadTaskControls`).
 
 ### T04-07 · Session board + SeatCard
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T04-06
 
 **Status: ✅ preview cut T04-07p done** (`0e4ffe8`, Haiku #1's last card; Sonnet review PASS; planner added in the merge: group titles are `<h2>` and light-mode `--warn` is darkened to #8f5f00 for contrast). `packages/ui/src/features/session-board/` (`SessionBoard`, `SeatCard`, `useNow`) + `packages/ui/src/store/selectors.ts`; groups executor / reviewers (`reviewer-*`, `panel`) / others; one 1 s ticker per board that stops when no seat is live; only `thinking` animates, under reduced-motion. Read-only: no model picker, pause/cancel, budget bar or drawer; no stage rail (stages aren't modelled). Follow-ups: CSS-path test via `import.meta.url`, `React.memo` on `SeatCard`, tests for ticker restart and the "other" group.
+
+**Phase 4 wave 2:** the header has Pause/Resume session (`session.pause`/`session.resume`, no confirm: reversible) and a "Session paused" badge from `session.paused`/`session.resumed` (`SessionView.paused`, separate from `lead.paused`). Still open: "Paused" on individual held seats (not knowable from events).
 
 **Context to read** — `packages/ui/README.md`, store selectors `selectSession`, `selectSeats`, `selectStages`, `@assentor/ui-shared/status`, fixture `session-negotiate-review.ndjson`, plan §4.6 "Session board".
 
@@ -146,6 +148,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T04-06 · **New deps:** `@xterm/xterm`
 
 **Status: ✅ preview cut T04-08p done** (`15ae1c1` + `3e901df`, Haiku #3; Sonnet NEEDS_WORK → fixed). Read-only drawer in `packages/ui/src/features/seat-drawer/`: a seat card (role=button, Enter/Space) opens a non-modal `role=dialog` with tabs Activity (seat's status/tool/done/error/retry/model/verdict events), Output (`outputTail` as text, follows the tail, "Jump to latest") and Info (provider/transport/permissions from `seat.spawned`, times, tokens, ids). Store gains `seatInfo` and `seatEvents` (only `ACTIVITY_EVENT_TYPES`, last 200 per seat). Escape/close restore focus. Not in this cut: pause/stop/restart/inject, Files tab, xterm.
+
+**Phase 4 wave 2:** the drawer gets Restart turn (confirm; the engine's refusal, e.g. no running turn or the 3-per-turn cap, shows as text in the dialog) and an Inject message box (Enter sends, Shift+Enter newline, IME-safe, UTF-8 byte counter against 8 KiB, cleared on success, Rejected reason shown and draft kept). `seat.injected` appears in Activity. Still open: pause per seat does not exist in the engine; a seat held by a session pause is not marked on the card (no event says which seats are waiting).
 
 **Allowed files** — `packages/ui/src/features/seat-drawer/*`, its tests.
 
@@ -246,6 +250,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 
 **Status: ✅ preview cut T04-14p done** (`df59587` + `dcd69d4`, Haiku; Sonnet review NEEDS_WORK (IME Enter, focus leak) → fixed → PASS; merged 2026-10-31). Watch-only, `packages/ui/src/features/palette/` + `packages/ui/src/keymap.ts`: Ctrl/⌘+K palette (combobox + listbox, IME-safe, focus kept inside, max 50 results) over sessions, recent sessions (in memory) and the views on screen; write actions (`/model`, `/pause`, `/inject`, `/approve`) listed disabled with the reason; `?` keyboard map; ⌘ on macOS, Ctrl elsewhere. Left for the full card: working write actions (need write RPCs), prompts navigation (no prompts view yet), persisted recents.
 
+**Phase 4 wave 2:** `/pause`, `/resume`, `/inject <seat> <text>` (UTF-8 8 KiB cap checked first; text keeps its spacing) and `/restart <seat>` (confirm dialog, refusal shown in it) now run; pause, resume and inject send at once like `/model`. No palette commands for the Lead controls (use the Lead board).
+
 **Allowed files** — `packages/ui/src/features/palette/*`, `packages/ui/src/keymap.ts`, tests.
 
 **Spec** — `Ctrl/Cmd+K` palette with fuzzy search over: navigate (sessions, prompts…), actions on focused session (`/model <seat> <model>`, `/pause`, `/inject <seat> …`, `/approve`), recent sessions. Keyboard map shown in a `?` help dialog. Platform-aware labels (⌘ on macOS, Ctrl elsewhere).
@@ -302,6 +308,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 **Tests** — columns from fixture stream; refused-actions filter; approve requires confirm; override sends RPC.
 
 **Status: preview cut T04-17p** (watch-only, branch `claude/card-t04-17p`). Points 1, 2, 3 and the seat-drawer part of 5 are in `packages/ui/src/features/lead-board/` (`LeadBoard`, `LeadOrgChart`, `LeadLog`), shown for a run whose `mode.selected` is `lead`. Shared reducer (`packages/ui-shared/src/lead.ts`) extended, not forked: six web stages (`leadStages`: Backlog, Assigned, In progress, In review, Accepted, Rejected), owner seat id, reassign and escalation counters, and `actions` (every lead action; `log` stays the terminal's last five). The refused-only switch is a native checkbox with `role="switch"`. Not in this cut: point 4 (approve, override, pin, pause/resume; the server has no write RPCs) and the task's reports in point 5.
+
+**Phase 4 wave 2 (`claude/card-t04-p4w2-controls`):** point 4's write parts are in: Pause/Resume lead (`lead.pause`/`lead.resume`, "Lead paused" badge), per-task Override assignment (seat picker + confirm, `lead.override`) and Pin/Unpin model (picker from `models.catalog` for the run's providers, `lead.pin`), pinned model on the card, and `by: "user"` actions marked "You:" in the Lead log. Lead pause and session pause are separate states with separate badges. Still open: the task's reports (point 5) and a pinned model when the task has no owner seat yet (the picker lists only providers with a seat in the run).
 
 ---
 

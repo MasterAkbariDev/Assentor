@@ -94,6 +94,48 @@ describe("EngineController", () => {
     expect(store.getState().session!.state).toBe("REVIEWING");
   });
 
+  it("keeps the session pause and the lead pause, apart, across a reconnect and a resync", async () => {
+    const { projectPath, store, controller, transports } = await setup();
+    const sessionId = createId();
+    const log = await EventLog.open(projectPath, sessionId);
+    stops.push(() => void log.close());
+    await log.append({ type: "session.created", sessionId, data: { title: "t" } });
+    await log.append({ type: "mode.selected", sessionId, data: { mode: "lead", kind: "dynamic", autonomy: "supervised" } });
+    await log.append({ type: "session.paused", sessionId, data: {} });
+    await log.append({ type: "lead.action", sessionId, data: { action: "pause", accepted: true, by: "user" } });
+    controller.start();
+    store.getState().select(sessionId);
+    await until(() => store.getState().session?.lastSeq === 4);
+    expect(store.getState().session).toMatchObject({ paused: true, lead: { paused: true } });
+
+    transports[0]!.close(); // the connection drops; the resubscribe replays from the last seq
+    await log.append({ type: "session.resumed", sessionId, data: {} });
+    await until(() => store.getState().session?.lastSeq === 5);
+    expect(store.getState().session!.eventCount).toBe(5);
+    expect(store.getState().session).toMatchObject({ paused: false, lead: { paused: true } });
+
+    // A resync from scratch (page reload) rebuilds the same state from the log.
+    const fresh = createEngineStore();
+    fresh.getState().select(sessionId);
+    const events = store.getState().session!.lastSeq;
+    expect(events).toBe(5);
+    const second = new EngineController({
+      store: fresh,
+      transport: new WebSocketTransport({
+        connect: async () => {
+          const { client } = createInProcessTransport(createEngineRpcServer({ projectPath, engineVersion: "1.0.0-test", subscriptions: { pollMs: 5 } }));
+          return client;
+        },
+        backoffMs: [10],
+      }),
+      schedule: (flush) => setTimeout(flush, 0),
+    });
+    stops.push(() => second.stop());
+    second.start();
+    await until(() => fresh.getState().session?.lastSeq === 5);
+    expect(fresh.getState().session).toMatchObject({ paused: false, lead: { paused: true } });
+  });
+
   it("stops retrying when the token is rejected", async () => {
     const store = createEngineStore();
     let attempts = 0;

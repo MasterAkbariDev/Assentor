@@ -3,7 +3,9 @@ import { detectPlatform, isComposing, shortcutLabel } from "../../keymap.js";
 import { useEngine } from "../../store/context.js";
 import { selectHasNegotiation, selectHasReview, selectLeadBoard, selectSeats } from "../../store/selectors.js";
 import { useToast } from "../../shell/Toasts.js";
+import { INJECT_MAX_BYTES } from "#assentor/protocol/rpc.js";
 import { ConfirmAction } from "../controls/ConfirmAction.js";
+import { byteLength } from "../controls/SeatInject.js";
 import { errorText, useSessionControl } from "../controls/useSessionControl.js";
 import type { Command } from "./commands.js";
 import { holdTab, restoreFocus, useEscapeKey } from "./dialog.js";
@@ -116,15 +118,37 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       if (rest.length > 0) return setNotice(`${control.approvals.length} approvals are pending; answer them in the approvals panel.`);
       return setConfirm({ title: "Approve?", confirmLabel: "Approve", body: only.text, danger: false, run: () => control.answerApproval(only.id, "approve") });
     }
+    if (command.name === "pause" || command.name === "resume") {
+      sentRef.current = true;
+      try {
+        await (command.name === "pause" ? control.pause() : control.resume());
+        toast(command.name === "pause" ? "Session paused." : "Session resumed.");
+        onClose();
+      } catch (e) {
+        setNotice(errorText(e));
+      } finally {
+        sentRef.current = false;
+      }
+      return;
+    }
     const seat = findSeat(command.seat);
     if (!seat) return setNotice(`No seat named “${command.seat}”.`);
     if (command.name === "stop") {
       return setConfirm({ title: `Stop ${seat.displayName}?`, confirmLabel: "Stop seat", body: "The seat stops working now.", run: () => control.stopSeat(seat.seatId) });
     }
+    if (command.name === "restart") {
+      return setConfirm({ title: `Restart ${seat.displayName}'s turn?`, confirmLabel: "Restart turn", body: "The turn in flight is killed and run once more with the same task. At most 3 restarts per turn.", run: () => control.restartSeat(seat.seatId) });
+    }
+    if (command.name === "inject" && byteLength(command.text) > INJECT_MAX_BYTES) return setNotice(`The message is over the ${INJECT_MAX_BYTES / 1024} KiB limit.`);
     sentRef.current = true;
     try {
-      await control.setModel(seat.seatId, command.model);
-      toast(`Model change for ${seat.displayName} to ${command.model} requested.`);
+      if (command.name === "inject") {
+        await control.inject(seat.seatId, command.text);
+        toast(`Message queued for ${seat.displayName}.`);
+      } else {
+        await control.setModel(seat.seatId, command.model);
+        toast(`Model change for ${seat.displayName} to ${command.model} requested.`);
+      }
       onClose();
     } catch (e) {
       setNotice(errorText(e));

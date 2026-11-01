@@ -6,7 +6,7 @@ import { App } from "../../App.js";
 import { renderWithStore } from "../../test/render.js";
 import { sessionFixture } from "../../test/fixtures.js";
 import { MAX_RESULTS } from "./CommandPalette.js";
-const PAUSE_REASON = "the engine has no pause yet";
+const PAUSE_REASON = "No session selected.";
 
 afterEach(() => {
   cleanup();
@@ -195,9 +195,9 @@ describe("command palette: keyboard and results", () => {
 
     const listbox = getByRole("listbox");
     expect(within(listbox).getAllByRole("option")).toHaveLength(MAX_RESULTS);
-    // 60 runs, 3 pages and 6 write actions: 19 are not drawn.
+    // 60 runs, 3 pages and 8 write actions: 21 are not drawn.
     expect(within(getByRole("dialog", { name: "Command palette" })).getByRole("status").textContent).toBe(
-      "19 more — keep typing to narrow the results",
+      "21 more — keep typing to narrow the results",
     );
   });
 
@@ -205,7 +205,7 @@ describe("command palette: keyboard and results", () => {
     const { getByRole, getByText } = renderApp();
     openPalette(getByText("Old run").closest("button") as HTMLElement);
     fireEvent.change(field(), { target: { value: "pause" } });
-    const option = getByRole("option", { name: /Pause the run/ });
+    const option = getByRole("option", { name: /Pause the session/ });
     expect(option.id).toMatch(/write_pause$/);
     expect(field().getAttribute("aria-activedescendant")).toBe(option.id);
   });
@@ -262,7 +262,7 @@ describe("command palette: write actions and views", () => {
     const input = field();
 
     fireEvent.change(input, { target: { value: "pause" } });
-    const option = getByRole("option", { name: /Pause the run/ });
+    const option = getByRole("option", { name: /Pause the session/ });
     expect(option.getAttribute("aria-disabled")).toBe("true");
     expect(option.textContent).toContain(PAUSE_REASON);
     const reason = document.getElementById(option.getAttribute("aria-describedby")!);
@@ -282,9 +282,9 @@ describe("command palette: write actions and views", () => {
     const { getByRole, getByText } = renderApp();
     openPalette(getByText("Old run").closest("button") as HTMLElement);
     fireEvent.change(field(), { target: { value: "inject" } });
-    const option = getByRole("option", { name: /Send a message to a seat/ });
+    const option = getByRole("option", { name: /Queue a message for a seat/ });
     expect(option.getAttribute("aria-disabled")).toBe("true");
-    expect(option.textContent).toContain("the engine can't send text to a running seat yet");
+    expect(option.textContent).toContain(PAUSE_REASON);
   });
 
   it("lists the views that are on screen and moves focus to one when run", () => {

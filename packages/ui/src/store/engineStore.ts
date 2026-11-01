@@ -33,6 +33,7 @@ export const ACTIVITY_EVENT_TYPES: ReadonlySet<EngineEventType> = new Set<Engine
   "seat.error",
   "seat.retry",
   "seat.model.changed",
+  "seat.injected",
   "review.verdict",
 ]);
 
@@ -92,6 +93,8 @@ export interface SessionView {
   lead: LeadBoardView;
   /** Latest `session.state` value, e.g. EXECUTING. */
   state?: string;
+  /** The user paused the whole session (FU-18a `session.pause`) and has not resumed it. Not the same as `lead.paused`. */
+  paused: boolean;
   /** Text of each approval question (`user.question` with kind "approval"), by question id. Static stage gates have none. */
   prompts: Record<string, string>;
   /** Counts `user.question`, `user.answer` and `session.state` events: the write controls refetch `session.get` when it changes. */
@@ -129,7 +132,7 @@ export type EngineStore = StoreApi<EngineState>;
 export const RECENT_LIMIT = 20;
 
 function emptySession(id: string): SessionView {
-  return { id, seats: {}, seatInfo: {}, seatEvents: {}, negotiationEvents: [], lead: emptyLeadBoardView(), reviewFindings: [], memberVerdicts: {}, prompts: {}, stages: [], pendingModels: {}, controlTick: 0, lastSeq: 0, eventCount: 0, tokenEvents: 0 };
+  return { id, seats: {}, seatInfo: {}, seatEvents: {}, negotiationEvents: [], lead: emptyLeadBoardView(), reviewFindings: [], memberVerdicts: {}, prompts: {}, stages: [], pendingModels: {}, controlTick: 0, paused: false, lastSeq: 0, eventCount: 0, tokenEvents: 0 };
 }
 
 export function createEngineStore(): EngineStore {
@@ -155,7 +158,7 @@ export function createEngineStore(): EngineStore {
         if (!current || current.id !== sessionId || events.length === 0) {
           return s;
         }
-        let { seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, stages, pendingModels, lastSeq, eventCount, tokenEvents, state, mode, prompts, controlTick } = current;
+        let { seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, stages, pendingModels, lastSeq, eventCount, tokenEvents, state, mode, prompts, controlTick, paused } = current;
         for (const event of events) {
           if (event.sessionId !== sessionId || event.seq <= lastSeq) {
             continue;
@@ -202,6 +205,9 @@ export function createEngineStore(): EngineStore {
           if (event.type === "session.state") {
             state = event.data.to;
           }
+          if (event.type === "session.paused" || event.type === "session.resumed") {
+            paused = event.type === "session.paused";
+          }
           if (event.type === "user.question" || event.type === "user.answer" || event.type === "session.state") {
             controlTick += 1;
           }
@@ -213,7 +219,7 @@ export function createEngineStore(): EngineStore {
           return s;
         }
         return {
-          session: { ...current, seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, stages, pendingModels, lastSeq, eventCount, tokenEvents, mode, prompts, controlTick, ...(state ? { state } : {}) },
+          session: { ...current, seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, stages, pendingModels, lastSeq, eventCount, tokenEvents, mode, prompts, controlTick, paused, ...(state ? { state } : {}) },
         };
       }),
     failSession: (sessionId, message) =>
