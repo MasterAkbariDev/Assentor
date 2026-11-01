@@ -19,6 +19,7 @@ import { cascadeProblems, createCascadeController } from "./cascade.js";
 import { createRedteamController, redteamProblems } from "./redteam.js";
 import { createPairController, pairProblems } from "./pair.js";
 import { createSwarmController, swarmProblems } from "./swarm.js";
+import { createRaceController, raceProblems } from "./race.js";
 
 /**
  * Mode registry and mode contract (T02B-01b metadata, T02B-01 contract). A mode
@@ -364,7 +365,11 @@ const MODES: readonly ModeDefinition[] = [
     validate: (config) => [...teamProblems(config), ...pairProblems(config)],
     createController: (input) => createPairController(input, { approve: (question) => input.requestApproval({ question }) }),
   }),
-  mode("race", "Race", "Several seats implement in parallel worktrees; a judge picks one.", "static", true),
+  // A controller loop (parallel candidates, gates, judge, apply the winner), not a stage graph: who is left to judge depends on the gates.
+  mode("race", "Race", "Several seats implement in parallel worktrees; a judge picks one.", "dynamic", true, true, {
+    validate: (config) => [...teamProblems(config), ...raceProblems(config)],
+    createController: (input) => createRaceController(input, { approve: (question) => input.requestApproval({ question }) }),
+  }),
   // A controller loop (attacker round, builder fix, gates), not a stage graph: the number of rounds depends on the attacker.
   mode("redteam", "Red team", "An attacker writes failing tests or exploits; a builder fixes; repeat.", "dynamic", true, true, {
     validate: (config) => [...teamProblems(config), ...redteamProblems(config)],
