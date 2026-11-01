@@ -42,6 +42,7 @@ export const PROFILE_CHANGES: Record<RunProfile, { summary: string; changes: rea
       "routing: Lead hires the cheapest capable model for planning, tests and docs seats",
       "cascade: starts at the cheapest tier (already so in every profile); danger still starts at the top tier",
       "skills.enabled: lean (an empty preset today, so it costs nothing)",
+      "race: at most 2 candidates (modes.race.seats is capped)",
     ],
   },
   balanced: { summary: "today's behaviour (default)", changes: [] },

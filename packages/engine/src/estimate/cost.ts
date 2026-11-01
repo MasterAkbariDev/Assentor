@@ -1,6 +1,7 @@
 import { expandSeatSpecs, type Seat, type Team } from "#assentor/protocol/seats.js";
 import type { AssentorConfig } from "../config/schema.js";
 import { resolveTeams, type NegotiateMode, type ReviewMode } from "../config/teams.js";
+import { raceCandidateSeats, raceSeatCount } from "../modes/race.js";
 import { estimateTokens } from "../usage/tokens.js";
 
 /**
@@ -17,6 +18,8 @@ import { estimateTokens } from "../usage/tokens.js";
  *   `modes.review.team` when set. When `modes.review` is unset, the optional
  *   `reviewTeam` (e.g. the legacy `resolveTeams(config).review`) is estimated
  *   instead; it is ignored whenever `modes.review` is set.
+ * - Race: each of the N candidates is one build turn (low and high), so the
+ *   build cost is N× one build; the judge is the review team's first seat.
  */
 
 export const EXTRA_INPUT_TOKENS = 2_000;
@@ -44,6 +47,8 @@ export interface EstimateInput {
   narrowReview?: boolean;
   /** The executor's team (solo runs): one turn low, `maxRounds` high, like a review seat. */
   executorTeam?: Team;
+  /** Race candidates (T02B-R): one build turn each, so N× one build. */
+  raceCandidates?: readonly Seat[];
   /** Tokens of shared context sent on every turn. */
   contextTokens: number;
   /** `limits.maxRounds`; used as the high-end review round count. */
@@ -120,9 +125,11 @@ export function estimateSession(input: EstimateInput): SessionEstimate {
     }
   }
 
+  for (const seat of input.raceCandidates ?? []) addTurns(seat, 1, 1);
+
   const inPerTurn = input.contextTokens + EXTRA_INPUT_TOKENS;
   const perSeat: SeatEstimate[] = [];
-  const notes: string[] = [];
+  const notes: string[] = input.raceCandidates?.length ? [`race: ${input.raceCandidates.length} candidates build in parallel, ${input.raceCandidates.length}× the build cost`] : [];
   const unpriced: string[] = [];
   let totalLow = 0;
   let totalHigh = 0;
@@ -185,7 +192,7 @@ function negotiateTurns(
 
 export interface RunEstimateOptions {
   prompt: string;
-  /** `solo`, or a mode id. Solo counts the executor; other modes exclude it (their execute stages vary). */
+  /** `solo`, or a mode id. Solo counts the executor, race its N candidates; other modes exclude it (their execute stages vary). */
   modeId: string;
   /** Observed prices (`usage/observed.ts`); seats without one stay unpriced. */
   pricing?: PricingTable;
@@ -199,18 +206,22 @@ export interface RunEstimateOptions {
  * The prompt stands in for the shared context. Pure: no model calls.
  */
 export function estimateRun(config: AssentorConfig, options: RunEstimateOptions): SessionEstimate {
-  let executorTeam: Team | undefined;
-  if (options.modeId === "solo") {
-    const executor = resolveTeams(config).executor;
-    const model = options.executorModel?.trim() || config.executor.model?.trim() || undefined;
-    executorTeam = { ...executor, seats: executor.seats.map((seat) => ({ ...seat, ...(model ? { model } : {}) })) };
+  const executor = resolveTeams(config).executor;
+  const model = options.executorModel?.trim() || config.executor.model?.trim() || undefined;
+  const executorTeam: Team = { ...executor, seats: executor.seats.map((seat) => ({ ...seat, ...(model ? { model } : {}) })) };
+  let raceCandidates: Seat[] | undefined;
+  if (options.modeId === "race") {
+    const team = config.modes.race?.team;
+    const base = typeof team === "string" && Object.hasOwn(config.teams, team) ? expandSeatSpecs(config.teams[team]!.seats, { teamName: team }) : expandSeatSpecs(executorTeam.seats);
+    raceCandidates = raceCandidateSeats(base, raceSeatCount(config));
   }
   return estimateSession({
     teams: config.teams,
     modes: { negotiate: options.modeId === "negotiate" ? config.modes.negotiate : undefined },
     reviewTeam: resolveTeams(config).review,
     narrowReview: Boolean(config.run.narrowReview) && !config.modes.review,
-    executorTeam,
+    ...(options.modeId === "solo" ? { executorTeam } : {}),
+    ...(raceCandidates ? { raceCandidates } : {}),
     contextTokens: estimateTokens(options.prompt),
     maxRounds: config.limits.maxRounds,
     pricing: options.pricing,

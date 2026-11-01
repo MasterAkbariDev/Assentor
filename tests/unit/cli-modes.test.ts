@@ -31,8 +31,8 @@ describe("assentor modes text table", () => {
     expect(solo).toMatch(/^solo\s+Solo\s+static\s+✓\s+✓\s+supervised\s+One executor/);
     const review = formatModesTable().split("\n").find((line) => line.startsWith("review "));
     expect(review).toMatch(/^review\s+Review\s+static\s+✓\s+✗\s+supervised\s+/);
-    const race = formatModesTable().split("\n").find((line) => line.startsWith("race "));
-    expect(race).toMatch(/^race\s+Race\s+static\s+✗ not yet\s+/);
+    const watch = formatModesTable().split("\n").find((line) => line.startsWith("watch "));
+    expect(watch).toMatch(/^watch\s+Watch\s+static\s+✗ not yet\s+/);
   });
 
   it("marks unavailable modes and says how many cannot run yet", () => {
@@ -75,7 +75,7 @@ describe("assentor modes --json", () => {
   it("keeps unavailable modes in the JSON with available false", async () => {
     const [output] = await runModes(["--json"]);
     const byId = new Map((JSON.parse(output ?? "[]") as { id: string; available: boolean }[]).map((m) => [m.id, m]));
-    expect(byId.get("race")?.available).toBe(false);
+    expect(byId.get("watch")?.available).toBe(false);
     expect(byId.get("review")?.available).toBe(true);
     expect(byId.get("solo")?.available).toBe(true);
   });

@@ -34,7 +34,7 @@ export const MODE_CATALOG: readonly ModeCard[] = [
   { id: "cascade", title: "Cascade", description: "Start with a cheap model; escalate on failure or risk.", kind: "dynamic", editsCode: true, available: true, defaultAutonomy: S },
   { id: "pipeline", title: "Pipeline", description: "Requirements, architect, coder, tester, reviewer and docs stages in order.", kind: "static", editsCode: true, available: true, defaultAutonomy: S },
   { id: "pair", title: "Pair", description: "A driver codes while a navigator watches the stream and interjects.", kind: "dynamic", editsCode: true, available: true, defaultAutonomy: S },
-  { id: "race", title: "Race", description: "Several seats implement in parallel worktrees; a judge picks one.", kind: "static", editsCode: true, available: false, reason: UNAVAILABLE_REASON, defaultAutonomy: S },
+  { id: "race", title: "Race", description: "Several seats implement in parallel worktrees; a judge picks one.", kind: "dynamic", editsCode: true, available: true, defaultAutonomy: S },
   { id: "redteam", title: "Red team", description: "An attacker writes failing tests or exploits; a builder fixes; repeat.", kind: "dynamic", editsCode: true, available: true, defaultAutonomy: S },
   { id: "tdd", title: "TDD", description: "Failing tests first, then code that passes them without touching the tests.", kind: "static", editsCode: true, available: true, defaultAutonomy: S },
   { id: "swarm", title: "Swarm", description: "Many small independent items split across cheap seats, then merged.", kind: "dynamic", editsCode: true, available: true, defaultAutonomy: S },
