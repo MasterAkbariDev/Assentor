@@ -24,7 +24,7 @@ import type { StageRunnerDeps } from "#assentor/engine/orchestrator/session-stag
 import { sessionPaths } from "#assentor/engine/persistence/paths.js";
 import { GeminiProvider, createOpenAIProvider } from "#assentor/engine/providers/ai/index.js";
 import { MockExecutor } from "#assentor/engine/providers/executors/mock/index.js";
-import type { Executor } from "#assentor/engine/providers/executors/types.js";
+import type { Executor, ExecutorResult } from "#assentor/engine/providers/executors/types.js";
 import { withAssentorGitignore } from "#assentor/engine/providers/executors/with-gitignore.js";
 import { ProcessCliTransport, resolveCliAdapter } from "#assentor/engine/providers/reviewers/cli/index.js";
 import type { Reviewer } from "#assentor/engine/providers/reviewers/types.js";
@@ -32,6 +32,7 @@ import { PanelReviewer, REVIEW_POLICIES, type ReviewPolicy } from "#assentor/eng
 import { createSeatScheduler, reviewerProviderForSeat } from "#assentor/engine/seats/index.js";
 import { PromptLibrary } from "#assentor/engine/prompts/library.js";
 import { WorktreeManager } from "#assentor/engine/worktrees/manager.js";
+import { cliUsage } from "#assentor/engine/usage/cli-usage.js";
 import type { EngineEvent, EngineEventDraft } from "#assentor/protocol/events.js";
 import { extractJsonCandidate } from "#assentor/protocol/parse.js";
 import { expandSeatSpecs, SEAT_CLI_PROVIDERS, type Seat, type StageSpec } from "#assentor/protocol/seats.js";
@@ -278,13 +279,42 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
   /** Live output listeners per executor this host made (pair's navigator). */
   const outputs = new WeakMap<Executor, Set<(chunk: ExecutorOutputChunk) => void>>();
 
+  /**
+   * Token use of one CLI turn (TE-01), read from its output. Exactly one source per turn: edit
+   * executors' results (below), read-only executors' asks, and `askSeat` replies (through the
+   * caller's `reportUsage`, so the scheduler also budgets it). Text-format CLIs (the reviewer
+   * transport runs claude with `--output-format text`, codex, opencode) and API seats print no
+   * usage, so they report nothing yet (API usage: TE-05).
+   */
+  const emitTokens = (seat: Seat, raw: string | undefined, stageId?: string): void => {
+    const usage = raw ? cliUsage(raw) : undefined;
+    if (!usage) return;
+    const { turns, costUsd, ...tokens } = usage;
+    input.emit({
+      type: "seat.tokens",
+      sessionId,
+      seatId: seat.id,
+      ...(stageId ? { stageId } : {}),
+      data: { ...tokens, turns, ...(costUsd !== undefined ? { costUsd } : {}) },
+    });
+  };
+
   /** A free-form ask with the CLI started in `cwd` (a read-only seat runs in its task's worktree). */
-  const ask = (seat: Seat, prompt: string, signal: AbortSignal, cwd: string): Promise<string> =>
-    hooks.askSeat
-      ? hooks.askSeat({ seat, prompt, signal, reportUsage: () => undefined })
-      : askSeatText(config, projectPath, cwd, seat, prompt, signal);
-  const askSeat: NonNullable<ModeHostServices["askSeat"]> =
-    hooks.askSeat ?? (({ seat, prompt, signal }) => askSeatText(config, projectPath, projectPath, seat, prompt, signal));
+  const ask = async (seat: Seat, prompt: string, signal: AbortSignal, cwd: string, stageId?: string): Promise<string> => {
+    const text = hooks.askSeat
+      ? await hooks.askSeat({ seat, prompt, signal, reportUsage: () => undefined })
+      : await askSeatText(config, projectPath, cwd, seat, prompt, signal);
+    emitTokens(seat, text, stageId);
+    return text;
+  };
+  const askSeat: NonNullable<ModeHostServices["askSeat"]> = async (request) => {
+    const text = hooks.askSeat
+      ? await hooks.askSeat(request)
+      : await askSeatText(config, projectPath, projectPath, request.seat, request.prompt, request.signal);
+    const usage = cliUsage(text);
+    if (usage) request.reportUsage(usage);
+    return text;
+  };
 
   const seatsFor = (stage: StageSpec): readonly Seat[] => {
     if (!stage.team) {
@@ -312,7 +342,12 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
     const send = (chunk: ExecutorOutputChunk) => listeners.forEach((listener) => listener(chunk));
     // Fail closed: only an "edit" seat gets an edit-capable executor (a hook's included); any other
     // seat answers through the read-only reviewer transport.
-    let executor = seat.permissions !== "edit" ? readOnlyExecutor(seat, ask) : hooks.seatExecutor?.(seat, stage);
+    if (seat.permissions !== "edit") {
+      const executor = readOnlyExecutor(seat, (s, prompt, signal, cwd) => ask(s, prompt, signal, cwd, stage.id));
+      outputs.set(executor, listeners);
+      return executor;
+    }
+    let executor = hooks.seatExecutor?.(seat, stage);
     if (!executor) {
       const provider = normalizeExecutorProvider(seat.provider);
       const plain = executorEmitsPlainText(provider);
@@ -334,6 +369,7 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
       if (!executor) throw new Error(`seat "${seat.id}": provider ${seat.provider} cannot run as an agent (no executor CLI for it)`);
       executor = withAssentorGitignore(executor);
     }
+    executor = countingTokens(executor, (result) => emitTokens(seat, result.rawOutput, stage.id));
     outputs.set(executor, listeners);
     return executor;
   };
@@ -429,6 +465,26 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
     },
   };
   return { deps, host };
+}
+
+/** `executor` whose every turn's result (completed, failed or interrupted) is passed to `onResult` first. */
+function countingTokens(executor: Executor, onResult: (result: ExecutorResult) => void): Executor {
+  const seen = async (pending: Promise<ExecutorResult>) => {
+    const result = await pending;
+    onResult(result);
+    return result;
+  };
+  return {
+    get name() {
+      return executor.name;
+    },
+    capabilities: () => executor.capabilities(),
+    run: (task) => seen(executor.run(task)),
+    continue: (next) => seen(executor.continue(next)),
+    cancel: (taskId) => executor.cancel(taskId),
+    ...(executor.setModel ? { setModel: (model: string) => executor.setModel!(model) } : {}),
+    ...(executor.interrupt ? { interrupt: () => executor.interrupt!() } : {}),
+  };
 }
 
 /** A read-only seat as an executor: one free-form ask in the task's directory; no session to continue. */

@@ -862,6 +862,8 @@ export class Supervisor {
       this.emit("executor.interrupted", {
         round: this.round,
         reason: "Interrupted to switch models; restarting the turn",
+        // The seat sink reads token use from it (and keeps only its length).
+        ...(result.rawOutput ? { rawOutput: result.rawOutput } : {}),
       });
       return { result, restart: { call, partial: result.summary ?? "" } };
     }

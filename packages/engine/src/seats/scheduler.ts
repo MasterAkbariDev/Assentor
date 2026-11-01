@@ -46,6 +46,8 @@ export interface Usage {
   costUsd: number;
   /** Input tokens served from a prompt cache (part of `tokensIn`); passed through to `seat.tokens`, not budgeted. */
   cachedTokens?: number;
+  /** Model turns the report covers (a CLI run makes several); passed through to `seat.tokens`. */
+  turns?: number;
 }
 
 export interface BudgetLimits {
@@ -435,6 +437,7 @@ export class SeatScheduler {
                 tokensOut: Math.max(0, delta.tokensOut ?? 0),
                 ...(delta.costUsd !== undefined ? { costUsd: Math.max(0, delta.costUsd) } : {}),
                 ...(delta.cachedTokens !== undefined ? { cachedTokens: Math.max(0, delta.cachedTokens) } : {}),
+                ...(delta.turns !== undefined && delta.turns >= 1 ? { turns: Math.round(delta.turns) } : {}),
               },
             });
             addUsage(usage, delta);

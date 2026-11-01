@@ -352,10 +352,15 @@ describe("SeatEventSink", () => {
       );
     turn(stream);
     turn("plain text output with no usage line\n");
+    // A turn interrupted for a model switch still paid for what it did.
+    sink.supervisor(
+      { type: "executor.interrupted", at: new Date().toISOString(), data: { reason: "switch", rawOutput: stream } },
+      { executorSeatId: "executor", stageId: "build" },
+    );
     await sink.close();
 
     const tokens = events.filter((e) => e.type === "seat.tokens");
-    expect(tokens).toHaveLength(1);
+    expect(tokens).toHaveLength(2);
     expect(tokens[0]).toMatchObject({
       seatId: "executor",
       stageId: "build",
