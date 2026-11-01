@@ -92,7 +92,7 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-05 · RPC handlers: sessions / seats / worktrees
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** T04-02, T02-09
 
-**Merged 2026-10-31 (planner, under the owner's standing merge direction):** `401f97f` + O2 fixes `92a7eab`; re-review PASS with nits. `session.create/start/cancel/approve/list/get/export`, `worktree.diff/apply/discard` (apply/discard need `confirm: true`, address worktrees by session + seat via the manifest, refused while the session is live in this or another process). Autonomy = min(host, client, `maxAutonomy`); `serve` caps at supervised (no autopilot from a browser). Created sessions expire after 10 min; export is bounded (5,000 events / ~1 MiB). Not supported yet (NotSupported -32004): session.pause/resume, seat.inject/restart. seat.stop and seat.setModel landed with FU-12 (see `packages/engine/src/rpc/README.md`). Error codes: RateLimited -32003, NotSupported -32004, Rejected -32005. Process note: merge commit `c68ae9e` on the card branch was made with plain `git commit` (no content).
+**Merged 2026-10-31 (planner, under the owner's standing merge direction):** `401f97f` + O2 fixes `92a7eab`; re-review PASS with nits. `session.create/start/cancel/approve/list/get/export`, `worktree.diff/apply/discard` (apply/discard need `confirm: true`, address worktrees by session + seat via the manifest, refused while the session is live in this or another process). Autonomy = min(host, client, `maxAutonomy`); `serve` caps at supervised (no autopilot from a browser). Created sessions expire after 10 min; export is bounded (5,000 events / ~1 MiB). seat.stop and seat.setModel landed with FU-12; session.pause/resume, seat.inject and seat.restart (`confirm: true`) with FU-18a, all at turn boundaries (see `packages/engine/src/rpc/README.md`). Error codes: RateLimited -32003, NotSupported -32004, Rejected -32005. Process note: merge commit `c68ae9e` on the card branch was made with plain `git commit` (no content).
 
 **Deliverables** — `session.create/start/pause/resume/cancel/list/get/approve/export`, `seat.setModel/inject/stop/restart`, `worktree.diff/apply/discard` delegating to `SessionRunner`, `WorktreeManager`; `apply`/`discard` require an explicit `confirm: true` param; all path params validated against project root.
 
@@ -151,7 +151,7 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 
 **Spec**
 1. Right-side drawer (full-screen on mobile) with tabs: **Transcript** (structured: messages, tool calls with name + summarized args + file links), **Raw output** (xterm.js read-only, ANSI colours, follows tail unless user scrolled up; "Jump to latest" button), **Files** (files touched + per-file diff link to T04-11), **Info** (provider, model, transport, permissions, worktree path, session id, tokens/cost).
-2. Actions: Pause/Resume seat, Stop (confirm), Restart turn (confirm), **Inject message** textarea (Enter sends, Shift+Enter newline) → `seat.inject`.
+2. Actions: Pause/Resume (session-wide: `session.pause`/`resume`; there is no per-seat pause), Stop (confirm), Restart turn (confirm → `seat.restart` with `confirm: true`), **Inject message** textarea (Enter sends, Shift+Enter newline, at most 8 KiB) → `seat.inject`.
 3. Transcript list virtualized; xterm disposed on unmount.
 
 **Tests** — tab switching; inject sends RPC and clears textarea; stop requires confirm; xterm disposed on unmount (mock).

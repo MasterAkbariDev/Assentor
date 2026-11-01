@@ -58,6 +58,8 @@ const SeatStatusChanged = z
   .object({ status: SeatStatusSchema, detail: z.string().optional() })
   .passthrough();
 const SeatOutputDelta = z.object({ text: z.string() }).passthrough();
+/** FU-18a: a user message queued for the seat's next turn; `preview` is redacted and cut short. */
+const SeatInjected = z.object({ preview: z.string(), chars: z.number().int().nonnegative() }).passthrough();
 const SeatThinking = z.object({ text: z.string().optional() }).passthrough();
 const SeatToolCall = z
   .object({
@@ -216,6 +218,9 @@ export const EngineEventDataSchemas = {
   "session.blocked": Open,
   "session.failed": Open,
   "session.estimate": RunEstimateSchema,
+  /** FU-18a: no new turn starts until `session.resumed`; turns in flight finish. */
+  "session.paused": Open,
+  "session.resumed": Open,
 
   "stage.started": StageEvent,
   "stage.completed": StageEvent,
@@ -230,6 +235,7 @@ export const EngineEventDataSchemas = {
   "seat.tool_call": SeatToolCall,
   "seat.tokens": SeatTokens,
   "seat.model.changed": SeatModelChanged,
+  "seat.injected": SeatInjected,
   "seat.retry": SeatRetry,
   "seat.error": SeatError,
   "seat.done": SeatDone,

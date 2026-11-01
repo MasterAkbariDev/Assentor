@@ -24,6 +24,9 @@ import type { EngineEventDraft } from "#assentor/protocol/events.js";
  *   running in parallel can overshoot a runtime budget by up to their overlap;
  *   the post-run check then stops everything else.
  * - **Deadlines**: `RunOptions.timeoutMs` stops a job with reason `timeout`.
+ * - **Pause** (FU-18a): `pause()` admits nothing new until `resume()`; jobs
+ *   already running go on. A job waiting in the queue has no timers yet, so
+ *   paused time counts against neither its timeout nor a runtime budget.
  * - **Cancellation**: `cancelSeat` / `cancelAll` abort the job's signal. Jobs
  *   must stop on abort (the engine wires the signal to the executor's
  *   `cancel`, which kills the process tree). If a job ignores its abort,
@@ -227,6 +230,7 @@ export class SeatScheduler {
   private readonly seatTrackers = new Map<string, Tracker>();
   private readonly session: Tracker = { usage: zeroUsage(), runtimeMs: 0, warned: new Set() };
   private stopped?: { reason: "cancelled" | "budget"; message: string };
+  private paused = false;
 
   constructor(options: SchedulerOptions) {
     this.options = options;
@@ -271,6 +275,16 @@ export class SeatScheduler {
     const count = this.active.get(seatId)?.size ?? 0;
     this.stopSeat(seatId, { reason: "cancelled", scope: "seat", message });
     return count;
+  }
+
+  /** Admit no job until `resume()`; running jobs go on, queued ones wait (and can still be cancelled). */
+  pause(): void {
+    this.paused = true;
+  }
+
+  resume(): void {
+    this.paused = false;
+    this.pump();
   }
 
   /** Cancel everything; later `run` calls resolve cancelled immediately. */
@@ -555,6 +569,9 @@ export class SeatScheduler {
     if (this.cooldownTimer !== undefined) {
       this.clearTimer(this.cooldownTimer);
       this.cooldownTimer = undefined;
+    }
+    if (this.paused) {
+      return; // `resume()` pumps again
     }
     const now = this.now();
     let nextCooldown = Infinity;
