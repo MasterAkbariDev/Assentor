@@ -170,6 +170,10 @@ export const AssentorConfigSchema = z.object({
       concurrency: z.record(z.enum(SEAT_PROVIDERS), z.number().int().min(1).max(16)).default({}),
       /** Seat scheduler: parallel jobs across all providers. */
       globalConcurrency: z.number().int().min(1).max(32).default(6),
+      /** Pre-run estimate (TE-09): ask before a run whose high estimate passes this many tokens (TTY), refuse without one. Unset = never ask. */
+      confirmAboveTokens: z.number().int().positive().optional(),
+      /** Pre-run estimate (TE-09): as `confirmAboveTokens`, in USD; only when pricing is known for the seats. */
+      confirmAboveUsd: z.number().positive().optional(),
       /** Seat scheduler: whole-session budget across all seats (unset = no limit). */
       session: z
         .object({

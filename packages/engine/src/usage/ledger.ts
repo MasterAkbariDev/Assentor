@@ -13,6 +13,7 @@ import type { PricingTable } from "../estimate/cost.js";
  * - `calls` counts model turns: a report's `turns` (a CLI run), else 1.
  * - A seat's model comes from `seat.spawned`, then `seat.model.changed`.
  * - Budget warnings are the scheduler's `session.warning` events of kind `budget`.
+ * - The pre-run estimate is the run's `session.estimate` event (TE-09); last one wins.
  */
 export class UsageLedger {
   private readonly report: UsageReport;
@@ -38,6 +39,11 @@ export class UsageLedger {
       case "seat.retry":
         this.report.retries += 1;
         return;
+      case "session.estimate": {
+        const { tokens, usd } = event.data;
+        this.report.estimate = { tokens: { ...tokens }, ...(usd ? { usd: { ...usd } } : {}) };
+        return;
+      }
       case "session.warning": {
         const data = event.data as Record<string, unknown>;
         if (data.kind === "budget" && typeof data.used === "number" && typeof data.limit === "number") {

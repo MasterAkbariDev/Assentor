@@ -19,7 +19,8 @@ import {
   type SeatInfo,
 } from "#assentor/engine/orchestrator/seat-events.js";
 import { EventLog } from "#assentor/engine/events/log.js";
-import type { EngineEvent } from "#assentor/protocol/events.js";
+import { estimateRun } from "#assentor/engine/estimate/cost.js";
+import type { EngineEvent, RunEstimate } from "#assentor/protocol/events.js";
 import { PRINT_CLI_RECIPES } from "#assentor/engine/providers/executors/cli-print/recipes.js";
 import { isTerminalState, TaskState } from "#assentor/engine/orchestrator/state-machine.js";
 import { TaskStore, loadTaskForResume, findLatestResumableTask } from "#assentor/engine/persistence/index.js";
@@ -69,6 +70,8 @@ import {
   reviewTeamTargets,
 } from "#assentor/engine/seats/index.js";
 import { printPreflight, runPreflight } from "./preflight.js";
+import { terminalQuestionIO, type QuestionIO } from "./mode-questions.js";
+import { confirmRunEstimate, formatRunEstimate, toRunEstimate } from "./run-estimate.js";
 import { RunReporter } from "./ui/reporter.js";
 import type { ModeRunHooks } from "./mode-run.js";
 import { resolveProviderApiKey } from "#assentor/engine/keys/resolve.js";
@@ -102,6 +105,10 @@ export interface RunAssentorInput {
   retro?: boolean;
   /** `--mode` runs (not solo): replace host pieces (tests, embedding hosts). */
   modeHooks?: ModeRunHooks;
+  /** Start even when the pre-run estimate is over `limits.confirmAbove*` (`--yes`, TE-09). */
+  yes?: boolean;
+  /** Where an over-limit estimate asks for confirmation; default the terminal. */
+  confirmIO?: QuestionIO;
 }
 
 export async function createExecutor(
@@ -380,6 +387,8 @@ export class RunSeatEvents {
     executor: { name: string; provider: string; model?: string };
     reviewers: Array<{ name: string; backend?: ReviewerMemberSource }>;
     redactSecrets: boolean;
+    /** The pre-run estimate (TE-09), logged so the usage report can compare it with actual use. */
+    estimate?: RunEstimate;
   }): Promise<void> {
     let log: EventLog | undefined;
     try {
@@ -405,6 +414,9 @@ export class RunSeatEvents {
         sessionId: input.taskId,
         data: { title: input.title },
       });
+    }
+    if (input.estimate) {
+      sink.emit({ type: "session.estimate", sessionId: input.taskId, data: input.estimate });
     }
     sink.spawned(executorSeatInfo(input.executor));
     if (input.reviewers.length > 1) {
@@ -878,6 +890,16 @@ async function runAssentorTaskBody(
     autonomy: input.autonomy,
   });
   const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
+  const estimate = estimateRun(config, input.prompt, "solo");
+  reporter.note(formatRunEstimate(estimate, config, "solo"));
+  await confirmRunEstimate({
+    estimate,
+    limits: config.limits,
+    yes: input.yes,
+    io: input.confirmIO ?? terminalQuestionIO(),
+    hold: (open) => reporter.holdOutput(open),
+    log: (line) => reporter.note(line),
+  });
   const runMode = config.run.mode;
   const autopilot = runMode === "autopilot";
 
@@ -1002,6 +1024,7 @@ async function runAssentorTaskBody(
       backend: memberBackends[index],
     })),
     redactSecrets: config.security.redactSecrets,
+    estimate: toRunEstimate(estimate),
   });
 
   const supervisor = new Supervisor({

@@ -1,5 +1,7 @@
 import { expandSeatSpecs, type Seat, type Team } from "#assentor/protocol/seats.js";
-import type { NegotiateMode, ReviewMode } from "../config/teams.js";
+import type { AssentorConfig } from "../config/schema.js";
+import { resolveTeams, type NegotiateMode, type ReviewMode } from "../config/teams.js";
+import { estimateTokens } from "../usage/tokens.js";
 
 /**
  * Pre-run cost estimate (T02-10). Pure: no I/O.
@@ -165,4 +167,19 @@ function negotiateTurns(
     case "divide":
       return { perSeat: 1, aggregator: 0 };
   }
+}
+
+/**
+ * The pre-run estimate of one run (TE-09): the review team's turns, plus the
+ * negotiate team's when `modeId` is `negotiate`. The prompt stands in for the
+ * shared context. Pure: no model calls. Executor turns are not counted.
+ */
+export function estimateRun(config: AssentorConfig, prompt: string, modeId: string): SessionEstimate {
+  return estimateSession({
+    teams: config.teams,
+    modes: { negotiate: modeId === "negotiate" ? config.modes.negotiate : undefined },
+    reviewTeam: resolveTeams(config).review,
+    contextTokens: estimateTokens(prompt),
+    maxRounds: config.limits.maxRounds,
+  });
 }

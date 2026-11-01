@@ -35,6 +35,7 @@ import { WorktreeManager } from "#assentor/engine/worktrees/manager.js";
 import { cliUsage } from "#assentor/engine/usage/cli-usage.js";
 import type { EngineEvent, EngineEventDraft } from "#assentor/protocol/events.js";
 import { extractJsonCandidate } from "#assentor/protocol/parse.js";
+import { estimateRun } from "#assentor/engine/estimate/cost.js";
 import { expandSeatSpecs, SEAT_CLI_PROVIDERS, type Seat, type StageSpec } from "#assentor/protocol/seats.js";
 import {
   attachRunInterrupt,
@@ -48,6 +49,7 @@ import {
 } from "./commands.js";
 import { createAnswerLoop, terminalQuestionIO, type QuestionIO } from "./mode-questions.js";
 import { printPreflight, runPreflight } from "./preflight.js";
+import { confirmRunEstimate, formatRunEstimate, toRunEstimate } from "./run-estimate.js";
 import { RunReporter } from "./ui/reporter.js";
 
 /**
@@ -102,6 +104,16 @@ export async function runModeTask(input: ModeTaskInput) {
     });
     const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
     const autonomy = config.run.autonomy ?? config.run.mode;
+    const estimate = estimateRun(config, input.prompt, mode.id);
+    reporter.note(formatRunEstimate(estimate, config, `mode ${mode.id}`));
+    await confirmRunEstimate({
+      estimate,
+      limits: config.limits,
+      yes: input.yes,
+      io: input.confirmIO ?? terminalQuestionIO(),
+      hold: (open) => reporter.holdOutput(open),
+      log: (line) => reporter.note(line),
+    });
 
     if (!input.skipPreflight) {
       reporter.updatePreparing("checking environment…");
@@ -143,6 +155,7 @@ export async function runModeTask(input: ModeTaskInput) {
       },
     });
     const emit = (draft: EngineEventDraft) => void sink!.emit(draft);
+    if (!input.resumeSessionId) emit({ type: "session.estimate", sessionId, data: toRunEstimate(estimate) });
 
     reporter.updatePreparing("starting seats…");
     const worktrees = new WorktreeManager({ repoPath: projectPath });

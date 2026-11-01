@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AUTONOMY_LEVELS, type EngineEvent } from "./events.js";
+import { AUTONOMY_LEVELS, RunEstimateSchema, type EngineEvent } from "./events.js";
 import { ModelIdSchema, SEAT_PROVIDERS, STAGE_KINDS, TeamSchema } from "./seats.js";
 
 /**
@@ -129,6 +129,8 @@ export const UsageReportSchema = z.object({
   skippedLines: z.number().int().positive().optional(),
   /** True when the log was longer than the reader's line cap; totals cover the start only. */
   truncated: z.boolean().optional(),
+  /** The pre-run estimate (TE-09), when the run logged one; compare with `total`. */
+  estimate: RunEstimateSchema.optional(),
 });
 export type UsageReport = z.infer<typeof UsageReportSchema>;
 
