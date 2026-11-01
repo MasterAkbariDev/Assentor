@@ -175,6 +175,19 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     expect(of("skill.loaded").length).toBeGreaterThanOrEqual(3);
   });
 
+  it("negotiate: steps run as read-only seats, so edit builder seats never get project skills", async () => {
+    await writeConfig({ teams: { peers: { seats: [ed("architect"), ed("engineer")] } }, modes: { negotiate: { team: "peers", strategy: "debate" } } });
+    const dir = path.join(repo, ".assentor", "skills", "project-tips");
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, "SKILL.md"), "---\nname: project-tips\ndescription: Use for modules.\nautoload:\n  keywords: [module]\nversion: 1\n---\nBODY-project-tips\n");
+    const prompts: string[] = [];
+    const { result, of } = await run("negotiate", { askSeat: async ({ prompt }) => (prompts.push(prompt), STEP_REPLY) });
+    expect(result).toMatchObject({ status: "completed" });
+    expect(prompts.length).toBeGreaterThanOrEqual(2);
+    expect(prompts.some((p) => p.includes("project-tips"))).toBe(false);
+    expect(of("skill.loaded")).toEqual([]);
+  });
+
   it("lead: plans, hires from the roster, the agent works in a worktree, the terminal approves the landing", async () => {
     await writeConfig({ modes: { lead: { lead: { provider: "mock", model: "lead" } } } });
     const lead = createMockLead(LEAD_SCRIPT);

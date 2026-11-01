@@ -113,6 +113,8 @@ export class SkillSession {
   /** seatId → skills loaded but not yet delivered to a running conversation. */
   private readonly undelivered = new Map<string, Loaded[]>();
   private readonly indexes = new Map<string, string>();
+  /** `seatId\0name` already warned about, so a refusal is reported once, not on every prompt. */
+  private readonly warned = new Set<string>();
 
   constructor(
     readonly library: SkillLibrary,
@@ -147,18 +149,22 @@ export class SkillSession {
   load(seat: SkillSeat, names: readonly string[], via: "trigger" | "request"): string[] {
     const have = this.loaded.get(seat.id) ?? [];
     const added: Loaded[] = [];
-    const warn = (message: string) =>
-      this.emit({ type: "session.warning", sessionId: this.options.sessionId, seatId: seat.id, data: { kind: "skill", message } });
     for (const name of names) {
       if (have.some((l) => l.skill.name === name)) continue;
+      const warn = (why: string) => {
+        const key = `${seat.id}\0${name}`;
+        if (this.warned.has(key)) return;
+        this.warned.add(key);
+        this.emit({ type: "session.warning", sessionId: this.options.sessionId, seatId: seat.id, data: { kind: "skill", message: `skill "${name}" not loaded: ${why}` } });
+      };
       const resolved = this.library.resolve(name, this.scope(seat));
       if ("refusal" in resolved) {
-        warn(`skill "${name}" not loaded: ${resolved.refusal}`);
+        warn(resolved.refusal);
         continue;
       }
       const tokens = have.reduce((sum, l) => sum + l.skill.tokens, 0);
       if (have.length >= MAX_SKILLS_PER_SEAT || tokens + resolved.skill.tokens > MAX_SKILL_TOKENS_PER_SEAT) {
-        warn(`skill "${name}" not loaded: a seat may load at most ${MAX_SKILLS_PER_SEAT} skills or ${MAX_SKILL_TOKENS_PER_SEAT} body tokens`);
+        warn(`a seat may load at most ${MAX_SKILLS_PER_SEAT} skills or ${MAX_SKILL_TOKENS_PER_SEAT} body tokens`);
         continue;
       }
       const entry = { skill: resolved.skill, via, deliveries: 0 };

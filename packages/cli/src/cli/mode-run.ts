@@ -382,7 +382,8 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
     seatsFor,
     runStep: async ({ seat, step, vars, readOnly, worktreePath, signal, reportUsage }) => {
       if (!readOnly) throw new Error(`negotiation step ${step} edits files; the CLI host runs read-only steps only`);
-      const reply = await stepAsk({ seat, prompt: input.prompts.render(step, vars as Record<string, never>), signal, reportUsage });
+      // Planning and judging steps never edit, so they never get project skills (builder seats on edit only).
+      const reply = await stepAsk({ seat: { ...seat, permissions: "read-only" }, prompt: input.prompts.render(step, vars as Record<string, never>), signal, reportUsage });
       void worktreePath;
       const json = extractJsonCandidate(reply);
       return json.ok ? json.data : reply;

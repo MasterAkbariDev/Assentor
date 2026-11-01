@@ -363,6 +363,8 @@ describe("skill safety limits", () => {
     const skills = session(await load(), events);
     expect(skills.load(engineer, ["huge"], "request")).toEqual([]);
     expect(skills.load(engineer, ["a1", "a2", "a3", "a4"], "request")).toEqual(["a1", "a2", "a3"]);
+    // Asked again (e.g. a trigger on every prompt): still refused, but warned only once per seat and skill.
+    expect(skills.load(engineer, ["a4", "huge"], "trigger")).toEqual([]);
     expect(events.map((e) => (e.data as { message?: string }).message)).toEqual([
       'skill "huge" not loaded: a seat may load at most 3 skills or 4000 body tokens',
       'skill "a4" not loaded: a seat may load at most 3 skills or 4000 body tokens',
