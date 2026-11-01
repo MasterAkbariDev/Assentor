@@ -25,6 +25,7 @@ import {
   type StageSpec,
 } from "../../packages/engine/src/index.js";
 import { EventLog } from "../../packages/engine/src/events/log.js";
+import { killProcessTree } from "../../packages/engine/src/process/kill-tree.js";
 import { RpcMethods } from "../../packages/protocol/src/rpc.js";
 import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
 
@@ -480,7 +481,12 @@ describe("seat control (FU-12)", () => {
       return false;
     }
   };
-  const stageFor = (seatId: string): StageSpec => ({ id: `work-${seatId}`, kind: "execute", options: { seat: { id: seatId, role: "engineer" } }, requireApproval: false });
+  const stageFor = (seatId: string, model?: string): StageSpec => ({
+    id: `work-${seatId}`,
+    kind: "execute",
+    options: { seat: { id: seatId, role: "engineer", ...(model ? { model } : {}) } },
+    requireApproval: false,
+  });
   const task = (i: ModeControllerInput, taskId: string) => ({ taskId, projectPath: i.deps.projectPath, contract: { goal: "g" } as never, prompt: "go" });
 
   /** Each turn is a real child process that lives until `cancel` kills it. */
@@ -498,7 +504,7 @@ describe("seat control (FU-12)", () => {
       ...executor(),
       run: (t) => turn(t.taskId),
       continue: (t) => turn(t.taskId),
-      cancel: async (taskId) => void children.get(taskId)?.kill("SIGKILL"),
+      cancel: async (taskId) => killProcessTree(children.get(taskId)),
     };
   }
 
@@ -536,6 +542,23 @@ describe("seat control (FU-12)", () => {
     expect((await failure(client.call("seat.stop", { sessionId, seatId: "b", confirm: true }))).code).toBe(RpcErrorCode.InvalidParams);
   });
 
+  it("stopping a static stage's Supervisor seat fails the session with the stop as the reason", async () => {
+    const pids: number[] = [];
+    const { client } = await setup({ executor: () => spawningExecutor(pids) });
+    const { sessionId } = await client.call("session.create", { mode: "solo", goal: "g" });
+    await client.call("session.start", { sessionId });
+    await until(() => pids.length === 1);
+    // No team on solo's execute stage: the seat is named after the stage.
+    await client.call("seat.stop", { sessionId, seatId: "execute", confirm: true });
+    await until(async () => (await client.call("session.get", { sessionId })).session.live === undefined);
+    expect(isAlive(pids[0]!)).toBe(false);
+    const { events } = await client.call("session.export", { sessionId });
+    const failed = events.find((e) => e.type === "session.failed") as { data: { status: string; reason?: string } };
+    expect(failed.data.status).toBe("failed");
+    expect(failed.data.reason).toContain("seat execute stopped over RPC");
+    expect(JSON.stringify(events)).not.toContain("Ctrl+C");
+  });
+
   it("setModel applies at the seat's next turn and emits pending then applied seat.model.changed", async () => {
     const models: Array<string | undefined> = [];
     let current: string | undefined;
@@ -545,7 +568,7 @@ describe("seat control (FU-12)", () => {
       setModel: (model) => void (current = model),
     });
     const mode = dynamicMode(async (i) => {
-      const ex = i.deps.createExecutor(stageFor("a"));
+      const ex = i.deps.createExecutor(stageFor("a", "sonnet-x"));
       await ex.run(task(i, "t1"));
       await i.requestApproval({ question: "next turn?" });
       await ex.run(task(i, "t2"));
@@ -567,8 +590,8 @@ describe("seat control (FU-12)", () => {
     expect(models).toEqual([undefined, "opus-x"]);
     const { events } = await client.call("session.export", { sessionId });
     expect(events.filter((e) => e.type === "seat.model.changed")).toMatchObject([
-      { seatId: "a", data: { to: "opus-x", pending: true } },
-      { seatId: "a", data: { to: "opus-x", pending: false } },
+      { seatId: "a", data: { from: "sonnet-x", to: "opus-x", pending: true } },
+      { seatId: "a", data: { from: "sonnet-x", to: "opus-x", pending: false } },
     ]);
     expect((await failure(client.call("seat.setModel", { sessionId, seatId: "a", model: "opus-y" }))).code).toBe(RpcErrorCode.InvalidParams);
   });

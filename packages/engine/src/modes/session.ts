@@ -181,7 +181,7 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
       if (mode.id === "review" && stage.strategy === EXISTING_WORK_STRATEGY) return existingWorkExecutor();
       const executor = input.deps.createExecutor(stage);
       const seat = seatOfStage(stage, input.deps);
-      const tracked = seatControls.track(seat.id, skills ? withSkills(executor, skills, seat) : executor);
+      const tracked = seatControls.track(seat.id, skills ? withSkills(executor, skills, seat) : executor, seat.model);
       hostExecutor.set(tracked, executor);
       return tracked;
     },
@@ -329,6 +329,8 @@ function createSeatControls(sessionId: string, emit: (draft: EngineEventDraft) =
     executor: Executor;
     /** Task ids of turns in flight. */
     running: Set<string>;
+    /** Task ids `stop` cancelled; their turn ends with the stop's reason, not the executor's. */
+    stopped: Set<string>;
     pending?: string;
     model?: string;
   }
@@ -338,8 +340,10 @@ function createSeatControls(sessionId: string, emit: (draft: EngineEventDraft) =
     emit({ type: "seat.model.changed", sessionId, seatId, data });
 
   return {
-    track(seatId: string, executor: Executor): Executor {
-      const entry: Tracked = { executor, running: new Set() };
+    /** `model`: the seat's configured model (blank and AUTO = the CLI default). */
+    track(seatId: string, executor: Executor, model?: string): Executor {
+      const configured = model?.trim();
+      const entry: Tracked = { executor, running: new Set(), stopped: new Set(), ...(configured && configured !== "AUTO" ? { model: configured } : {}) };
       if (!closed) {
         if (!bySeat.has(seatId)) bySeat.set(seatId, new Set());
         bySeat.get(seatId)!.add(entry);
@@ -357,8 +361,16 @@ function createSeatControls(sessionId: string, emit: (draft: EngineEventDraft) =
           }
         }
         entry.running.add(taskId);
+        // Replaces e.g. the executor's "Interrupted (Ctrl+C)" text, which the Supervisor reports as the failure.
+        const stopped = (): ExecutorResult | undefined =>
+          entry.stopped.delete(taskId) ? { status: "cancelled", summary: `seat ${seatId} stopped over RPC`, error: `seat ${seatId} stopped over RPC` } : undefined;
         try {
-          return await start();
+          const result = await start();
+          return stopped() ?? result;
+        } catch (error) {
+          const result = stopped();
+          if (result) return result;
+          throw error;
         } finally {
           entry.running.delete(taskId);
         }
@@ -371,8 +383,10 @@ function createSeatControls(sessionId: string, emit: (draft: EngineEventDraft) =
         cancel: (taskId) => executor.cancel(taskId),
       };
       if (executor.setModel) {
+        // The Supervisor's own switch is newer than any RPC request still pending.
         tracked.setModel = (model) => {
           executor.setModel!(model);
+          entry.pending = undefined;
           entry.model = model;
         };
       }
@@ -384,7 +398,14 @@ function createSeatControls(sessionId: string, emit: (draft: EngineEventDraft) =
       if (closed) return "the session has finished";
       const turns = [...(bySeat.get(seatId) ?? [])].flatMap((e) => [...e.running].map((taskId) => ({ e, taskId })));
       const jobs = scheduler.cancelSeat(seatId, "stopped by the user");
-      for (const { e, taskId } of turns) void Promise.resolve().then(() => e.executor.cancel(taskId)).catch(() => undefined);
+      for (const { e, taskId } of turns) {
+        e.stopped.add(taskId);
+        try {
+          void Promise.resolve(e.executor.cancel(taskId)).catch(() => undefined);
+        } catch {
+          // A cancel that throws must not keep the other turns running.
+        }
+      }
       return turns.length + jobs > 0 ? undefined : `seat "${seatId}" has no work running in this session`;
     },
 
@@ -582,10 +603,15 @@ function staticSpec(
  * project skills. Strategy executors that fan out (best-of-n, divide) use the
  * chosen seat's role for all of them.
  */
-function seatOfStage(stage: StageSpec, deps: StageRunnerDeps): Pick<Seat, "id" | "role" | "permissions"> {
+function seatOfStage(stage: StageSpec, deps: StageRunnerDeps): Pick<Seat, "id" | "role" | "permissions"> & { model?: string } {
   const named = stage.options.seat as Partial<Seat> | undefined;
   if (named && typeof named.id === "string" && typeof named.role === "string") {
-    return { id: named.id, role: named.role, permissions: named.permissions === "edit" ? "edit" : "read-only" };
+    return {
+      id: named.id,
+      role: named.role,
+      permissions: named.permissions === "edit" ? "edit" : "read-only",
+      ...(typeof named.model === "string" ? { model: named.model } : {}),
+    };
   }
   let seats: readonly Seat[] = [];
   try {
