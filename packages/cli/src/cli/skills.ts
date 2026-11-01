@@ -36,7 +36,7 @@ export async function listSkills(options: SkillCommandOptions): Promise<number> 
   }
   for (const skill of skills) {
     const where = skill.overrides ? `${skill.layer}, overrides ${skill.overrides}` : skill.layer;
-    options.out(`${skill.name} (${where}, ~${skill.tokens} tokens): ${skill.description}`);
+    options.out(`${skill.name} (${where}${skill.optIn ? ", off by default" : ""}, ~${skill.tokens} tokens): ${skill.description}`);
   }
   return reportErrors(library, options);
 }
@@ -55,6 +55,7 @@ export async function showSkill(options: SkillCommandOptions & { name: string })
     ["roles", list(skill.roles)],
     ["modes", list(skill.modes)],
     ["profiles", list(skill.profiles)],
+    ["default", skill.optIn ? "off (add to skills.enabled)" : "on"],
     ["autoload", skill.autoload ? [...skill.autoload.keywords, ...skill.autoload.globs].join(", ") || "-" : "-"],
     ["version", String(skill.version)],
     ["tokens", `~${skill.tokens}`],

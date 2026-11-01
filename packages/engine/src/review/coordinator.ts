@@ -410,10 +410,21 @@ export class PanelReviewer implements Reviewer {
     method: "review" | "continue",
   ): Promise<ReviewerTurnResult> {
     this.callCount += 1;
-    const { findings, turns, outcomes } = await this.coordinator.runIndependentReviews(
-      input,
-      method,
-    );
+    const reviewed = await this.coordinator.runIndependentReviews(input, method);
+    // Every member's reported tokens, whatever the panel decides (TE-05).
+    const memberUsage = reviewed.turns.flatMap(({ agentId, turn }, i) => [
+      ...(turn.usage ? [{ seatId: this.memberSeatIds?.[i] ?? agentId, usage: turn.usage }] : []),
+      ...(turn.memberUsage ?? []),
+    ]);
+    const decided = await this.decide(reviewed);
+    return memberUsage.length > 0 ? { ...decided, memberUsage } : decided;
+  }
+
+  private async decide({
+    findings,
+    turns,
+    outcomes,
+  }: Awaited<ReturnType<ReviewCoordinator["runIndependentReviews"]>>): Promise<ReviewerTurnResult> {
     const failed = outcomes.filter(
       (o): o is Extract<MemberOutcome, { kind: "failed" }> => o.kind === "failed",
     );

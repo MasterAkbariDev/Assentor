@@ -77,9 +77,10 @@ export async function summarizeHistory(turns: readonly string[], options: Summar
   const tokensOf = (list: readonly string[]) => estimateTokens(list.join("\n\n"), model);
   const end = Math.max(0, turns.length - Math.max(0, keepLast));
 
-  // keys[k] names the digest of turns[0..k): a hash chain, so a key is cheap to extend and never collides across ranges.
+  // keys[k] names the digest of turns[0..k) at this cap: a hash chain, so a key is cheap to extend and never
+  // collides across ranges or caps (a smaller cap never reuses a bigger digest).
   const keys: string[] = [`${scope}#0`];
-  let hash = createHash("sha256").update(scope).digest("hex");
+  let hash = createHash("sha256").update(`${scope}\0${digestTokens}`).digest("hex");
   for (let k = 1; k <= end; k += 1) {
     hash = createHash("sha256").update(`${hash}\0${turns[k - 1]}`).digest("hex");
     keys.push(`${scope}#${k}:${hash}`);

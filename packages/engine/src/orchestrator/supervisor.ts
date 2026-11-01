@@ -651,7 +651,9 @@ export class Supervisor {
       return true;
     }
     if (result.status === "cancelled") {
-      this.moveTo(TaskState.Failed, withResumeHint(result.error ?? "Interrupted (Ctrl+C)."));
+      // A seat stopped over RPC (FU-12) is not a Ctrl+C: no resume hint.
+      const error = result.error?.trim() || "Interrupted (Ctrl+C).";
+      this.moveTo(TaskState.Failed, error.endsWith("stopped over RPC") ? error : withResumeHint(error));
       return true;
     }
     return false;

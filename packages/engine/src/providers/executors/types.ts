@@ -15,6 +15,8 @@ export interface ExecutorTask {
   contract: TaskContract;
   prompt: string;
   messages?: ProtocolMessage[];
+  /** Start a new CLI session instead of resuming the executor's last one (e.g. after a failed resume). */
+  newSession?: boolean;
 }
 
 export interface ExecutorContinuation {

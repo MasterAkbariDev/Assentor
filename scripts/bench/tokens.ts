@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,10 +8,21 @@ import { parseAssentorConfig } from "#assentor/engine/config/load.js";
 import { splitPromptFile } from "#assentor/engine/prompts/format.js";
 import type { PromptLibrary } from "#assentor/engine/prompts/library.js";
 import { templateVariables } from "#assentor/engine/prompts/template.js";
+import { assembleSeatPrompt } from "#assentor/engine/prompts/assemble.js";
+import { specialtyAddendum } from "#assentor/engine/review/specialty-prompts.js";
 import { UsageLedger } from "#assentor/engine/usage/ledger.js";
 import { estimateTokens } from "#assentor/engine/usage/tokens.js";
 import { packPromptVariables } from "#assentor/engine/context/vars.js";
 import { cliUsage } from "#assentor/engine/usage/cli-usage.js";
+import {
+  fenceSkill,
+  MAX_SKILL_TOKENS_PER_SEAT,
+  MAX_SKILLS_PER_SEAT,
+  renderSkillsIndex,
+  SKILL_PRESETS,
+  validateSkillFrontMatter,
+  type SkillDefinition,
+} from "#assentor/engine/skills/index.js";
 import { BENCH_TASKS, type BenchTask, type TaskResult } from "./tasks.js";
 
 /**
@@ -50,6 +61,12 @@ export interface MockScript {
   extraTurns?: number;
   /** The prompt prefix changes per call, so nothing is served from the cache. */
   unstablePrefix?: boolean;
+  /**
+   * Seat prompt order (TE-05). `stable` (default, what the engine ships): `assembleSeatPrompt`'s
+   * static → shared → per-seat delta. `legacy`: the per-seat text before the shared task, as review
+   * prompts were before TE-05, so panel members share only the always-on text.
+   */
+  promptOrder?: "stable" | "legacy";
 }
 
 export interface Variant {
@@ -58,6 +75,12 @@ export interface Variant {
   overlay: { style?: string; profile?: string; skills?: string[]; context?: string };
   /** Text added to every seat prompt (style fragment, skills index, or a skill body). */
   alwaysOn: string;
+  /**
+   * Skills variants: what a seat of `role` gets. The index (plus style) is always on;
+   * `loaded` holds the fenced bodies of the skills eligible for the role, present from
+   * the first call (best case for cost: no extra `load_skill` turn).
+   */
+  perRole?: (role: string) => { alwaysOn: string; loaded: string };
   notes: string[];
   mock?: MockScript;
   /**
@@ -75,6 +98,12 @@ export interface Variant {
   leadSummarizer?: boolean;
 }
 
+/** Everything a seat of `role` gets in front of its role prompt under `variant`. */
+export function seatExtra(variant: Variant, role: string): string {
+  const { alwaysOn, loaded } = variant.perRole?.(role) ?? { alwaysOn: variant.alwaysOn, loaded: "" };
+  return joinParts(alwaysOn, loaded);
+}
+
 /** A style fragment as shipped (`prompts/builtin/style-<name>.md`); empty with a note when it does not exist. */
 function styleText(style: string, root: string, notes: string[]): string {
   const file = path.join(root, "prompts", "builtin", `style-${style}.md`);
@@ -86,19 +115,30 @@ function styleText(style: string, root: string, notes: string[]): string {
   return text.startsWith("---") ? splitPromptFile(text).body : text.trim();
 }
 
-/** The skills index lines (name + description) for skills that exist; a note for each that does not. */
-function skillsIndex(skills: string[], root: string, notes: string[]): string {
-  return skills
-    .flatMap((skill) => {
-      const file = path.join(root, "skills", skill, "SKILL.md");
-      if (!existsSync(file)) {
-        notes.push(`skill ${skill} is not built yet (TE-07/08): no effect`);
-        return [];
-      }
-      return [`- ${skill}: ${String(splitPromptFile(readFileSync(file, "utf8")).frontMatter.description ?? "")}`];
-    })
-    .join("\n");
+/** Skill names with presets (`lean`) and `all` expanded. */
+function expandNames(names: string[], root: string): string[] {
+  const dir = path.join(root, "skills");
+  const all = existsSync(dir) ? readdirSync(dir).filter((d) => existsSync(path.join(dir, d, "SKILL.md"))).sort() : [];
+  return [...new Set(names.flatMap((name) => (name === "all" ? all : (SKILL_PRESETS[name] ?? [name]))))];
 }
+
+/** Built-in skills read from `skills/<name>/SKILL.md`; a note for each missing. */
+function readSkills(names: string[], root: string, notes: string[]): SkillDefinition[] {
+  const dir = path.join(root, "skills");
+  return expandNames(names, root).flatMap((name) => {
+    const file = path.join(dir, name, "SKILL.md");
+    if (!existsSync(file)) {
+      notes.push(`skill ${name} is not built yet (TE-07/08): no effect`);
+      return [];
+    }
+    const { frontMatter, body } = splitPromptFile(readFileSync(file, "utf8"));
+    const checked = validateSkillFrontMatter(frontMatter);
+    if (!checked.ok) throw new Error(`${file}: ${checked.message}`);
+    return [{ ...checked.value, body, layer: "builtin", file, tokens: estimateTokens(body) } as SkillDefinition];
+  });
+}
+
+const eligibleFor = (skills: SkillDefinition[], role: string) => skills.filter((s) => !s.roles || s.roles.includes(role));
 
 /** Style and skills of the default config (`output.style`, `skills.enabled` once TE-02/TE-07 add them). */
 function defaults(): { style: string; skills: string[] } {
@@ -116,11 +156,11 @@ const joinParts = (...parts: string[]) => parts.filter(Boolean).join("\n\n");
  */
 export function defaultAlwaysOn(root = REPO_ROOT): string {
   const { style, skills } = defaults();
-  return joinParts(styleText(style, root, []), skillsIndex(skills, root, []));
+  return joinParts(styleText(style, root, []), renderSkillsIndex(readSkills(skills, root, [])));
 }
 
 /**
- * `baseline`, `style:<name>`, `profile:<name>`, `skills:<a>+<b>` or `context:packed[@<tokens>]`, each on top
+ * `baseline`, `style:<name>`, `profile:<name>`, `cache:stable|legacy`, `skills:<a>+<b>` or `context:packed[@<tokens>]`, each on top
  * of the default config. Features that are not built yet resolve to a no-op
  * with a note, so the harness never depends on them.
  */
@@ -132,15 +172,35 @@ export function resolveVariant(name: string, root = REPO_ROOT): Variant {
     return { name, overlay: {}, alwaysOn: defaultAlwaysOn(root), notes };
   }
   if (kind === "style" && value) {
-    return { name, overlay: { style: value }, alwaysOn: joinParts(styleText(value, root, notes), skillsIndex(base.skills, root, [])), notes };
+    return { name, overlay: { style: value }, alwaysOn: joinParts(styleText(value, root, notes), renderSkillsIndex(readSkills(base.skills, root, []))), notes };
   }
   if (kind === "profile" && value) {
     notes.push("profiles are not built yet (TE-06): no effect in the mock; live runs need the feature");
     return { name, overlay: { profile: value }, alwaysOn: defaultAlwaysOn(root), notes };
   }
+  if (kind === "cache" && (value === "stable" || value === "legacy")) {
+    notes.push(
+      value === "stable"
+        ? "TE-05 prompt order (static → shared → per-seat delta), the shipped default: the same as baseline"
+        : "pre-TE-05 order: each panel member's specialty before the shared task, so members share only the always-on text",
+      "mock panels assume a warm cache (same model, after the first member's call); live runs use the engine's order",
+    );
+    return { name, overlay: {}, alwaysOn: defaultAlwaysOn(root), notes, mock: { promptOrder: value } };
+  }
   if (kind === "skills" && value) {
-    const skills = [...new Set([...base.skills, ...value.split("+")])];
-    return { name, overlay: { skills }, alwaysOn: joinParts(styleText(base.style, root, []), skillsIndex(skills, root, notes)), notes };
+    const names = expandNames([...base.skills, ...value.split("+")], root);
+    const skills = readSkills(names, root, notes);
+    const style = styleText(base.style, root, []);
+    const perRole = (role: string) => {
+      const eligible = eligibleFor(skills, role);
+      // A seat loads at most MAX_SKILLS_PER_SEAT skills / MAX_SKILL_TOKENS_PER_SEAT body tokens (first by name).
+      let tokens = 0;
+      const bodies = eligible.filter((s) => (tokens += s.tokens) <= MAX_SKILL_TOKENS_PER_SEAT).slice(0, MAX_SKILLS_PER_SEAT);
+      return { alwaysOn: joinParts(style, renderSkillsIndex(eligible)), loaded: bodies.map(fenceSkill).join("\n\n") };
+    };
+    // The report's always-on size is the largest index any fixture role sees.
+    const alwaysOn = BENCH_TASKS.map((t) => perRole(t.role).alwaysOn).reduce((a, b) => (b.length > a.length ? b : a), "");
+    return { name, overlay: { skills: names }, alwaysOn, perRole, notes };
   }
   if (kind === "context" && /^(summaries|truncate)(@\d+)?$/.test(value)) {
     const budgetTokens = value.includes("@") ? Number(value.split("@")[1]) : undefined;
@@ -155,7 +215,7 @@ export function resolveVariant(name: string, root = REPO_ROOT): Variant {
     const budgetTokens = value.includes("@") ? Number(value.split("@")[1]) : undefined;
     return { name, overlay: { context: value }, alwaysOn: defaultAlwaysOn(root), notes, packContext: budgetTokens ? { budgetTokens } : {} };
   }
-  throw new Error(`Unknown variant "${name}" (use baseline, style:<name>, profile:<name>, skills:<a>+<b>, context:packed[@<tokens>], context:summaries[@<tokens>], context:truncate[@<tokens>] or lead:summarizer)`);
+  throw new Error(`Unknown variant "${name}" (use baseline, style:<name>, profile:<name>, cache:stable|legacy, skills:<a>+<b>, context:packed[@<tokens>], context:summaries[@<tokens>], context:truncate[@<tokens>] or lead:summarizer)`);
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +342,12 @@ function noise(key: string): number {
   return ((h ^ (h >>> 16)) >>> 0) / 2 ** 32;
 }
 
+function commonPrefix(a: string, b: string): string {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i += 1;
+  return a.slice(0, i);
+}
+
 function mockReply(task: BenchTask, script: MockScript, u: number, blind = false): string {
   if (blind) return "I could not find the code or output this task refers to in the context I was given.";
   const full = task.mock.output;
@@ -294,7 +360,7 @@ function mockReply(task: BenchTask, script: MockScript, u: number, blind = false
   return prose.slice(0, Math.round(prose.length * scale)) + extra + (script.dropHandoff ? "" : block);
 }
 
-/** One task attempt with a scripted seat; usage goes through the TE-01 ledger as `seat.tokens` events. */
+/** One task attempt with a scripted seat (each member of a panel task in turn); usage goes through the TE-01 ledger as `seat.tokens` events. */
 function mockAttempt(library: PromptLibrary, task: BenchTask, variant: Variant, run: number, model: string): Attempt {
   const script = variant.mock ?? {};
   const sessionId = `${variant.name}/${task.id}/${run}`;
@@ -304,40 +370,56 @@ function mockAttempt(library: PromptLibrary, task: BenchTask, variant: Variant, 
     ledger.add({ seq: ++seq, sessionId, seatId: task.role, at: "", type, data } as EngineEvent);
 
   const contextScale = script.contextScale ?? 1;
-  const base = (variant.alwaysOn ? `${variant.alwaysOn}\n\n` : "") + rolePrompt(library, task, contextScale, variant.packContext);
+  const prefix = seatExtra(variant, task.role);
+  const role = rolePrompt(library, task, contextScale, variant.packContext);
   // A seat that was not given what the task needs cannot answer it.
-  const blind = !(task.needs ?? []).every((text) => base.includes(text));
+  const blind = !(task.needs ?? []).every((text) => role.includes(text) || prefix.includes(text));
+  // A panel task runs once per member, each with its own specialty (the per-seat delta).
+  const deltas = task.panel?.map((specialty) => specialtyAddendum(specialty)) ?? [""];
+  const bases = deltas.map((delta) =>
+    script.promptOrder === "legacy"
+      ? [prefix, delta, role].filter(Boolean).join("\n\n")
+      : assembleSeatPrompt({ static: [prefix], shared: [role], delta: [delta] }).text,
+  );
   // The seat reads each project file in its own tool turn; extra turns re-read the first one.
   const reads = Object.values(task.files);
   const extra = reads.length ? Array.from({ length: script.extraTurns ?? 0 }, () => reads[0]!) : [];
-  let history = "";
-  let previous = "";
-  const call = (prompt: string, output: string) => {
-    emit("seat.tokens", {
-      tokensIn: estimateTokens(prompt, model),
-      tokensOut: estimateTokens(output, model),
-      // The previous call (prompt + reply) is a prefix of this one, so a cache serves it.
-      cachedTokens: previous && !script.unstablePrefix ? estimateTokens(previous, model) : 0,
-    });
-    previous = prompt + output;
-  };
-
-  for (const file of [...reads, ...extra]) {
-    call(base + history, STEP);
-    history += STEP + file.slice(0, Math.round(file.length * contextScale));
-  }
   const u = noise(`${task.id}:${run}`);
-  let output = mockReply(task, script, u, blind);
-  call(base + history, output);
-  history += output;
   const files = { ...task.files, ...task.mock.edits };
-  let success = task.check({ output, files });
-  for (let followUp = 1; !success && followUp <= MAX_FOLLOW_UPS; followUp += 1) {
-    emit("seat.retry", { attempt: followUp + 1, maxAttempts: MAX_FOLLOW_UPS + 1, delayMs: 0, reason: "reply failed the task check" });
-    output = mockReply(task, { ...script, dropHandoff: false }, u, blind);
-    call(base + history + FOLLOW_UP, output);
-    history += FOLLOW_UP + output;
-    success = task.check({ output, files });
+  /** The first member's first prompt: what a warm cache holds when the next member starts. */
+  let first = "";
+  let success = true;
+  for (const base of bases) {
+    let history = "";
+    let previous = "";
+    const call = (prompt: string, output: string) => {
+      emit("seat.tokens", {
+        tokensIn: estimateTokens(prompt, model),
+        tokensOut: estimateTokens(output, model),
+        // The previous call (prompt + reply) is a prefix of this one, so a cache serves it; a later
+        // panel member's first call gets the prefix it shares with the first member's.
+        cachedTokens: script.unstablePrefix ? 0 : estimateTokens(previous || commonPrefix(prompt, first), model),
+      });
+      previous = prompt + output;
+      first ||= prompt;
+    };
+
+    for (const file of [...reads, ...extra]) {
+      call(base + history, STEP);
+      history += STEP + file.slice(0, Math.round(file.length * contextScale));
+    }
+    let output = mockReply(task, script, u, blind);
+    call(base + history, output);
+    history += output;
+    let passed = task.check({ output, files });
+    for (let followUp = 1; !passed && followUp <= MAX_FOLLOW_UPS; followUp += 1) {
+      emit("seat.retry", { attempt: followUp + 1, maxAttempts: MAX_FOLLOW_UPS + 1, delayMs: 0, reason: "reply failed the task check" });
+      output = mockReply(task, { ...script, dropHandoff: false }, u, blind);
+      call(base + history + FOLLOW_UP, output);
+      history += FOLLOW_UP + output;
+      passed = task.check({ output, files });
+    }
+    success &&= passed;
   }
 
   const usage = ledger.snapshot();
@@ -409,7 +491,8 @@ export async function runLive(options: LiveOptions): Promise<BenchReport> {
             await fs.mkdir(path.dirname(path.join(dir, file)), { recursive: true });
             await fs.writeFile(path.join(dir, file), text);
           }
-          const prompt = (variant.alwaysOn ? `${variant.alwaysOn}\n\n` : "") + rolePrompt(options.library, task, 1, variant.packContext);
+          const extra = seatExtra(variant, task.role);
+          const prompt = (extra ? `${extra}\n\n` : "") + rolePrompt(options.library, task, 1, variant.packContext);
           const executor = await createExecutor(options.executor, dir, { model: options.executorModel, timeoutMs: 15 * 60_000 });
           const result = await executor.run({ taskId: createId(), projectPath: dir, contract: buildContract(task.variables.goal ?? task.id), prompt });
           const output = result.summary;
@@ -523,8 +606,8 @@ export function gateVariant(report: BenchReport, name: string): { pass: boolean;
     }
   } else {
     // The variant may cost what its own extra always-on text costs on every call (+1 per call for the joining
-    // newlines), nothing more. Note: the mock adds that text itself; it does not call the engine's prompt
-    // assembly yet, so TE-03/04/05 must hook their packer, summaries and cache order into mockAttempt.
+    // newlines), nothing more. Note: the mock orders prompts with the engine's `assembleSeatPrompt` (TE-05);
+    // TE-03/04 must still hook their packer and summaries into mockAttempt.
     const successes = base.successRate * report.tasks.length;
     const extraPerCall = Math.max(0, variant.alwaysOnTokens - base.alwaysOnTokens) + 1;
     const allowance = successes > 0 ? (extraPerCall * base.calls) / successes : 0;

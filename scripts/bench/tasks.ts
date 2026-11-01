@@ -17,6 +17,8 @@ export interface BenchTask {
   role: string;
   /** Variables rendered into the role prompt. */
   variables: Record<string, string>;
+  /** Reviewer specialties when a panel does the task (TE-05): every member gets the same task and its own specialty addendum. */
+  panel?: string[];
   files: Record<string, string>;
   /**
    * Strings the seat's prompt must still contain for a competent seat to get the task right (the vulnerable
@@ -335,6 +337,7 @@ export function cartTotal(lines: Line[]): number {
   {
     id: "review",
     role: "code-reviewer",
+    panel: ["security", "testing", "architecture"],
     variables: {
       goal: "Add a user search for the admin page.",
       acceptanceCriteria: "- searchUsers(name) returns users whose name contains the text\n- no SQL injection",

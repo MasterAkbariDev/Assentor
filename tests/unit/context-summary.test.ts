@@ -74,8 +74,9 @@ describe("summarizeHistory (TE-04)", () => {
     expect(r.prompts[1]).toContain("DIGEST-1");
     expect(r.prompts[1]).toContain(turn(19));
     expect(r.prompts[1]).not.toContain(turn(18));
-    // Another scope does not see the cache.
+    // Another scope, or another digest cap, does not see the cache.
     expect((await summarizeHistory(turns(20), { ...options2, scope: "s2" })).calls).toBe(1);
+    expect((await summarizeHistory(turns(20), { ...options2, digestTokens: 50 })).calls).toBe(1);
   });
 
   it("concurrent asks for the same range share one call", async () => {

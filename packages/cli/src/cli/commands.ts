@@ -576,6 +576,8 @@ async function buildMembersFromBackends(input: {
    * defines the panel, so `routing.reviewStrategy: SINGLE` does not cut it to one.
    */
   teamMode: boolean;
+  /** Team mode: `members[i]`'s seat id, for its token reports. */
+  seatIds?: string[];
 }> {
   const complexity = new TaskComplexityAnalyzer().analyze({
     taskText: input.prompt,
@@ -654,6 +656,7 @@ async function buildMembersFromBackends(input: {
       complexity,
       reviewStrategy,
       teamMode: true,
+      seatIds: seats.map(({ seat }) => seat.id),
     };
   }
 

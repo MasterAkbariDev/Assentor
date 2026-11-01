@@ -28,9 +28,11 @@ const textOf = (value: unknown): string | undefined =>
 
 /**
  * Rolling summaries for negotiations (TE-04). Only from round 3, with `context.summaries: auto`, a negotiation
- * budget, and step context over that budget: each other seat's proposal larger than its share of the budget is
- * replaced by a digest (one call per proposal text, cached; the seat's own proposal and the critiques stay
- * verbatim, and steps without `round` — the moderator and judge rulings — are never touched). `packStepVars`
+ * budget, and step context over that budget: each entry of `proposals` larger than its share of the budget is
+ * replaced by a digest (one call per proposal text, cached). In revise and critique that list holds only the other
+ * seats' proposals (the seat's own `proposal` stays verbatim); in negotiate-agree it holds every proposal, the
+ * voter's own included, so all of them may be digested. Critiques stay verbatim, and steps without `round` — the
+ * moderator and judge rulings — are never touched. `packStepVars`
  * stays the outer bound. Everything else returns `vars` itself, so prompts are byte-identical when off.
  */
 export async function summarizeStepVars<V extends Readonly<Record<string, unknown>>>(vars: V, budgets: ContextBudgets | undefined, options: StepSummaryOptions): Promise<V> {
@@ -47,7 +49,7 @@ export async function summarizeStepVars<V extends Readonly<Record<string, unknow
       options.model,
     );
   if (tokens(vars) <= budgetTokens) return vars;
-  // What stays verbatim (goal, own proposal, critiques) is paid first; the other proposals share the rest.
+  // What stays verbatim (goal, `proposal` when the step has one, critiques) is paid first; `proposals` share the rest.
   const { proposals: _others, ...fixed } = vars as Record<string, unknown>;
   const share = Math.floor((budgetTokens - tokens(fixed)) / proposals.length);
   if (share <= 0) return vars;

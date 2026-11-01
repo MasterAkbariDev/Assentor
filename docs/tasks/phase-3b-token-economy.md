@@ -76,7 +76,7 @@ Phase exit criteria:
 ### TE-04 · Rolling summaries for long conversations
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** TE-03
 
-**Built (branch `claude/card-te-04`, not merged):** `summarizeHistory` (`packages/engine/src/context/summary.ts`): no call under budget or when the fold is under twice the digest cap; digests cached per (session, folded turns), shared by concurrent asks, extended with only new turns + the old digest; redaction before the summariser and on its reply; fenced, capped; truncation with markers when there is no summariser or it fails (never fails the run). Config `context.summaries: off|auto`, **OFF** (unset). With `auto` + a negotiation budget: debate rounds ≥ 3 replace other seats' over-share proposals by digests (made by the asking seat, counted in its usage); the Lead's `digestLog()` replaces its ad-hoc fold (smaller on the bench). Vote/synthesize and the TDD/red-team/debug retries carry no history, so they are not wired. Bench (`--fixtures debate-6|lead-long`, docs/benchmarks/tokens.md): summaries alone 0% (debate) / −3.5% (Lead); with budgets the same folding without the call is cheaper every time (debate −19.5% vs −8.2% at 800 tokens), so on the mock the call is pure cost and turning it on needs the owner's live A/B.
+**Built (branch `claude/card-te-04`, not merged):** `summarizeHistory` (`packages/engine/src/context/summary.ts`): no call under budget or when the fold is under twice the digest cap; digests cached per (session, folded turns), shared by concurrent asks, extended with only new turns + the old digest; redaction before the summariser and on its reply; fenced, capped; truncation with markers when there is no summariser or it fails (never fails the run). Config `context.summaries: off|auto`, **OFF** (unset). With `auto` + a negotiation budget: debate rounds ≥ 3 replace other seats' over-share proposals by digests (made by the asking seat, counted in its usage); the Lead's `digestLog()` replaces its ad-hoc fold (smaller on the bench). Vote/synthesize and the TDD/red-team/debug retries carry no history, so they are not wired. Bench (`--fixtures debate-6|lead-long`, docs/benchmarks/tokens.md): summaries alone 0% (debate) / −3.5% (Lead); with budgets the same folding without the call is cheaper every time (debate −19.4% vs +2.9% at 800 tokens), so on the mock the call is pure cost and turning it on needs the owner's live A/B. Debate digests use the asking seat, not the cheapest; must change before any `auto` default.
 
 **Goal** — Keep long negotiations, Lead runs and multi-round fixes from re-sending full history.
 
@@ -94,6 +94,8 @@ Phase exit criteria:
 **Tier:** 🟡 S · **Review:** O2 · **Size:** M · **Depends:** TE-01
 
 **Goal** — Pay once for the parts of a prompt that never change.
+
+**Savings note:** caching cuts billed cost (cached input is cheaper), not net tokens, which stay the same. The mock benchmark's ≈ −30% fresh (uncached) input for `cache:stable` vs `cache:legacy` is a best case (sequential calls, providers with prefix caching, warm cache) and is unverified on live runs.
 
 **Deliverables**
 1. Stable prompt order everywhere: (static) role prompt + style fragment + skills index → (shared) task/context → (per-seat) delta. A test pins the order.
@@ -142,6 +144,8 @@ Phase exit criteria:
 
 ### TE-08 · Built-in token-saver skills
 **Tier:** 🟢 H · **Review:** O (quality) · **Size:** M · **Depends:** TE-07
+
+**Built 2026-11-01 (branch `claude/card-te-08`):** the eight skills ship in `skills/`, all **off** (`optIn: true`; turned on by `skills.enabled`, by name or preset). Mock benchmark: every skill raises net tokens per task (+4% to +33%; all eight together +92% (3 bodies per seat), the owner's failure mode); the mock models costs (index + body) and no behavioural saving, so none passes the ship-on rule and the `lean` preset (`SKILL_PRESETS`) is empty. Numbers: `docs/benchmarks/tokens.md`; each description carries its own. Needs the owner: a `--live` A/B per skill; best candidates `review-signal-only` and `plan-in-bullets`. Passing skills go into `SKILL_PRESETS.lean`; TE-06's `economy` profile should expand that preset.
 
 **Goal** — Ship a strong default set; on in `economy`, opt-in elsewhere.
 

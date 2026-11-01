@@ -3,6 +3,7 @@ import {
   buildReviewPrompt,
   extractReviewImages,
   reviewResultFromModelText,
+  withTokens,
 } from "../shared/prompt.js";
 import type {
   ReviewContinuation,
@@ -143,7 +144,7 @@ export class GeminiReviewer implements Reviewer {
         });
         this.lastModelUsed = model;
         this.onStatus?.(`Gemini responded with ${model}`);
-        return reviewResultFromModelText(response.text);
+        return withTokens(reviewResultFromModelText(response.text), response.tokens);
       } catch (error) {
         if (error instanceof ProviderRequestError) {
           errors.push(`${model}: ${error.error.message}`);
