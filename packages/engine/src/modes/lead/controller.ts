@@ -26,7 +26,13 @@ import { runVerificationGates } from "../../review/verification-gates.js";
 import { installSetting, lockfileFingerprint, prepareWorktree } from "../../worktrees/prepare.js";
 import type { JobOutcome } from "../../seats/scheduler.js";
 import { ControllerActionSchema, type ControllerAction } from "../controller.js";
-import { ApprovalDeniedError, type ModeController, type ModeControllerInput, type ModeControllerResult } from "../registry.js";
+import {
+  ApprovalDeniedError,
+  type ControllerCommand,
+  type ModeController,
+  type ModeControllerInput,
+  type ModeControllerResult,
+} from "../registry.js";
 import { costRank, type RosterEntry } from "../roster.js";
 import { routeSeatModel } from "../../config/profile.js";
 import { LEAD_AGENT_STRATEGY, LeadConfigSchema, type LeadConfig } from "./config.js";
@@ -123,6 +129,8 @@ const LeadStateSchema = z.object({
   summary: z.string(),
   /** Results of the last turn, shown to the lead next turn. */
   lastResults: z.array(ResultSchema),
+  /** FU-18b: models the user pinned per task (lower-cased task id); the task's next runs use them. */
+  pins: z.record(ModelIdSchema).default({}),
 });
 type LeadState = z.infer<typeof LeadStateSchema>;
 
@@ -194,6 +202,14 @@ class LeadController implements ModeController {
   private templateWarned = false;
   private readonly leadSeat: Seat;
   private readonly stateFile: string;
+  /** FU-18b user controls: overrides by lower-cased task id, applied at the next decision point. */
+  private readonly overrides = new Map<string, { taskId: string; seatId: string }>();
+  /** Paused: no new lead turns or actions; agent runs in flight finish and are drained. */
+  private paused = false;
+  /** Log lines about user commands, added to the lead's log at the next decision point. */
+  private readonly userNotes: string[] = [];
+  private woken = false;
+  private nudge: (() => void) | undefined;
 
   constructor(private readonly input: ModeControllerInput) {
     this.cfg = LeadConfigSchema.parse(input.config.modes.lead);
@@ -253,8 +269,15 @@ class LeadController implements ModeController {
     let repeats = 0;
     for (;;) {
       if (this.stop.signal.aborted) return { status: "blocked", reason: "cancelled" };
+      this.woken = false;
       const stop = this.drain();
       if (stop) return stop;
+      await this.applyOverrides();
+      this.state.log.push(...this.userNotes.splice(0));
+      if (this.paused) {
+        await Promise.race([this.wake(), this.stopped, ...[...this.running.values()].map((r) => r.done)]);
+        continue;
+      }
       if (this.state.turns >= limits.maxLeadTurns) {
         return { status: "budget_exceeded", reason: `the lead used all ${limits.maxLeadTurns} turns; the board is saved` };
       }
@@ -274,10 +297,12 @@ class LeadController implements ModeController {
       }
       for (const raw of turn.actions) {
         if (this.stop.signal.aborted) break;
-        const verdict = await this.execute(raw);
+        // A pause stops the rest of the turn too; the lead sees why and can send them again.
+        const skipped = this.paused;
+        const verdict: ActionVerdict = skipped ? { accepted: false, reason: "not run: the user paused the lead" } : await this.execute(raw);
         const name = typeof (raw as { action?: unknown })?.action === "string" ? String((raw as { action: string }).action) : "(unknown)";
         this.emit({ type: "lead.action", data: { action: name, accepted: verdict.accepted, reason: clip(verdict.reason, 2000) } });
-        if (!verdict.accepted) this.state.invalidActions += 1;
+        if (!verdict.accepted && !skipped) this.state.invalidActions += 1;
         results.push({ action: name, accepted: verdict.accepted, reason: clip(verdict.reason, LINE_LIMIT) });
         if (verdict.stop) {
           this.state.lastResults = results;
@@ -311,9 +336,91 @@ class LeadController implements ModeController {
       await this.save();
       // Nothing new to look at yet: wait for an agent run to end before the next turn.
       if (this.finished.length === 0 && this.running.size > 0) {
-        await Promise.race([...[...this.running.values()].map((r) => r.done), this.stopped]);
+        await Promise.race([...[...this.running.values()].map((r) => r.done), this.stopped, this.wake()]);
       }
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // User controls (FU-18b)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Checked now, applied by the loop: an override waits for the next decision point (and for the task's
+   * current run to report), a pin applies to the task's next run, pause and resume to the next lead action.
+   */
+  control(command: ControllerCommand): string | undefined {
+    if (command.kind === "pause" || command.kind === "resume") {
+      const pause = command.kind === "pause";
+      if (this.paused === pause) return pause ? "the lead is already paused" : "the lead is not paused";
+      this.paused = pause;
+      this.userAction(command.kind, true, pause ? "the lead takes no new actions; agent runs in flight finish" : "the lead continues");
+      if (!pause) this.poke();
+      return undefined;
+    }
+    if (!this.state) return "the lead has not loaded its board yet";
+    const task = this.state.board.tasks.find((t) => key(t.id) === key(command.taskId));
+    if (!task) return `unknown task ${command.taskId}`;
+    if (task.status === "accepted" || task.status === "split") {
+      return `task ${task.id} is ${this.state.tasks[key(task.id)]?.integrated ? "integrated" : task.status}`;
+    }
+    if (command.kind === "pin") {
+      if (command.model === null) delete this.state.pins[key(task.id)];
+      else if (!ModelIdSchema.safeParse(command.model).success) return `invalid model id ${JSON.stringify(command.model)}`;
+      else this.state.pins[key(task.id)] = command.model;
+      const reason = command.model === null ? `${task.id} is no longer pinned` : `${task.id}'s next runs use model ${command.model}`;
+      this.userAction("pin", true, reason, { taskId: task.id, model: command.model });
+      return undefined;
+    }
+    if (!this.state.seats.some((s) => s.id === command.seatId)) return `unknown seat ${command.seatId}`;
+    this.overrides.set(key(task.id), { taskId: task.id, seatId: command.seatId });
+    this.poke();
+    return undefined;
+  }
+
+  private async applyOverrides(): Promise<void> {
+    for (const [taskKey, { taskId, seatId }] of this.overrides) {
+      if (this.running.has(taskKey)) continue; // once its current run has reported
+      this.overrides.delete(taskKey);
+      const verdict = await this.override(taskId, seatId);
+      this.userAction("override", verdict.accepted, verdict.reason, { taskId, seatId });
+    }
+  }
+
+  /** The user's reassignment: the board and run checks of `reassign`, but not the lead's reassign limit. */
+  private async override(taskId: string, seatId: string): Promise<ActionVerdict> {
+    try {
+      const task = this.task(taskId);
+      if (task.status === "accepted" || task.status === "split") throw new Refused(`task ${task.id} is ${task.status}`);
+      const seat = this.seat(seatId);
+      const ops: BoardOp[] =
+        task.status === "backlog"
+          ? [{ op: "assign", taskId: task.id, seatId: seat.id }]
+          : [
+              ...(task.status === "in_review" ? [{ op: "reject", taskId: task.id, reason: "the user reassigned it" } as const] : []),
+              { op: "reassign", taskId: task.id, seatId: seat.id },
+            ];
+      await this.startRun(task, seat, ops);
+      delete this.record(task.id).review;
+      return { accepted: true, reason: `the user reassigned ${task.id} to ${seat.id}` };
+    } catch (error) {
+      return { accepted: false, reason: error instanceof Refused ? error.message : `failed: ${message(error)}` };
+    }
+  }
+
+  private userAction(action: string, accepted: boolean, reason: string, extra: Record<string, unknown> = {}): void {
+    this.emit({ type: "lead.action", data: { action, by: "user", accepted, reason: clip(reason, 2000), ...extra } });
+    this.userNotes.push(`the user: ${action}: ${accepted ? "done" : "REFUSED"}: ${clip(reason, LINE_LIMIT)}`);
+  }
+
+  /** Resolves on the next `poke`, or now if one came since the loop's last decision point. */
+  private wake(): Promise<void> {
+    return this.woken ? Promise.resolve() : new Promise((resolve) => (this.nudge = resolve));
+  }
+
+  private poke(): void {
+    this.woken = true;
+    this.nudge?.();
   }
 
   /** One lead turn through the scheduler. A seat failure pauses the session (lead failover). */
@@ -571,10 +678,12 @@ class LeadController implements ModeController {
     // The hash keeps ids apart that sanitise alike (T.1, T-1, T_1).
     const hash = createHash("sha256").update(key(task.id)).digest("hex").slice(0, 6);
     const stageId = `task-${key(task.id).replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "x"}-${hash}-r${record.runs + 1}`;
-    const display = this.toSeat(seat).displayName;
+    // A user pin (FU-18b) is the model of this task's runs; the host builds each run's executor from this seat.
+    const pinned = this.state.pins[key(task.id)];
+    const runSeat = pinned ? { ...this.toSeat(seat), model: pinned } : this.toSeat(seat);
     if (this.input.autonomy === "manual") {
       const gates = this.gatesEnabled() ? "; its verification gates then run in its worktree" : "";
-      const question = `Start task ${task.id} "${clip(task.title, 80)}" on ${display} (${seat.provider}/${seat.model}, ${seat.permissions})${gates}?`;
+      const question = `Start task ${task.id} "${clip(task.title, 80)}" on ${runSeat.displayName} (${seat.provider}/${runSeat.model}, ${seat.permissions})${gates}?`;
       if (!(await this.input.requestApproval({ question, stageId }))) throw new Refused("the user did not approve this run");
     }
     let worktree = record.worktrees[seat.id];
@@ -602,7 +711,7 @@ class LeadController implements ModeController {
       record.lostWork ? "Earlier work on this task is gone (its worktree was removed); start again from this working copy." : "",
     ].filter(Boolean).join("\n");
     record.lostWork = false;
-    const done = this.runAgent(task, this.toSeat(seat), stageId, worktree, feedback || undefined).then((outcome) => {
+    const done = this.runAgent(task, runSeat, stageId, worktree, feedback || undefined).then((outcome) => {
       this.finished.push(outcome);
     });
     this.running.set(key(task.id), { seatId: seat.id, done });
@@ -1190,6 +1299,7 @@ class LeadController implements ModeController {
         log: [],
         summary: "",
         lastResults: [],
+        pins: {},
       };
     }
     if (raw === undefined) throw new Error("nothing to resume: this session has no lead state");

@@ -204,7 +204,16 @@ export interface ModeController {
    * settle promptly: whatever it returns then is recorded as cancelled.
    */
   run(): Promise<ModeControllerResult>;
+  /** FU-18b: a user command from outside the run (RPC). Returns why it was refused, else undefined. */
+  control?(command: ControllerCommand): string | undefined;
 }
+
+/** User commands a controller may take (FU-18b; Lead only so far). */
+export type ControllerCommand =
+  | { kind: "override"; taskId: string; seatId: string }
+  | { kind: "pin"; taskId: string; model: string | null }
+  | { kind: "pause" }
+  | { kind: "resume" };
 
 export interface ModeControllerResult {
   status: "completed" | "blocked" | "budget_exceeded";
@@ -312,9 +321,13 @@ const negotiate: ModeRuntime = {
 // The controller is Node-only (worktrees, gates, state file), so it loads on run and the registry stays browser-safe.
 const lead: ModeRuntime = {
   validate: leadConfigProblems,
-  createController: (input) => ({
-    run: async () => (await import("./lead/controller.js")).createLeadController(input).run(),
-  }),
+  createController: (input) => {
+    let controller: ModeController | undefined;
+    return {
+      run: async () => (controller = (await import("./lead/controller.js")).createLeadController(input)).run(),
+      control: (command) => controller?.control?.(command) ?? (controller ? undefined : "the lead has not started yet"),
+    };
+  },
 };
 
 // Built-in playbooks (playbooks/builtin): read-only explore and plan have no execute stage or edit seat.

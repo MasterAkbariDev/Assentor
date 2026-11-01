@@ -65,12 +65,16 @@ export interface LeadTaskView {
   reassigns: number;
   /** `task.escalated` events seen for the task. */
   escalations: number;
+  /** Model the user pinned for the task's next runs (FU-18b `lead.pin`); absent when not pinned. */
+  pinnedModel?: string;
 }
 
 export interface LeadLogEntry {
   action: string;
   accepted: boolean;
   reason: string;
+  /** Set for a user's override, pin, pause or resume (FU-18b); absent for the lead's own actions. */
+  by?: "user";
 }
 
 export interface LeadBoardView {
@@ -86,10 +90,12 @@ export interface LeadBoardView {
   actions: LeadLogEntry[];
   /** Every lead action seen in this run, including those dropped from `actions`. */
   actionsTotal: number;
+  /** The user paused the lead (FU-18b `lead.pause`) and has not resumed it. */
+  paused: boolean;
 }
 
 export function emptyLeadBoardView(): LeadBoardView {
-  return { turn: 0, tasks: [], seatNames: {}, log: [], actions: [], actionsTotal: 0 };
+  return { turn: 0, tasks: [], seatNames: {}, log: [], actions: [], actionsTotal: 0, paused: false };
 }
 
 /** The column a task state sits in. `split` parents have none. */
@@ -173,13 +179,15 @@ export function reduceLeadEvents(view: LeadBoardView, event: EngineEvent): LeadB
       return { ...view, turn: event.data.turn };
 
     case "lead.action": {
+      const user = event.data.by === "user";
       const entry: LeadLogEntry = {
         action: plainText(event.data.action),
         accepted: event.data.accepted,
         reason: plainText(event.data.reason),
+        ...(user ? { by: "user" as const } : {}),
       };
       return {
-        ...view,
+        ...userControl(view, event.data, user),
         log: [...view.log, entry].slice(-LEAD_LOG_LIMIT),
         actions: [...view.actions, entry].slice(-LEAD_ACTION_LIMIT),
         actionsTotal: view.actionsTotal + 1,
@@ -232,6 +240,18 @@ export function reduceLeadEvents(view: LeadBoardView, event: EngineEvent): LeadB
     default:
       return view;
   }
+}
+
+/** What an accepted user control changes besides the log: the pause flag, a task's pin. */
+function userControl(view: LeadBoardView, data: { action: string; accepted: boolean; [key: string]: unknown }, user: boolean): LeadBoardView {
+  if (!user || !data.accepted) return view;
+  if (data.action === "pause" || data.action === "resume") return { ...view, paused: data.action === "pause" };
+  if (data.action !== "pin") return view;
+  const model = typeof data.model === "string" ? plainText(data.model) : "";
+  const task = findTask(view, plainText(data.taskId));
+  if (!task) return view;
+  const { pinnedModel: _old, ...rest } = task;
+  return { ...view, tasks: view.tasks.map((t) => (t === task ? (model ? { ...rest, pinnedModel: model } : rest) : t)) };
 }
 
 /** The task statuses a `task.status` event can carry that move a task on the board. */
