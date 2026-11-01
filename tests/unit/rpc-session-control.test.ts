@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -73,12 +73,12 @@ const executor = (): Executor => ({
   continue: async () => ({ status: "completed", summary: "done" }),
   cancel: async () => undefined,
 });
-const deps = (projectPath: string): StageRunnerDeps => ({
+const deps = (projectPath: string, makeExecutor: () => Executor = executor): StageRunnerDeps => ({
   projectPath,
   scheduler: new SeatScheduler({ sessionId: "s", backoffBaseMs: 1 }),
   runStep: async () => ({}),
   seatsFor,
-  createExecutor: () => executor(),
+  createExecutor: () => makeExecutor(),
   createReviewer: () => new PanelReviewer({ name: "panel", policy: "majority", reviewers: [new MockReviewer({ name: "r1" })] }),
   supervisor: { skipGates: true },
 });
@@ -106,6 +106,7 @@ async function setup(
     maxAutonomy?: "manual" | "supervised" | "autopilot";
     createdTtlMs?: number;
     launchDelayMs?: number;
+    executor?: () => Executor;
   } = {},
 ): Promise<Setup> {
   const projectPath = await makeRepo();
@@ -116,7 +117,7 @@ async function setup(
       return {
       autonomy: options.autonomy ?? "supervised",
       config,
-      deps: deps(projectPath),
+      deps: deps(projectPath, options.executor),
       ...(options.mode ? { mode: options.mode } : {}),
       };
     },
@@ -164,15 +165,13 @@ describe("contract and access", () => {
     expect(frames.map((f) => JSON.parse(f).error.code)).toEqual(Array(4).fill(RpcErrorCode.WriteNotAllowed));
   });
 
-  it("pause, resume and every seat method answer NotSupported", async () => {
+  it("pause, resume, seat.inject and seat.restart answer NotSupported", async () => {
     const { client } = await setup();
     const id = "11111111-1111-4111-8111-111111111111";
     const calls = [
       client.call("session.pause", { sessionId: id }),
       client.call("session.resume", { sessionId: id }),
-      client.call("seat.setModel", { sessionId: id, seatId: "a", model: "m" }),
       client.call("seat.inject", { sessionId: id, seatId: "a", text: "hi" }),
-      client.call("seat.stop", { sessionId: id, seatId: "a" }),
       client.call("seat.restart", { sessionId: id, seatId: "a" }),
     ];
     for (const call of calls) expect((await failure(call)).code).toBe(RpcErrorCode.NotSupported);
@@ -469,5 +468,138 @@ describe("worktrees", () => {
     // A dead owner is a stale lock: not live.
     await fs.writeFile(lock, `${JSON.stringify({ pid: 2 ** 22 - 1, host: os.hostname(), startedAt: new Date().toISOString(), token: "dead" })}\n`);
     expect(await client.call("worktree.discard", { ...key, force: true })).toEqual({ ok: true });
+  });
+});
+
+describe("seat control (FU-12)", () => {
+  const isAlive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const stageFor = (seatId: string): StageSpec => ({ id: `work-${seatId}`, kind: "execute", options: { seat: { id: seatId, role: "engineer" } }, requireApproval: false });
+  const task = (i: ModeControllerInput, taskId: string) => ({ taskId, projectPath: i.deps.projectPath, contract: { goal: "g" } as never, prompt: "go" });
+
+  /** Each turn is a real child process that lives until `cancel` kills it. */
+  function spawningExecutor(pids: number[]): Executor {
+    const children = new Map<string, ChildProcess>();
+    const turn = (taskId: string) =>
+      new Promise<{ status: "cancelled"; summary: string }>((resolve) => {
+        const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+        children.set(taskId, child);
+        pids.push(child.pid!);
+        cleanups.push(() => void child.kill("SIGKILL"));
+        child.on("exit", () => resolve({ status: "cancelled", summary: "killed" }));
+      });
+    return {
+      ...executor(),
+      run: (t) => turn(t.taskId),
+      continue: (t) => turn(t.taskId),
+      cancel: async (taskId) => void children.get(taskId)?.kill("SIGKILL"),
+    };
+  }
+
+  it("stop kills only that seat's process; the controller sees the turn cancelled and the session goes on", async () => {
+    const pids: Record<string, number[]> = { a: [], b: [] };
+    const seats = ["a", "b"]; // the order the controller makes them in
+    const results: Record<string, string> = {};
+    const mode = dynamicMode(async (i) => {
+      const turns = (["a", "b"] as const).map(async (seat) => {
+        const ex = i.deps.createExecutor(stageFor(seat));
+        results[seat] = (await ex.run(task(i, `t-${seat}`))).status;
+      });
+      await Promise.all(turns);
+    });
+    const { client } = await setup({ mode, executor: () => spawningExecutor(pids[seats.shift()!]!) });
+    const { sessionId } = await client.call("session.create", { mode: "lead", goal: "g" });
+    await client.call("session.start", { sessionId });
+    await until(() => pids.a!.length === 1 && pids.b!.length === 1);
+
+    expect((await failure(client.call("seat.stop", { sessionId, seatId: "a" } as never))).code).toBe(RpcErrorCode.InvalidParams);
+    expect(await client.call("seat.stop", { sessionId, seatId: "a", confirm: true })).toEqual({ ok: true });
+    await until(() => results.a !== undefined);
+    expect(results.a).toBe("cancelled");
+    expect(isAlive(pids.a![0]!)).toBe(false);
+    expect(isAlive(pids.b![0]!)).toBe(true);
+    expect((await client.call("session.get", { sessionId })).session.live).toBe("running");
+    // Nothing of a's is running any more.
+    expect((await failure(client.call("seat.stop", { sessionId, seatId: "a", confirm: true }))).code).toBe(RpcErrorCode.Rejected);
+
+    await client.call("seat.stop", { sessionId, seatId: "b", confirm: true });
+    await until(async () => (await client.call("session.get", { sessionId })).session.live === undefined);
+    const { events } = await client.call("session.export", { sessionId });
+    expect(events.map((e) => e.type)).toContain("session.completed");
+    // Finished: the seat is out of reach.
+    expect((await failure(client.call("seat.stop", { sessionId, seatId: "b", confirm: true }))).code).toBe(RpcErrorCode.InvalidParams);
+  });
+
+  it("setModel applies at the seat's next turn and emits pending then applied seat.model.changed", async () => {
+    const models: Array<string | undefined> = [];
+    let current: string | undefined;
+    const switchable = (): Executor => ({
+      ...executor(),
+      run: async () => (models.push(current), { status: "completed", summary: "done" }),
+      setModel: (model) => void (current = model),
+    });
+    const mode = dynamicMode(async (i) => {
+      const ex = i.deps.createExecutor(stageFor("a"));
+      await ex.run(task(i, "t1"));
+      await i.requestApproval({ question: "next turn?" });
+      await ex.run(task(i, "t2"));
+    });
+    const { client } = await setup({ mode, executor: switchable });
+    const { sessionId } = await client.call("session.create", { mode: "lead", goal: "g" });
+    await client.call("session.start", { sessionId });
+    const pending = async () => (await client.call("session.get", { sessionId })).pendingApprovals;
+    await until(async () => (await pending()).length === 1);
+
+    for (const model of ["--yolo", "a b", ""]) {
+      expect((await failure(client.call("seat.setModel", { sessionId, seatId: "a", model }))).code).toBe(RpcErrorCode.InvalidParams);
+    }
+    expect(await client.call("seat.setModel", { sessionId, seatId: "a", model: "opus-x" })).toEqual({ ok: true });
+    expect(models).toEqual([undefined]); // not applied before the next turn
+    await client.call("session.approve", { sessionId, id: (await pending())[0]!, decision: "approve" });
+    await until(async () => (await client.call("session.get", { sessionId })).session.live === undefined);
+
+    expect(models).toEqual([undefined, "opus-x"]);
+    const { events } = await client.call("session.export", { sessionId });
+    expect(events.filter((e) => e.type === "seat.model.changed")).toMatchObject([
+      { seatId: "a", data: { to: "opus-x", pending: true } },
+      { seatId: "a", data: { to: "opus-x", pending: false } },
+    ]);
+    expect((await failure(client.call("seat.setModel", { sessionId, seatId: "a", model: "opus-y" }))).code).toBe(RpcErrorCode.InvalidParams);
+  });
+
+  it("unknown, foreign and fixed-model seats, unknown sessions and not-started sessions are refused", async () => {
+    const mode = dynamicMode(async (i) => {
+      i.deps.createExecutor(stageFor(i.goal)); // seat named after the goal; no setModel
+      await i.requestApproval({ question: "hold" });
+    });
+    const { client } = await setup({ mode });
+    const one = (await client.call("session.create", { mode: "lead", goal: "a" })).sessionId;
+    const two = (await client.call("session.create", { mode: "lead", goal: "b" })).sessionId;
+    // Created, not started.
+    expect((await failure(client.call("seat.stop", { sessionId: one, seatId: "a", confirm: true }))).code).toBe(RpcErrorCode.Rejected);
+    await client.call("session.start", { sessionId: one });
+    await client.call("session.start", { sessionId: two });
+    await until(async () => (await client.call("session.get", { sessionId: two })).pendingApprovals.length === 1);
+
+    const rejectedCalls = [
+      client.call("seat.setModel", { sessionId: one, seatId: "a", model: "m" }), // executor cannot switch
+      client.call("seat.setModel", { sessionId: one, seatId: "b", model: "m" }), // b is session two's seat
+      client.call("seat.setModel", { sessionId: one, seatId: "nobody", model: "m" }),
+      client.call("seat.stop", { sessionId: one, seatId: "b", confirm: true }),
+      client.call("seat.stop", { sessionId: one, seatId: "a", confirm: true }), // nothing running
+    ];
+    for (const call of rejectedCalls) expect((await failure(call)).code).toBe(RpcErrorCode.Rejected);
+    for (const bad of ["22222222-2222-4222-8222-222222222222", "not-an-id"]) {
+      expect((await failure(client.call("seat.stop", { sessionId: bad, seatId: "a", confirm: true }))).code).toBe(RpcErrorCode.InvalidParams);
+      expect((await failure(client.call("seat.setModel", { sessionId: bad, seatId: "a", model: "m" }))).code).toBe(RpcErrorCode.InvalidParams);
+    }
+    for (const sessionId of [one, two]) await client.call("session.cancel", { sessionId });
+    await until(async () => (await client.call("session.list")).sessions.every((s) => s.live === undefined));
   });
 });

@@ -569,18 +569,17 @@ export const RpcMethods = {
     params: z.object({ sessionId: SessionIdSchema, fromSeq: z.number().int().nonnegative().default(0) }).strict(),
     result: z.object({ events: z.array(z.record(z.unknown())), truncated: z.boolean() }),
   },
-  // Not supported yet: no registry reaches a live Supervisor/executor from a session id.
-  "seat.setModel": {
-    access: "write",
-    params: SessionSeatSchema.extend({ model: z.string().min(1).max(200), immediate: z.boolean().optional() }).strict(),
-    result: OkSchema,
-  },
+  // FU-12: a seat of a session running in this engine. `setModel` applies at the seat's next turn.
+  "seat.setModel": { access: "write", params: SessionSeatSchema.extend({ model: ModelIdSchema }).strict(), result: OkSchema },
+  // Not supported yet: no way to inject text into a running seat.
   "seat.inject": {
     access: "write",
     params: SessionSeatSchema.extend({ text: z.string().min(1).max(20_000) }).strict(),
     result: OkSchema,
   },
-  "seat.stop": { access: "write", params: SessionSeatSchema.strict(), result: OkSchema },
+  /** Kills the seat's turns in flight and its scheduler jobs; the session goes on. */
+  "seat.stop": { access: "write", params: SessionSeatSchema.extend({ confirm: ConfirmSchema }).strict(), result: OkSchema },
+  // Not supported yet: a controller cannot take a restarted seat back mid-session.
   "seat.restart": { access: "write", params: SessionSeatSchema.strict(), result: OkSchema },
   // Worktrees are addressed by (sessionId, seatId) and checked against the manager's manifest; never by path.
   "worktree.diff": {
