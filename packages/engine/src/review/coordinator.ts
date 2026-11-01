@@ -150,6 +150,8 @@ export class ReviewCoordinator {
   async runIndependentReviews(
     input: ReviewInput | ReviewContinuation,
     method: "review" | "continue" = "review",
+    /** Run only the first `limit` reviewers (economy profile, TE-06); default all. */
+    limit?: number,
   ): Promise<{
     findings: ReviewerFinding[];
     turns: Array<{ agentId: string; turn: ReviewerTurnResult }>;
@@ -157,7 +159,7 @@ export class ReviewCoordinator {
   }> {
     const ids = uniqueMemberIds(this.reviewers.map((reviewer) => reviewer.name));
     const settled = await Promise.allSettled(
-      this.reviewers.map((reviewer) =>
+      this.reviewers.slice(0, limit).map((reviewer) =>
         method === "review"
           ? reviewer.review(input as ReviewInput)
           : reviewer.continue(input as ReviewContinuation),
@@ -208,8 +210,8 @@ export class ReviewCoordinator {
     return { findings, turns, outcomes };
   }
 
-  correlate(findings: ReviewerFinding[]): CorrelatedFinding[] {
-    return correlateFindings(findings, this.reviewers.length);
+  correlate(findings: ReviewerFinding[], total = this.reviewers.length): CorrelatedFinding[] {
+    return correlateFindings(findings, total);
   }
 
   /**
@@ -374,6 +376,7 @@ export class PanelReviewer implements Reviewer {
   readonly name: string;
   private readonly coordinator: ReviewCoordinator;
   private readonly members: Reviewer[];
+  private readonly narrow?: (input: ReviewInput | ReviewContinuation) => boolean;
   /** Unevidenced security claims already sent for verification in this task. */
   private readonly verificationRequested = new Set<string>();
   callCount = 0;
@@ -385,8 +388,14 @@ export class PanelReviewer implements Reviewer {
     options: ReviewCoordinatorOptions & {
       name?: string;
       memberSeatIds?: string[];
+      /**
+       * Economy profile (TE-06): called with each review's input; true = only the first member reviews this
+       * turn, false (or unset) = the whole panel.
+       */
+      narrow?: (input: ReviewInput | ReviewContinuation) => boolean;
     },
   ) {
+    this.narrow = options.narrow;
     this.name = options.name ?? "panel";
     this.memberSeatIds = options.memberSeatIds;
     this.members = [...options.reviewers];
@@ -410,7 +419,7 @@ export class PanelReviewer implements Reviewer {
     method: "review" | "continue",
   ): Promise<ReviewerTurnResult> {
     this.callCount += 1;
-    const reviewed = await this.coordinator.runIndependentReviews(input, method);
+    const reviewed = await this.coordinator.runIndependentReviews(input, method, this.narrow?.(input) ? 1 : undefined);
     // Every member's reported tokens, whatever the panel decides (TE-05).
     const memberUsage = reviewed.turns.flatMap(({ agentId, turn }, i) => [
       ...(turn.usage ? [{ seatId: this.memberSeatIds?.[i] ?? agentId, usage: turn.usage }] : []),
@@ -496,7 +505,7 @@ export class PanelReviewer implements Reviewer {
       return {
         error: inconclusiveSummary(outcomes),
         retryable: failed.every((f) => f.retryable),
-        rawOutput: rawOutput(this.coordinator.correlate(findings)),
+        rawOutput: rawOutput(this.coordinator.correlate(findings, outcomes.length)),
       };
     }
     const result = decided.result;
@@ -512,11 +521,11 @@ export class PanelReviewer implements Reviewer {
       return {
         error: inconclusiveSummary(outcomes),
         retryable: failed.every((f) => f.retryable),
-        rawOutput: rawOutput(this.coordinator.correlate(findings)),
+        rawOutput: rawOutput(this.coordinator.correlate(findings, outcomes.length)),
       };
     }
 
-    const correlated = this.coordinator.correlate(findings);
+    const correlated = this.coordinator.correlate(findings, outcomes.length);
     const seatOf = new Map(
       uniqueMemberIds(this.members.map((m) => m.name)).map((id, i) => [id, this.memberSeatIds?.[i] ?? id]),
     );

@@ -47,6 +47,7 @@ import {
   buildContract,
   createMembersFromBackends,
   executorEmitsPlainText,
+  panelNarrowing,
   panelPolicyOptions,
   resolveExecutorModel,
   withReviewTeam,
@@ -108,7 +109,7 @@ export async function runModeTask(input: ModeTaskInput) {
       autonomy: input.autonomy,
       profile: input.profile,
     });
-    const profiled = applyRunProfile(loaded, { explicit: input.style ? ["output.style"] : [] });
+    const profiled = applyRunProfile(loaded);
     const config = input.team ? withReviewTeam(profiled, input.team) : profiled;
     const profileLine = profileNote(config);
     if (profileLine) reporter.note(profileLine);
@@ -427,6 +428,7 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
           ...(seatIds ? { memberSeatIds: seatIds } : {}),
           goal: input.goal,
           acceptanceCriteria: input.acceptanceCriteria ?? [],
+          ...panelNarrowing(config, input.goal, projectPath, teamMode),
           ...panelPolicyOptions(config, backends),
           ...((REVIEW_POLICIES as readonly string[]).includes(policy as string) ? { policy: policy as ReviewPolicy } : {}),
           ...tiebreak,

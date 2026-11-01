@@ -1,4 +1,5 @@
 import readline from "node:readline";
+import { profileOf } from "#assentor/engine/config/profile.js";
 import type { AssentorConfig } from "#assentor/engine/config/schema.js";
 import type { SessionEstimate } from "#assentor/engine/estimate/cost.js";
 import type { RunEstimate } from "#assentor/protocol/events.js";
@@ -10,7 +11,7 @@ const n = (value: number) => Math.round(value).toLocaleString("en-US");
 
 /**
  * One line before a run. `excludesExecutor` marks mode runs, whose execute
- * stages are not estimated. The profile is `n/a` until `run.profile` (TE-06) exists.
+ * stages are not estimated. The profile is the run's (`balanced` unless `run.profile` / `--profile`).
  */
 export function formatRunEstimate(
   estimate: SessionEstimate,
@@ -25,7 +26,7 @@ export function formatRunEstimate(
   const seats = estimate.perSeat.length;
   const team = config.modes.review?.team ? `team ${config.modes.review.team}` : "legacy reviewers";
   const excludes = options.excludesExecutor ? " · excludes executor" : "";
-  return `Estimate: ${tokens}, ${cost} · ${modeLabel}${excludes} · ${team} · ${seats} ${seats === 1 ? "seat" : "seats"} · review rounds 1–${config.limits.maxRounds} · profile n/a`;
+  return `Estimate: ${tokens}, ${cost} · ${modeLabel}${excludes} · ${team} · ${seats} ${seats === 1 ? "seat" : "seats"} · review rounds 1–${config.limits.maxRounds} · profile ${profileOf(config)}`;
 }
 
 /** The estimate as the `session.estimate` event and the usage report carry it. */

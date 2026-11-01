@@ -73,7 +73,7 @@ import {
   type OutputStyle,
 } from "#assentor/engine/output/style.js";
 import { resolveTeams, ReviewModeSchema } from "#assentor/engine/config/teams.js";
-import { applyRunProfile, profileNote, reviewStrategyFor, type RunProfile } from "#assentor/engine/config/profile.js";
+import { applyRunProfile, profileNote, reviewNarrowing, type RunProfile } from "#assentor/engine/config/profile.js";
 import {
   createReviewerSeats,
   reviewerProviderForSeat,
@@ -585,12 +585,11 @@ async function buildMembersFromBackends(input: {
   const complexity = new TaskComplexityAnalyzer().analyze({
     taskText: input.prompt,
   });
-  // Balanced: the config's own. Economy/max: the profile's default unless the config sets one (TE-06).
-  const reviewStrategy = reviewStrategyFor(input.config, input.prompt, input.projectPath) as ReviewStrategy;
+  const reviewStrategy = input.config.routing.reviewStrategy as ReviewStrategy;
   const reviewTeam =
     input.team?.team ??
     (input.config.modes.review ? resolveTeams(input.config).review : undefined);
-  const backends = reviewTeam ? [] : selectReviewerBackends(input.config, reviewStrategy);
+  const backends = reviewTeam ? [] : selectReviewerBackends(input.config);
   if (!reviewTeam && backends.length === 0) {
     throw new Error(
       "No reviewers configured. Add Gemini (API) or Claude (CLI) in Configure → Reviewers.",
@@ -685,6 +684,12 @@ async function buildMembersFromBackends(input: {
   }
 
   return { members, backends, complexity, reviewStrategy, teamMode: false };
+}
+
+/** `narrow` for a `PanelReviewer` under the economy profile (TE-06); nothing otherwise or when a team defines the panel. */
+export function panelNarrowing(config: AssentorConfig, goal: string, projectPath: string, teamMode: boolean) {
+  const narrow = teamMode ? undefined : reviewNarrowing(config, goal, projectPath);
+  return narrow ? { narrow } : {};
 }
 
 async function instantiateBackend(
@@ -937,7 +942,7 @@ async function runAssentorTaskBody(
     style: input.style,
     profile: input.profile,
   });
-  const profiled = applyRunProfile(loaded, { explicit: input.style ? ["output.style"] : [] });
+  const profiled = applyRunProfile(loaded);
   const config = input.team ? withReviewTeam(profiled, input.team) : profiled;
   reporter.setStyle(config.output.style);
   const profileLine = profileNote(config);
@@ -1038,6 +1043,7 @@ async function runAssentorTaskBody(
           reviewers: memberReviewers,
           goal: input.prompt,
           acceptanceCriteria: input.acceptanceCriteria ?? [],
+          ...panelNarrowing(config, input.prompt, projectPath, teamMode),
           ...panelPolicyOptions(config, memberBackends),
         });
 
@@ -1209,7 +1215,7 @@ export async function resumeAssentorTask(input: {
       style: input.style,
       profile: input.profile,
     });
-    const profiled = applyRunProfile(loaded, { explicit: input.style ? ["output.style"] : [] });
+    const profiled = applyRunProfile(loaded);
     const config = input.team ? withReviewTeam(profiled, input.team) : profiled;
     const profileLine = profileNote(config);
     if (profileLine) reporter.note(profileLine);
@@ -1328,6 +1334,7 @@ export async function resumeAssentorTask(input: {
             name: teamMode ? "panel:team" : `panel:${reviewStrategy.toLowerCase()}`,
             reviewers: memberReviewers,
             goal: resume.snapshot.contract.goal,
+            ...panelNarrowing(config, resume.snapshot.contract.goal, projectPath, teamMode),
             ...panelPolicyOptions(config, memberBackends),
             acceptanceCriteria:
               resume.snapshot.contract.acceptanceCriteria ?? [],

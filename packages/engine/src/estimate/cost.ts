@@ -40,6 +40,8 @@ export interface EstimateInput {
   modes: { negotiate?: NegotiateMode; review?: ReviewMode };
   /** Review team for configs without `modes.review`; ignored when `modes.review` is set. */
   reviewTeam?: Team;
+  /** Economy profile (TE-06): the reviewTeam's later members only count in the high estimate. */
+  narrowReview?: boolean;
   /** The executor's team (solo runs): one turn low, `maxRounds` high, like a review seat. */
   executorTeam?: Team;
   /** Tokens of shared context sent on every turn. */
@@ -107,9 +109,10 @@ export function estimateSession(input: EstimateInput): SessionEstimate {
   const reviewTeam = review ? input.teams[review.team] : input.reviewTeam;
   if (reviewTeam) {
     const seats = expandSeatSpecs(reviewTeam.seats, { teamName: review?.team });
-    for (const seat of seats) {
-      addTurns(seat, 1, input.maxRounds);
-    }
+    seats.forEach((seat, index) => {
+      // Economy narrowing (TE-06): the low end has the first member only; a danger area brings the rest.
+      addTurns(seat, input.narrowReview && index > 0 ? 0 : 1, input.maxRounds);
+    });
   }
   if (input.executorTeam) {
     for (const seat of expandSeatSpecs(input.executorTeam.seats, { teamName: "executor" })) {
@@ -206,6 +209,7 @@ export function estimateRun(config: AssentorConfig, options: RunEstimateOptions)
     teams: config.teams,
     modes: { negotiate: options.modeId === "negotiate" ? config.modes.negotiate : undefined },
     reviewTeam: resolveTeams(config).review,
+    narrowReview: Boolean(config.run.narrowReview) && !config.modes.review,
     executorTeam,
     contextTokens: estimateTokens(options.prompt),
     maxRounds: config.limits.maxRounds,

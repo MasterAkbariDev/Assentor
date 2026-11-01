@@ -23,7 +23,7 @@ import {
   validateSkillFrontMatter,
   type SkillDefinition,
 } from "#assentor/engine/skills/index.js";
-import { applyRunProfile, parseRunProfile } from "#assentor/engine/config/profile.js";
+import { applyRunProfile, parseRunProfile, reviewNarrowing } from "#assentor/engine/config/profile.js";
 import { BENCH_TASKS, type BenchTask, type TaskResult } from "./tasks.js";
 
 /**
@@ -90,6 +90,8 @@ export interface Variant {
    * proposals / repeated test-output blocks once, which ships ON); with it, the budget cuts too (ships OFF).
    */
   packContext?: { budgetTokens?: number };
+  /** Members of a panel task that review under this variant (default all): the economy profile's one-or-all choice (TE-06). */
+  panelFor?: (task: BenchTask) => number | undefined;
 }
 
 /** Everything a seat of `role` gets in front of its role prompt under `variant`. */
@@ -153,6 +155,13 @@ export function defaultAlwaysOn(root = REPO_ROOT): string {
   return joinParts(styleText(style, root, []), renderSkillsIndex(readSkills(skills, root, [])));
 }
 
+/** The evidence pack a review of `task` would carry: its diff and the files the diff changes. */
+function fixturePack(task: BenchTask): { git: { isRepo: true; changedFiles: string[]; diff: string } } {
+  const diff = task.variables.diff ?? "";
+  const changedFiles = [...diff.matchAll(/^\+\+\+ b\/(.+)$/gm)].map((m) => m[1]!);
+  return { git: { isRepo: true, changedFiles, diff } };
+}
+
 /** A variant with these skills (names or presets) on top of `style`: the index is always on, the bodies load per role. */
 function skillsVariant(name: string, styleName: string, skillNames: string[], root: string, notes: string[]): Variant {
   const names = expandNames(skillNames, root);
@@ -189,12 +198,19 @@ export function resolveVariant(name: string, root = REPO_ROOT): Variant {
     // The real resolver (TE-06): what the profile sets for style and skills is what the variant sends.
     const effective = applyRunProfile(parseAssentorConfig({}), { profile: parseRunProfile(value) });
     const skills = effective.skills.enabled;
+    // The review task is a three-member panel: the real narrowing decides, from the task's changed files and diff, whether one member is enough.
+    const narrows = Boolean(reviewNarrowing(effective, ""));
     notes.push(
-      "the bench runs one seat per task (mock and live): reviewer count, negotiation rounds and Lead model routing are not modelled, so only the profile's style and skills show here",
+      narrows
+        ? "review panel: one member when classifyRisk finds no danger area in the task's changed files and diff, else all (the real narrowing, on the fixture diff)"
+        : "review panel: unchanged (this profile does not narrow it)",
+      "not modelled: negotiation rounds and Lead model routing (the bench has no negotiation or Lead seats)",
     );
+    const panelFor = narrows ? (task: BenchTask) => (task.panel && reviewNarrowing(effective, task.variables.goal ?? "")?.({ evidencePack: fixturePack(task) }) ? 1 : undefined) : undefined;
     return {
       ...(skills.length ? skillsVariant(name, effective.output.style, skills, root, notes) : { name, alwaysOn: joinParts(styleText(effective.output.style, root, notes), renderSkillsIndex([])), notes }),
       overlay: { profile: value, style: effective.output.style, skills },
+      ...(panelFor ? { panelFor } : {}),
     };
   }
   if (kind === "cache" && (value === "stable" || value === "legacy")) {
@@ -373,7 +389,7 @@ function mockAttempt(library: PromptLibrary, task: BenchTask, variant: Variant, 
   // A seat that was not given what the task needs cannot answer it.
   const blind = !(task.needs ?? []).every((text) => role.includes(text) || prefix.includes(text));
   // A panel task runs once per member, each with its own specialty (the per-seat delta).
-  const deltas = task.panel?.map((specialty) => specialtyAddendum(specialty)) ?? [""];
+  const deltas = (task.panel?.map((specialty) => specialtyAddendum(specialty)) ?? [""]).slice(0, variant.panelFor?.(task));
   const bases = deltas.map((delta) =>
     script.promptOrder === "legacy"
       ? [prefix, delta, role].filter(Boolean).join("\n\n")

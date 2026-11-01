@@ -87,7 +87,14 @@ export const AssentorConfigSchema = z.object({
       /** economy | balanced | max (TE-06). Unset = balanced, today's behaviour; nothing is written on save. */
       profile: z.preprocess(blankToUndefined, RunProfileSchema.optional()),
     })
-    .transform(({ autonomy, ...run }): { mode: RunMode; autonomy?: Autonomy; profile?: RunProfile } =>
+    .transform(({ autonomy, ...run }): {
+      mode: RunMode;
+      autonomy?: Autonomy;
+      profile?: RunProfile;
+      /** Runtime only (set by the loader and `applyRunProfile`, never read from a file or written): see config/profile.ts. */
+      explicit?: string[];
+      narrowReview?: boolean;
+    } =>
       autonomy ? { ...run, mode: runModeForAutonomy(autonomy), autonomy } : run,
     )
     .default({ mode: DEFAULT_RUN_MODE }),

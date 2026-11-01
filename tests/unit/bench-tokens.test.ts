@@ -142,15 +142,18 @@ describe("mock runner", () => {
 });
 
 describe("profile variants (TE-06)", () => {
-  it("balanced and economy are the baseline in the mock; max pays its verbose fragment; none models panels", () => {
+  it("balanced is the baseline; economy sends the review panel task to one reviewer; max pays its verbose fragment", () => {
     const report = bench(resolveVariant("profile:balanced"), resolveVariant("profile:economy"), resolveVariant("profile:max"));
-    for (const name of ["profile:balanced", "profile:economy"]) {
-      expect(result(report, name)).toMatchObject({ alwaysOnTokens: 0, promptTokens: result(report, "baseline").promptTokens, calls: result(report, "baseline").calls });
-      expect(gateVariant(report, name)).toEqual({ pass: true, reasons: [] });
-    }
+    const base = result(report, "baseline");
+    expect(result(report, "profile:balanced")).toMatchObject({ alwaysOnTokens: 0, promptTokens: base.promptTokens, calls: base.calls });
+    // The review fixture is a 3-member panel with no danger area in its diff: economy runs 1 member (2 calls fewer per run).
+    const economy = result(report, "profile:economy");
+    expect(economy).toMatchObject({ alwaysOnTokens: 0, calls: base.calls - 2, successRate: 1 });
+    expect(economy.promptTokens).toBeLessThan(base.promptTokens);
+    expect(economy.netPerSuccess.mean).toBeLessThan(base.netPerSuccess.mean);
     expect(result(report, "profile:max").alwaysOnTokens).toBeGreaterThan(0);
-    expect(result(report, "profile:max").promptTokens).toBeGreaterThan(result(report, "baseline").promptTokens);
-    expect(result(report, "profile:economy").notes.join()).toMatch(/reviewer count, negotiation rounds and Lead model routing are not modelled/);
+    expect(result(report, "profile:max").promptTokens).toBeGreaterThan(base.promptTokens);
+    expect(economy.notes.join()).toMatch(/not modelled: negotiation rounds and Lead model routing/);
   });
 });
 

@@ -68,16 +68,15 @@ export function defaultTransportForProvider(
   return transportsForProvider(provider)[0] ?? "api";
 }
 
-/** Backends that will actually run: first only when strategy is SINGLE (`strategy` defaults to the config's; TE-06 passes the profile's). */
+/** Backends that will actually run: first only when strategy is SINGLE. */
 export function selectReviewerBackends(
   config: AssentorConfig,
-  strategy: string = config.routing.reviewStrategy,
 ): ReviewerBackend[] {
   const all = config.reviewers ?? [];
   if (all.length === 0) {
     return [];
   }
-  if (strategy === "SINGLE") {
+  if (config.routing.reviewStrategy === "SINGLE") {
     return [all[0]!];
   }
   return all;

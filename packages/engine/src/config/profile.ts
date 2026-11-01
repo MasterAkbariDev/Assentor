@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { classifyRisk } from "../modes/danger.js";
 import { costRank, type RosterEntry, type Strength } from "../modes/roster.js";
+import type { ProjectReviewEvidencePack } from "../review/evidence-pack.js";
 import type { AssentorConfig } from "./schema.js";
 
 /**
@@ -11,10 +12,9 @@ import type { AssentorConfig } from "./schema.js";
  * `context.budgetTokens` cuts alone: both are off until the owner's live A/B passes the gate. Their mock
  * numbers are in PENDING_LIVE_AB below and in docs/benchmarks/tokens.md.
  *
- * Profiles only set defaults. A key counts as unset while it still has its built-in default value
- * (`output.style: normal`, `skills.enabled: []`, `routing.reviewStrategy: ADAPTIVE`, an unset or default
- * `modes.negotiate.maxRounds`); any other value is the user's and wins, and so does a key the caller
- * lists in `explicit` (a flag). `balanced` is today's behaviour: it changes nothing.
+ * Profiles only set defaults. A key the user set wins: any non-default value, any key present in the config
+ * files or given as a flag (the loader records those in `run.explicit`, so an explicit `ADAPTIVE` or
+ * `maxRounds: 3` survives). `balanced` is today's behaviour: it changes nothing.
  */
 export const RUN_PROFILES = ["economy", "balanced", "max"] as const;
 export type RunProfile = (typeof RUN_PROFILES)[number];
@@ -37,7 +37,7 @@ export const PROFILE_CHANGES: Record<RunProfile, { summary: string; changes: rea
   economy: {
     summary: "measured or no-risk savings only",
     changes: [
-      "review: one reviewer (the first configured), unless the task text touches a danger area: then the full panel",
+      "review: one reviewer (the first configured) unless the task text or the changed files and diff touch a danger area: then the full panel, decided at each review",
       "negotiation: modes.negotiate.maxRounds 2 (stops early on consensus in every profile)",
       "routing: Lead hires the cheapest capable model for planning, tests and docs seats",
       "cascade: starts at the cheapest tier (already so in every profile); danger still starts at the top tier",
@@ -74,10 +74,26 @@ export function profileOf(config: AssentorConfig): RunProfile {
   return config.run.profile ?? DEFAULT_RUN_PROFILE;
 }
 
+/** Dotted keys a profile can fill. A key is "set by the user" when it holds a non-default value or is listed as explicit. */
+export const PROFILE_KEYS = ["output.style", "skills.enabled", "modes.negotiate.maxRounds", "limits.maxRounds", "routing.reviewStrategy"] as const;
+
+/** Which of `PROFILE_KEYS` are present in the raw config (before defaults), for the loader. */
+export function explicitProfileKeys(raw: Record<string, unknown>): string[] {
+  return PROFILE_KEYS.filter((key) => {
+    let at: unknown = raw;
+    for (const part of key.split(".")) {
+      if (!at || typeof at !== "object" || !Object.hasOwn(at, part) || (at as Record<string, unknown>)[part] === undefined) return false;
+      at = (at as Record<string, unknown>)[part];
+    }
+    return true;
+  });
+}
+
 /**
  * `config` with the profile's defaults filled in, as a new object (nothing is written to disk).
- * `profile` (the `--profile` flag) beats `run.profile`; `explicit` lists dotted keys the caller knows
- * the user set (a flag), which a profile never overrides. Balanced returns `config` as it is.
+ * `profile` (the `--profile` flag) beats `run.profile`. A key the user set is never overridden: that is a
+ * non-default value, a key in `config.run.explicit` (the loader lists the keys present in the config files
+ * and the flags `--style` / `--max-rounds`), or one in `options.explicit`. Balanced returns `config` as it is.
  */
 export function applyRunProfile(
   config: AssentorConfig,
@@ -85,38 +101,46 @@ export function applyRunProfile(
 ): AssentorConfig {
   const profile = options.profile ?? profileOf(config);
   if (profile === "balanced") return options.profile ? { ...config, run: { ...config.run, profile } } : config;
-  const explicit = new Set(options.explicit ?? []);
+  const explicit = new Set([...(config.run.explicit ?? []), ...(options.explicit ?? [])]);
+  const unset = (key: (typeof PROFILE_KEYS)[number], value: unknown, builtin: unknown) => value === builtin && !explicit.has(key);
   const next: AssentorConfig = { ...config, run: { ...config.run, profile } };
 
   if (profile === "max") {
-    if (config.output.style === "normal" && !explicit.has("output.style")) next.output = { ...config.output, style: "verbose" };
-    if (config.limits.maxRounds === 8 && !explicit.has("limits.maxRounds")) next.limits = { ...config.limits, maxRounds: 12 };
-  } else if (config.skills.enabled.length === 0) {
-    next.skills = { ...config.skills, enabled: ["lean"] };
+    if (unset("output.style", config.output.style, "normal")) next.output = { ...config.output, style: "verbose" };
+    if (unset("limits.maxRounds", config.limits.maxRounds, 8)) next.limits = { ...config.limits, maxRounds: 12 };
+    if (unset("routing.reviewStrategy", config.routing.reviewStrategy, DEFAULT_REVIEW_STRATEGY)) next.routing = { ...config.routing, reviewStrategy: "FULL" };
+  } else {
+    if (!explicit.has("skills.enabled") && config.skills.enabled.length === 0) next.skills = { ...config.skills, enabled: ["lean"] };
+    // The panel stays configured; `reviewNarrowing` picks one member or all at each review.
+    if (unset("routing.reviewStrategy", config.routing.reviewStrategy, DEFAULT_REVIEW_STRATEGY)) next.run = { ...next.run, narrowReview: true };
   }
   const negotiate = config.modes.negotiate;
-  if (negotiate && negotiate.maxRounds === DEFAULT_NEGOTIATE_ROUNDS && !explicit.has("modes.negotiate.maxRounds")) {
+  if (negotiate && unset("modes.negotiate.maxRounds", negotiate.maxRounds, DEFAULT_NEGOTIATE_ROUNDS)) {
     next.modes = { ...config.modes, negotiate: { ...negotiate, maxRounds: profile === "max" ? 5 : 2 } };
   }
   return next;
 }
 
 /**
- * Review strategy for one run. `balanced` is the config's own. `economy` replaces the default (ADAPTIVE)
- * with SINGLE unless `classifyRisk` finds a danger area in the task text: then the default panel stays.
- * An explicit strategy (SINGLE, PANEL, FULL) is kept. `max` replaces the default with FULL.
+ * Economy review narrowing: undefined unless the profile owns the review strategy (economy, the strategy
+ * not set by the user, no review team: a team defines its own panel). Otherwise a function a panel calls at
+ * each review: true = one member is enough, false = the whole panel. It runs `classifyRisk` on the task
+ * text plus the changed files and diff in the review's evidence pack, so a task that sounds safe but touches
+ * a danger area still gets the full panel. Without a readable pack (no evidence, not a git repo) it
+ * returns false: unknown changes get the full panel.
  */
-export function reviewStrategyFor(
+export function reviewNarrowing(
   config: AssentorConfig,
   taskText: string,
   projectRoot?: string,
-): AssentorConfig["routing"]["reviewStrategy"] {
-  const configured = config.routing.reviewStrategy;
-  const profile = profileOf(config);
-  if (configured !== DEFAULT_REVIEW_STRATEGY || profile === "balanced") return configured;
-  if (profile === "max") return "FULL";
-  const risk = classifyRisk({ taskText }, { ...(projectRoot ? { projectRoot } : {}), extraRules: config.modes.cascade?.dangerAreas });
-  return risk.level === "danger" ? configured : "SINGLE";
+): ((input: { evidencePack?: { git?: Partial<Pick<ProjectReviewEvidencePack["git"], "isRepo" | "changedFiles" | "diff">> } }) => boolean) | undefined {
+  if (!config.run.narrowReview || config.modes.review) return undefined;
+  const options = { ...(projectRoot ? { projectRoot } : {}), extraRules: config.modes.cascade?.dangerAreas };
+  return ({ evidencePack }) => {
+    const git = evidencePack?.git;
+    if (!git?.isRepo) return false;
+    return classifyRisk({ taskText, paths: git.changedFiles ?? [], diff: git.diff ?? "" }, options).level !== "danger";
+  };
 }
 
 /**

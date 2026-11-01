@@ -8,7 +8,7 @@ import {
 } from "./schema.js";
 import { defaultTransportForProvider } from "../review/backends.js";
 import { DEFAULT_OUTPUT_STYLE, type OutputStyle } from "../output/style.js";
-import type { RunProfile } from "./profile.js";
+import { explicitProfileKeys, type RunProfile } from "./profile.js";
 import {
   AutonomySchema,
   blankToUndefined,
@@ -156,6 +156,8 @@ export async function loadAssentorConfig(
 
   const merged = mergeConfigLayers(dropShadowedAutonomy(userRaw, projectRaw), projectRaw);
   const parsed = parseAssentorConfig(merged);
+  // Keys the user set, for run profiles (TE-06): in the files, or given as a flag below.
+  const explicit = explicitProfileKeys(merged);
 
   if (overrides.executor) {
     parsed.executor.provider = normalizeExecutorProvider(
@@ -181,17 +183,21 @@ export async function loadAssentorConfig(
   }
   if (overrides.style) {
     parsed.output.style = overrides.style;
+    explicit.push("output.style");
   }
   if (overrides.profile) {
     parsed.run.profile = overrides.profile;
   }
   if (overrides.maxRounds) {
     parsed.limits.maxRounds = overrides.maxRounds;
+    explicit.push("limits.maxRounds");
   }
   if (overrides.maxMessages) {
     parsed.limits.maxMessages = overrides.maxMessages;
   }
 
+  // Only a run with a profile carries them: the config of a balanced run is exactly what it was.
+  if (parsed.run.profile && parsed.run.profile !== "balanced") parsed.run.explicit = explicit;
   parsed.project.path = projectRoot;
   return parsed;
 }
@@ -218,6 +224,12 @@ function toSerializable(config: AssentorConfig): Record<string, unknown> {
     // `output` is written only when it differs from the default, so saving never adds a
     // `style: normal` block to a config that did not have one (TE-02).
     if (key === "output" && config.output.style === DEFAULT_OUTPUT_STYLE) continue;
+    // Runtime-only fields of `run` (run profiles) are never saved.
+    if (key === "run") {
+      const { explicit: _explicit, narrowReview: _narrow, ...run } = config.run;
+      out[key] = run;
+      continue;
+    }
     out[key] = value;
   }
   return out;

@@ -59,6 +59,19 @@ program
   .description("AI agent orchestrator for software development tasks")
   .version(version);
 
+/** `serve` and `app` run sessions in the web host, which does not apply run profiles yet: say so once. */
+async function warnProfileNotApplied(projectPath: string): Promise<void> {
+  try {
+    const { loadAssentorConfig } = await import("#assentor/engine/config/load.js");
+    const profile = (await loadAssentorConfig(projectPath)).run.profile;
+    if (profile && profile !== "balanced") {
+      console.error(`Note: run.profile is "${profile}", but this web host does not apply run profiles yet; sessions started here run as balanced. "assentor run" and "assentor resume" apply it.`);
+    }
+  } catch {
+    // A broken config is reported by the command itself.
+  }
+}
+
 program
   .command("ui")
   .description("Launch interactive terminal UI")
@@ -103,6 +116,7 @@ program
       idleTimeout?: number;
       allowWrite: boolean;
     }) => {
+      await warnProfileNotApplied(path.resolve(options.project));
       const { startServe } = await import("#assentor/engine/serve/index.js");
       const handle = await startServe({
         projectPath: path.resolve(options.project),
@@ -130,6 +144,7 @@ program
   .option("--port <n>", "Port (0 picks a free one)", parsePort, 0)
   .option("--no-open", "Print the URL without opening a browser")
   .action(async (options: { project: string; port: number; open: boolean }) => {
+    await warnProfileNotApplied(path.resolve(options.project));
     const { runApp } = await import("./app.js");
     await runApp({
       projectPath: path.resolve(options.project),

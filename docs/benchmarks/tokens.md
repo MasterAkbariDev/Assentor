@@ -15,7 +15,7 @@ Runner: mock · 5 runs × 5 tasks (bug-fix, add-test, refactor, review, plan)
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | baseline | 0 | 12,254 | 2,254 | 6,353 | 11.0 | 0.0 | 100% | 2,902 (2,898–2,904) | — |
 | style:concise | 92 | 13,266 | 2,254 | 6,905 | 11.0 | 0.0 | 100% | 3,104 (3,100–3,106) | +7% |
-| profile:economy | 0 | 12,254 | 2,254 | 6,353 | 11.0 | 0.0 | 100% | 2,902 (2,898–2,904) | +0% |
+| profile:economy | 0 | 9,343 | 1,414 | 3,785 | 9.0 | 0.0 | 100% | 2,151 (2,148–2,154) | -25.9% |
 | cache:stable | 0 | 12,254 | 2,254 | 6,353 | 11.0 | 0.0 | 100% | 2,902 (2,898–2,904) | +0% |
 | cache:legacy | 0 | 12,254 | 2,254 | 3,793 | 11.0 | 0.0 | 100% | 2,902 (2,898–2,904) | +0% |
 | context:packed | 0 | 12,254 | 2,254 | 6,353 | 11.0 | 0.0 | 100% | 2,902 (2,898–2,904) | +0% |
@@ -52,7 +52,7 @@ Runner: mock · 5 runs × 5 tasks (bug-fix, add-test, refactor, review, plan)
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | baseline | 0 | 26,802 | 2,254 | 15,535 | 11.0 | 0.0 | 100% | 5,811 (5,808–5,813) | — |
 | style:concise | 92 | 27,814 | 2,254 | 16,087 | 11.0 | 0.0 | 100% | 6,014 (6,010–6,016) | +3.5% |
-| profile:economy | 0 | 26,802 | 2,254 | 15,535 | 11.0 | 0.0 | 100% | 5,811 (5,808–5,813) | +0% |
+| profile:economy | 0 | 16,253 | 1,414 | 5,331 | 9.0 | 0.0 | 100% | 3,533 (3,530–3,536) | -39.2% |
 | cache:stable | 0 | 26,802 | 2,254 | 15,535 | 11.0 | 0.0 | 100% | 5,811 (5,808–5,813) | +0% |
 | cache:legacy | 0 | 26,802 | 2,254 | 5,339 | 11.0 | 0.0 | 100% | 5,811 (5,808–5,813) | +0% |
 | context:packed | 0 | 26,802 | 2,254 | 15,535 | 11.0 | 0.0 | 100% | 5,811 (5,808–5,813) | +0% |
@@ -89,16 +89,16 @@ Mock numbers prove prompt-structure effects only. Each `skills:<name>` row above
 
 ## TE-06 run profiles (`--profile economy | balanced | max`, mock, 2026-11-01)
 
-`profile:<name>` runs the real resolver (`applyRunProfile` in `packages/engine/src/config/profile.ts`) on the default config and sends what it sets: its output style and its skills index. Reproduce: `pnpm bench:tokens --runs 5 --variants profile:economy,profile:balanced,profile:max`.
+`profile:<name>` runs the real resolver (`applyRunProfile` in `packages/engine/src/config/profile.ts`) on the default config: it sends the profile's output style and skills index, and on the review task (a 3-member panel since TE-05) it asks the real narrowing (`reviewNarrowing`: `classifyRisk` on the task text, changed files and diff) whether one member is enough. Reproduce: `pnpm bench:tokens --runs 5 --variants profile:economy,profile:balanced,profile:max`.
 
 | variant | always-on | prompt | calls | net tokens / success | vs baseline |
 |---|---:|---:|---:|---:|---:|
-| baseline | 0 | 9,199 | 9.0 | 2,123 | — |
-| profile:balanced | 0 | 9,199 | 9.0 | 2,123 | +0% |
-| profile:economy | 0 | 9,199 | 9.0 | 2,123 | +0% |
-| profile:max | 102 | 10,117 | 9.0 | 2,306 | +8.7% |
+| baseline | 0 | 12,254 | 11.0 | 2,902 | — |
+| profile:balanced | 0 | 12,254 | 11.0 | 2,902 | +0% |
+| profile:economy | 0 | 9,343 | 9.0 | 2,151 | -25.9% |
+| profile:max | 102 | 13,376 | 11.0 | 3,126 | +7.7% |
 
-**Economy shows no saving here, and that is honest, not a pass.** The mock runs one seat per task (calls 9.0 in every row), so it does not model what economy changes: how many reviewers see the diff, how many negotiation rounds run, which model a Lead seat uses. By construction (unit-tested, not benchmarked): with N reviewers configured, economy sends the review prompt to 1 instead of N unless `classifyRisk` finds a danger area in the task; negotiation stops after 2 rounds instead of 3 (it already stops earlier on consensus); a Lead planning, tests or docs seat moves to the cheapest capable model of its provider. Their saving in tokens and dollars is unmeasured until the owner's `--live` run covers a multi-reviewer team. The only prompt text economy adds is `skills.enabled: ["lean"]`, an empty preset today (0 tokens). `max` pays the verbose fragment (+8.7%) and is not meant to save anything.
+Large fixtures: economy 3,533 vs 5,811 (-39.2%). **Read this number with care.** The whole economy saving is the review panel going from 3 members to 1 on the one fixture whose diff touches no danger area (calls 11.0 to 9.0); the other four tasks are one seat and do not move, and the always-on text is unchanged (0 tokens). It assumes one reviewer catches what three would: the mock scripts the replies, so success stays 100% by construction. Whether one reviewer misses findings the panel would catch needs the live A/B on a multi-reviewer team, and it is what the gate's "no success drop" is for. A real run saves only when 2 or more reviewers are configured and the changes touch no danger area; a danger area brings the whole panel back (tested). Not modelled by the bench: negotiation rounds (3 to 2, by construction), Lead model routing, and the economy skill preset `lean` (empty today). `max` costs the verbose fragment (+7.7%); its FULL panel is already the fixture's 3.
 
 What `economy` does NOT switch on (the shipping gate: net tokens per success down 10% or more, no success drop), pending the live A/B:
 
