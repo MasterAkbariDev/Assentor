@@ -13,6 +13,7 @@ describe("config teams and modes", () => {
     expect(Object.keys(config)).toEqual([
       "project",
       "executor",
+      "output",
       "run",
       "reviewers",
       "teams",

@@ -22,6 +22,7 @@ pnpm test              # UI tests run with the rest (jsdom per file)
 | `src/features/session-board/` | Session board: `SessionBoard` (grid and the one elapsed ticker, `useNow`), `SeatCard` (opens the drawer). |
 | `src/features/usage/` | Usage section: `UsagePage` (the selected run from the sidebar list) and `UsagePanel` (totals, per seat / stage / model tables, budget bars). `usageModel.ts` holds the pure helpers. |
 | `src/features/seat-drawer/` | Read-only seat drawer: `SeatDrawer` (panel, tabs, focus), `SeatActivity`, `SeatOutput`, `SeatInfo`, `activity.ts` (row text). |
+| `src/features/{prompts,teams,playbooks}/` | Library screens (T04-12): prompt editor (front-matter form, plain textarea body, validate, preview, save/fork), team seat-table editor (validate, save, delete), read-only playbook list and stages. `prompts/shared.tsx` has the unsaved-changes guard, debounce and write note. |
 | `src/transport/types.ts` | `Transport` (`call`, `subscribe`, `onStatus`, `close`): the single seam to the engine. |
 | `src/transport/websocketTransport.ts` | `WebSocketTransport`: connects, reconnects with backoff, wraps the typed RPC client. |
 | `src/transport/mock.ts` | `mockTransport()` for tests and the fixtures page. |
@@ -47,7 +48,7 @@ Status: `connecting` → `open`; a lost link goes `reconnecting` → `open`; `un
 
 ## Routing and shell
 
-A tiny hash router (`shell/route.ts`): `#/sessions` (default), `#/prompts`, `#/teams`, `#/playbooks`, `#/usage`, `#/settings`. Prompts, Teams and Playbooks show an empty state until built. Settings is built (`features/settings/`): settings form, keys list, Doctor and CLI detection; the first-run guide (`features/onboarding/`) shows in the sessions view while there are no runs. TanStack Router, Query and Virtual, Radix and Tailwind are not in the approved dependency set (STATUS §6), so none are used. `useToast()` shows a toast; the shell toasts when the connection drops and returns.
+A tiny hash router (`shell/route.ts`): `#/sessions` (default), `#/prompts`, `#/teams`, `#/playbooks`, `#/usage`, `#/settings`. Prompts, Teams and Playbooks are built (T04-12). Settings is built (`features/settings/`): settings form, keys list, Doctor and CLI detection; the first-run guide (`features/onboarding/`) shows in the sessions view while there are no runs. TanStack Router, Query and Virtual, Radix and Tailwind are not in the approved dependency set (STATUS §6), so none are used. `useToast()` shows a toast; the shell toasts when the connection drops and returns.
 
 ## Engine imports
 
@@ -124,3 +125,5 @@ act(() => {
 - `serve`'s CSP allows no inline scripts and no inline `<style>` blocks; use CSS classes in `styles.css`.
 - Never log or render the token.
 - A write control uses only RPCs the engine implements, is disabled with a visible reason when it can't run, and guards against double submit.
+- Writes: `WebSocketTransport` always sends `{"auth":token,"write":true}`; the server grants it only under `serve --allow-write` and replies `{"auth":"ok","write":<granted>}`. `transport.canWrite` (and `useCanWrite()`) is true only while open and granted; reads work either way. Disable write controls when it is false and say why (`WriteNote`). `mockTransport({ canWrite })` defaults to true.
+- No CodeMirror (not an approved dependency): prompt bodies use a monospace `<textarea>`.

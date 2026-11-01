@@ -172,7 +172,8 @@ describe("team.list", () => {
       role: "reviewer",
       permissions: "read-only",
     });
-    expect(result.teams.find((team) => team.source === "legacy-review")).toBeDefined();
+    expect(panel?.spec?.seats).toEqual([{ provider: "mock", model: "AUTO", role: "reviewer", count: 2, permissions: "read-only" }]);
+    expect(result.teams.find((team) => team.source === "legacy-review")?.spec).toBeUndefined();
     expect(result.modes).toEqual({});
   });
 

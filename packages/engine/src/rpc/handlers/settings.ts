@@ -69,7 +69,7 @@ export function registerSettingsMethods(server: RpcServer, options: SettingsMeth
         } catch (error) {
           throw new RpcError(RpcErrorCode.InvalidParams, `Invalid settings: ${error instanceof Error ? error.message : String(error)}`);
         }
-        await saveAssentorConfig(projectPath, valid, { scope: "user", preserveFromExisting: ["teams", "modes"] });
+        await saveAssentorConfig(projectPath, valid, { scope: "user", preserveFromExisting: ["teams", "modes", "output"] });
         // Return what settings.get now returns (user + project), not just the user file.
         return { settings: publicSettings(await configOrReject(projectPath, () => loadAssentorConfig(projectPath))) };
       }),

@@ -17,6 +17,7 @@ import { CascadeTierSchema, NegotiateModeSchema, ReviewModeSchema } from "./team
 import { SEAT_PROVIDERS, TeamSchema } from "#assentor/protocol/seats.js";
 import { MODE_ALIASES, MODE_IDS } from "../modes/registry.js";
 import { DangerAreaRuleSchema } from "../modes/danger.js";
+import { DEFAULT_OUTPUT_STYLE, OutputStyleSchema } from "../output/style.js";
 
 const ExecutorProviderSchema = z.preprocess(
   (value) =>
@@ -65,6 +66,12 @@ export const AssentorConfigSchema = z.object({
       model: z.string().optional(),
     })
     .default({ provider: "mock" }),
+  /** How verbose seats and the CLI are (TE-02). `normal` is unchanged; `concise` is opt-in. */
+  output: z
+    .object({
+      style: OutputStyleSchema.default(DEFAULT_OUTPUT_STYLE),
+    })
+    .default({}),
   run: z
     .object({
       /** Supervised is default; Autopilot auto-steers next phases. */

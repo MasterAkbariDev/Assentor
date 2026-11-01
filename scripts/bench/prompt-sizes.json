@@ -37,6 +37,8 @@
     "specialty-security": 144,
     "specialty-testing": 126,
     "specialty-ui": 104,
+    "style-concise": 92,
+    "style-verbose": 102,
     "summarizer": 594,
     "swarm-worker": 663,
     "test-reviewer": 1165,

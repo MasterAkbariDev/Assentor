@@ -8,6 +8,9 @@ import { SeatDrawer } from "./features/seat-drawer/SeatDrawer.js";
 import { CommandPalette } from "./features/palette/CommandPalette.js";
 import { KeyboardHelp } from "./features/palette/KeyboardHelp.js";
 import { useShortcuts } from "./features/palette/useShortcuts.js";
+import { PlaybooksView } from "./features/playbooks/PlaybooksView.js";
+import { PromptsView } from "./features/prompts/PromptsView.js";
+import { TeamsView } from "./features/teams/TeamsView.js";
 import { ReviewView } from "./features/review/ReviewView.js";
 import { SessionBoard } from "./features/session-board/SessionBoard.js";
 import { Onboarding } from "./features/onboarding/Onboarding.js";
@@ -16,8 +19,8 @@ import { UsagePage } from "./features/usage/UsagePage.js";
 import { useEngine } from "./store/context.js";
 import type { ConnectionStatus } from "./store/engineStore.js";
 import { selectHasNegotiation, selectHasReview } from "./store/selectors.js";
-import { useRoute, SECTIONS } from "./shell/route.js";
-import { EmptySection, SectionNav } from "./shell/Sidebar.js";
+import { useRoute } from "./shell/route.js";
+import { SectionNav } from "./shell/Sidebar.js";
 import { useConnectionToasts } from "./shell/Toasts.js";
 
 // Dev only: `import.meta.env.DEV` is false in the production build, so this chunk is never emitted.
@@ -109,9 +112,9 @@ export function App() {
             <FixturesPage />
           </Suspense>
         ) : null}
-        {SECTIONS.filter((s) => s.id !== "sessions" && s.id !== "settings" && s.id !== "usage" && s.id === route).map((s) => (
-          <EmptySection key={s.id} id={s.id} label={s.label} />
-        ))}
+        {route === "prompts" ? <PromptsView /> : null}
+        {route === "teams" ? <TeamsView /> : null}
+        {route === "playbooks" ? <PlaybooksView /> : null}
       </main>
       {paletteOpen ? <CommandPalette onClose={closePalette} /> : null}
       {helpOpen ? <KeyboardHelp onClose={closeHelp} /> : null}

@@ -162,10 +162,56 @@ describe("saveAssentorConfig", () => {
     });
     const written = await readYaml(file);
 
+    // `output` is left out at its default (TE-02); every other section is written.
     expect(Object.keys(written).sort()).toEqual(
-      Object.keys(AssentorConfigSchema.shape).sort(),
+      Object.keys(AssentorConfigSchema.shape).filter((key) => key !== "output").sort(),
     );
     expect(written.project).toEqual({ path: "." });
+  });
+
+  it("does not add output.style to a legacy config", async () => {
+    const dir = await projectDir();
+    const file = await saveAssentorConfig(dir, parseAssentorConfig({ run: { mode: "autopilot" } }), {
+      scope: "project",
+    });
+
+    expect(await readYaml(file)).not.toHaveProperty("output");
+  });
+
+  it("writes output.style only when it is not the default", async () => {
+    const dir = await projectDir();
+    const file = await saveAssentorConfig(dir, parseAssentorConfig({ output: { style: "concise" } }), {
+      scope: "project",
+    });
+
+    expect((await readYaml(file)).output).toEqual({ style: "concise" });
+  });
+
+  it("does not copy a project's output.style into the user file when preserving", async () => {
+    const dir = await projectDir();
+    await fs.mkdir(path.dirname(userConfigPath()), { recursive: true });
+    await fs.writeFile(userConfigPath(), "executor:\n  provider: mock\n", "utf8");
+    await fs.mkdir(path.join(dir, ".assentor"), { recursive: true });
+    await fs.writeFile(path.join(dir, ".assentor", "config.yaml"), "output:\n  style: concise\n", "utf8");
+
+    const merged = await loadAssentorConfig(dir);
+    expect(merged.output.style).toBe("concise");
+    await saveAssentorConfig(dir, merged, { scope: "user", preserveFromExisting: ["output"] });
+
+    expect(await readYaml(userConfigPath())).not.toHaveProperty("output");
+  });
+
+  it("keeps the user file's own output.style when preserving", async () => {
+    const dir = await projectDir();
+    await fs.mkdir(path.dirname(userConfigPath()), { recursive: true });
+    await fs.writeFile(userConfigPath(), "output:\n  style: verbose\n", "utf8");
+    await fs.mkdir(path.join(dir, ".assentor"), { recursive: true });
+    await fs.writeFile(path.join(dir, ".assentor", "config.yaml"), "output:\n  style: concise\n", "utf8");
+
+    const merged = await loadAssentorConfig(dir);
+    await saveAssentorConfig(dir, merged, { scope: "user", preserveFromExisting: ["output"] });
+
+    expect((await readYaml(userConfigPath())).output).toEqual({ style: "verbose" });
   });
 
   it("omits optional fields that are unset instead of writing nulls", async () => {

@@ -11,18 +11,3 @@ export function SectionNav({ route }: { route: Route }) {
     </nav>
   );
 }
-
-const EMPTY: Record<string, string> = {
-  prompts: "Prompt library: browse and edit the prompts your seats use. Not built yet; for now they live in .assentor/prompts.",
-  teams: "Teams: saved seat line-ups to start a run from. Not built yet; for now use the CLI.",
-  playbooks: "Playbooks: reusable run recipes. Not built yet; for now use the CLI.",
-};
-
-export function EmptySection({ id, label }: { id: string; label: string }) {
-  return (
-    <section aria-label={label}>
-      <h1 className="session-heading">{label}</h1>
-      <p className="empty">{EMPTY[id]}</p>
-    </section>
-  );
-}

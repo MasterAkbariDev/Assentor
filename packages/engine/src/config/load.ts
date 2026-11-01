@@ -7,6 +7,7 @@ import {
   type AssentorConfig,
 } from "./schema.js";
 import { defaultTransportForProvider } from "../review/backends.js";
+import { DEFAULT_OUTPUT_STYLE, type OutputStyle } from "../output/style.js";
 import {
   AutonomySchema,
   blankToUndefined,
@@ -132,6 +133,8 @@ export async function loadAssentorConfig(
     /** Deprecated: legacy `--mode supervised|autopilot`. `autonomy` wins when both are set. */
     mode: AssentorConfig["run"]["mode"];
     autonomy: Autonomy;
+    /** `--style` / `--brief`: beats `output.style` from the config files. */
+    style: OutputStyle;
   }> = {},
 ): Promise<AssentorConfig> {
   const userRaw = (await readYamlFile(userConfigPath())) as Record<
@@ -173,6 +176,9 @@ export async function loadAssentorConfig(
       },
     ];
   }
+  if (overrides.style) {
+    parsed.output.style = overrides.style;
+  }
   if (overrides.maxRounds) {
     parsed.limits.maxRounds = overrides.maxRounds;
   }
@@ -191,7 +197,7 @@ export type ConfigSaveScope = "user" | "project";
  * "run.autonomy" writes `run.mode` from `config` but keeps the file's own autonomy
  * (see `keepOwnAutonomy`); the others keep the whole section from the file.
  */
-export type PreservableConfigSection = "teams" | "modes" | "run" | "run.autonomy";
+export type PreservableConfigSection = "teams" | "modes" | "run" | "run.autonomy" | "output";
 
 /**
  * Every schema section is written, in schema order, so a field added to the
@@ -201,7 +207,14 @@ export type PreservableConfigSection = "teams" | "modes" | "run" | "run.autonomy
  */
 function toSerializable(config: AssentorConfig): Record<string, unknown> {
   const { project: _project, ...sections } = config;
-  return { project: { path: "." }, ...sections };
+  const out: Record<string, unknown> = { project: { path: "." } };
+  for (const [key, value] of Object.entries(sections)) {
+    // `output` is written only when it differs from the default, so saving never adds a
+    // `style: normal` block to a config that did not have one (TE-02).
+    if (key === "output" && config.output.style === DEFAULT_OUTPUT_STYLE) continue;
+    out[key] = value;
+  }
+  return out;
 }
 
 /**

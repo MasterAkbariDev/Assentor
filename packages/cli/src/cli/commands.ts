@@ -64,6 +64,12 @@ import {
   type ReviewerBackend,
 } from "#assentor/engine/review/index.js";
 import { loadAssentorConfig, type AssentorConfig } from "#assentor/engine/config/load.js";
+import {
+  OUTPUT_STYLES,
+  OutputStyleSchema,
+  withOutputStyle,
+  type OutputStyle,
+} from "#assentor/engine/output/style.js";
 import { resolveTeams, ReviewModeSchema } from "#assentor/engine/config/teams.js";
 import {
   createReviewerSeats,
@@ -98,6 +104,8 @@ export interface RunAssentorInput {
   autopilot?: boolean;
   /** Overrides config `run.autonomy` / `run.mode`. */
   autonomy?: Autonomy;
+  /** `--style` / `--brief`; overrides `output.style`. */
+  style?: OutputStyle;
   /** Registry mode (`--mode <id>`). Only `available` modes run; solo runs the Supervisor below, others through prepareModeSession. */
   modeId?: ModeId;
   /** Live seat-scoped engine events (T00-07), in log order. Errors thrown here are reported, not propagated. */
@@ -617,7 +625,9 @@ export async function createMembersFromBackends(input: {
       },
       specialtyAddendum: (_seat, index) => {
         const profile = profiles[index % profiles.length];
-        return profile ? specialtyAddendum(profile.specialty) : undefined;
+        return profile
+          ? withOutputStyle(specialtyAddendum(profile.specialty), input.config.output.style)
+          : undefined;
       },
       onStatus: (seat, index, message) => {
         input.onStatus?.(`[${seat.displayName}] ${message}`);
@@ -652,7 +662,7 @@ export async function createMembersFromBackends(input: {
           input.onMemberStatus?.(i, message);
         },
         specialtyAddendum: profile
-          ? specialtyAddendum(profile.specialty)
+          ? withOutputStyle(specialtyAddendum(profile.specialty), input.config.output.style)
           : undefined,
         logicalName: backend.name ?? profile?.id ?? backend.provider,
       }),
@@ -785,6 +795,26 @@ export function parseModeFlags(options: {
 }
 
 /**
+ * `--style` and `--brief` (= `--style concise`) for one run. Undefined when neither
+ * is given, so `output.style` from the config files applies. Throws on an unknown
+ * style and when the two flags disagree.
+ */
+export function resolveStyleFlags(options: { style?: string; brief?: boolean }): OutputStyle | undefined {
+  let requested: OutputStyle | undefined;
+  if (options.style !== undefined) {
+    const parsed = OutputStyleSchema.safeParse(options.style.trim().toLowerCase());
+    if (!parsed.success) {
+      throw new Error(`Unknown style "${options.style}". Use one of: ${OUTPUT_STYLES.join(", ")}.`);
+    }
+    requested = parsed.data;
+  }
+  if (options.brief && requested && requested !== "concise") {
+    throw new Error(`--brief is --style concise; it conflicts with --style ${requested}.`);
+  }
+  return options.brief ? "concise" : requested;
+}
+
+/**
  * `config` with `modes.review.team` set to `team`, for one run. Returns a new
  * object and writes nothing to disk. An unknown team throws the `resolveTeams`
  * error here, before any executor or reviewer exists.
@@ -889,8 +919,10 @@ async function runAssentorTaskBody(
     maxMessages: input.maxMessages,
     mode: input.autopilot ? "autopilot" : input.mode,
     autonomy: input.autonomy,
+    style: input.style,
   });
   const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
+  reporter.setStyle(config.output.style);
   const pricing = await observedPricing(projectPath).catch(() => ({}));
   const estimate = estimateRun(config, {
     prompt: input.prompt,
@@ -1047,6 +1079,7 @@ async function runAssentorTaskBody(
     verification: config.verification,
     skipGates: input.skipGates,
     autopilot,
+    outputStyle: config.output.style,
     onEvent: (event) => {
       reporter.onEvent(event);
     },
@@ -1073,6 +1106,7 @@ async function runAssentorTaskBody(
     reviewer: reviewerDisplay,
     mode: runMode,
     status: TaskState.Executing,
+    concise: config.output.style === "concise",
   });
 
   const result = await supervisor.run();
@@ -1085,6 +1119,7 @@ async function runAssentorTaskBody(
     reviewer: reviewerDisplay,
     mode: runMode,
     status: result.status,
+    concise: config.output.style === "concise",
   });
 
   return { result, config, store };
@@ -1108,6 +1143,8 @@ export async function resumeAssentorTask(input: {
   autonomy?: Autonomy;
   /** Mode sessions only: see `RunAssentorInput.modeHooks`. */
   modeHooks?: ModeRunHooks;
+  /** `--style` / `--brief`; overrides `output.style`. */
+  style?: OutputStyle;
 }) {
   assertReviewerOrTeam(input);
   if (input.taskId) {
@@ -1148,8 +1185,12 @@ export async function resumeAssentorTask(input: {
       maxRounds: input.maxRounds,
       maxMessages: input.maxMessages,
       autonomy: input.autonomy,
+      style: input.style,
     });
     const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
+    // The resumed executor session keeps the style of its first run (its continuation
+    // prompts carry no style). `--style` here restyles reviewers and the Lead only.
+    reporter.setStyle(config.output.style);
 
     const resume = input.taskId
       ? await loadTaskForResume(projectPath, input.taskId)
@@ -1192,6 +1233,7 @@ export async function resumeAssentorTask(input: {
       };
       reporter.note(
         `Extended budgets for resume: rounds ${resume.snapshot.budgets.usage.rounds}/${limits.maxRounds}, messages ${resume.snapshot.budgets.usage.messages}/${limits.maxMessages}`,
+        "warning",
       );
     }
     const executorProvider = config.executor.provider;
@@ -1295,6 +1337,7 @@ export async function resumeAssentorTask(input: {
       resumeFrom: resume.snapshot,
       verification: config.verification,
       autopilot: config.run.mode === "autopilot",
+      outputStyle: config.output.style,
       onEvent: (event) => reporter.onEvent(event),
       seatEvents: seatEvents.events,
       seatScope: seatEvents.scope(memberReviewers.length),
@@ -1460,18 +1503,24 @@ export function attachRunInterrupt(input: {
   };
 }
 
-function printBanner(input: {
+export function printBanner(input: {
   task: string;
   round: string;
   executor: string;
   reviewer: string;
   mode?: string;
   status: string;
+  /** `output.style: concise`: one line instead of the box (TE-02). */
+  concise?: boolean;
 }): void {
   const task = truncate(input.task, 40);
   const bold = "\x1b[1m";
   const cyan = "\x1b[36m";
   const reset = "\x1b[0m";
+  if (input.concise) {
+    console.log(`${cyan}${bold}ASSENTOR${reset} · ${input.status} · round ${input.round} · ${truncate(input.task, 60)}`);
+    return;
+  }
   console.log(`${cyan}${bold}╭──────────────────────────────────────────╮${reset}`);
   console.log(`${cyan}${bold}│ ASSENTOR                                    │${reset}`);
   console.log(`${cyan}${bold}├──────────────────────────────────────────┤${reset}`);

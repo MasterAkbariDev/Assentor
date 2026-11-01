@@ -14,6 +14,8 @@ export interface ContractHarness {
   events: EngineEvent[];
   /** Add one more event to the session as the engine would; resolves with it. */
   emit(): Promise<EngineEvent>;
+  /** Whether the engine behind this transport grants it writes (what `canWrite` must report once open). */
+  writeGranted: boolean;
   /** Cut the link. The transport must go `reconnecting` and then `open` again by itself. */
   drop(): void;
   dispose(): Promise<void> | void;
@@ -96,6 +98,17 @@ export function runTransportContract(name: string, make: () => Promise<ContractH
       await until(() => got.length === 2);
       expect(got).toEqual(missed.map((e) => e.seq));
       expect(old).toHaveLength(events.length); // the dropped subscription saw nothing more
+    }));
+
+    it("exposes whether writes were granted, only while open", withHarness(async ({ transport, writeGranted, drop }) => {
+      expect(transport.canWrite).toBe(writeGranted);
+      const seen: boolean[] = [];
+      transport.onStatus((s) => seen.push(s === "open" && transport.canWrite)); // already set when `open` is announced
+      drop();
+      await until(() => seen.includes(false) && seen.at(-1) === writeGranted);
+      expect(transport.canWrite).toBe(writeGranted);
+      transport.close();
+      expect(transport.canWrite).toBe(false);
     }));
 
     it("rejects calls once closed, and stays closed", withHarness(async ({ transport }) => {
