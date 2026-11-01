@@ -255,6 +255,7 @@ const LiveStateSchema = z.enum(["created", "running", "cancelling"]);
 const SessionSummaryLiveSchema = SessionSummarySchema.extend({ live: LiveStateSchema.optional() });
 const SeatIdSchema = z.string().min(1).max(100);
 const SessionSeatSchema = z.object({ sessionId: SessionIdSchema, seatId: SeatIdSchema });
+const LeadTaskIdSchema = z.string().min(1).max(100);
 const OkSchema = z.object({ ok: z.literal(true) });
 /** Destructive worktree calls must carry an explicit `confirm: true`. */
 const ConfirmSchema = z.literal(true);
@@ -643,6 +644,20 @@ export const RpcMethods = {
     }).strict(),
     result: OkSchema,
   },
+  // FU-18b: controls for a Lead session running in this engine; the controller applies them (see the RPC README).
+  "lead.override": {
+    access: "write",
+    params: z.object({ sessionId: SessionIdSchema, taskId: LeadTaskIdSchema, seatId: SeatIdSchema }).strict(),
+    result: OkSchema,
+  },
+  /** `model: null` unpins. */
+  "lead.pin": {
+    access: "write",
+    params: z.object({ sessionId: SessionIdSchema, taskId: LeadTaskIdSchema, model: ModelIdSchema.nullable() }).strict(),
+    result: OkSchema,
+  },
+  "lead.pause": { access: "write", params: z.object({ sessionId: SessionIdSchema }).strict(), result: OkSchema },
+  "lead.resume": { access: "write", params: z.object({ sessionId: SessionIdSchema }).strict(), result: OkSchema },
 } as const satisfies Record<string, RpcMethodDef>;
 
 export type RpcMethodName = keyof typeof RpcMethods;

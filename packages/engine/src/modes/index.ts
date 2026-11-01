@@ -64,6 +64,7 @@ export {
   type ModeDefinition,
   type ModeBuildInput,
   type ModeController,
+  type ControllerCommand,
   type ModeControllerInput,
   type ModeControllerResult,
   type ModeHostServices,

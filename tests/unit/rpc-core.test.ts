@@ -136,6 +136,10 @@ describe("JSON-RPC conformance", () => {
         "env.doctor",
         "events.subscribe",
         "events.unsubscribe",
+        "lead.override",
+        "lead.pause",
+        "lead.pin",
+        "lead.resume",
         "models.catalog",
         "models.discover",
         "playbook.get",
@@ -644,7 +648,8 @@ describe("write access", () => {
   it("declares only the mutating or process-starting methods as write", () => {
     const writes = Object.entries(RpcMethods).filter(([, def]) => def.access === "write").map(([name]) => name);
     expect(writes.sort()).toEqual([
-      "env.detectClis", "env.doctor", "models.discover", "prompt.fork", "prompt.save",
+      "env.detectClis", "env.doctor", "lead.override", "lead.pause", "lead.pin", "lead.resume",
+      "models.discover", "prompt.fork", "prompt.save",
       "seat.inject", "seat.restart", "seat.setModel", "seat.stop",
       "session.approve", "session.cancel", "session.create", "session.pause", "session.resume", "session.start",
       "settings.save", "team.delete", "team.save",
