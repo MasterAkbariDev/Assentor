@@ -27,6 +27,7 @@ import {
 import { acquireRunLock, EventLog, isSessionRunLocked } from "../../packages/engine/src/events/log.js";
 import { killProcessTree } from "../../packages/engine/src/process/kill-tree.js";
 import { RpcMethods } from "../../packages/protocol/src/rpc.js";
+import { buildAutonomousContinuationPrompt, buildSupervisedContinuationPrompt } from "../../packages/engine/src/orchestrator/phase-steering.js";
 import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
 
 vi.setConfig({ testTimeout: 60_000 });
@@ -810,6 +811,11 @@ describe("pause, inject and restart (FU-18a)", () => {
     await until(() => continued.length === 1);
     expect(continued[0]!.at(-1)).toMatchObject({ from: "user", content: { code: "user_message" } });
     expect(JSON.stringify(continued[0])).toContain("<user-message>\\nsecond note\\n</user-message>");
+    // The CLI continuation prompt shows it under its own header, not as reviewer feedback.
+    for (const prompt of [buildSupervisedContinuationPrompt(continued[0] as never), buildAutonomousContinuationPrompt(continued[0] as never)]) {
+      expect(prompt).toContain("Message from the user (data):");
+      expect(prompt).not.toContain("feedback below");
+    }
 
     // Queued after the seat's last turn: the end of the run reports it undelivered.
     const pending = async () => (await client.call("session.get", { sessionId })).pendingApprovals;
@@ -828,11 +834,13 @@ describe("pause, inject and restart (FU-18a)", () => {
   it("restart kills the turn's process tree and runs it once more; the static stage still succeeds", async () => {
     const pids: number[] = [];
     const prompts: string[] = [];
+    const fresh: Array<boolean | undefined> = [];
     let current: ChildProcess | undefined;
     const restartable = (): Executor => ({
       ...executor(),
       run: (t) => {
         prompts.push(t.prompt);
+        fresh.push(t.newSession);
         if (prompts.length > 1) return Promise.resolve({ status: "completed", summary: "redone" });
         return new Promise<Result>((resolve) => {
           const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
@@ -859,9 +867,40 @@ describe("pause, inject and restart (FU-18a)", () => {
     expect(isAlive(pids[0]!)).toBe(false);
     expect(prompts).toHaveLength(2);
     expect(prompts[1]).toBe(prompts[0]);
+    expect(fresh).toEqual([undefined, true]); // the re-run is a new CLI session, not a resume of the killed one
     const { events } = await client.call("session.export", { sessionId });
     expect(events.map((e) => e.type)).toContain("session.completed");
     expect(events.map((e) => e.type)).not.toContain("session.failed");
+  });
+
+  it("a turn can be restarted at most 3 times", async () => {
+    const pids: number[] = [];
+    let current: ChildProcess | undefined;
+    const looping = (): Executor => ({
+      ...executor(),
+      run: () =>
+        new Promise<Result>((resolve) => {
+          const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+          current = child;
+          pids.push(child.pid!);
+          cleanups.push(() => void child.kill("SIGKILL"));
+          child.on("exit", () => resolve({ status: "cancelled", summary: "killed", interrupted: true }));
+        }),
+      interrupt: () => (current ? (killProcessTree(current), (current = undefined), true) : false),
+      cancel: async () => killProcessTree(current),
+    });
+    const mode = dynamicMode(async (i) => void (await i.deps.createExecutor(stageFor("a")).run(task(i, "t1"))));
+    const { client } = await setup({ mode, executor: looping });
+    const { sessionId } = await client.call("session.create", { mode: "lead", goal: "g" });
+    await client.call("session.start", { sessionId });
+    for (let n = 1; n <= 3; n++) {
+      await until(() => pids.length === n && current !== undefined);
+      expect(await client.call("seat.restart", { sessionId, seatId: "a", confirm: true })).toEqual({ ok: true });
+    }
+    await until(() => pids.length === 4 && current !== undefined);
+    expect((await failure(client.call("seat.restart", { sessionId, seatId: "a", confirm: true }))).code).toBe(RpcErrorCode.Rejected);
+    await client.call("seat.stop", { sessionId, seatId: "a", confirm: true });
+    await ended(client, sessionId);
   });
 
   it("restart is refused for an idle seat, an unknown seat and an executor that cannot interrupt", async () => {
