@@ -643,3 +643,32 @@ button.lead-task-open:focus-visible { outline: 2px solid var(--accent); outline-
 .toast-error { border-color: var(--error); }
 .toast button { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; }
 .fixture-controls { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 12px; }
+
+/* Diff & worktrees */
+.diff-view { margin-top: 16px; }
+.diff-heading { margin: 0; font-size: 16px; }
+.diff-toggle, .diff-seats button, .diff-actions button, .diff-files button { font: inherit; font-size: 13px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.diff-toggle { font-size: 16px; font-weight: 600; }
+.diff-view button:disabled { color: var(--muted); cursor: not-allowed; }
+.diff-view button:focus-visible, .diff-dialog button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.diff-view button[aria-pressed="true"] { border-color: var(--accent); }
+.diff-sub { margin: 12px 0 6px; font-size: 14px; }
+.diff-seats, .diff-files, .diff-dialog-files { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.diff-seats li { display: flex; align-items: center; gap: 8px; }
+.diff-meta { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.diff-actions { display: flex; gap: 8px; margin: 8px 0; }
+.diff-files button { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; text-align: left; }
+.diff-file-name { margin: 12px 0 4px; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.diff-hunk { border: 1px solid var(--border); border-radius: 6px; margin: 6px 0; }
+.diff-hunk summary { cursor: pointer; padding: 4px 8px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
+.diff-lines { margin: 0; padding: 4px 0; overflow-x: auto; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.diff-line { display: block; padding: 0 8px; white-space: pre; }
+.diff-l-add { color: var(--ok); }
+.diff-l-del { color: var(--error); }
+.diff-l-meta { color: var(--muted); }
+.diff-dialog { display: flex; flex-direction: column; }
+.diff-dialog-body { padding: 12px 16px; overflow-y: auto; max-height: 50vh; }
+.diff-dialog-files { flex-direction: column; font-size: 13px; }
+.diff-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); }
+.diff-danger { border-color: var(--error); color: var(--error); }
+.diff-field { display: block; margin-top: 10px; font-size: 14px; }

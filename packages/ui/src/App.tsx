@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { NegotiationView } from "./features/negotiation/NegotiationView.js";
 import { LeadBoard } from "./features/lead-board/LeadBoard.js";
+import { DiffView } from "./features/diff/DiffView.js";
 import { SeatDrawer } from "./features/seat-drawer/SeatDrawer.js";
 import { CommandPalette } from "./features/palette/CommandPalette.js";
 import { KeyboardHelp } from "./features/palette/KeyboardHelp.js";
@@ -177,6 +178,7 @@ export function SessionPanel() {
         </>
       )}
       {hasNegotiation ? <NegotiationView key={session.id} /> : null}
+      {seatCount > 0 ? <DiffView key={session.id} /> : null}
     </section>
   );
 }
