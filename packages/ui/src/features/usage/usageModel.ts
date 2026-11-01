@@ -61,3 +61,37 @@ export function sortedRows(rows: Record<string, UsageTotals>): Array<[string, Us
   const size = (t: UsageTotals) => t.tokensIn + t.tokensOut;
   return Object.entries(rows).sort(([, a], [, b]) => size(b) - size(a));
 }
+
+export interface RangeCompare {
+  low: number;
+  high: number;
+  actual: number;
+  /** 0 inside the estimated range; otherwise how far actual is above `high` (+) or below `low` (-). */
+  diff: number;
+}
+
+export interface EstimateCompare {
+  tokens: RangeCompare;
+  /** Undefined when the estimate had no price (show "unknown"); also when the ledger has no cost yet. */
+  usd?: RangeCompare;
+  usdKnown: boolean;
+}
+
+function compare(low: number, high: number, actual: number): RangeCompare {
+  return { low, high, actual, diff: actual > high ? actual - high : actual < low ? actual - low : 0 };
+}
+
+/** Estimate (TE-09) against the ledger's actuals; undefined when the run logged no estimate. */
+export function compareEstimate(report: UsageReport): EstimateCompare | undefined {
+  const { estimate, total } = report;
+  if (!estimate) return undefined;
+  const tokens = compare(estimate.tokens.low, estimate.tokens.high, total.tokensIn + total.tokensOut);
+  // A zero ledger cost means no seat reported or had a price, so it is not an actual of $0.
+  const usd = estimate.usd && total.costUsd > 0 ? compare(estimate.usd.low, estimate.usd.high, total.costUsd) : undefined;
+  return { tokens, ...(usd ? { usd } : {}), usdKnown: usd !== undefined };
+}
+
+/** Skills loaded, most tokens first. */
+export function sortedSkills(skills: UsageReport["skills"]): Array<[string, NonNullable<UsageReport["skills"]>[string]]> {
+  return Object.entries(skills ?? {}).sort(([, a], [, b]) => b.tokens - a.tokens);
+}

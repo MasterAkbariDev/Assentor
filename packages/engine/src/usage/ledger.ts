@@ -13,6 +13,7 @@ import type { PricingTable } from "../estimate/cost.js";
  * - `calls` counts model turns: a report's `turns` (a CLI run), else 1.
  * - A seat's model comes from `seat.spawned`, then `seat.model.changed`.
  * - Budget warnings are the scheduler's `session.warning` events of kind `budget`.
+ * - `skill.loaded` events fold into `skills` per skill name: loads, summed tokens, seats (TE-07).
  * - The pre-run estimate is the run's `session.estimate` event (TE-09); last one wins.
  */
 export class UsageLedger {
@@ -43,6 +44,14 @@ export class UsageLedger {
       case "session.estimate": {
         const { tokens, usd } = event.data;
         this.report.estimate = { tokens: { ...tokens }, ...(usd ? { usd: { ...usd } } : {}) };
+        return;
+      }
+      case "skill.loaded": {
+        const skill = ((this.report.skills ??= {})[event.data.name] ??= { loads: 0, tokens: 0, seats: [] });
+        skill.loads += 1;
+        skill.tokens += event.data.tokens;
+        const seat = event.seatId ?? "-";
+        if (!skill.seats.includes(seat)) skill.seats.push(seat);
         return;
       }
       case "session.warning": {

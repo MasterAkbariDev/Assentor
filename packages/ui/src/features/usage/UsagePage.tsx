@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { UsageReport, UsageTotals } from "#assentor/protocol/rpc.js";
 import { useEngine } from "../../store/context.js";
 import { useRpc } from "../../transport/context.js";
-import { budgetBars, cachedShare, formatBudget, sortedRows, type BudgetBar, type BudgetState } from "./usageModel.js";
+import { budgetBars, cachedShare, compareEstimate, formatBudget, sortedRows, sortedSkills, type BudgetBar, type BudgetState, type RangeCompare } from "./usageModel.js";
 
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 4 });
 const count = new Intl.NumberFormat("en-US");
@@ -107,6 +107,8 @@ export function UsagePanel({ sessionId }: { sessionId: string }) {
           <Budgets bars={budgetBars(report, seatName)} />
         </>
       )}
+      <EstimateVsActual report={report} />
+      <Skills skills={report.skills} seatName={seatName} />
     </div>
   );
 }
@@ -194,6 +196,82 @@ function Budgets({ bars }: { bars: BudgetBar[] }) {
           <progress max={bar.limit} value={Math.min(bar.used, bar.limit)} aria-hidden="true" />
         </div>
       ))}
+    </section>
+  );
+}
+
+const rangeText = (r: { low: number; high: number }, f: (n: number) => string) => (r.low === r.high ? f(r.low) : `${f(r.low)}–${f(r.high)}`);
+const diffText = (r: RangeCompare, f: (n: number) => string) =>
+  r.diff === 0 ? "within the estimate" : r.diff > 0 ? `${f(r.diff)} over the high end` : `${f(-r.diff)} under the low end`;
+
+/** The pre-run estimate (TE-09) beside what the ledger counted. */
+function EstimateVsActual({ report }: { report: UsageReport }) {
+  const cmp = compareEstimate(report);
+  return (
+    <section className="usage-estimate" aria-labelledby="usage-estimate-title">
+      <h2 id="usage-estimate-title">Estimate vs actual</h2>
+      {!cmp ? (
+        <p className="empty">This run logged no pre-run estimate.</p>
+      ) : (
+        <table className="usage-table">
+          <thead>
+            <tr>
+              <th scope="col">Measure</th>
+              <th scope="col">Estimated</th>
+              <th scope="col">Actual</th>
+              <th scope="col">Difference</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Tokens</th>
+              <td>{rangeText(cmp.tokens, formatCount)}</td>
+              <td>{formatCount(cmp.tokens.actual)}</td>
+              <td>{diffText(cmp.tokens, formatCount)}</td>
+            </tr>
+            <tr>
+              <th scope="row">Cost</th>
+              <td>{report.estimate?.usd ? rangeText(report.estimate.usd, formatUsd) : "unknown"}</td>
+              <td>{cmp.usd ? formatUsd(cmp.usd.actual) : "unknown"}</td>
+              <td>{cmp.usd ? diffText(cmp.usd, formatUsd) : "unknown"}</td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+/** Skill bodies sent to seats (TE-07), each delivery counted. */
+function Skills({ skills, seatName }: { skills: UsageReport["skills"]; seatName: (id: string) => string }) {
+  const rows = sortedSkills(skills);
+  return (
+    <section className="usage-skills" aria-labelledby="usage-skills-title">
+      <h2 id="usage-skills-title">Skills loaded</h2>
+      {rows.length === 0 ? (
+        <p className="empty">No skills were loaded in this run.</p>
+      ) : (
+        <table className="usage-table">
+          <thead>
+            <tr>
+              <th scope="col">Skill</th>
+              <th scope="col">Seats</th>
+              <th scope="col">Loads</th>
+              <th scope="col">Tokens</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([name, skill]) => (
+              <tr key={name}>
+                <th scope="row">{name}</th>
+                <td>{skill.seats.map((id) => seatName(id)).join(", ")}</td>
+                <td>{formatCount(skill.loads)}</td>
+                <td>{formatCount(skill.tokens)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </section>
   );
 }
