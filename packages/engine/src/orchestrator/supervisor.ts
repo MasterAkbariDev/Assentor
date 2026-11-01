@@ -628,17 +628,6 @@ export class Supervisor {
   }
 
   private handleExecutorTerminal(result: ExecutorResult): boolean {
-    const withResumeHint = (message: string): string => {
-      const base = message.trim();
-      if (!base) {
-        return "Resume with: assentor resume";
-      }
-      if (/resume with:\s*assentor resume/i.test(base)) {
-        return base;
-      }
-      return `${base} Resume with: assentor resume`;
-    };
-
     if (result.status === "failed") {
       this.moveTo(TaskState.Failed, withResumeHint(result.error ?? result.summary));
       return true;
@@ -681,8 +670,12 @@ export class Supervisor {
 
     if (outcome.kind === "failed") {
       this.finalReview = outcome.review;
-      this.moveTo(TaskState.Failed, outcome.review.summary);
-      this.emit("task.failed", { summary: outcome.review.summary });
+      // Retries ran out on a failure that may clear (e.g. an inconclusive panel): the run can resume.
+      const summary = (outcome.retryable ?? isRetryableReviewFailure(outcome.review))
+        ? withResumeHint(outcome.review.summary)
+        : outcome.review.summary;
+      this.moveTo(TaskState.Failed, summary);
+      this.emit("task.failed", { summary });
       return true;
     }
 
@@ -1156,6 +1149,7 @@ export class Supervisor {
       optionalChanges: turn.result.optionalChanges,
       evidenceRequests: turn.result.evidenceRequests,
       ...(turn.policy ? { policy: turn.policy } : {}),
+      ...(turn.model ? { reportedModel: turn.model } : {}),
     });
     this.emitPanelFindings(turn.correlated);
 
@@ -1660,4 +1654,15 @@ export class Supervisor {
     this.config.seatEvents?.supervisor(event, this.config.seatScope ?? {});
     void this.config.store?.appendEvent(event).catch(() => undefined);
   }
+}
+
+function withResumeHint(message: string): string {
+  const base = message.trim();
+  if (!base) {
+    return "Resume with: assentor resume";
+  }
+  if (/resume with:\s*assentor resume/i.test(base)) {
+    return base;
+  }
+  return `${base} Resume with: assentor resume`;
 }

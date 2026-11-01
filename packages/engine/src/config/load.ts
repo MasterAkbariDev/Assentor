@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { ZodError } from "zod";
 import {
   normalizeExecutorProvider,
   parseAssentorConfig,
@@ -155,7 +156,18 @@ export async function loadAssentorConfig(
         >);
 
   const merged = mergeConfigLayers(dropShadowedAutonomy(userRaw, projectRaw), projectRaw);
-  const parsed = parseAssentorConfig(merged);
+  let parsed: AssentorConfig;
+  try {
+    parsed = parseAssentorConfig(merged);
+  } catch (error) {
+    if (!(error instanceof ZodError)) throw error;
+    // One line per problem, with the file that set the key, instead of raw ZodError JSON.
+    const fileOf = (key: unknown) =>
+      typeof key === "string" && Object.hasOwn(projectRaw, key) ? projectConfigPath(projectRoot) : userConfigPath();
+    throw new Error(
+      `Invalid Assentor config:\n${error.issues.map((i) => `  ${fileOf(i.path[0])}: ${i.path.join(".")}: ${i.message}`).join("\n")}`,
+    );
+  }
   // Keys the user set, for run profiles (TE-06): in the files, or given as a flag below.
   const explicit = explicitProfileKeys(merged);
 

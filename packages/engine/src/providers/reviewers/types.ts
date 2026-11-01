@@ -62,6 +62,8 @@ export interface ReviewerTurnResult {
   retryable?: boolean;
   /** Token use of this turn when the transport reports it (API seats, Claude Code CLI) (TE-05). */
   usage?: CliUsage;
+  /** The model the provider reported for this turn (FU-17); unset = unverified, never the requested model. */
+  model?: string;
   /** Set by a panel: each member's reported token use, by the member's seat id. */
   memberUsage?: Array<{ seatId: string; usage: CliUsage }>;
   /** Set by a panel with a result: its decision policy and the findings correlated across members. */

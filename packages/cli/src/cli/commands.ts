@@ -21,6 +21,7 @@ import {
 import { EventLog, acquireRunLock, type RunLock } from "#assentor/engine/events/log.js";
 import { estimateRun } from "#assentor/engine/estimate/cost.js";
 import { observedPricing } from "#assentor/engine/usage/observed.js";
+import type { CliUsage } from "#assentor/engine/usage/cli-usage.js";
 import type { EngineEvent, RunEstimate } from "#assentor/protocol/events.js";
 import { PRINT_CLI_RECIPES } from "#assentor/engine/providers/executors/cli-print/recipes.js";
 import { isTerminalState, TaskState } from "#assentor/engine/orchestrator/state-machine.js";
@@ -85,6 +86,7 @@ import { confirmRunEstimate, formatRunEstimate, toRunEstimate } from "./run-esti
 import { RunReporter } from "./ui/reporter.js";
 import type { ModeRunHooks } from "./mode-run.js";
 import { resolveProviderApiKey } from "#assentor/engine/keys/resolve.js";
+import { createAssentorServices, type AssentorServices } from "#assentor/engine/services/app.js";
 
 export interface RunAssentorInput {
   projectPath: string;
@@ -551,6 +553,50 @@ export function panelPolicyOptions(
   return {
     ...(mode ? { policy: mode.policy, tiebreak: mode.tiebreak } : {}),
     roles: backends.map((backend) => backend.role ?? "general"),
+  };
+}
+
+/** Shared by every panel in this process. shortcut: keys added after the first panel are not seen until restart. */
+let adjudicatorServices: Promise<Pick<AssentorServices, "agents" | "routing">> | undefined;
+
+/**
+ * The LLM adjudicator for a panel whose policy is `adjudicator` (FU-17): the
+ * enabled `adjudicator` agent profile and the routing engine, as the library
+ * takes them, plus `onUsage` for each call's tokens. Any other policy, no
+ * enabled profile, or no provider/key that can serve it keeps the
+ * deterministic merge (its verdict says no adjudicator was configured).
+ */
+export async function panelAdjudicator(
+  policy: string | undefined,
+  projectPath: string,
+  options: {
+    services?: Pick<AssentorServices, "agents" | "routing">;
+    onUsage?: (usage: CliUsage) => void;
+  } = {},
+): Promise<Pick<ReviewCoordinatorOptions, "routing" | "adjudicatorProfile" | "onAdjudicatorUsage">> {
+  if (policy !== "adjudicator") return {};
+  const { agents, routing } = await (options.services ?? (adjudicatorServices ??= createAssentorServices(projectPath)));
+  const profile = agents.list().find((p) => p.kind === "adjudicator" && p.enabled);
+  const routable =
+    profile &&
+    routing.canRoute({
+      agentId: profile.id,
+      preference: profile.routing,
+      provider: profile.provider,
+      model: profile.model,
+      jsonMode: true,
+      requireStructuredOutput: true,
+    });
+  return routable
+    ? { routing, adjudicatorProfile: profile, ...(options.onUsage ? { onAdjudicatorUsage: options.onUsage } : {}) }
+    : {};
+}
+
+/** Emits an adjudicator call's tokens as `seat.tokens` on the `adjudicator` seat. */
+function adjudicatorUsage(sink: () => SeatEventSink | undefined): (usage: CliUsage) => void {
+  return (usage) => {
+    const events = sink();
+    events?.emit({ type: "seat.tokens", sessionId: events.sessionId, seatId: "adjudicator", data: { ...usage } });
   };
 }
 
@@ -1062,6 +1108,9 @@ async function runAssentorTaskBody(
           acceptanceCriteria: input.acceptanceCriteria ?? [],
           ...panelNarrowing(config, input.prompt, projectPath, teamMode),
           ...panelPolicyOptions(config, memberBackends),
+          ...(await panelAdjudicator(config.modes.review?.policy, projectPath, {
+            onUsage: adjudicatorUsage(() => seatEvents.events),
+          })),
         });
 
   reporter.note(
@@ -1360,6 +1409,9 @@ export async function resumeAssentorTask(input: {
             goal: resume.snapshot.contract.goal,
             ...panelNarrowing(config, resume.snapshot.contract.goal, projectPath, teamMode),
             ...panelPolicyOptions(config, memberBackends),
+            ...(await panelAdjudicator(config.modes.review?.policy, projectPath, {
+              onUsage: adjudicatorUsage(() => seatEvents.events),
+            })),
             acceptanceCriteria:
               resume.snapshot.contract.acceptanceCriteria ?? [],
           });

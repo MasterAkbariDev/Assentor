@@ -10,7 +10,7 @@ import { requestedModel } from "../../executors/cli-print/recipes.js";
 import { isCursorAppBinary } from "../../executors/cursor/index.js";
 import { killProcessTree } from "../../../process/kill-tree.js";
 import { trackChildProcess } from "../../../process/tracker.js";
-import { usageOf, type CliUsage } from "../../../usage/cli-usage.js";
+import { claudeReportedModel, usageOf, type CliUsage } from "../../../usage/cli-usage.js";
 import {
   asReviewInput,
   buildReviewPrompt,
@@ -46,6 +46,8 @@ export interface CliSpawnResult {
   signal?: NodeJS.Signals | null;
   /** Token use the CLI reported (Claude Code's JSON output); `stdout` is then the reply text alone. */
   usage?: CliUsage;
+  /** The model the CLI reported it ran (Claude Code's JSON output); unset = unverified. */
+  model?: string;
 }
 
 export type CliSpawnFn = (request: CliSpawnRequest) => Promise<CliSpawnResult>;
@@ -231,14 +233,15 @@ export function unwrapClaudeJson(result: CliSpawnResult): CliSpawnResult {
   }
   if (value?.type !== "result") return result;
   const usage = usageOf(value);
+  const model = claudeReportedModel(raw);
   const subtype = typeof value.subtype === "string" ? value.subtype : "";
   if (value.is_error === true || subtype.startsWith("error")) {
     // An error envelope is a failed call (empty stdout, non-zero code), never an answer.
     const message = typeof value.result === "string" && value.result.trim() ? value.result.trim() : `claude CLI error: ${subtype || "is_error"}`;
-    return { ...result, code: result.code || 1, stdout: "", stderr: message, ...(usage ? { usage } : {}) };
+    return { ...result, code: result.code || 1, stdout: "", stderr: message, ...(usage ? { usage } : {}), ...(model ? { model } : {}) };
   }
   if (typeof value.result !== "string") return result;
-  return { ...result, stdout: value.result, ...(usage ? { usage } : {}) };
+  return { ...result, stdout: value.result, ...(usage ? { usage } : {}), ...(model ? { model } : {}) };
 }
 
 export interface CliReviewerOptions {
@@ -375,7 +378,7 @@ export class CliReviewer implements Reviewer {
     }
 
     this.onStatus?.(`${this.adapter} CLI reviewer responded`);
-    return result.usage ? { ...parsed, usage: result.usage } : parsed;
+    return { ...parsed, ...(result.usage ? { usage: result.usage } : {}), ...(result.model ? { model: result.model } : {}) };
   }
 }
 

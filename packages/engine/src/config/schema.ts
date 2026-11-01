@@ -120,6 +120,25 @@ export const AssentorConfigSchema = z.object({
           .optional(),
       }),
     )
+    // A reviewer `name` is its explicit identity (findings carry it): two may not share one.
+    .superRefine((reviewers, ctx) => {
+      const paths = new Map<string, number[]>();
+      reviewers.forEach((reviewer, index) => {
+        const key = reviewer.name?.trim().toLowerCase();
+        if (key) paths.set(key, [...(paths.get(key) ?? []), index]);
+      });
+      for (const indexes of paths.values()) {
+        if (indexes.length < 2) continue;
+        const where = indexes.map((i) => `reviewers.${i}.name`).join(", ");
+        for (const index of indexes) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [index, "name"],
+            message: `duplicate reviewer name "${reviewers[index]!.name}" (${where})`,
+          });
+        }
+      }
+    })
     .default([{ provider: "mock", role: "general", transport: "api" }]),
   teams: z.record(z.string().min(1), TeamSchema).default({}),
   /**
