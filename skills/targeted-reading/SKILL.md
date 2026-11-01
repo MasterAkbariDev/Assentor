@@ -12,7 +12,7 @@ Do:
 - Read the lines around a hit, a function or a range, not the whole file. Widen only when the range does not answer the question.
 - Read a whole file when it is short (about 150 lines or less), when you will rewrite most of it, or when a range keeps missing.
 - Stop as soon as you can answer the question. Write down the file and line you rely on.
-- Still read the callers and tests of anything you will change, as your role prompt says: find them by search, then read those lines.
+- When you change code, still read its callers and tests as your role prompt says: find them by search, then read those lines.
 
 Don't:
 - Open files "to get a feel" or list and read a whole directory.

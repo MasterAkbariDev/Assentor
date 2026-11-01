@@ -15,14 +15,14 @@ Runner: mock · 5 runs × 5 tasks (bug-fix, add-test, refactor, review, plan)
 | style:concise | 0 | 9,199 | 1,414 | 3,785 | 9.0 | 0.0 | 100% | 2,123 (2,119–2,125) | +0% |
 | profile:economy | 0 | 9,199 | 1,414 | 3,785 | 9.0 | 0.0 | 100% | 2,123 (2,119–2,125) | +0% |
 | skills:answer-first | 56 | 12,660 | 1,414 | 5,323 | 9.0 | 0.0 | 100% | 2,815 (2,811–2,817) | +32.6% |
-| skills:targeted-reading | 61 | 12,031 | 1,414 | 5,403 | 9.0 | 0.0 | 100% | 2,689 (2,685–2,691) | +26.7% |
+| skills:targeted-reading | 61 | 12,020 | 1,414 | 5,397 | 9.0 | 0.0 | 100% | 2,687 (2,683–2,689) | +26.6% |
 | skills:minimal-diff-edits | 60 | 11,847 | 1,414 | 5,297 | 9.0 | 0.0 | 100% | 2,652 (2,649–2,654) | +25% |
 | skills:smallest-solution | 61 | 11,080 | 1,414 | 4,913 | 9.0 | 0.0 | 100% | 2,499 (2,495–2,501) | +17.7% |
-| skills:test-triage | 58 | 11,735 | 1,414 | 5,233 | 9.0 | 0.0 | 100% | 2,630 (2,626–2,632) | +23.9% |
+| skills:test-triage | 58 | 10,991 | 1,414 | 4,859 | 9.0 | 0.0 | 100% | 2,481 (2,477–2,483) | +16.9% |
 | skills:compact-handoff | 59 | 12,118 | 1,414 | 5,453 | 9.0 | 0.0 | 100% | 2,706 (2,703–2,709) | +27.5% |
 | skills:review-signal-only | 62 | 9,653 | 1,414 | 3,785 | 9.0 | 0.0 | 100% | 2,213 (2,210–2,216) | +4.3% |
 | skills:plan-in-bullets | 57 | 9,612 | 1,414 | 3,785 | 9.0 | 0.0 | 100% | 2,205 (2,202–2,207) | +3.9% |
-| skills:all | 182 | 25,123 | 1,414 | 12,038 | 9.0 | 0.0 | 100% | 5,307 (5,304–5,310) | +150% |
+| skills:all | 182 | 18,972 | 1,414 | 8,481 | 9.0 | 0.0 | 100% | 4,077 (4,074–4,079) | +92.1% |
 | skills:lean | 0 | 9,199 | 1,414 | 3,785 | 9.0 | 0.0 | 100% | 2,123 (2,119–2,125) | +0% |
 
 - style:concise: style-concise.md is not built yet (TE-02): no effect
@@ -30,23 +30,23 @@ Runner: mock · 5 runs × 5 tasks (bug-fix, add-test, refactor, review, plan)
 
 ## TE-08 built-in token-saver skills (mock, 2026-11-01)
 
-Mock numbers prove prompt-structure effects only. Each `skills:<name>` row above puts the real index line (with the shipped index header) in the prompt of every role the skill is for, and its fenced body in every call of those roles from the first call. That is the best case for cost (no extra `load_skill` turn) and it still costs tokens. **No behavioural saving is modelled**: the scripted replies are already at the floor the role prompts set (reviewer and planner reply with one JSON block and nothing else, builders with fixed headings), and the fixture projects are a few dozen lines, so there is nothing for "read line ranges" or "rerun one test" to save. A saving that only a real model can show (shorter replies, fewer reads, fewer suite reruns) needs the owner's `--live` run; do not read the mock rows as a verdict on that.
+Mock numbers prove prompt-structure effects only. Each `skills:<name>` row above puts the real index line (with the shipped index header) in the prompt of every role the skill is for, and its fenced body in every call of those roles from the first call (at most 3 bodies / 4,000 body tokens per seat). That is the best case for cost (no extra `load_skill` turn) and it still costs tokens. **No behavioural saving is modelled**: the scripted replies are already at the floor the role prompts set (reviewer and planner reply with one JSON block and nothing else, builders with fixed headings), and the fixture projects are a few dozen lines, so there is nothing for "read line ranges" or "rerun one test" to save. A saving that only a real model can show (shorter replies, fewer reads, fewer suite reruns) needs the owner's `--live` run; do not read the mock rows as a verdict on that.
 
 | skill | for roles | body (tokens) | mock net tokens / success | mock gate | saving a live run must show to pass (-10%) | status |
 |---|---|---:|---:|---|---:|---|
 | answer-first | builders, planners, reviewers | ~260 | +32.6% | FAIL | 904 tokens per task | off |
-| targeted-reading | builders | ~275 | +26.7% | FAIL | 779 | off |
+| targeted-reading | builders | ~275 | +26.6% | FAIL | 776 | off |
 | minimal-diff-edits | builders | ~250 | +25% | FAIL | 742 | off |
 | smallest-solution | engineer, refactorer, debugger, devops, db-migrations | ~245 | +17.7% | FAIL | 588 | off |
-| test-triage | engineer, refactorer, debugger, test-writer | ~235 | +23.9% | FAIL | 719 | off |
+| test-triage | engineer, debugger, test-writer | ~235 | +16.9% | FAIL | 571 | off |
 | compact-handoff | builders | ~290 | +27.5% | FAIL | 796 | off |
 | review-signal-only | reviewers | ~325 | +4.3% | pass (overhead only) | 303 | off |
 | plan-in-bullets | planner, architect, requirements-analyst | ~285 | +3.9% | pass (overhead only) | 295 | off |
-| all eight together | | | +150% | FAIL | 3,397 | off |
+| all eight together (3 bodies per seat) | | | +92% | FAIL | 2,167 | off |
 | lean preset | | | +0% (empty) | n/a | n/a | empty |
 
 - The mock gate checks structure: a variant fails when its net tokens grow by more than its own always-on text explains. `review-signal-only` and `plan-in-bullets` apply to one fixture task each, so their cost stays within that allowance; they still raise net tokens (+4%), so they do not meet the ship-on rule (net tokens per successful task down by 10% or more, no success drop). All eight stay off.
 - The last column is what the live A/B must beat: average tokens saved per fixture task (all five tasks, not only the ones the skill applies to). The fixtures' replies average about 280 output tokens per task, so shortening replies alone can never pay back a body of this size on tasks this small. These skills can only win where real work is large: long files, long test logs, many reads.
-- Loading all eight is the owner's failure mode, reproduced: +150% net tokens. The shipped design keeps them off and one index line each when enabled.
+- Enabling all eight is the owner's failure mode, reproduced: +92% net tokens even though a seat loads at most 3 bodies (`MAX_SKILLS_PER_SEAT`, applied in the benchmark: the first 3 eligible by name). The shipped design keeps them off, and one index line each when enabled.
 - Best live-A/B candidates: `review-signal-only` and `plan-in-bullets` (smallest overhead, narrow roles). When a live run passes the gate, add the skill to `SKILL_PRESETS.lean` in `packages/engine/src/skills/format.ts` (the test in `tests/unit/skills-builtin.test.ts` then checks it against the benchmark) and paste the live output here.
 - Reproduce: `pnpm bench:tokens --runs 5 --variants skills:answer-first,…,skills:all,skills:lean --gate skills:<name>`; live: `pnpm bench:tokens --live --budget 300000 --executor claude-code --variants skills:<name> --gate skills:<name>`.

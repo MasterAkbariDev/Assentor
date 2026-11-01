@@ -81,6 +81,16 @@ describe("built-in skills", () => {
     expect(parseAssentorConfig({}).skills.enabled).toEqual([]);
   });
 
+  it("rejects non-kebab-case skills.enabled names, and warns about unknown ones", async () => {
+    expect(() => parseAssentorConfig({ skills: { enabled: ["Not Kebab"] } })).toThrow();
+    expect(parseAssentorConfig({ skills: { enabled: ["lean", "test-triage"] } }).skills.enabled).toEqual(["lean", "test-triage"]);
+    const library = await SkillLibrary.load({ userDir: "/nonexistent-user-dir" });
+    const events: Array<{ type: string; data?: Record<string, unknown> }> = [];
+    new SkillSession(library, { sessionId: "x", enabled: ["test-triage", "no-such-skill"], emit: (e) => events.push(e) });
+    expect(events).toHaveLength(1);
+    expect(events[0]!.data?.message).toMatch(/unknown skill "no-such-skill"/);
+  });
+
   it("keeps the index under its cap with all eight, and each role's own index untruncated", async () => {
     const library = await SkillLibrary.load({ userDir: "/nonexistent-user-dir" });
     const tokens = (text: string) => Math.ceil(text.length / 4);
@@ -119,8 +129,8 @@ describe("lean preset", () => {
     }
   });
 
-  it("loading all eight is the owner's failure mode: net tokens more than double and the gate fails", () => {
-    expect(net("skills:all") / net("baseline")).toBeGreaterThan(2);
+  it("enabling all eight is the owner's failure mode: net tokens up by more than 80% even at 3 bodies per seat, and the gate fails", () => {
+    expect(net("skills:all") / net("baseline")).toBeGreaterThan(1.8);
     expect(gateVariant(report, "skills:all").pass).toBe(false);
     expect(report.variants.every((v) => v.successRate === 1)).toBe(true);
   });

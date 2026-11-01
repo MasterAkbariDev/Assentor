@@ -121,7 +121,14 @@ export class SkillSession {
   constructor(
     readonly library: SkillLibrary,
     private readonly options: SkillSessionOptions,
-  ) {}
+  ) {
+    // A typo in skills.enabled would otherwise silently leave a skill off.
+    for (const name of options.enabled ?? []) {
+      if (!library.get(name)) {
+        this.emit({ type: "session.warning", sessionId: options.sessionId, data: { kind: "skill", message: `skills.enabled names unknown skill "${name}"` } });
+      }
+    }
+  }
 
   private scope(seat: SkillSeat): SkillScope {
     return { role: seat.role, permissions: seat.permissions, mode: this.options.mode, profile: this.options.profile, enabled: this.options.enabled };

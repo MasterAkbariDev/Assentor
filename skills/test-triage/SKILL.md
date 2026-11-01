@@ -1,7 +1,7 @@
 ---
 name: test-triage
-description: Use when tests fail, first error, rerun one test. Off, mock bench +24% tokens.
-roles: [engineer, refactorer, debugger, test-writer]
+description: Use when tests fail, first error, rerun one test. Off, mock bench +17% tokens.
+roles: [engineer, debugger, test-writer]
 optIn: true
 version: 1
 ---
@@ -12,7 +12,7 @@ Do:
 - Open only the failing test and the code it calls.
 - Rerun that single test (a file or name filter) after each change.
 - Capture only the tail of a long run and the first error block.
-- Before you finish, run the full suite, typecheck, and build once, as your role prompt requires, and quote their summary lines.
+- Run the full suite, typecheck, or build only when your role prompt asks for it, and quote their summary lines.
 
 Don't:
 - Paste whole logs or stack traces into your reply. Quote the one error line.

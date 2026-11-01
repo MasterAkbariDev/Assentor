@@ -13,6 +13,8 @@ import { estimateTokens } from "#assentor/engine/usage/tokens.js";
 import { cliUsage } from "#assentor/engine/usage/cli-usage.js";
 import {
   fenceSkill,
+  MAX_SKILL_TOKENS_PER_SEAT,
+  MAX_SKILLS_PER_SEAT,
   renderSkillsIndex,
   SKILL_PRESETS,
   validateSkillFrontMatter,
@@ -160,7 +162,10 @@ export function resolveVariant(name: string, root = REPO_ROOT): Variant {
     const style = styleText(base.style, root, []);
     const perRole = (role: string) => {
       const eligible = eligibleFor(skills, role);
-      return { alwaysOn: joinParts(style, renderSkillsIndex(eligible)), loaded: eligible.map(fenceSkill).join("\n\n") };
+      // A seat loads at most MAX_SKILLS_PER_SEAT skills / MAX_SKILL_TOKENS_PER_SEAT body tokens (first by name).
+      let tokens = 0;
+      const bodies = eligible.filter((s) => (tokens += s.tokens) <= MAX_SKILL_TOKENS_PER_SEAT).slice(0, MAX_SKILLS_PER_SEAT);
+      return { alwaysOn: joinParts(style, renderSkillsIndex(eligible)), loaded: bodies.map(fenceSkill).join("\n\n") };
     };
     // The report's always-on size is the largest index any fixture role sees.
     const alwaysOn = BENCH_TASKS.map((t) => perRole(t.role).alwaysOn).reduce((a, b) => (b.length > a.length ? b : a), "");
