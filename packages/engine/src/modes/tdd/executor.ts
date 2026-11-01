@@ -13,6 +13,7 @@ import type { EngineEventDraft } from "#assentor/protocol/events.js";
 import type { ProtocolMessage } from "#assentor/protocol/messages.js";
 import type { RunMode } from "../../core/run-mode.js";
 import { runShellCommand } from "../../process/run-shell.js";
+import { prepareWorktree } from "../../worktrees/prepare.js";
 import type {
   Executor,
   ExecutorCapabilities,
@@ -135,6 +136,8 @@ export interface TddDeps {
   options?: Readonly<Record<string, unknown>>;
   /** Source of the test command when `options.testCommand` is not set. */
   verification?: AssentorConfig["verification"];
+  /** `worktrees.install`: dependency install in each round's worktree before its first gate. Default `auto`. */
+  install?: AssentorConfig["worktrees"]["install"];
   /** Runs the test command; default: a shell. Must honour `signal` (kill the process). */
   runCommand?: TddGateRunner;
   /** Decides test change requests. Absent: every request is refused. */
@@ -434,6 +437,11 @@ export function createTddExecutor(deps: TddDeps): Executor {
       const seatKey: SeatKey = { sessionId: deps.sessionId, seatId: `tdd-r${rounds}${randomBytes(4).toString("hex")}` };
       const worktree = (await deps.manager.create(seatKey, "HEAD")).path;
       key = seatKey;
+      const prepared = await prepareWorktree(worktree, deps.install, { signal: controller.signal, run: runCommand });
+      if (!prepared.ok) {
+        if (controller.signal.aborted) throw new Error("cancelled");
+        throw new TddBlocked(prepared.reason);
+      }
       const locks = new Map(locked);
       const template = await resolveTemplate(worktree);
       let guard: Map<string, Snapshot>;
