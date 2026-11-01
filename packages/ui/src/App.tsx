@@ -18,12 +18,12 @@ import { UsagePage } from "./features/usage/UsagePage.js";
 import { useEngine } from "./store/context.js";
 import type { ConnectionStatus } from "./store/engineStore.js";
 import { selectHasNegotiation, selectHasReview } from "./store/selectors.js";
-import { useRoute } from "./shell/route.js";
+import { DEV_PAGES, useRoute } from "./shell/route.js";
 import { SectionNav } from "./shell/Sidebar.js";
 import { useConnectionToasts } from "./shell/Toasts.js";
 
-// Dev only: `import.meta.env.DEV` is false in the production build, so this chunk is never emitted.
-const FixturesPage = import.meta.env.DEV ? lazy(() => import("./features/dev/FixturesPage.js")) : undefined;
+// Dev only: `DEV_PAGES` is false in the production build, so this chunk is never emitted.
+const FixturesPage = DEV_PAGES ? lazy(() => import("./features/dev/FixturesPage.js")) : undefined;
 
 const CONNECTION_LABEL: Record<ConnectionStatus, string> = {
   connecting: "Connecting…",

@@ -19,9 +19,12 @@ export type SectionId = (typeof SECTIONS)[number]["id"];
 /** `dev/fixtures` exists only in dev builds; `new-session` is reached from the sidebar. Neither is in `SECTIONS`, so neither shows in the nav. */
 export type Route = SectionId | "dev/fixtures" | "new-session";
 
+/** Dev pages: always in `vite dev`; in a build only when made with `VITE_PERF=1` (the T05-02 perf harness). */
+export const DEV_PAGES = import.meta.env.DEV || import.meta.env.VITE_PERF === "1";
+
 export function parseRoute(hash: string): Route {
-  const path = hash.replace(/^#\/?/, "");
-  if (import.meta.env.DEV && path === "dev/fixtures") return "dev/fixtures";
+  const path = hash.replace(/^#\/?/, "").replace(/\?.*$/, "");
+  if (DEV_PAGES && path === "dev/fixtures") return "dev/fixtures";
   if (path === "new-session") return "new-session";
   return SECTIONS.find((s) => s.id === path)?.id ?? "sessions";
 }
