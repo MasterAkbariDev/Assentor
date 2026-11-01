@@ -294,6 +294,11 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .seat-info-row { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 16px; }
 .seat-info dt { color: var(--muted); }
 .seat-info dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.seat-transcript { display: flex; flex: 1; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; }
+.seat-more { align-self: flex-start; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+.seat-tool-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.seat-msg-error { color: var(--error); }
+.seat-file-list { display: grid; gap: 4px; margin: 0; padding: 0; overflow-y: auto; list-style: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
 
 /* Review view (T04-10p). Colours come from the status tokens above. */
 .review { display: grid; gap: 12px; margin-top: 24px; }

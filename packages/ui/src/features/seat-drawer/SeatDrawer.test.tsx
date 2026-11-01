@@ -2,6 +2,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, within } from "@testing-library/react";
 import type { EngineEvent } from "#assentor/protocol/events.js";
+import type { Transport } from "../../transport/types.js";
+import { mockTransport } from "../../transport/mock.js";
 import { renderWithStore } from "../../test/render.js";
 import { sessionFixture } from "../../test/fixtures.js";
 import { SessionBoard } from "../session-board/SessionBoard.js";
@@ -11,11 +13,17 @@ afterEach(() => cleanup());
 
 /** The board and the drawer, with the shared fixture run selected and applied. */
 function renderPanel() {
+  return renderPanelWith();
+}
+
+function renderPanelWith(transport?: Transport) {
   const rendered = renderWithStore(
     <>
       <SessionBoard />
       <SeatDrawer />
     </>,
+    undefined,
+    transport,
   );
   act(() => {
     rendered.store.getState().select(sessionFixture.id);
@@ -102,6 +110,8 @@ describe("SeatDrawer: tabs", () => {
     expect(getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(tab(dialog, "Output").id);
 
     fireEvent.keyDown(tablist, { key: "ArrowRight" });
+    expect(tab(dialog, "Files").getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(tablist, { key: "ArrowRight" });
     expect(tab(dialog, "Info").getAttribute("aria-selected")).toBe("true");
     expect(document.activeElement).toBe(tab(dialog, "Info"));
 
@@ -122,8 +132,9 @@ describe("SeatDrawer: tabs", () => {
     fireEvent.click(cardFor(container, "executor"));
     const dialog = getByRole("dialog");
     expect(tab(dialog, "Activity").tabIndex).toBe(0);
-    expect(tab(dialog, "Output").tabIndex).toBe(-1);
-    expect(tab(dialog, "Info").tabIndex).toBe(-1);
+    for (const name of ["Transcript", "Output", "Files", "Info"]) {
+      expect(tab(dialog, name).tabIndex).toBe(-1);
+    }
   });
 });
 
@@ -199,6 +210,158 @@ describe("SeatDrawer: Output", () => {
   });
 });
 
+describe("SeatDrawer: Output follow-tail and colours", () => {
+  const spawn = { displayName: "Executor", provider: "mock", transport: "api", model: "AUTO", role: "engineer", permissions: "edit" };
+  function renderOutput(texts: string[]) {
+    const id = "ansi-run";
+    const rendered = renderWithStore(
+      <>
+        <SessionBoard />
+        <SeatDrawer />
+      </>,
+    );
+    const at = new Date(Date.UTC(2026, 9, 25, 10, 0, 0)).toISOString();
+    const ev = (seq: number, type: string, data: unknown) => ({ seq, sessionId: id, seatId: "executor", at, type, data }) as EngineEvent;
+    act(() => {
+      rendered.store.getState().select(id);
+      rendered.store.getState().applyEvents(id, [ev(1, "seat.spawned", spawn), ...texts.map((t, i) => ev(i + 2, "seat.output.delta", { text: t }))]);
+    });
+    fireEvent.click(cardFor(rendered.container, "executor"));
+    fireEvent.click(rendered.getByRole("tab", { name: "Output" }));
+    let seq = 100;
+    const more = (text: string) =>
+      act(() => rendered.store.getState().applyEvents(id, [ev(++seq, "seat.output.delta", { text })]));
+    return { ...rendered, more, pre: () => rendered.getByRole("tabpanel").querySelector("pre") as HTMLPreElement };
+  }
+  const geometry = (pre: HTMLPreElement, scrollTop: number) =>
+    Object.defineProperties(pre, {
+      scrollHeight: { value: 500, configurable: true },
+      clientHeight: { value: 100, configurable: true },
+      scrollTop: { value: scrollTop, writable: true, configurable: true },
+    });
+
+  it("renders colour codes as styled spans without the escape characters", () => {
+    const { pre } = renderOutput(["\u001b[31mred\u001b[0m plain \u001b[1;38;5;196mhot\u001b[0m <b>x</b>"]);
+    const spans = Array.from(pre().querySelectorAll("span"));
+    expect(spans.map((s) => s.textContent)).toEqual(["red", " plain ", "hot", " <b>x</b>"]);
+    expect(spans[0]!.style.color).not.toBe("");
+    expect(spans[2]!.style.fontWeight).toBe("700");
+    expect(pre().querySelector("b")).toBeNull();
+    expect(pre().textContent).not.toContain("\u001b");
+  });
+
+  it("follows new output while at the bottom, and stays put once the reader scrolled up", () => {
+    const { pre, more, getByRole } = renderOutput(["one\n"]);
+    const el = geometry(pre(), 400); // at the bottom
+    fireEvent.scroll(el);
+    more("two\n");
+    expect(el.scrollTop).toBe(500);
+
+    el.scrollTop = 0;
+    fireEvent.scroll(el); // scrolled up
+    more("three\n");
+    expect(el.scrollTop).toBe(0);
+    expect(getByRole("button", { name: "Jump to latest" })).toBeTruthy();
+  });
+});
+
+describe("SeatDrawer: Transcript", () => {
+  it("lists tool calls with their args, a file link to the diff view, and results", () => {
+    const { container, getByRole } = renderPanel();
+    fireEvent.click(cardFor(container, "executor"));
+    fireEvent.click(getByRole("tab", { name: "Transcript" }));
+    const list = getByRole("list", { name: "Transcript" });
+    const rows = Array.from(list.querySelectorAll("li")).map((li) => li.querySelector(".seat-activity-text")!.textContent);
+    expect(rows).toEqual(["editing src/average.ts", "average() added"]);
+    const link = within(list).getByRole("link", { name: "src/average.ts" });
+    expect(link.getAttribute("href")).toBe("#/sessions?diff=src%2Faverage.ts&seat=executor");
+  });
+
+  it("cuts long tool args at 200 characters and keeps the whole text in the title", () => {
+    const id = "args-run";
+    const { store, container, getByRole } = renderWithStore(
+      <>
+        <SessionBoard />
+        <SeatDrawer />
+      </>,
+    );
+    const at = new Date(Date.UTC(2026, 9, 25, 10, 0, 0)).toISOString();
+    const long = "x".repeat(450);
+    act(() => {
+      store.getState().select(id);
+      store.getState().applyEvents(id, [
+        { seq: 1, sessionId: id, seatId: "a", at, type: "seat.spawned", data: { displayName: "A", provider: "mock", transport: "api", model: "AUTO", role: "x", permissions: "edit" } },
+        { seq: 2, sessionId: id, seatId: "a", at, type: "seat.tool_call", data: { name: "bash", summary: long } },
+      ] as EngineEvent[]);
+    });
+    fireEvent.click(cardFor(container, "a"));
+    fireEvent.click(getByRole("tab", { name: "Transcript" }));
+    const text = getByRole("list", { name: "Transcript" }).querySelector(".seat-activity-text") as HTMLElement;
+    expect(text.textContent).toBe(`bash ${"x".repeat(200)}…`);
+    expect(text.title).toBe(long);
+  });
+
+  it("shows only the last rows and loads earlier ones on request", () => {
+    const id = "long-run";
+    const { store, container, getByRole, queryByRole } = renderWithStore(
+      <>
+        <SessionBoard />
+        <SeatDrawer />
+      </>,
+    );
+    const at = new Date(Date.UTC(2026, 9, 25, 10, 0, 0)).toISOString();
+    const events = [
+      { seq: 1, sessionId: id, seatId: "a", at, type: "seat.spawned", data: { displayName: "A", provider: "mock", transport: "api", model: "AUTO", role: "x", permissions: "edit" } },
+      ...Array.from({ length: 120 }, (_, i) => ({ seq: i + 2, sessionId: id, seatId: "a", at, type: "seat.tool_call", data: { name: "read", summary: `call ${i}` } })),
+    ] as EngineEvent[];
+    act(() => {
+      store.getState().select(id);
+      store.getState().applyEvents(id, events);
+    });
+    fireEvent.click(cardFor(container, "a"));
+    fireEvent.click(getByRole("tab", { name: "Transcript" }));
+    const count = () => getByRole("list", { name: "Transcript" }).querySelectorAll("li").length;
+    expect(count()).toBe(50);
+    fireEvent.click(getByRole("button", { name: "Show earlier (70)" }));
+    expect(count()).toBe(100);
+    fireEvent.click(getByRole("button", { name: "Show earlier (20)" }));
+    expect(count()).toBe(120);
+    expect(queryByRole("button", { name: /Show earlier/ })).toBeNull();
+  });
+});
+
+describe("SeatDrawer: Files", () => {
+  const diff = { baseSha: "a".repeat(40), head: "b".repeat(40), dirty: true, files: ["src/a.ts", "docs/b.md"], diff: "", truncated: false };
+
+  it("lists the worktree's files with links to the diff view", async () => {
+    const transport = mockTransport({ handlers: { "worktree.diff": () => diff } });
+    const { container, findByRole, getByRole } = renderPanelWith(transport);
+    fireEvent.click(cardFor(container, "executor"));
+    fireEvent.click(getByRole("tab", { name: "Files" }));
+    const list = await findByRole("list", { name: "Files" });
+    const links = Array.from(list.querySelectorAll("a"));
+    expect(links.map((a) => a.textContent)).toEqual(["src/a.ts", "docs/b.md"]);
+    expect(links[1]!.getAttribute("href")).toBe("#/sessions?diff=docs%2Fb.md&seat=executor");
+    expect(transport.calls.some((c) => c.method === "worktree.diff")).toBe(true);
+  });
+
+  it("falls back to files named in tool calls when the seat has no worktree", async () => {
+    const transport = mockTransport({
+      handlers: {
+        "worktree.diff": () => {
+          throw new Error("No worktree for seat");
+        },
+      },
+    });
+    const { container, findByRole, getByRole } = renderPanelWith(transport);
+    fireEvent.click(cardFor(container, "executor"));
+    fireEvent.click(getByRole("tab", { name: "Files" }));
+    const list = await findByRole("list", { name: "Files" });
+    expect(list.textContent).toBe("src/average.ts");
+    expect(getByRole("note").textContent).toContain("no worktree");
+  });
+});
+
 describe("SeatDrawer: Info", () => {
   it("shows provider, transport and permissions from seat.spawned, plus ids and status", () => {
     const { container, getByRole } = renderPanel();
@@ -218,7 +381,7 @@ describe("SeatDrawer: Info", () => {
   it("renders no inline style attributes anywhere in the panel", () => {
     const { container, getByRole } = renderPanel();
     fireEvent.click(cardFor(container, "executor"));
-    for (const name of ["Activity", "Output", "Info"]) {
+    for (const name of ["Activity", "Transcript", "Files", "Output", "Info"]) {
       fireEvent.click(getByRole("tab", { name }));
       expect(document.querySelectorAll("[style]")).toHaveLength(0);
     }

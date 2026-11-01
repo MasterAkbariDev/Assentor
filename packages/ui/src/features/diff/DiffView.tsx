@@ -29,10 +29,19 @@ const subscribeHash = (fn: () => void) => {
   return () => window.removeEventListener("hashchange", fn);
 };
 
-/** The file a `#/sessions?diff=<path>` link (the review view's file links) asks for. */
+/** The file a `#/sessions?diff=<path>[&seat=<id>]` link (review view, seat drawer) asks for. */
 function useDiffTarget(): string | undefined {
+  return useHashParam("diff");
+}
+
+/** The seat whose worktree such a link names; without one the executor's is shown. */
+function useDiffSeat(): string | undefined {
+  return useHashParam("seat");
+}
+
+function useHashParam(name: string): string | undefined {
   const hash = useSyncExternalStore(subscribeHash, () => window.location.hash);
-  const raw = /[?&]diff=([^&]*)/.exec(hash)?.[1];
+  const raw = new RegExp(`[?&]${name}=([^&]*)`).exec(hash)?.[1];
   try {
     return raw ? decodeURIComponent(raw) : undefined;
   } catch {
@@ -43,6 +52,7 @@ function useDiffTarget(): string | undefined {
 /** Collapsed section of the session panel: per-seat worktrees, their diff, apply and discard. */
 export function DiffView() {
   const target = useDiffTarget();
+  const targetSeat = useDiffSeat();
   const [open, setOpen] = useState(target !== undefined);
   useEffect(() => {
     if (target) setOpen(true);
@@ -54,12 +64,12 @@ export function DiffView() {
           Diff &amp; worktrees
         </button>
       </h2>
-      {open ? <DiffBody target={target} /> : null}
+      {open ? <DiffBody target={target} targetSeat={targetSeat} /> : null}
     </section>
   );
 }
 
-function DiffBody({ target }: { target: string | undefined }) {
+function DiffBody({ target, targetSeat }: { target: string | undefined; targetSeat: string | undefined }) {
   const rpc = useRpc();
   const connection = useEngine((s) => s.connection);
   const sessionId = useEngine((s) => s.session?.id);
@@ -126,13 +136,20 @@ function DiffBody({ target }: { target: string | undefined }) {
     if (live !== undefined) wasLive.current = Boolean(live);
   }, [live, seatId, load]);
 
-  // A file link: show the executor's worktree (else a seat that can edit, so has one) at that file.
+  // A file link: show the named seat's worktree (else the executor's, else a seat that can edit, so has one) at that file.
   const firstSeat =
     groupSeats(seats ?? {}).find((g) => g.key === "executor")?.seats[0]?.seatId ??
     Object.values(seats ?? {}).find((s) => seatInfo?.[s.seatId]?.permissions === "edit")?.seatId;
+  const linkedSeat = targetSeat && seats?.[targetSeat] ? targetSeat : firstSeat;
+  const opened = useRef<string | undefined>();
   useEffect(() => {
-    if (target && !seatId && firstSeat) void load(firstSeat);
-  }, [target, seatId, firstSeat, load]);
+    // Once per link: picking another seat by hand afterwards must stick.
+    const key = target && linkedSeat ? `${linkedSeat}\n${target}` : undefined;
+    if (key && opened.current !== key) {
+      opened.current = key;
+      void load(linkedSeat as string);
+    }
+  }, [target, linkedSeat, load]);
   useEffect(() => {
     if (target && diff?.files.includes(target)) setFile(target);
   }, [target, diff]);
