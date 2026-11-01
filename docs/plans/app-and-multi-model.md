@@ -183,7 +183,7 @@ UI: prompt list, editor with live variable preview, "try on this seat" button, d
 
 **Event protocol** (replaces/extends `SupervisorEvent`, every event has `sessionId`, `seatId?`, `seq`, `at`):
 
-`session.*` · `stage.started/completed` · `seat.spawned` · `seat.status` · `seat.output.delta` · `seat.thinking` · `seat.tool_call` (name, args summary, file) · `seat.tokens` (in/out/cost) · `seat.model.changed` · `seat.error` · `seat.done` · `negotiation.proposal` · `negotiation.critique` · `negotiation.vote` · `negotiation.consensus` · `review.finding` · `review.verdict` · `gate.result` · `budget.warning`
+`session.*` · `stage.started/completed` · `seat.spawned` · `seat.status` · `seat.output.delta` · `seat.thinking` · `seat.tool_call` (name, args summary, file) · `seat.tokens` (in/out/cost) · `seat.model.changed` · `seat.error` · `seat.done` · `negotiation.proposal` (the proposing seat in the envelope `seatId`) · `negotiation.critique` · `negotiation.vote` · `negotiation.consensus` (with `threshold`) · `negotiation.decided` (rationale, winner) · `review.finding` (agreement, reviewer seat ids) · `review.verdict` (`policy` on the merged verdict; `panelMember` verdicts per reviewer) · `gate.result` · `budget.warning`
 
 Persisted append-only to `.assentor/sessions/<id>/events.ndjson` → **replay**, **reconnect without loss** (client sends last `seq`), and crash recovery.
 

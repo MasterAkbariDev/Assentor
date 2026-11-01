@@ -91,6 +91,8 @@ interface Verdict {
   round?: number;
   seatId?: string;
   status: string;
+  /** One panel member's own verdict; the seat's merged verdict is the panel's. */
+  member?: boolean;
 }
 
 interface Gate {
@@ -180,6 +182,7 @@ function fold(events: EngineEvent[]): Fold {
           ...(result.round !== undefined ? { round: result.round } : {}),
           ...(event.seatId ? { seatId: event.seatId } : {}),
           status: event.data.status,
+          ...(event.data.panelMember ? { member: true } : {}),
         });
         break;
       case "gate.result":
@@ -230,7 +233,7 @@ function verdictsSection(data: Fold): string[] {
   return data.verdicts.map((verdict) => {
     const round = verdict.round !== undefined ? `round ${verdict.round}` : "round unknown";
     const seat = verdict.seatId ? `seat ${code(verdict.seatId)}` : "no seat";
-    return `- ${round}, ${seat}: ${code(verdict.status)}`;
+    return `- ${round}, ${seat}${verdict.member ? " (panel member)" : ""}: ${code(verdict.status)}`;
   });
 }
 

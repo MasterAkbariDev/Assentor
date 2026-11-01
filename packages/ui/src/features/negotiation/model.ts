@@ -2,16 +2,16 @@ import type { EngineEvent } from "#assentor/protocol/events.js";
 
 /**
  * Negotiation runs rebuilt from the event stream (T04-09p). Pure, so the view and
- * the tests use the same code. Every field comes from an event. The stream does
- * not carry the decision rationale, the consensus threshold, or invalid ballots,
- * so those are not here; the view says so.
+ * the tests use the same code. Every field comes from an event. Logs from before
+ * `negotiation.decided` and `threshold` have no rationale or threshold, and no
+ * log carries invalid ballots, so those fields are optional and the view says so.
  */
 
 export interface ProposalView {
   round: number;
   label: string;
   text: string;
-  /** Only when the event carries the author (current strategies do not send it). */
+  /** Only when the event carries the author (older logs and divide's parts do not). */
   seatId?: string;
 }
 
@@ -34,6 +34,15 @@ export interface ConsensusView {
   score: number;
   reached: boolean;
   preferred?: string;
+  /** Older logs do not carry it. */
+  threshold?: number;
+}
+
+/** From `negotiation.decided`: the strategy's final decision. */
+export interface DecidedView {
+  rationale: string;
+  /** Winning proposal label; none for a synthesized answer. */
+  winner?: string;
 }
 
 /** A failed seat ask in the negotiation's stage (`seat.error`). */
@@ -54,6 +63,8 @@ export interface NegotiationRun {
   critiques: CritiqueView[];
   votes: VoteView[];
   consensus: ConsensusView[];
+  /** The last `negotiation.decided`; absent in older logs and while the run is going. */
+  decided?: DecidedView;
   dissent: DissentView[];
 }
 
@@ -149,6 +160,7 @@ export function buildNegotiationRuns(events: readonly EngineEvent[]): Negotiatio
       case "negotiation.critique":
       case "negotiation.vote":
       case "negotiation.consensus":
+      case "negotiation.decided":
         windowFor(event.stageId).negotiation.push(event);
         break;
       default:
@@ -164,6 +176,7 @@ function toRun(window: Window): NegotiationRun {
   const critiques: CritiqueView[] = [];
   const votes: VoteView[] = [];
   const consensus: ConsensusView[] = [];
+  let decided: DecidedView | undefined;
   for (const event of window.negotiation) {
     switch (event.type) {
       case "negotiation.proposal":
@@ -194,7 +207,11 @@ function toRun(window: Window): NegotiationRun {
           score: event.data.score,
           reached: event.data.reached,
           ...(event.data.preferred ? { preferred: event.data.preferred } : {}),
+          ...(event.data.threshold !== undefined ? { threshold: event.data.threshold } : {}),
         });
+        break;
+      case "negotiation.decided":
+        decided = { rationale: event.data.rationale, ...(event.data.winner ? { winner: event.data.winner } : {}) };
         break;
       default:
         break;
@@ -212,6 +229,7 @@ function toRun(window: Window): NegotiationRun {
     critiques,
     votes,
     consensus,
+    ...(decided ? { decided } : {}),
     dissent: window.errors,
   };
 }

@@ -411,12 +411,15 @@ function redactStrings<T>(value: T): T {
 
 /**
  * Wrap a reviewer so each turn reports `starting` → `done`/`error` on its own
- * seat. The reviewer's behaviour and name are unchanged.
+ * seat. The reviewer's behaviour and name are unchanged. A panel member
+ * (`panelMember`) also reports its own `review.verdict`; a lone reviewer does
+ * not, because the supervisor's verdict is already scoped to its seat.
  */
 export function trackReviewerSeat(
   reviewer: Reviewer,
   seatId: string,
   getSink: () => SeatEventSink | undefined,
+  panelMember = false,
 ): Reviewer {
   const turn = async (
     call: () => Promise<ReviewerTurnResult>,
@@ -428,6 +431,15 @@ export function trackReviewerSeat(
       if (result.error) {
         sink?.error(seatId, result.error);
       } else {
+        if (panelMember && result.result && sink) {
+          const { status, confidence, summary } = result.result;
+          sink.emit({
+            type: "review.verdict",
+            sessionId: sink.sessionId,
+            seatId,
+            data: { status, confidence, summary, panelMember: true },
+          });
+        }
         sink?.done(seatId, true, result.result?.summary);
       }
       return result;

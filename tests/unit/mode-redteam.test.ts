@@ -211,7 +211,7 @@ function expectTerminalSeatEvents(events: EngineEventDraft[]) {
 }
 
 describe("red-team mode", () => {
-  it("is a dynamic, CLI-unavailable mode", () => {
+  it("is a dynamic mode, not CLI-available until worktrees get dependencies", () => {
     expect(getMode("redteam")).toMatchObject({ kind: "dynamic", available: false, editsCode: true });
   });
 

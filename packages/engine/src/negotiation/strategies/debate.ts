@@ -115,12 +115,14 @@ export const debateStrategy: NegotiationStrategy = {
     if (entries.length < 2) {
       const only = entries[0];
       const result = { score: only ? 1 : 0, reached: Boolean(only) };
-      emitProposals(ctx, 1, shown());
-      ctx.emit({ type: "negotiation.consensus", data: { round: 1, ...result, ...(only ? { preferred: only.label } : {}) } });
+      emitProposals(ctx, 1, entries);
+      ctx.emit({ type: "negotiation.consensus", data: { round: 1, ...result, threshold, ...(only ? { preferred: only.label } : {}) } });
+      const rationale = only ? "only one proposal" : "no proposals";
+      ctx.emit({ type: "negotiation.decided", data: { rationale, ...(only ? { winner: only.label } : {}) } });
       return {
         strategy: "debate",
         decision: only?.text ?? "",
-        rationale: only ? "only one proposal" : "no proposals",
+        rationale,
         proposals: listed(),
         dissent,
         rounds: 1,
@@ -164,7 +166,7 @@ export const debateStrategy: NegotiationStrategy = {
           else failure(reply, "negotiate-revise", round);
         });
       }
-      emitProposals(ctx, round, shown());
+      emitProposals(ctx, round, entries);
 
       cancelIfAborted(ctx);
       const critiqueReplies = await Promise.all(
@@ -247,7 +249,7 @@ export const debateStrategy: NegotiationStrategy = {
       const reached = base.preferred !== undefined && score >= threshold;
       ctx.emit({
         type: "negotiation.consensus",
-        data: { round, score, reached, ...(base.preferred ? { preferred: base.preferred } : {}) },
+        data: { round, score, reached, threshold, ...(base.preferred ? { preferred: base.preferred } : {}) },
       });
 
       if (reached) {
@@ -290,6 +292,7 @@ export const debateStrategy: NegotiationStrategy = {
     return finish(fallback, `${noConsensus}; the ${by} gave no usable ruling, so ${fallback} (${last.preferred ? "leader of the last check" : "first proposal"}) stands`, false);
 
     function finish(label: string, rationale: string, reached: boolean): NegotiationResult {
+      ctx.emit({ type: "negotiation.decided", data: { rationale, winner: label } });
       for (const reply of lastAgree) {
         const preferred = matchLabel(reply.preferred, labels);
         if (reply.agree && preferred === label) continue;
@@ -342,9 +345,9 @@ function cancelIfAborted(ctx: NegotiationContext): void {
   }
 }
 
-function emitProposals(ctx: NegotiationContext, round: number, proposals: Array<{ label: string; text: string }>): void {
+function emitProposals(ctx: NegotiationContext, round: number, proposals: Array<{ seatId: string; label: string; text: string }>): void {
   for (const p of proposals) {
-    ctx.emit({ type: "negotiation.proposal", data: { round, label: p.label, text: p.text } });
+    ctx.emit({ type: "negotiation.proposal", seatId: p.seatId, data: { round, label: p.label, text: p.text } });
   }
 }
 

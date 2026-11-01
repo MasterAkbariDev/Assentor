@@ -32,10 +32,12 @@ describe("mode registry", () => {
     }
   });
 
-  it("marks only solo available, because only solo runs from the CLI today", () => {
-    expect(listModes().filter((m) => m.available).map((m) => m.id)).toEqual(["solo"]);
-    expect(getMode("review")?.available).toBe(false);
-    expect(getMode("negotiate")?.available).toBe(false);
+  it("marks available exactly the modes assentor run --mode runs (each has a buildSession or controller)", () => {
+    expect(listModes().filter((m) => m.available).map((m) => m.id)).toEqual([
+      "solo", "review", "negotiate", "cascade", "pipeline", "explore", "plan",
+    ]);
+    // Runnable but held back: their gates need dependencies installed in new worktrees.
+    for (const id of ["lead", "pair", "redteam", "tdd", "swarm", "debug"]) expect(getMode(id)?.available).toBe(false);
   });
 
   it("records the kind and read-only modes from the design", () => {
@@ -248,10 +250,7 @@ describe("autonomy precedence and mode availability in runs", { timeout: 30_000 
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     try {
-      await expect(
-        runAssentorTask({ projectPath: projectDir, prompt: "goal", modeId: "review" }),
-      ).rejects.toThrow("Mode review is not available yet. For a review panel use run --team.");
-      for (const id of ["negotiate", "lead"] as const) {
+      for (const id of ["race", "interactive", "watch"] as const) {
         await expect(
           runAssentorTask({ projectPath: projectDir, prompt: "goal", modeId: id }),
         ).rejects.toThrow(new RegExp(`^Mode ${id} is not available yet\\.$`));
