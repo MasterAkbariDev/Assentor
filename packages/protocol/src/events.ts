@@ -165,6 +165,10 @@ const UserQuestion = z
   .object({ question: z.string(), options: z.array(z.string()).optional() })
   .passthrough();
 const UserAnswer = z.object({ answer: z.string() }).passthrough();
+/** A skill body entered a seat's prompt (TE-07); `tokens` is its estimated size. The seat is the envelope's `seatId`. */
+const SkillLoaded = z
+  .object({ name: z.string(), tokens: z.number().int().nonnegative(), via: z.enum(["trigger", "request"]).optional() })
+  .passthrough();
 
 /**
  * Catalog: event type → payload schema. Adding a type here is the only way to
@@ -231,6 +235,7 @@ export const EngineEventDataSchemas = {
   "swarm.item": SwarmItem,
   "user.question": UserQuestion,
   "user.answer": UserAnswer,
+  "skill.loaded": SkillLoaded,
 } as const satisfies Record<string, z.ZodTypeAny>;
 
 export type EngineEventType = keyof typeof EngineEventDataSchemas;

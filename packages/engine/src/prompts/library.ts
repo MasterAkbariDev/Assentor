@@ -156,7 +156,8 @@ interface LayerFiles {
   errors: PromptLoadError[];
 }
 
-function isInside(base: string, target: string): boolean {
+/** True when `target` lies strictly inside `base` (both resolved). Shared with the skill loader. */
+export function isInside(base: string, target: string): boolean {
   const relative = path.relative(base, target);
   return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
@@ -248,12 +249,13 @@ function readLayerSync(layer: PromptLayer, dir: string): LayerFiles {
   return out;
 }
 
-function checkFileStat(stat: fs.Stats): void {
+/** A regular file no larger than `maxBytes`, else throws. Shared with the skill loader. */
+export function checkFileStat(stat: fs.Stats, maxBytes: number = MAX_PROMPT_FILE_BYTES): void {
   if (!stat.isFile()) {
     throw new Error("not a regular file");
   }
-  if (stat.size > MAX_PROMPT_FILE_BYTES) {
-    throw new Error(`file is larger than ${MAX_PROMPT_FILE_BYTES} bytes`);
+  if (stat.size > maxBytes) {
+    throw new Error(`file is larger than ${maxBytes} bytes`);
   }
 }
 

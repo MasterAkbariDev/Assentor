@@ -162,6 +162,8 @@ describe("JSON-RPC conformance", () => {
         "sessions.list",
         "settings.get",
         "settings.save",
+        "skill.get",
+        "skill.list",
         "team.delete",
         "team.list",
         "team.save",

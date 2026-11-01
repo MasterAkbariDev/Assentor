@@ -5,6 +5,7 @@ import { resolveTeams } from "../config/teams.js";
 import { expandSeatSpecs, type Seat } from "#assentor/protocol/seats.js";
 import { CliModelCatalog } from "../models/cli-catalog.js";
 import { PromptLibrary, promptLayerDirs } from "../prompts/library.js";
+import { SkillLibrary, skillLayerDirs, type SkillDefinition } from "../skills/library.js";
 import { RpcErrorCode } from "#assentor/protocol/rpc.js";
 import { RpcError, type RpcServer } from "./server.js";
 
@@ -21,7 +22,7 @@ export interface LibraryMethodsOptions {
   createCatalog?: () => CliModelCatalog;
 }
 
-/** Registers `prompt.list`, `prompt.get`, `team.list` and `models.catalog`. */
+/** Registers `prompt.list`, `prompt.get`, `skill.list`, `skill.get`, `team.list` and `models.catalog`. */
 export function registerLibraryMethods(server: RpcServer, options: LibraryMethodsOptions): RpcServer {
   const projectPath = path.resolve(options.projectPath);
   // Read-only: a browser request must never create or repair the cache file.
@@ -67,6 +68,26 @@ export function registerLibraryMethods(server: RpcServer, options: LibraryMethod
         frontMatter,
         body,
       };
+    })
+    .register("skill.list", async () => {
+      const library = await SkillLibrary.load({ projectPath });
+      const roots = skillLayerDirs({ projectPath });
+      const rootOf = new Map(roots.map((root) => [root.layer, root.dir]));
+      return {
+        skills: library.list().map(skillSummary),
+        errors: library.errors.map((error) => ({
+          file: relativeFile(rootOf.get(error.layer) ?? projectPath, error.file),
+          message: scrubMessage(error.message, roots.map((root) => [root.dir, "<skills>"])),
+        })),
+      };
+    })
+    .register("skill.get", async ({ name }) => {
+      const skill = (await SkillLibrary.load({ projectPath })).get(name);
+      if (!skill) {
+        throw new RpcError(RpcErrorCode.InvalidParams, `Unknown skill ${name}`);
+      }
+      const { body, layer: _layer, file: _file, overrides: _overrides, tokens: _tokens, ...frontMatter } = skill;
+      return { ...skillSummary(skill), frontMatter, body };
     })
     .register("team.list", async () => {
       let config: Awaited<ReturnType<typeof loadAssentorConfig>>;
@@ -129,6 +150,20 @@ export function registerLibraryMethods(server: RpcServer, options: LibraryMethod
     });
 
   return server;
+}
+
+/** A skill without its body or absolute file path. */
+function skillSummary(skill: SkillDefinition) {
+  return {
+    name: skill.name,
+    description: skill.description,
+    source: skill.layer,
+    overridden: skill.overrides !== undefined,
+    ...(skill.roles ? { roles: skill.roles } : {}),
+    ...(skill.modes ? { modes: skill.modes } : {}),
+    ...(skill.profiles ? { profiles: skill.profiles } : {}),
+    tokens: skill.tokens,
+  };
 }
 
 /** Only the fields a client needs. Seats never carry key or vault data. */
