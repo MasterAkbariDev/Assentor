@@ -104,6 +104,8 @@ interface SetupOptions {
   scheduler?: Partial<SchedulerOptions>;
   supervisor?: StageRunnerDeps["supervisor"];
   roster?: () => readonly RosterEntry[];
+  /** `run.profile` of the config (TE-06). */
+  profile?: "economy" | "balanced" | "max";
   repo?: string;
   sessionId?: string;
   resume?: boolean;
@@ -125,6 +127,7 @@ async function setup(options: SetupOptions): Promise<Setup> {
   const config = parseAssentorConfig({
     modes: { lead: { lead: { provider: "mock", model: "lead" }, ...options.lead } },
     ...(options.context ? { context: options.context } : {}),
+    ...(options.profile ? { run: { profile: options.profile } } : {}),
   });
   const lead = createMockLead(options.script, { ...(options.tokensPerTurn ? { tokensPerTurn: options.tokensPerTurn } : {}) });
   const controller = new AbortController();
@@ -718,6 +721,25 @@ describe("Lead controller", () => {
     expect(await git(s.repo, "status", "--porcelain")).toBe("");
     expect((await s.manager.list(s.sessionId)).map((w) => w.seatId)).toEqual(["agent-1.w1"]);
     expect((await leadState(s)).tasks.t1?.integrated).toBe(false);
+  });
+
+  it("economy sends a planning seat to the cheapest capable model; balanced keeps the lead's choice (TE-06)", async () => {
+    const reasoning = (model: string, cost: "low" | "high"): RosterEntry => ({ provider: "mock", model, label: model, strengths: ["reasoning"], speed: "fast", cost, freeSlots: 2 });
+    const hired = async (profile: "economy" | "balanced") => {
+      const s = await setup({
+        profile,
+        roster: () => [reasoning("cheap", "low"), reasoning("strong", "high")],
+        script: [
+          turn(plan(T1), { action: "assign", taskId: "T1", seat: { role: "planner", provider: "mock", model: "strong", permissions: "edit" } }),
+          turn({ action: "reject", taskId: "T1", reason: "stop" }, { action: "finish", summary: "x" }),
+        ],
+        agents: { cheap: writes("a/x.ts"), strong: writes("a/x.ts") },
+      });
+      await s.run();
+      return s.runs.map((r) => r.seat.model);
+    };
+    expect(await hired("economy")).toEqual(["cheap"]);
+    expect(await hired("balanced")).toEqual(["strong"]);
   });
 
   it("policy and limits refuse bad actions without side effects", async () => {

@@ -29,7 +29,7 @@ Runner: mock · 5 runs × 5 tasks (bug-fix, add-test, refactor, review, plan)
 | skills:all | 182 | 18,972 | 1,414 | 8,481 | 9.0 | 0.0 | 100% | 4,077 (4,074–4,079) | +92.1% |
 | skills:lean | 0 | 9,199 | 1,414 | 3,785 | 9.0 | 0.0 | 100% | 2,123 (2,119–2,125) | +0% |
 
-- profile:economy: profiles are not built yet (TE-06): no effect in the mock; live runs need the feature
+- profile:economy: the bench runs one seat per task (mock and live): reviewer count, negotiation rounds and Lead model routing are not modelled, so only the profile's style and skills show here (TE-06, see below)
 
 - style:concise: its fragment (92 tokens) is paid on every call; the mock scripts replies, so it cannot show the shorter output concise is for. It ships opt-in (`--brief`); turning it on by default needs the live A/B.
 
@@ -50,7 +50,7 @@ Runner: mock · 5 runs × 5 tasks (bug-fix, add-test, refactor, review, plan)
 | context:packed@2500 | 0 | 14,617 | 1,414 | 5,331 | 9.0 | 0.0 | 100% | 3,206 (3,203–3,208) | -8.5% |
 | context:packed@1000 | 0 | 12,265 | 1,414 | 5,331 | 9.0 | 0.0 | 100% | 2,736 (2,732–2,738) | -21.9% |
 
-- profile:economy: profiles are not built yet (TE-06): no effect in the mock; live runs need the feature
+- profile:economy: the bench runs one seat per task (mock and live): reviewer count, negotiation rounds and Lead model routing are not modelled, so only the profile's style and skills show here (TE-06, see below)
 
 ## TE-08 built-in token-saver skills (mock, 2026-11-01)
 
@@ -74,3 +74,26 @@ Mock numbers prove prompt-structure effects only. Each `skills:<name>` row above
 - Enabling all eight is the owner's failure mode, reproduced: +92% net tokens even though a seat loads at most 3 bodies (`MAX_SKILLS_PER_SEAT`, applied in the benchmark: the first 3 eligible by name). The shipped design keeps them off, and one index line each when enabled.
 - Best live-A/B candidates: `review-signal-only` and `plan-in-bullets` (smallest overhead, narrow roles). When a live run passes the gate, add the skill to `SKILL_PRESETS.lean` in `packages/engine/src/skills/format.ts` (the test in `tests/unit/skills-builtin.test.ts` then checks it against the benchmark) and paste the live output here.
 - Reproduce: `pnpm bench:tokens --runs 5 --variants skills:answer-first,…,skills:all,skills:lean --gate skills:<name>`; live: `pnpm bench:tokens --live --budget 300000 --executor claude-code --variants skills:<name> --gate skills:<name>`.
+
+## TE-06 run profiles (`--profile economy | balanced | max`, mock, 2026-11-01)
+
+`profile:<name>` runs the real resolver (`applyRunProfile` in `packages/engine/src/config/profile.ts`) on the default config and sends what it sets: its output style and its skills index. Reproduce: `pnpm bench:tokens --runs 5 --variants profile:economy,profile:balanced,profile:max`.
+
+| variant | always-on | prompt | calls | net tokens / success | vs baseline |
+|---|---:|---:|---:|---:|---:|
+| baseline | 0 | 9,199 | 9.0 | 2,123 | — |
+| profile:balanced | 0 | 9,199 | 9.0 | 2,123 | +0% |
+| profile:economy | 0 | 9,199 | 9.0 | 2,123 | +0% |
+| profile:max | 102 | 10,117 | 9.0 | 2,306 | +8.7% |
+
+**Economy shows no saving here, and that is honest, not a pass.** The mock runs one seat per task (calls 9.0 in every row), so it does not model what economy changes: how many reviewers see the diff, how many negotiation rounds run, which model a Lead seat uses. By construction (unit-tested, not benchmarked): with N reviewers configured, economy sends the review prompt to 1 instead of N unless `classifyRisk` finds a danger area in the task; negotiation stops after 2 rounds instead of 3 (it already stops earlier on consensus); a Lead planning, tests or docs seat moves to the cheapest capable model of its provider. Their saving in tokens and dollars is unmeasured until the owner's `--live` run covers a multi-reviewer team. The only prompt text economy adds is `skills.enabled: ["lean"]`, an empty preset today (0 tokens). `max` pays the verbose fragment (+8.7%) and is not meant to save anything.
+
+What `economy` does NOT switch on (the shipping gate: net tokens per success down 10% or more, no success drop), pending the live A/B:
+
+| saving | mock result | why it is off |
+|---|---|---|
+| `output.style: concise` | +7.8% (original fixtures), +4.7% (large) | its fragment is paid on every call; the mock scripts replies, so shorter output cannot show |
+| `context.budgetTokens` cuts | 0% (original), -8.5% at 2500 and -21.9% at 1000 (large) | the fixtures are small, a seat that loses a line it needs fails; success under cuts is unproven with real models |
+| the eight token-saver skills | +4% to +33% each, +92% together | none passes the gate; `lean` stays empty |
+
+When a live run passes the gate for one of these, add it to the `economy` branch of `applyRunProfile` (and to `PROFILE_CHANGES`, `PENDING_LIVE_AB`) and paste the live output here.

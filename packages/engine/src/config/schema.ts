@@ -19,6 +19,7 @@ import { MODE_ALIASES, MODE_IDS } from "../modes/registry.js";
 import { DangerAreaRuleSchema } from "../modes/danger.js";
 import { DEFAULT_OUTPUT_STYLE, OutputStyleSchema } from "../output/style.js";
 import { ContextConfigSchema } from "../context/budget.js";
+import { RunProfileSchema, type RunProfile } from "./profile.js";
 
 const ExecutorProviderSchema = z.preprocess(
   (value) =>
@@ -83,8 +84,10 @@ export const AssentorConfigSchema = z.object({
        * field) keep reading `mode`.
        */
       autonomy: z.preprocess(blankToUndefined, AutonomySchema.optional()),
+      /** economy | balanced | max (TE-06). Unset = balanced, today's behaviour; nothing is written on save. */
+      profile: z.preprocess(blankToUndefined, RunProfileSchema.optional()),
     })
-    .transform(({ autonomy, ...run }): { mode: RunMode; autonomy?: Autonomy } =>
+    .transform(({ autonomy, ...run }): { mode: RunMode; autonomy?: Autonomy; profile?: RunProfile } =>
       autonomy ? { ...run, mode: runModeForAutonomy(autonomy), autonomy } : run,
     )
     .default({ mode: DEFAULT_RUN_MODE }),

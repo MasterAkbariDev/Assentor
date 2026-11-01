@@ -73,6 +73,7 @@ import {
   type OutputStyle,
 } from "#assentor/engine/output/style.js";
 import { resolveTeams, ReviewModeSchema } from "#assentor/engine/config/teams.js";
+import { applyRunProfile, profileNote, reviewStrategyFor, type RunProfile } from "#assentor/engine/config/profile.js";
 import {
   createReviewerSeats,
   reviewerProviderForSeat,
@@ -108,6 +109,8 @@ export interface RunAssentorInput {
   autonomy?: Autonomy;
   /** `--style` / `--brief`; overrides `output.style`. */
   style?: OutputStyle;
+  /** `--profile`; overrides `run.profile` (TE-06). */
+  profile?: RunProfile;
   /** Registry mode (`--mode <id>`). Only `available` modes run; solo runs the Supervisor below, others through prepareModeSession. */
   modeId?: ModeId;
   /** Live seat-scoped engine events (T00-07), in log order. Errors thrown here are reported, not propagated. */
@@ -580,11 +583,12 @@ async function buildMembersFromBackends(input: {
   const complexity = new TaskComplexityAnalyzer().analyze({
     taskText: input.prompt,
   });
-  const reviewStrategy = input.config.routing.reviewStrategy as ReviewStrategy;
+  // Balanced: the config's own. Economy/max: the profile's default unless the config sets one (TE-06).
+  const reviewStrategy = reviewStrategyFor(input.config, input.prompt, input.projectPath) as ReviewStrategy;
   const reviewTeam =
     input.team?.team ??
     (input.config.modes.review ? resolveTeams(input.config).review : undefined);
-  const backends = reviewTeam ? [] : selectReviewerBackends(input.config);
+  const backends = reviewTeam ? [] : selectReviewerBackends(input.config, reviewStrategy);
   if (!reviewTeam && backends.length === 0) {
     throw new Error(
       "No reviewers configured. Add Gemini (API) or Claude (CLI) in Configure → Reviewers.",
@@ -928,9 +932,13 @@ async function runAssentorTaskBody(
     mode: input.autopilot ? "autopilot" : input.mode,
     autonomy: input.autonomy,
     style: input.style,
+    profile: input.profile,
   });
-  const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
+  const profiled = applyRunProfile(loaded, { explicit: input.style ? ["output.style"] : [] });
+  const config = input.team ? withReviewTeam(profiled, input.team) : profiled;
   reporter.setStyle(config.output.style);
+  const profileLine = profileNote(config);
+  if (profileLine) reporter.note(profileLine);
   const pricing = await observedPricing(projectPath).catch(() => ({}));
   const estimate = estimateRun(config, {
     prompt: input.prompt,
@@ -1153,6 +1161,8 @@ export async function resumeAssentorTask(input: {
   modeHooks?: ModeRunHooks;
   /** `--style` / `--brief`; overrides `output.style`. */
   style?: OutputStyle;
+  /** `--profile`; overrides `run.profile` (TE-06). */
+  profile?: RunProfile;
 }) {
   assertReviewerOrTeam(input);
   if (input.taskId) {
@@ -1194,8 +1204,12 @@ export async function resumeAssentorTask(input: {
       maxMessages: input.maxMessages,
       autonomy: input.autonomy,
       style: input.style,
+      profile: input.profile,
     });
-    const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
+    const profiled = applyRunProfile(loaded, { explicit: input.style ? ["output.style"] : [] });
+    const config = input.team ? withReviewTeam(profiled, input.team) : profiled;
+    const profileLine = profileNote(config);
+    if (profileLine) reporter.note(profileLine);
     // The resumed executor session keeps the style of its first run (its continuation
     // prompts carry no style). `--style` here restyles reviewers and the Lead only.
     reporter.setStyle(config.output.style);

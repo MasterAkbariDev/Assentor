@@ -12,6 +12,7 @@ import {
 } from "./commands.js";
 import { TaskStore } from "#assentor/engine/persistence/store.js";
 import { registerModesCommand } from "./modes.js";
+import { formatProfiles, parseRunProfile, type RunProfile } from "#assentor/engine/config/profile.js";
 import {
   editPrompt,
   forkPrompt,
@@ -34,6 +35,15 @@ import {
 
 const program = new Command();
 const version = getLocalVersionSync();
+
+/** `--profile` value; an unknown name is a one-line usage error. */
+function parseProfileArg(value: string): RunProfile {
+  try {
+    return parseRunProfile(value);
+  } catch (error) {
+    throw new InvalidArgumentError((error as Error).message);
+  }
+}
 
 /** Commander turns a thrown InvalidArgumentError into a one-line message and exit code 1. */
 function parsePort(value: string): number {
@@ -217,6 +227,8 @@ program
     "Output style: concise|normal|verbose (default: output.style). Applies to solo, review and lead prompts; other modes are unstyled for now",
   )
   .option("--brief", "Shortcut for --style concise", false)
+  .option("--profile <profile>", "Run profile: economy|balanced|max (default: run.profile, else balanced)", parseProfileArg)
+  .addHelpText("after", `\n${formatProfiles()}`)
   .option("--playbook <id>", "Playbook to run (validates the id only; running playbooks is not wired yet)")
   .option("-y, --yes", "Start without asking when the pre-run estimate is over limits.confirmAbove*", false)
   .action(
@@ -240,6 +252,7 @@ program
         yes?: boolean;
         style?: string;
         brief?: boolean;
+        profile?: RunProfile;
       },
     ) => {
       if (options.playbook !== undefined) {
@@ -280,6 +293,7 @@ program
         retro: options.retro,
         yes: options.yes,
         style: resolveStyleFlags(options),
+        profile: options.profile,
       });
 
       console.log(`Task ${result.taskId} finished: ${result.status}`);
@@ -324,6 +338,8 @@ program
     "Output style: concise|normal|verbose. Reviewers and lead use it; the resumed executor keeps the style of its first run",
   )
   .option("--brief", "Shortcut for --style concise", false)
+  .option("--profile <profile>", "Run profile: economy|balanced|max (default: run.profile, else balanced)", parseProfileArg)
+  .addHelpText("after", `\n${formatProfiles()}`)
   .action(
     async (
       taskId: string | undefined,
@@ -339,6 +355,7 @@ program
         autonomy?: string;
         style?: string;
         brief?: boolean;
+        profile?: RunProfile;
       },
     ) => {
     const { autonomy } = parseModeFlags({ autonomy: options.autonomy });
@@ -354,6 +371,7 @@ program
       team: options.team,
       autonomy,
       style: resolveStyleFlags(options),
+      profile: options.profile,
     });
       console.log(`Task ${result.taskId} finished: ${result.status}`);
       if (result.status !== "DONE" && result.status !== "completed") {

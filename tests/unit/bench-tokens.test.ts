@@ -128,6 +128,19 @@ describe("mock runner", () => {
   });
 });
 
+describe("profile variants (TE-06)", () => {
+  it("balanced and economy are the baseline in the mock; max pays its verbose fragment; none models panels", () => {
+    const report = bench(resolveVariant("profile:balanced"), resolveVariant("profile:economy"), resolveVariant("profile:max"));
+    for (const name of ["profile:balanced", "profile:economy"]) {
+      expect(result(report, name)).toMatchObject({ alwaysOnTokens: 0, promptTokens: result(report, "baseline").promptTokens, calls: result(report, "baseline").calls });
+      expect(gateVariant(report, name)).toEqual({ pass: true, reasons: [] });
+    }
+    expect(result(report, "profile:max").alwaysOnTokens).toBeGreaterThan(0);
+    expect(result(report, "profile:max").promptTokens).toBeGreaterThan(result(report, "baseline").promptTokens);
+    expect(result(report, "profile:economy").notes.join()).toMatch(/reviewer count, negotiation rounds and Lead model routing are not modelled/);
+  });
+});
+
 describe("gate thresholds (live)", () => {
   const row = (name: string, net: number, successRate = 1): VariantResult => ({
     name,
@@ -157,7 +170,10 @@ describe("variants", () => {
   it("resolves overlays, with no-ops for features not built yet", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "bench-root-"));
     dirs.push(root);
-    expect(resolveVariant("profile:economy", root)).toMatchObject({ overlay: { profile: "economy" }, alwaysOn: "" });
+    // Profiles go through the real resolver (TE-06): economy leaves style and skills at today's values, so it adds nothing.
+    expect(resolveVariant("profile:economy", root)).toMatchObject({ overlay: { profile: "economy", style: "normal", skills: ["lean"] }, alwaysOn: "" });
+    expect(resolveVariant("profile:balanced", root).alwaysOn).toBe(resolveVariant("baseline", root).alwaysOn);
+    expect(() => resolveVariant("profile:turbo", root)).toThrow(/Unknown profile/);
     expect(resolveVariant("style:concise", root).notes[0]).toMatch(/not built yet/);
     expect(() => resolveVariant("nonsense", root)).toThrow(/Unknown variant/);
 

@@ -21,6 +21,7 @@ import {
   validateSkillFrontMatter,
   type SkillDefinition,
 } from "#assentor/engine/skills/index.js";
+import { applyRunProfile, parseRunProfile } from "#assentor/engine/config/profile.js";
 import { BENCH_TASKS, type BenchTask, type TaskResult } from "./tasks.js";
 
 /**
@@ -144,6 +145,23 @@ export function defaultAlwaysOn(root = REPO_ROOT): string {
   return joinParts(styleText(style, root, []), renderSkillsIndex(readSkills(skills, root, [])));
 }
 
+/** A variant with these skills (names or presets) on top of `style`: the index is always on, the bodies load per role. */
+function skillsVariant(name: string, styleName: string, skillNames: string[], root: string, notes: string[]): Variant {
+  const names = expandNames(skillNames, root);
+  const skills = readSkills(names, root, notes);
+  const style = styleText(styleName, root, []);
+  const perRole = (role: string) => {
+    const eligible = eligibleFor(skills, role);
+    // A seat loads at most MAX_SKILLS_PER_SEAT skills / MAX_SKILL_TOKENS_PER_SEAT body tokens (first by name).
+    let tokens = 0;
+    const bodies = eligible.filter((s) => (tokens += s.tokens) <= MAX_SKILL_TOKENS_PER_SEAT).slice(0, MAX_SKILLS_PER_SEAT);
+    return { alwaysOn: joinParts(style, renderSkillsIndex(eligible)), loaded: bodies.map(fenceSkill).join("\n\n") };
+  };
+  // The report's always-on size is the largest index any fixture role sees.
+  const alwaysOn = BENCH_TASKS.map((t) => perRole(t.role).alwaysOn).reduce((a, b) => (b.length > a.length ? b : a), "");
+  return { name, overlay: { skills: names }, alwaysOn, perRole, notes };
+}
+
 /**
  * `baseline`, `style:<name>`, `profile:<name>`, `skills:<a>+<b>` or `context:packed[@<tokens>]`, each on top
  * of the default config. Features that are not built yet resolve to a no-op
@@ -160,23 +178,19 @@ export function resolveVariant(name: string, root = REPO_ROOT): Variant {
     return { name, overlay: { style: value }, alwaysOn: joinParts(styleText(value, root, notes), renderSkillsIndex(readSkills(base.skills, root, []))), notes };
   }
   if (kind === "profile" && value) {
-    notes.push("profiles are not built yet (TE-06): no effect in the mock; live runs need the feature");
-    return { name, overlay: { profile: value }, alwaysOn: defaultAlwaysOn(root), notes };
+    // The real resolver (TE-06): what the profile sets for style and skills is what the variant sends.
+    const effective = applyRunProfile(parseAssentorConfig({}), { profile: parseRunProfile(value) });
+    const skills = effective.skills.enabled;
+    notes.push(
+      "the bench runs one seat per task (mock and live): reviewer count, negotiation rounds and Lead model routing are not modelled, so only the profile's style and skills show here",
+    );
+    return {
+      ...(skills.length ? skillsVariant(name, effective.output.style, skills, root, notes) : { name, alwaysOn: joinParts(styleText(effective.output.style, root, notes), renderSkillsIndex([])), notes }),
+      overlay: { profile: value, style: effective.output.style, skills },
+    };
   }
   if (kind === "skills" && value) {
-    const names = expandNames([...base.skills, ...value.split("+")], root);
-    const skills = readSkills(names, root, notes);
-    const style = styleText(base.style, root, []);
-    const perRole = (role: string) => {
-      const eligible = eligibleFor(skills, role);
-      // A seat loads at most MAX_SKILLS_PER_SEAT skills / MAX_SKILL_TOKENS_PER_SEAT body tokens (first by name).
-      let tokens = 0;
-      const bodies = eligible.filter((s) => (tokens += s.tokens) <= MAX_SKILL_TOKENS_PER_SEAT).slice(0, MAX_SKILLS_PER_SEAT);
-      return { alwaysOn: joinParts(style, renderSkillsIndex(eligible)), loaded: bodies.map(fenceSkill).join("\n\n") };
-    };
-    // The report's always-on size is the largest index any fixture role sees.
-    const alwaysOn = BENCH_TASKS.map((t) => perRole(t.role).alwaysOn).reduce((a, b) => (b.length > a.length ? b : a), "");
-    return { name, overlay: { skills: names }, alwaysOn, perRole, notes };
+    return skillsVariant(name, base.style, [...base.skills, ...value.split("+")], root, notes);
   }
   if (kind === "context" && /^packed(@\d+)?$/.test(value)) {
     const budgetTokens = value.includes("@") ? Number(value.split("@")[1]) : undefined;
