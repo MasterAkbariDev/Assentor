@@ -5,7 +5,7 @@ import { RpcErrorCode } from "#assentor/protocol/rpc.js";
 import { RpcRemoteError } from "#assentor/protocol/rpc-client.js";
 import { renderWithStore } from "../../test/render.js";
 import { mockTransport } from "../../transport/mock.js";
-import { MODE_CATALOG } from "./modeCatalog.js";
+import { MODE_CATALOG, UNAVAILABLE_REASON } from "./modeCatalog.js";
 import { NewSessionPage } from "./NewSessionPage.js";
 
 afterEach(() => {
@@ -61,11 +61,10 @@ describe("NewSessionPage", () => {
       expect(card.reason).toBeTruthy();
       expect(reason?.textContent).toBe(card.reason);
     }
-    // The engine's own note is shown when it gives one.
-    expect(modeInput("lead").getAttribute("aria-describedby")).toBeTruthy();
-    expect(document.getElementById("mode-lead-reason")?.textContent).toBe(
-      "Not runnable yet: new worktrees get no dependency install before its gates.",
-    );
+    // Race is still unavailable; lead is runnable now.
+    expect(modeInput("race").disabled).toBe(true);
+    expect(document.getElementById("mode-race-reason")?.textContent).toBe(UNAVAILABLE_REASON);
+    expect(modeInput("lead").disabled).toBe(false);
   });
 
   it("shows the goal hint only while the goal is empty", async () => {
