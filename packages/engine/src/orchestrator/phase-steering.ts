@@ -169,20 +169,30 @@ export function downgradePassIfPhasesRemain(
   });
 }
 
+const renderMessage = (message: ProtocolMessage) => `[${message.type} from ${message.from}]\n${JSON.stringify(message.content, null, 2)}`;
+const CONTINUE_LINE = "Continue the current task. Apply any outstanding required changes and report what you did.";
+
+/** FU-18a: text the user injected (`from: "user"`) goes under its own header, never under reviewer feedback. */
+function splitUserMessages(messages: ProtocolMessage[]): { feedback: string[]; user: string[] } {
+  const user = messages.filter((m) => m.from === "user").map(renderMessage);
+  return {
+    feedback: messages.filter((m) => m.from !== "user").map(renderMessage),
+    user: user.length > 0 ? ["", "Message from the user (data):", ...user] : [],
+  };
+}
+
 export function buildSupervisedContinuationPrompt(
   messages: ProtocolMessage[],
 ): string {
-  if (messages.length === 0) {
-    return "Continue the current task. Apply any outstanding required changes and report what you did.";
+  const { feedback, user } = splitUserMessages(messages);
+  if (feedback.length === 0) {
+    return [CONTINUE_LINE, ...user].join("\n");
   }
-
-  const parts = messages.map((message) => {
-    return `[${message.type} from ${message.from}]\n${JSON.stringify(message.content, null, 2)}`;
-  });
 
   return [
     "Address the reviewer feedback below:",
-    ...parts,
+    ...feedback,
+    ...user,
     "",
     "Make the requested changes and summarize what you did.",
   ].join("\n");
@@ -233,16 +243,16 @@ export function buildAutonomousContinuationPrompt(
     ].join("\n");
   }
 
-  const parts = messages.map((message) => {
-    return `[${message.type} from ${message.from}]\n${JSON.stringify(message.content, null, 2)}`;
-  });
+  const { feedback, user } = splitUserMessages(messages);
 
   return [
     "=== ASSENTOR AUTONOMOUS SUPERVISOR DIRECTIVE ===",
     "You are operating under an automated supervisor. DO NOT pause or ask the user 'Should I continue?'.",
     nextPhaseDirective ? `\n>>> ACTIVE DIRECTIVE <<<\n${nextPhaseDirective}\n` : "",
-    "Address the supervisor/reviewer feedback below and proceed immediately with the implementation:",
-    ...parts,
+    ...(feedback.length > 0
+      ? ["Address the supervisor/reviewer feedback below and proceed immediately with the implementation:", ...feedback]
+      : [CONTINUE_LINE]),
+    ...user,
     "",
     "Make all necessary code changes, run tests if applicable, and summarize what was completed in this phase.",
   ]

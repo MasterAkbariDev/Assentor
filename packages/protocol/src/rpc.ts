@@ -258,6 +258,8 @@ const SessionSeatSchema = z.object({ sessionId: SessionIdSchema, seatId: SeatIdS
 const OkSchema = z.object({ ok: z.literal(true) });
 /** Destructive worktree calls must carry an explicit `confirm: true`. */
 const ConfirmSchema = z.literal(true);
+/** `seat.inject` text limit (UTF-8 bytes). */
+export const INJECT_MAX_BYTES = 8 * 1024;
 
 export type RpcAccess = "read" | "write";
 
@@ -543,7 +545,7 @@ export const RpcMethods = {
     params: z.object({ sessionId: SessionIdSchema }).strict(),
     result: z.object({ sessionId: z.string(), live: LiveStateSchema }),
   },
-  // Not supported yet: no engine pause, and a static session has no prepared resume path.
+  // FU-18a: a gate at turn boundaries; turns in flight finish, no new turn starts until resume.
   "session.pause": { access: "write", params: z.object({ sessionId: SessionIdSchema }).strict(), result: OkSchema },
   "session.resume": { access: "write", params: z.object({ sessionId: SessionIdSchema }).strict(), result: OkSchema },
   "session.cancel": {
@@ -585,16 +587,22 @@ export const RpcMethods = {
   },
   // FU-12: a seat of a session running in this engine. `setModel` applies at the seat's next turn.
   "seat.setModel": { access: "write", params: SessionSeatSchema.extend({ model: ModelIdSchema }).strict(), result: OkSchema },
-  // Not supported yet: no way to inject text into a running seat.
+  /** FU-18a: queued for the seat's next turn, redacted and fenced as data. At most 8 KiB of UTF-8. */
   "seat.inject": {
     access: "write",
-    params: SessionSeatSchema.extend({ text: z.string().min(1).max(20_000) }).strict(),
+    params: SessionSeatSchema.extend({
+      text: z
+        .string()
+        .max(INJECT_MAX_BYTES)
+        .refine((t) => t.trim() !== "", "text is empty")
+        .refine((t) => new TextEncoder().encode(t).length <= INJECT_MAX_BYTES, "text is over 8 KiB"),
+    }).strict(),
     result: OkSchema,
   },
   /** Kills the seat's turns in flight and its scheduler jobs; the session goes on. */
   "seat.stop": { access: "write", params: SessionSeatSchema.extend({ confirm: ConfirmSchema }).strict(), result: OkSchema },
-  // Not supported yet: a controller cannot take a restarted seat back mid-session.
-  "seat.restart": { access: "write", params: SessionSeatSchema.strict(), result: OkSchema },
+  /** FU-18a: kills the seat's turn in flight and runs it again once; the controller sees one result. */
+  "seat.restart": { access: "write", params: SessionSeatSchema.extend({ confirm: ConfirmSchema }).strict(), result: OkSchema },
   // Worktrees are addressed by (sessionId, seatId) and checked against the manager's manifest; never by path.
   "worktree.diff": {
     access: "read",

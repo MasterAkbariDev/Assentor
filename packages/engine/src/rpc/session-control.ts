@@ -20,9 +20,10 @@ import { RpcError, scrubPaths, type RpcServer } from "./server.js";
  *   a client never supplies a path. `apply`/`discard` need `confirm: true` (a contract literal).
  * - `seat.stop`/`setModel` (FU-12) reach the session's live executors through
  *   `PreparedModeSession.stopSeat`/`setSeatModel` (the registry lives in `prepareModeSession`).
- * - `session.pause`/`resume`, `seat.inject`/`restart` answer `NotSupported`: the engine has no
- *   pause, no static-session resume through `prepareModeSession`, no way to feed text into a
- *   running CLI turn, and no controller that takes a restarted seat back mid-session.
+ * - `session.pause`/`resume`, `seat.inject`/`restart` (FU-18a) act at turn boundaries through
+ *   `PreparedModeSession.pause`/`resume`/`injectSeat`/`restartSeat`.
+ * - All of them reach only sessions in this engine's map, i.e. ones this process runs (and
+ *   holds the event-log lock for); a session run elsewhere is unknown here (InvalidParams).
  */
 
 /** What `prepareModeSession` needs besides the fields this module owns. */
@@ -76,9 +77,6 @@ const CREATED_TTL_MS = 10 * 60_000;
 
 const invalid = (message: string) => new RpcError(RpcErrorCode.InvalidParams, message);
 const rejected = (message: string) => new RpcError(RpcErrorCode.Rejected, scrubPaths(message));
-const unsupported = (what: string, why: string) => () => {
-  throw new RpcError(RpcErrorCode.NotSupported, `${what} is not supported yet: ${why}`);
-};
 
 export function registerSessionControlMethods(server: RpcServer, options: SessionControlOptions): RpcServer {
   const { projectPath } = options;
@@ -132,7 +130,7 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
     return { ...(found ?? { id: sessionId, title: live!.title, hasLiveLog: false, lastSeq: 0 }), ...(live ? { live: live.state } : {}) };
   };
 
-  /** Seat control reaches only a running session of this engine; `act` returns why it refused. */
+  /** Seat and pause control reach only a running session of this engine; `act` returns why it refused. */
   const seatCall = (sessionId: string, act: (prepared: PreparedModeSession) => string | undefined) => {
     const live = liveOf(sessionId);
     if (live.state !== "running") throw rejected(`session is ${live.state}`);
@@ -223,8 +221,8 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
       return { sessionId, live: live.state };
     },
 
-    "session.pause": unsupported("session.pause", "the engine has no pause; cancel the session instead"),
-    "session.resume": unsupported("session.resume", "a static session has no prepared resume path and there is no pause"),
+    "session.pause": ({ sessionId }) => seatCall(sessionId, (p) => p.pause()),
+    "session.resume": ({ sessionId }) => seatCall(sessionId, (p) => p.resume()),
 
     "session.cancel": ({ sessionId }) => {
       const live = liveOf(sessionId);
@@ -270,8 +268,8 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
 
     "seat.setModel": ({ sessionId, seatId, model }) => seatCall(sessionId, (p) => p.setSeatModel(seatId, model)),
     "seat.stop": ({ sessionId, seatId }) => seatCall(sessionId, (p) => p.stopSeat(seatId)),
-    "seat.inject": unsupported("seat.inject", "the engine has no way to inject text into a running seat"),
-    "seat.restart": unsupported("seat.restart", "no controller takes a restarted seat back mid-session; stop it instead"),
+    "seat.inject": ({ sessionId, seatId, text }) => seatCall(sessionId, (p) => p.injectSeat(seatId, text)),
+    "seat.restart": ({ sessionId, seatId }) => seatCall(sessionId, (p) => p.restartSeat(seatId)),
 
     "worktree.diff": async ({ sessionId, seatId }) => {
       const key = await seatKey(sessionId, seatId);
