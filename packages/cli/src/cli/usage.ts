@@ -7,13 +7,14 @@ import type { UsageReport, UsageTotals } from "#assentor/protocol/rpc.js";
 
 const n = (value: number) => Math.round(value).toLocaleString("en-US");
 
-/** One line: totals, calls, retries, cost when known. */
+/** One line: totals, cache hit rate, calls, retries, cost when known. */
 export function formatUsageLine(report: UsageReport): string {
   const t = report.total;
   if (t.calls === 0) {
     return "Usage: no token counts reported by these seats";
   }
-  const cached = t.cachedTokens > 0 ? ` (cached ${n(t.cachedTokens)})` : "";
+  // Cache hit rate (TE-05): the share of input tokens a prompt cache served.
+  const cached = t.cachedTokens > 0 ? ` (cached ${n(t.cachedTokens)}, ${Math.round((t.cachedTokens / t.tokensIn) * 100)}% hit)` : "";
   const retries = report.retries > 0 ? ` · ${report.retries} ${report.retries === 1 ? "retry" : "retries"}` : "";
   const cost = t.costUsd > 0 ? ` · $${t.costUsd.toFixed(4)}` : "";
   return `Usage: ${n(t.tokensIn + t.tokensOut)} tokens · in ${n(t.tokensIn)}${cached} · out ${n(t.tokensOut)} · ${t.calls} calls${retries}${cost}`;

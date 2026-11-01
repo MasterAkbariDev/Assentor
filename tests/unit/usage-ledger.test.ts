@@ -129,7 +129,7 @@ describe("usage report output", () => {
     expect(formatUsage(usageFromEvents([]))).toEqual(["Usage: no token counts reported by these seats"]);
     const { projectPath, sessionId } = await fixture();
     const report = usageFromEvents(await readSessionEvents(projectPath, sessionId));
-    expect(formatUsageLine(report)).toBe("Usage: 3,955 tokens · in 3,350 (cached 600) · out 605 · 4 calls · 1 retry · $0.0100");
+    expect(formatUsageLine(report)).toBe("Usage: 3,955 tokens · in 3,350 (cached 600, 18% hit) · out 605 · 4 calls · 1 retry · $0.0100");
     expect(formatUsage(report, { concise: true })).toHaveLength(1);
     const table = formatUsage(report);
     expect(table.some((l) => l.includes("seat builder") && l.includes("2,550"))).toBe(true);
