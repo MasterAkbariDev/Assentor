@@ -14,7 +14,12 @@ import {
   summarizeStreamJson,
   type AgentStatusUpdate,
 } from "./stream-status.js";
-import { locateBinary, spawnCliProcess } from "../../../executors/cli-locator.js";
+import {
+  cliPromptInvocation,
+  locateBinary,
+  spawnCliProcess,
+  type CliPromptInvocation,
+} from "../../../executors/cli-locator.js";
 import { killProcessTree } from "../../../process/kill-tree.js";
 import { trackChildProcess, untrackChildProcess } from "../../../process/tracker.js";
 import { buildAutonomousContinuationPrompt, buildSupervisedContinuationPrompt } from "../../../orchestrator/phase-steering.js";
@@ -25,6 +30,8 @@ export type { AgentStatusUpdate };
 export interface CursorSpawnRequest {
   command: string;
   args: string[];
+  /** Prompt for the child's stdin (Windows `.cmd` shims only; see `cliPromptInvocation`). */
+  stdin?: string;
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
@@ -228,7 +235,6 @@ export class CursorExecutor implements Executor {
     this.turnInterrupted = false;
 
     const args = this.buildArgs(projectPath, prompt, isContinuation);
-    this.lastCommand = { command: this.binary, args, cwd: projectPath };
 
     const env: NodeJS.ProcessEnv = { ...process.env };
     if (this.apiKey) {
@@ -282,11 +288,15 @@ export class CursorExecutor implements Executor {
     };
 
     let result: CursorSpawnResult;
+    let invocation: CliPromptInvocation | undefined;
     try {
+      invocation = cliPromptInvocation("cursor", this.binary, args, prompt);
+      this.lastCommand = { command: this.binary, args: invocation.args, cwd: projectPath };
       result = await Promise.race([
         this.spawnFn({
           command: this.binary,
-          args,
+          args: invocation.args,
+          ...(invocation.stdin !== undefined ? { stdin: invocation.stdin } : {}),
           cwd: projectPath,
           env,
           timeoutMs: this.timeoutMs,
@@ -337,6 +347,7 @@ export class CursorExecutor implements Executor {
         sessionId: this.sessionId,
       };
     } finally {
+      invocation?.cleanup();
       if (resultGrace) {
         clearTimeout(resultGrace);
       }
@@ -630,17 +641,22 @@ export async function defaultSpawn(
 ): Promise<CursorSpawnResult> {
   return new Promise((resolve, reject) => {
     const child = trackChildProcess(
-      spawnCliProcess(request.command, request.args, {
-        cwd: request.cwd,
-        env: {
-          ...request.env,
-          // Headless: don't let Cursor's own TTY UI paint over Assentor's spinner.
-          CI: request.env.CI ?? "1",
-          NO_UPDATE_NOTIFIER: "1",
+      spawnCliProcess(
+        request.command,
+        request.args,
+        {
+          cwd: request.cwd,
+          env: {
+            ...request.env,
+            // Headless: don't let Cursor's own TTY UI paint over Assentor's spinner.
+            CI: request.env.CI ?? "1",
+            NO_UPDATE_NOTIFIER: "1",
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
         },
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      }),
+        request.stdin,
+      ),
     );
 
     const parser = new CursorStreamStatusParser();

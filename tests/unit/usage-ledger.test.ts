@@ -46,6 +46,11 @@ async function fixture(): Promise<{ projectPath: string; sessionId: string }> {
     line("seat.tokens", { tokensIn: 50, tokensOut: 5 }, { seatId: "builder" }),
     line("session.warning", { kind: "budget", budget: "session.tokens", threshold: 0.5, used: 3955, limit: 6000, message: "…" }),
     line("session.warning", { kind: "pair-navigator", message: "not a budget" }),
+    line("session.estimate", { tokens: { low: 2000, high: 5000 } }),
+    line("skill.loaded", { name: "tdd", tokens: 300, via: "trigger", delivery: 1 }, { seatId: "builder" }),
+    line("skill.loaded", { name: "tdd", tokens: 300, via: "trigger", delivery: 2 }, { seatId: "builder" }),
+    line("skill.loaded", { name: "tdd", tokens: 280 }, { seatId: "reviewer-1" }),
+    line("skill.loaded", { name: "docs", tokens: 50 }, { seatId: "builder" }),
   ];
   const file = sessionPaths(projectPath, sessionId).events;
   await fs.mkdir(path.dirname(file), { recursive: true });
@@ -80,6 +85,17 @@ describe("UsageLedger", () => {
     expect(report.retries).toBe(1);
     expect(report.warnings).toEqual([{ budget: "session.tokens", threshold: 0.5, used: 3955, limit: 6000 }]);
     expect(UsageReportSchema.parse(report)).toEqual(report);
+    // Two builder turns have neither a reported cost nor a table price.
+    expect(report.unpricedCalls).toBe(2);
+    expect(report.estimate).toEqual({ tokens: { low: 2000, high: 5000 } });
+    expect(report.skills).toEqual({
+      tdd: { loads: 3, tokens: 880, seats: ["builder", "reviewer-1"] },
+      docs: { loads: 1, tokens: 50, seats: ["builder"] },
+    });
+  });
+
+  it("has no skills field when none were loaded", () => {
+    expect(usageFromEvents([]).skills).toBeUndefined();
   });
 
   it("folds incrementally and snapshots are copies", () => {
@@ -129,7 +145,7 @@ describe("usage report output", () => {
     expect(formatUsage(usageFromEvents([]))).toEqual(["Usage: no token counts reported by these seats"]);
     const { projectPath, sessionId } = await fixture();
     const report = usageFromEvents(await readSessionEvents(projectPath, sessionId));
-    expect(formatUsageLine(report)).toBe("Usage: 3,955 tokens · in 3,350 (cached 600, 18% hit) · out 605 · 4 calls · 1 retry · $0.0100");
+    expect(formatUsageLine(report)).toBe("Usage: 3,955 tokens · in 3,350 (cached 600, 18% hit) · out 605 · 4 calls · 1 retry · $0.0100 · estimate 2,000–5,000 tokens");
     expect(formatUsage(report, { concise: true })).toHaveLength(1);
     const table = formatUsage(report);
     expect(table.some((l) => l.includes("seat builder") && l.includes("2,550"))).toBe(true);
@@ -162,6 +178,8 @@ describe("usage.get RPC", () => {
       const report = await client.call("usage.get", { sessionId });
       expect(report.total.tokensIn).toBe(3350);
       expect(report.bySeat["reviewer-1"]?.calls).toBe(1);
+      expect(report.skills?.tdd).toEqual({ loads: 3, tokens: 880, seats: ["builder", "reviewer-1"] });
+      expect(report.estimate?.tokens).toEqual({ low: 2000, high: 5000 });
       expect((await client.call("usage.get", { sessionId: createId() })).total.calls).toBe(0);
       await expect(client.call("usage.get", { sessionId: "../etc" })).rejects.toBeInstanceOf(RpcRemoteError);
     } finally {

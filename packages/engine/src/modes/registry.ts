@@ -377,7 +377,7 @@ const MODES: readonly ModeDefinition[] = [
   mode("explore", "Explore", "Read-only seats investigate a question; a synthesizer answers with citations.", "static", false, true, explore),
   mode("plan", "Plan", "Produce a spec and task cards, no code.", "static", true, true, plan),
   mode("interactive", "Interactive", "Chat with the team; a lead routes messages to seats.", "dynamic", true),
-  mode("auto", "Auto", "Suggest a mode from the task and ask before running it.", "dynamic", true),
+  mode("auto", "Auto", "Suggest a mode from the task and ask before running it.", "dynamic", true, true),
   mode("watch", "Watch", "React to commits, PRs or CI failures by running a chosen mode.", "static", true),
 ];
 

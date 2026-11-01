@@ -149,4 +149,43 @@ describe("UsagePage", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(loads).toBe(3);
   });
+
+  it("shows skills loaded with totals that match the fixture, and estimate vs actual", async () => {
+    const skills = {
+      tdd: { loads: 3, tokens: 880, seats: ["executor", "reviewer-1"] },
+      docs: { loads: 1, tokens: 50, seats: ["executor"] },
+    };
+    const view = setup({ ...REPORT, skills, estimate: { tokens: { low: 10000, high: 14000 }, usd: { low: 0.1, high: 0.2 } } });
+    await view.findByRole("table", { name: "By seat" });
+    const table = within(view.container.querySelector(".usage-skills table") as HTMLElement);
+    const tdd = table.getByRole("rowheader", { name: "tdd" }).closest("tr")!;
+    expect(tdd.textContent).toBe("tddExecutor, Opus#1" + "3" + "880");
+    // Column sums match the fixture.
+    const sum = (col: number) => [...view.container.querySelectorAll(".usage-skills tbody tr")].reduce((n, tr) => n + Number(tr.children[col]!.textContent!.replace(/,/g, "")), 0);
+    expect(sum(2)).toBe(4);
+    expect(sum(3)).toBe(930);
+
+    const est = within(view.container.querySelector(".usage-estimate") as HTMLElement);
+    const tokens = est.getByRole("rowheader", { name: "Tokens" }).closest("tr")!;
+    expect(tokens.textContent).toBe("Tokens10,000–14,00015,0001,000 over the high end");
+    const cost = est.getByRole("rowheader", { name: "Cost" }).closest("tr")!;
+    expect(cost.textContent).toBe("Cost$0.10–$0.20$0.4321$0.2321 over the high end");
+  });
+
+  it("shows empty states for skills and estimate, and unknown when the estimate has no price", async () => {
+    const view = setup(REPORT);
+    await view.findByText("No skills were loaded in this run.");
+    view.getByText("This run logged no pre-run estimate.");
+    cleanup();
+    const partial = setup({ ...REPORT, unpricedCalls: 2, skills: { x: { loads: 1, tokens: 5, seats: ["-"] } }, estimate: { tokens: { low: 1, high: 2 }, usd: { low: 0.1, high: 0.2 } } });
+    const row = (await partial.findByRole("rowheader", { name: "Cost" })).closest("tr")!;
+    expect(row.textContent).toBe("Cost$0.10–$0.20≥ $0.4321 (some calls unpriced)unknown (actual is partial)");
+    expect(partial.container.querySelector(".usage-skills tbody tr")!.textContent).toBe("x(no seat)15");
+    expect(partial.container.querySelectorAll(".usage-table-wrap caption").length).toBeGreaterThanOrEqual(2);
+    cleanup();
+    const unpriced = setup({ ...REPORT, estimate: { tokens: { low: 15000, high: 15000 } } });
+    const cost = (await unpriced.findByRole("rowheader", { name: "Cost" })).closest("tr")!;
+    expect(cost.textContent).toBe("Costunknownunknownunknown");
+    expect(unpriced.container.querySelector(".usage-estimate tbody tr")!.textContent).toBe("Tokens15,00015,000within the estimate");
+  });
 });

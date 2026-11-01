@@ -157,7 +157,9 @@ describe("mode contract", () => {
       "explore",
       "plan",
     ]);
-    expect(listModes().filter((m) => m.available)).toEqual(listModes().filter((m) => m.buildSession || m.createController));
+    expect(listModes().filter((m) => m.available).map((m) => m.id)).toContain("auto");
+    // auto has no builder: the CLI asks, then runs the chosen mode.
+    expect(listModes().filter((m) => m.available && m.id !== "auto")).toEqual(listModes().filter((m) => m.buildSession || m.createController));
   });
 
   it("builds the static graphs from config", async () => {

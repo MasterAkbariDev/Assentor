@@ -113,6 +113,14 @@ export const BudgetWarningSchema = z.object({
   seatId: z.string().optional(),
 });
 
+/** One skill's deliveries (TE-07 `skill.loaded`): `loads` counts every send, re-sends included; `tokens` is their summed size. */
+export const SkillUsageSchema = z.object({
+  loads: z.number().int().nonnegative(),
+  tokens: z.number().nonnegative(),
+  /** Seat ids that received the skill. */
+  seats: z.array(z.string()),
+});
+
 export const UsageReportSchema = z.object({
   sessionId: z.string(),
   total: UsageTotalsSchema,
@@ -131,6 +139,10 @@ export const UsageReportSchema = z.object({
   truncated: z.boolean().optional(),
   /** The pre-run estimate (TE-09), when the run logged one; compare with `total`. */
   estimate: RunEstimateSchema.optional(),
+  /** Model calls with neither a reported cost nor a known price; their cost is missing from `total.costUsd`. Absent when 0. */
+  unpricedCalls: z.number().int().positive().optional(),
+  /** Skills sent to seats, keyed by skill name; absent when none were loaded. */
+  skills: z.record(SkillUsageSchema).optional(),
 });
 export type UsageReport = z.infer<typeof UsageReportSchema>;
 

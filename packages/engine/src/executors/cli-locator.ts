@@ -3,6 +3,7 @@ import {
   accessSync,
   constants as fsConstants,
   existsSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -396,11 +397,11 @@ function binaryCachePath(): string {
 }
 
 /**
- * Quote one argument for `cmd.exe /d /s /c`. Inside double quotes cmd treats
- * `& | < > ^ ( )` as text, so any argument with whitespace, a quote or one of
- * those is quoted. `%VAR%` is still expanded by cmd even inside quotes; that
- * is a known limit of running `.cmd` shims (tracked in docs/tasks/STATUS.md).
- * Exported for tests.
+ * Quote one argument for `cmd.exe /d /v:off /s /c`. Inside double quotes cmd
+ * treats `& | < > ^ ( )` as text, so any argument with whitespace, a quote or
+ * one of those is quoted. `%VAR%` is still expanded inside quotes and a newline
+ * ends the command, so `spawnCliProcess` refuses both and prompts never reach
+ * the command line (`cliPromptInvocation`). Exported for tests.
  */
 export function quoteCmdArg(value: string): string {
   if (value.length > 0 && !/[\s"&|<>^()!,;=]/.test(value)) {
@@ -409,23 +410,156 @@ export function quoteCmdArg(value: string): string {
   return `"${value.replace(/"/g, '""')}"`;
 }
 
+/** True when `command` must run through cmd.exe (a `.cmd`/`.bat` shim on Windows). */
+export function isWindowsCmdShim(command: string): boolean {
+  return process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
+}
+
+/** `code` of the error `assertCmdSafeArgs` throws. */
+export const CMD_UNSAFE_ARG = "ASSENTOR_CMD_UNSAFE_ARG";
+
+/**
+ * Throws for an argument cmd.exe would alter (`%VAR%` expansion), cut short
+ * (newline), or that would re-split argv once the shim's `%*` reaches node.exe
+ * (a `"`, or a trailing `\` that turns the closing quote into `\"`).
+ */
+export function assertCmdSafeArgs(args: readonly string[]): void {
+  for (const arg of args) {
+    if (/[%"\r\n]/.test(arg) || arg.endsWith("\\")) {
+      throw Object.assign(
+        new Error(
+          `Refusing to run a .cmd/.bat CLI with an argument containing "%", a double quote, a newline or a trailing backslash (cmd.exe would expand, split or truncate it): ${JSON.stringify(arg.slice(0, 120))}`,
+        ),
+        { code: CMD_UNSAFE_ARG },
+      );
+    }
+  }
+}
+
+/**
+ * How each CLI takes its prompt off the cmd.exe command line. `stdin`: the CLI
+ * reads the prompt from stdin when none is given (claude -p). `stdin-dash`: a
+ * `-` prompt reads stdin (codex exec). `file`: no confirmed stdin support, so
+ * the prompt goes in a private temp file and the CLI is told to read it;
+ * `addDir` makes that file's directory readable to the agent. `refuse`: no
+ * transport verified, so the run fails closed.
+ */
+const CMD_PROMPT: Record<BinaryTool, { mode: "stdin" | "stdin-dash" | "file" | "refuse"; addDir?: string }> = {
+  claude: { mode: "stdin" },
+  codex: { mode: "stdin-dash" },
+  cursor: { mode: "file", addDir: "--add-dir" },
+  agy: { mode: "file", addDir: "--add-dir" },
+  qwen: { mode: "refuse" },
+  opencode: { mode: "refuse" },
+};
+
+/** Prompt temp dirs still on disk; removed on process exit if a run never reached its `finally`. */
+const pendingPromptDirs = new Set<string>();
+let promptDirExitHook = false;
+
+function removePromptDir(dir: string): void {
+  pendingPromptDirs.delete(dir);
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // Windows may hold the file briefly after a kill; the OS temp cleaner gets it.
+  }
+}
+
+export interface CliPromptInvocation {
+  args: string[];
+  /** Prompt text for the child's stdin (pass as `spawnCliProcess`'s `input`). */
+  stdin?: string;
+  /** Removes the prompt temp dir, if any. Call in `finally` once the child is done. */
+  cleanup: () => void;
+}
+
+/**
+ * Final argv for a CLI whose `args` end with the prompt (`prompt` or
+ * `-p=<prompt>`). Unchanged unless `command` is a Windows `.cmd`/`.bat` shim:
+ * cmd.exe expands `%VAR%` and stops at newlines even inside quotes, so the
+ * prompt then moves to stdin or a private temp file.
+ */
+export function cliPromptInvocation(
+  tool: BinaryTool,
+  command: string,
+  args: string[],
+  prompt: string,
+): CliPromptInvocation {
+  const noop = () => {};
+  if (!isWindowsCmdShim(command)) {
+    return { args, cleanup: noop };
+  }
+  const last = args[args.length - 1];
+  const attached = last === `-p=${prompt}`;
+  if (!attached && last !== prompt) {
+    throw new Error("cliPromptInvocation: the prompt must be the last CLI argument");
+  }
+  const base = args.slice(0, -1);
+  const how = CMD_PROMPT[tool];
+  if (how.mode === "refuse") {
+    throw new Error(`prompt transport unverified for ${tool} via .cmd shim; use the native binary or WSL`);
+  }
+  if (how.mode === "stdin") {
+    return { args: base, stdin: prompt, cleanup: noop };
+  }
+  if (how.mode === "stdin-dash") {
+    return { args: [...base, "-"], stdin: prompt, cleanup: noop };
+  }
+  // mkdtemp makes a fresh 0700 dir per run; the file itself is 0600.
+  const dir = mkdtempSync(path.join(os.tmpdir(), "assentor-prompt-"));
+  pendingPromptDirs.add(dir);
+  if (!promptDirExitHook) {
+    promptDirExitHook = true;
+    process.once("exit", () => [...pendingPromptDirs].forEach(removePromptDir));
+  }
+  const cleanup = () => removePromptDir(dir);
+  const file = path.join(dir, "prompt.md");
+  try {
+    writeFileSync(file, prompt, { encoding: "utf8", mode: 0o600, flag: "wx" });
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+  const pointer = `Your full task is in the file ${file} - read that whole file first and follow its instructions exactly.`;
+  return {
+    args: [...base, ...(how.addDir ? [how.addDir, dir] : []), attached ? `-p=${pointer}` : pointer],
+    cleanup,
+  };
+}
+
 /**
  * Spawn a CLI on Windows even when the file is `agent.cmd` (Node cannot exec .cmd without cmd.exe).
+ * `input`, when set, is written to the child's stdin (which is then a pipe).
  */
 export function spawnCliProcess(
   command: string,
   args: string[],
   options: SpawnOptions,
+  input?: string,
 ): ChildProcess {
-  const winScript =
-    process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
-  if (winScript) {
+  const opts: SpawnOptions =
+    input === undefined
+      ? { ...options, windowsHide: true }
+      : { ...options, stdio: ["pipe", "pipe", "pipe"], windowsHide: true };
+  let child: ChildProcess;
+  if (isWindowsCmdShim(command)) {
+    assertCmdSafeArgs([command, ...args]);
     const comspec = process.env.ComSpec || "cmd.exe";
-    return spawn(
-      comspec,
-      ["/d", "/s", "/c", quoteCmdArg(command), ...args.map(quoteCmdArg)],
-      { ...options, windowsHide: true },
-    );
+    // /v:off: no `!VAR!` delayed expansion even if the registry turns it on.
+    // Verbatim: libuv would otherwise re-escape each quoted arg as `"\"x\""`,
+    // which cmd ignores, letting `&` etc. escape. /s strips the outer quotes.
+    const line = `"${[command, ...args].map(quoteCmdArg).join(" ")}"`;
+    child = spawn(comspec, ["/d", "/v:off", "/s", "/c", line], {
+      ...opts,
+      windowsVerbatimArguments: true,
+    });
+  } else {
+    child = spawn(command, args, opts);
   }
-  return spawn(command, args, { ...options, windowsHide: true });
+  if (input !== undefined) {
+    child.stdin?.on("error", () => {}); // EPIPE when the CLI exits without reading
+    child.stdin?.end(input);
+  }
+  return child;
 }

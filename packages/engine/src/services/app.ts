@@ -33,6 +33,7 @@ import {
   updateAssentor,
   type UpdateCheckResult,
 } from "../self/index.js";
+import { CMD_UNSAFE_ARG } from "../executors/cli-locator.js";
 import { AuditLog, type AuditEvent } from "./audit.js";
 import path from "node:path";
 
@@ -343,7 +344,15 @@ export async function performUpdate(options?: {
   const result = await updateAssentor();
   const localVersion = getLocalVersionSync();
   if (result.code === 0 && options?.relaunchArgs) {
-    await relaunchAssentor(options.relaunchArgs);
+    try {
+      await relaunchAssentor(options.relaunchArgs);
+    } catch (error) {
+      if ((error as { code?: unknown }).code !== CMD_UNSAFE_ARG) throw error;
+      // The update itself succeeded; only the cmd.exe relaunch was refused.
+      const note = `Updated to v${localVersion}. Restart assentor manually; your arguments contain characters that can't pass through cmd.exe safely.`;
+      process.stderr.write(`${note}\n`);
+      return { code: 0, output: `${result.output}\n${note}`, localVersion, relaunched: false };
+    }
     return {
       code: result.code,
       output: result.output,

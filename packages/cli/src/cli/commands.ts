@@ -113,6 +113,8 @@ export interface RunAssentorInput {
   profile?: RunProfile;
   /** Registry mode (`--mode <id>`). Only `available` modes run; solo runs the Supervisor below, others through prepareModeSession. */
   modeId?: ModeId;
+  /** Set by `--mode auto` on the mode it chose; recorded as `via` on `mode.selected` (not for solo, which emits none). */
+  selectedVia?: "auto";
   /** Live seat-scoped engine events (T00-07), in log order. Errors thrown here are reported, not propagated. */
   onEngineEvent?: (event: EngineEvent) => void;
   /** `--mode` runs (not solo): after the session, a retro appends lessons to `.assentor/memory/lessons.md`. */
@@ -869,6 +871,13 @@ export function runAssentorTask(input: RunAssentorInput & { modeId?: "solo" }): 
 export function runAssentorTask(input: RunAssentorInput): Promise<SoloRun | ModeRun>;
 export async function runAssentorTask(input: RunAssentorInput): Promise<SoloRun | ModeRun> {
   assertReviewerOrTeam(input);
+  if (input.modeId === "auto" && getMode("auto")?.available) {
+    // Not a second dispatcher: pick a mode, then run it through the normal --mode path below.
+    const { chooseAutoMode } = await import("./auto-run.js");
+    const modeId = await chooseAutoMode(input);
+    if (modeId === "solo" && input.retro) console.error("Note: --retro only applies to a non-solo --mode run; ignored.");
+    return runAssentorTask({ ...input, modeId, selectedVia: "auto" });
+  }
   if (input.modeId && !getMode(input.modeId)?.available) {
     throw new Error(`Mode ${input.modeId} is not available yet.`);
   }
@@ -947,6 +956,8 @@ async function runAssentorTaskBody(
   reporter.setStyle(config.output.style);
   const profileLine = profileNote(config);
   if (profileLine) reporter.note(profileLine);
+  // solo emits no mode.selected, so the choice is only noted (no session log is open yet).
+  if (input.selectedVia === "auto") reporter.note("mode: solo (chosen by auto)");
   const pricing = await observedPricing(projectPath).catch(() => ({}));
   const estimate = estimateRun(config, {
     prompt: input.prompt,
