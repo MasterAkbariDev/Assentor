@@ -28,9 +28,11 @@ export function SeatInject({ seatId, finished }: { seatId: string; finished?: st
     sent.current = true;
     setBusy(true);
     setResult(undefined);
+    const sentText = text;
     try {
-      await control.inject(seatId, text);
-      setText("");
+      await control.inject(seatId, sentText);
+      // Only what was sent: anything typed since stays.
+      setText((now) => (now === sentText ? "" : now));
       setResult({ ok: true, text: "Message queued for the seat's next turn." });
     } catch (e) {
       setResult({ ok: false, text: errorText(e) });
@@ -52,7 +54,7 @@ export function SeatInject({ seatId, finished }: { seatId: string; finished?: st
         id={`${id}-text`}
         value={text}
         rows={3}
-        readOnly={reason !== undefined}
+        readOnly={reason !== undefined || busy}
         aria-disabled={reason !== undefined ? true : undefined}
         aria-invalid={bytes > INJECT_MAX_BYTES ? true : undefined}
         aria-describedby={describedBy}

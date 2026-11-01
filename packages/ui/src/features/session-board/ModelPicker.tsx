@@ -101,7 +101,7 @@ export function ModelPicker({ seat }: { seat: SeatState }) {
       <select
         id={`${id}-select`}
         value={shown}
-        disabled={reason !== undefined || busy}
+        aria-disabled={reason !== undefined || busy ? true : undefined}
         title={!canWrite ? READ_ONLY_REASON : undefined}
         aria-describedby={[reason ? `${id}-reason` : "", pending ? `${id}-pending` : ""].filter(Boolean).join(" ") || undefined}
         onChange={(e) => void onChange(e.target.value)}

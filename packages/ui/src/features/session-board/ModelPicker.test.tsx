@@ -39,7 +39,7 @@ describe("ModelPicker", () => {
 
   it("choosing a model calls seat.setModel and shows pending until seat.model.changed arrives with pending:false", async () => {
     const { picker, transport, store, queryByText, getByText } = setup();
-    await waitFor(() => expect(picker("Executor").disabled).toBe(false));
+    await waitFor(() => expect(picker("Executor").getAttribute("aria-disabled")).toBeNull());
     fireEvent.change(picker("Executor"), { target: { value: "model-b" } });
     await waitFor(() => expect(getByText("pending: applies at the next turn")).toBeTruthy());
     expect(transport.calls.find((c) => c.method === "seat.setModel")!.params).toEqual({ sessionId: ID, seatId: "executor", model: "model-b" });
@@ -58,7 +58,7 @@ describe("ModelPicker", () => {
   it("is off with a reason on a read-only connection", async () => {
     const { picker, getAllByText, transport } = setup({ canWrite: false });
     await waitFor(() => expect(picker("Executor").options.length).toBeGreaterThan(1));
-    expect(picker("Executor").disabled).toBe(true);
+    expect(picker("Executor").getAttribute("aria-disabled")).toBe("true");
     expect(getAllByText("Read-only connection")).toHaveLength(2);
     fireEvent.change(picker("Executor"), { target: { value: "model-b" } });
     expect(transport.calls.some((c) => c.method === "seat.setModel")).toBe(false);
@@ -67,16 +67,16 @@ describe("ModelPicker", () => {
   it("is off with a reason once the seat has finished; other seats stay on", async () => {
     const done = { seq: 90, sessionId: ID, seatId: "executor", at: new Date(Date.UTC(2026, 9, 25, 12, 0, 0)).toISOString(), type: "seat.done", data: { ok: true } } as EngineEvent;
     const { picker, getByText } = setup({}, [...liveRun(ID), done]);
-    expect(picker("Executor").disabled).toBe(true);
+    expect(picker("Executor").getAttribute("aria-disabled")).toBe("true");
     expect(getByText("Seat finished")).toBeTruthy();
-    await waitFor(() => expect(picker("Reviewer").disabled).toBe(false));
+    await waitFor(() => expect(picker("Reviewer").getAttribute("aria-disabled")).toBeNull());
   });
 
   it("shows the engine's error when seat.setModel fails", async () => {
     const { picker, findByRole } = setup({
       handlers: { ...handlers, "seat.setModel": () => Promise.reject(new Error("seat has no executor")) },
     });
-    await waitFor(() => expect(picker("Executor").disabled).toBe(false));
+    await waitFor(() => expect(picker("Executor").getAttribute("aria-disabled")).toBeNull());
     fireEvent.change(picker("Executor"), { target: { value: "model-a" } });
     expect((await findByRole("alert")).textContent).toBe("seat has no executor");
   });

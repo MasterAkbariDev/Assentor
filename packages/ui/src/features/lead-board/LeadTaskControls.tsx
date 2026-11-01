@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { LeadTaskView } from "#assentor/ui-shared/lead.js";
 import type { SeatState } from "#assentor/ui-shared/status.js";
 import { useEngine } from "../../store/context.js";
+import { isLiveSeat } from "../../store/selectors.js";
 import { useRpc } from "../../transport/context.js";
 import { ConfirmAction } from "../controls/ConfirmAction.js";
 import { errorText, useSessionControl } from "../controls/useSessionControl.js";
@@ -62,7 +63,7 @@ export function LeadTaskControls({ task, seats }: { task: LeadTaskView; seats: R
       setBusy(false);
     }
   };
-  const options = Object.values(seats);
+  const options = Object.values(seats).filter(isLiveSeat);
   const pickReason = model === "" ? "Pick a model first." : undefined;
   return (
     <details className="lead-task-controls">
@@ -80,9 +81,11 @@ export function LeadTaskControls({ task, seats }: { task: LeadTaskView; seats: R
         <select
           id={`${id}-model`}
           value={model}
-          disabled={pinReason !== undefined || busy}
+          aria-disabled={pinReason !== undefined || busy ? true : undefined}
           aria-describedby={pinReason ? `${id}-pin-reason` : undefined}
-          onChange={(e) => setModel(e.target.value)}
+          onChange={(e) => {
+            if (pinReason === undefined && !busy) setModel(e.target.value);
+          }}
         >
           <option value="">Choose a model</option>
           {models.map((m) => (

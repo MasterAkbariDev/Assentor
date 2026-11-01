@@ -310,7 +310,7 @@ describe("Seat drawer actions", () => {
   it("is disabled with a reason without write access, and for a finished seat", async () => {
     const ro = openLive({ write: false });
     await ready(ro.transport);
-    await waitFor(() => expect(within(ro.getByRole("dialog", { name: "Executor" })).getAllByText(/read-only/).length).toBeGreaterThanOrEqual(2));
+    await waitFor(() => expect(within(ro.getByRole("dialog", { name: "Executor" })).getAllByText(/read-only/)).toHaveLength(4));
     expect(within(ro.getByRole("dialog", { name: "Executor" })).getByRole("button", { name: "Stop seat" }).getAttribute("aria-disabled")).toBe("true");
     cleanup();
 
