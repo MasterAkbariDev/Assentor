@@ -675,3 +675,4 @@ button.lead-task-open:focus-visible { outline: 2px solid var(--accent); outline-
 .new-session-actions button { font: inherit; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent); color: var(--bg); cursor: pointer; }
 .new-session-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 .new-session-actions button:focus-visible, .new-session input:focus-visible, .new-session textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.new-session-actions .hint { margin: 0 12px 0 0; font-size: 13px; color: var(--muted); align-self: center; }

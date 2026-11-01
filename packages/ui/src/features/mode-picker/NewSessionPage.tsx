@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useRpc } from "../../transport/context.js";
 import { useEngine } from "../../store/context.js";
-import { MODE_CATALOG, UNAVAILABLE_REASON } from "./modeCatalog.js";
+import { MODE_CATALOG } from "./modeCatalog.js";
 import { useWriteAccess } from "./useWriteAccess.js";
 
 /** Autopilot is not offered here: the serve host caps sessions at supervised. */
@@ -52,7 +52,20 @@ export function NewSessionPage() {
       window.location.hash = "#/sessions";
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
-      setError(sessionId ? `Session ${sessionId} was created but did not start: ${message}` : message);
+      if (sessionId) {
+        // Created but not started: cancel it so it does not stay behind as a created run.
+        const cancelled = await rpc.call("session.cancel", { sessionId }).then(
+          () => true,
+          () => false,
+        );
+        setError(
+          `Session ${sessionId} was created but did not start: ${message}. ${
+            cancelled ? "It has been cancelled." : "Cancelling it failed; it may still be listed as created."
+          }`,
+        );
+      } else {
+        setError(message);
+      }
       setBusy(false);
     }
   }
@@ -105,7 +118,7 @@ export function NewSessionPage() {
                   </span>
                   {off ? (
                     <span id={reasonId} className="mode-card-reason">
-                      {UNAVAILABLE_REASON}
+                      {card.reason}
                     </span>
                   ) : null}
                 </label>
@@ -145,7 +158,16 @@ export function NewSessionPage() {
         </fieldset>
 
         <div className="new-session-actions">
-          <button type="submit" disabled={!canSubmit}>
+          {goal.trim() === "" ? (
+            <p id="new-session-hint" className="hint">
+              Write a goal to create the session.
+            </p>
+          ) : null}
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            aria-describedby={goal.trim() === "" ? "new-session-hint" : undefined}
+          >
             {busy ? "Starting…" : "Create and start"}
           </button>
         </div>

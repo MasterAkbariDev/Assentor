@@ -5,7 +5,7 @@ import { RpcErrorCode } from "#assentor/protocol/rpc.js";
 import { RpcRemoteError } from "#assentor/protocol/rpc-client.js";
 import { renderWithStore } from "../../test/render.js";
 import { mockTransport } from "../../transport/mock.js";
-import { MODE_CATALOG, UNAVAILABLE_REASON } from "./modeCatalog.js";
+import { MODE_CATALOG } from "./modeCatalog.js";
 import { NewSessionPage } from "./NewSessionPage.js";
 
 afterEach(() => {
@@ -16,12 +16,13 @@ afterEach(() => {
 const WRITE_CAPABILITIES = ["engine.hello", "sessions.list", "session.create", "session.start"];
 
 /** Renders the page on an open, writable connection unless the options say otherwise. */
-function setup(options: { capabilities?: string[]; create?: () => unknown } = {}) {
+function setup(options: { capabilities?: string[]; create?: () => unknown; start?: () => unknown; cancel?: () => unknown } = {}) {
   const transport = mockTransport({
     handlers: {
       "engine.hello": () => ({ engineVersion: "0.4.0", protocolVersion: 1, capabilities: options.capabilities ?? WRITE_CAPABILITIES }),
       "session.create": (options.create ?? (() => ({ sessionId: "s-new", mode: "solo", autonomy: "manual" }))) as never,
-      "session.start": () => ({ sessionId: "s-new", live: "running" }),
+      "session.start": (options.start ?? (() => ({ sessionId: "s-new", live: "running" }))) as never,
+      "session.cancel": (options.cancel ?? (() => ({ ok: true, live: "created" }))) as never,
     },
   });
   const rendered = renderWithStore(<NewSessionPage />, undefined, transport);
@@ -57,8 +58,23 @@ describe("NewSessionPage", () => {
       const input = modeInput(card.id);
       expect(input.disabled).toBe(true);
       const reason = document.getElementById(input.getAttribute("aria-describedby")!);
-      expect(reason?.textContent).toBe(UNAVAILABLE_REASON);
+      expect(card.reason).toBeTruthy();
+      expect(reason?.textContent).toBe(card.reason);
     }
+    // The engine's own note is shown when it gives one.
+    expect(modeInput("lead").getAttribute("aria-describedby")).toBeTruthy();
+    expect(document.getElementById("mode-lead-reason")?.textContent).toBe(
+      "Not runnable yet: new worktrees get no dependency install before its gates.",
+    );
+  });
+
+  it("shows the goal hint only while the goal is empty", async () => {
+    setup();
+    await waitFor(() => expect(submitButton().disabled).toBe(true));
+    expect(document.getElementById("new-session-hint")?.textContent).toBe("Write a goal to create the session.");
+    expect(submitButton().getAttribute("aria-describedby")).toBe("new-session-hint");
+    fireEvent.change(goalField(), { target: { value: "x" } });
+    expect(document.getElementById("new-session-hint")).toBeNull();
   });
 
   it("creates then starts with the chosen mode, goal and autonomy, and opens the session", async () => {
@@ -104,6 +120,42 @@ describe("NewSessionPage", () => {
 
     await waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toBe(message));
     expect(transport.calls.some((c) => c.method === "session.start")).toBe(false);
+  });
+
+  it("cancels a session that was created but did not start, and says so", async () => {
+    const { transport } = setup({
+      start: () => {
+        throw new Error("worktree is locked");
+      },
+    });
+    await waitFor(() => expect(submitButton().disabled).toBe(true));
+    fireEvent.change(goalField(), { target: { value: "Plan the work" } });
+    await waitFor(() => expect(submitButton().disabled).toBe(false));
+    fireEvent.click(submitButton());
+
+    await waitFor(() => expect(document.querySelector('[role="alert"]')).toBeTruthy());
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+      "Session s-new was created but did not start: worktree is locked. It has been cancelled.",
+    );
+    expect(transport.calls.filter((c) => c.method === "session.cancel").map((c) => c.params)).toEqual([{ sessionId: "s-new" }]);
+  });
+
+  it("says so when the cancel after a failed start also fails", async () => {
+    setup({
+      start: () => {
+        throw new Error("worktree is locked");
+      },
+      cancel: () => {
+        throw new Error("not live");
+      },
+    });
+    await waitFor(() => expect(submitButton().disabled).toBe(true));
+    fireEvent.change(goalField(), { target: { value: "Plan the work" } });
+    await waitFor(() => expect(submitButton().disabled).toBe(false));
+    fireEvent.click(submitButton());
+
+    await waitFor(() => expect(document.querySelector('[role="alert"]')).toBeTruthy());
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Cancelling it failed");
   });
 
   it("is disabled with a reason when the connection cannot write", async () => {
