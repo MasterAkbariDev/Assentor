@@ -34,6 +34,26 @@ export interface KeyVaultFile {
 }
 
 export class KeyVault {
+  /**
+   * `{ id, provider, name, healthy }` per stored key, read without side effects: no master key is
+   * created, nothing is decrypted or rewritten (unlike `load`, which also dedupes). A missing or
+   * unreadable file is no keys.
+   */
+  static async readSummaries(
+    projectPath: string,
+  ): Promise<Array<{ id: string; provider: string; name: string; healthy: boolean }>> {
+    try {
+      const raw = await fs.readFile(path.join(path.resolve(projectPath), ASSENTOR_DIR, "secrets.json"), "utf8");
+      const keys = (JSON.parse(raw) as Partial<KeyVaultFile>).keys;
+      return (Array.isArray(keys) ? keys : [])
+        .filter((key) => typeof key?.id === "string" && typeof key.provider === "string" && typeof key.name === "string")
+        .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
+        .map((key) => ({ id: key.id, provider: key.provider, name: key.name, healthy: key.health === "healthy" }));
+    } catch {
+      return [];
+    }
+  }
+
   private masterKey?: Buffer;
   private data: KeyVaultFile = { version: 1, keys: [] };
   private readonly filePath: string;

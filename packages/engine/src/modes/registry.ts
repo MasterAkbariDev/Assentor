@@ -5,7 +5,7 @@ import type { Autonomy } from "../core/run-mode.js";
 import type { Seat, SessionSpecSchema } from "#assentor/protocol/seats.js";
 import type { Executor } from "../providers/executors/types.js";
 import type { StageRunnerDeps } from "../orchestrator/session-stages.js";
-import type { StageRunners } from "../orchestrator/session-runner.js";
+import type { StageResult, StageRunners } from "../orchestrator/session-runner.js";
 import type { EngineEventDraft } from "#assentor/protocol/events.js";
 import type { PromptLibrary } from "../prompts/library.js";
 import type { Usage } from "../seats/scheduler.js";
@@ -32,7 +32,8 @@ import { createSwarmController, swarmProblems } from "./swarm.js";
  * runners as tools (Lead, T02B-02). `prepareModeSession` (`src/modes/session.ts`)
  * validates and starts either kind. A mode with neither cannot run yet.
  *
- * `available` is narrower: true only when `assentor run --mode <id>` runs the mode.
+ * `available` is narrower: true only when `assentor run --mode <id>` runs the mode
+ * (solo through the Supervisor, the rest through `prepareModeSession`).
  */
 /** Ids in modes.md §3 catalog order. */
 export const MODE_IDS = [
@@ -124,6 +125,12 @@ export interface ModeHostServices {
 export class ApprovalDeniedError extends Error {
   override name = "ApprovalDeniedError";
 }
+
+/**
+ * The stage result the session's `manual` gate returns when the user declines a stage. Compare by identity:
+ * a model-written BLOCKED review with the same words is a different object and must still escalate.
+ */
+export const STAGE_DENIED: StageResult = Object.freeze({ outcome: "blocked" as const, summary: "the user did not approve this stage" });
 
 /** What a controller may do with worktrees. `applyTo("main")` passes the session's approval floor. */
 export type ControllerWorktrees = Pick<WorktreeManager, "create" | "diff" | "list" | "applyTo" | "discard" | "markFailed" | "cleanup" | "readAtBase">;
@@ -329,42 +336,43 @@ const plan: ModeRuntime = {
 const MODES: readonly ModeDefinition[] = [
   // Today's `assentor run`: one executor in a review loop (one reviewer or a `--team` panel).
   mode("solo", "Solo", "One executor with a review loop; today's assentor run.", "static", true, true, solo),
-  // review and negotiate run through prepareModeSession; the CLI does not route them yet (no real
-  // SeatStepRunner for negotiation steps, and `run` still drives the Supervisor directly).
-  mode("review", "Review", "Several reviewers judge existing work; a policy merges their verdicts.", "static", false, false, review),
-  mode("negotiate", "Negotiate", "Several peers reach consensus with a strategy (vote, debate, synthesize).", "static", true, false, negotiate),
-  // Runs through prepareModeSession with host services (T02B-02); the CLI does not route it yet.
-  mode("lead", "Lead (Supervisor)", "A lead seat plans tasks, picks agents and accepts or rejects their reports.", "dynamic", true, false, lead),
-  mode("cascade", "Cascade", "Start with a cheap model; escalate on failure or risk.", "dynamic", true, false, {
+  // Modes below with a buildSession/createController run from `assentor run --mode <id>` through
+  // prepareModeSession (CLI host: packages/cli/src/cli/mode-run.ts), except lead, pair, redteam, tdd,
+  // swarm and debug: their gates run in fresh worktrees and the host does not install dependencies there yet
+  // (follow-up), so on real projects they would block. The routing for them is in place.
+  mode("review", "Review", "Several reviewers judge existing work; a policy merges their verdicts.", "static", false, true, review),
+  mode("negotiate", "Negotiate", "Several peers reach consensus with a strategy (vote, debate, synthesize).", "static", true, true, negotiate),
+  mode("lead", "Lead (Supervisor)", "A lead seat plans tasks, picks agents and accepts or rejects their reports. Not runnable yet: new worktrees get no dependency install before its gates.", "dynamic", true, false, lead),
+  mode("cascade", "Cascade", "Start with a cheap model; escalate on failure or risk.", "dynamic", true, true, {
     validate: cascadeProblems,
     createController: (input) => createCascadeController(input, { approve: (question) => input.requestApproval({ question }) }),
   }),
-  mode("pipeline", "Pipeline", "Requirements, architect, coder, tester, reviewer and docs stages in order.", "static", true, false, pipeline),
+  mode("pipeline", "Pipeline", "Requirements, architect, coder, tester, reviewer and docs stages in order.", "static", true, true, pipeline),
   // A controller loop (driver turns, live navigator, gates, review), not a stage graph: an interjection restarts a turn.
-  mode("pair", "Pair", "A driver codes while a navigator watches the stream and interjects.", "dynamic", true, false, {
+  mode("pair", "Pair", "A driver codes while a navigator watches the stream and interjects. Not runnable yet: new worktrees get no dependency install before its gates.", "dynamic", true, false, {
     validate: (config) => [...teamProblems(config), ...pairProblems(config)],
     createController: (input) => createPairController(input, { approve: (question) => input.requestApproval({ question }) }),
   }),
   mode("race", "Race", "Several seats implement in parallel worktrees; a judge picks one.", "static", true),
   // A controller loop (attacker round, builder fix, gates), not a stage graph: the number of rounds depends on the attacker.
-  mode("redteam", "Red team", "An attacker writes failing tests or exploits; a builder fixes; repeat.", "dynamic", true, false, {
+  mode("redteam", "Red team", "An attacker writes failing tests or exploits; a builder fixes; repeat. Not runnable yet: new worktrees get no dependency install before its gates.", "dynamic", true, false, {
     validate: (config) => [...teamProblems(config), ...redteamProblems(config)],
     createController: (input) => createRedteamController(input, { approve: (question) => input.requestApproval({ question }) }),
   }),
-  // Runs through prepareModeSession once the host returns createTddExecutor for strategy "tdd"; no CLI route yet.
-  mode("tdd", "TDD", "Failing tests first, then code that passes them without touching the tests.", "static", true, false, tddRuntime),
+  // The CLI host returns createTddExecutor for strategy "tdd".
+  mode("tdd", "TDD", "Failing tests first, then code that passes them without touching the tests. Not runnable yet: new worktrees get no dependency install before its gates.", "static", true, false, tddRuntime),
   // A controller loop (split, batches, tier retries, gates, review), not a stage graph: the batches depend on the split and on what fails.
-  mode("swarm", "Swarm", "Many small independent items split across cheap seats, then merged.", "dynamic", true, false, {
+  mode("swarm", "Swarm", "Many small independent items split across cheap seats, then merged. Not runnable yet: new worktrees get no dependency install before its gates.", "dynamic", true, false, {
     validate: (config) => [...teamProblems(config), ...swarmProblems(config)],
     createController: (input) => createSwarmController(input),
   }),
   // A controller loop (hypothesis rounds, then a fix), not a stage graph: how many rounds it takes depends on the evidence.
-  mode("debug", "Debug", "Seats test competing hypotheses in their own worktrees; evidence picks the fix.", "dynamic", true, false, {
+  mode("debug", "Debug", "Seats test competing hypotheses in their own worktrees; evidence picks the fix. Not runnable yet: new worktrees get no dependency install before its gates.", "dynamic", true, false, {
     validate: (config) => [...teamProblems(config), ...debugProblems(config)],
     createController: (input) => createDebugController(input, { approve: (question) => input.requestApproval({ question }) }),
   }),
-  mode("explore", "Explore", "Read-only seats investigate a question; a synthesizer answers with citations.", "static", false, false, explore),
-  mode("plan", "Plan", "Produce a spec and task cards, no code.", "static", true, false, plan),
+  mode("explore", "Explore", "Read-only seats investigate a question; a synthesizer answers with citations.", "static", false, true, explore),
+  mode("plan", "Plan", "Produce a spec and task cards, no code.", "static", true, true, plan),
   mode("interactive", "Interactive", "Chat with the team; a lead routes messages to seats.", "dynamic", true),
   mode("auto", "Auto", "Suggest a mode from the task and ask before running it.", "dynamic", true),
   mode("watch", "Watch", "React to commits, PRs or CI failures by running a chosen mode.", "static", true),

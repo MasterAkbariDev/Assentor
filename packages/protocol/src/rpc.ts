@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { SEAT_PROVIDERS } from "./seats.js";
-import type { EngineEvent } from "./events.js";
+import { AUTONOMY_LEVELS, type EngineEvent } from "./events.js";
+import { ModelIdSchema, SEAT_PROVIDERS, STAGE_KINDS, TeamSchema } from "./seats.js";
 
 /**
  * Engine JSON-RPC contract (task T04-02p). Browser-safe: zod and types only,
@@ -11,8 +11,10 @@ import type { EngineEvent } from "./events.js";
  *
  * Every method declares `access`. `read` methods never start, change or
  * delete anything; any other method is a write and a connection refuses it
- * (`WriteNotAllowed`) unless its transport grants writes. There are no write
- * methods yet.
+ * (`WriteNotAllowed`) unless its transport grants writes. Write methods:
+ * `prompt.save/fork`, `team.save/delete`, `settings.save`, and the ones that
+ * start a process (`env.doctor`, `env.detectClis`, `models.discover`).
+ * The session / seat / worktree mutations (T04-05) are write too.
  */
 
 export const RPC_PROTOCOL_VERSION = 1;
@@ -30,6 +32,10 @@ export const RpcErrorCode = {
   WriteNotAllowed: -32002,
   /** Too many write calls; `serve` limits them. Retry later. */
   RateLimited: -32003,
+  /** A valid method the engine has no implementation for yet (e.g. `seat.inject`). */
+  NotSupported: -32004,
+  /** The engine understood the request and refused it (unknown session, wrong state, git refused). */
+  Rejected: -32005,
 } as const;
 
 /** Largest inbound frame a connection accepts (characters of JSON text). */
@@ -114,6 +120,78 @@ const TeamSeatSchema = z.object({
   role: z.string(),
   permissions: z.enum(["read-only", "edit"]),
 });
+
+const PromptSourceSchema = z.enum(["builtin", "user", "project"]);
+/** Where a client may write: never `builtin`. */
+const WritableScopeSchema = z.enum(["user", "project"]);
+/** Kebab-case id (prompt ids, team names). Rejects `/`, `.`, `_` and everything else a path needs. */
+const KebabIdSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "must be a kebab-case id");
+const ValidationSchema = z.object({ ok: z.boolean(), problems: z.array(z.string()) });
+
+const PlaybookSummarySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  description: z.string(),
+  readOnly: z.boolean(),
+  source: PromptSourceSchema,
+  overridden: z.boolean(),
+});
+
+const KeySummarySchema = z.object({ id: z.string(), provider: z.string(), name: z.string(), healthy: z.boolean() });
+
+/** The non-secret settings `settings.get` returns and `settings.save` can change (each key optional on save). */
+/** Mirrors `SELECTABLE_EXECUTOR_PROVIDERS` in the engine (a test keeps them equal; this file stays browser-safe). */
+const EXECUTOR_PROVIDERS = ["mock", "cursor", "claude-code", "antigravity", "codex", "qwen", "opencode"] as const;
+const SettingsShape = {
+  // `model` reaches a CLI as an argument value, so it must pass the same check as a seat model (never a flag).
+  executor: z.object({ provider: z.enum(EXECUTOR_PROVIDERS), model: ModelIdSchema.optional() }).strict(),
+  run: z.object({ autonomy: z.enum(AUTONOMY_LEVELS) }).strict(),
+  routing: z
+    .object({
+      strategy: z.enum(["FREE_FIRST", "CHEAPEST", "BALANCED", "BEST", "CUSTOM"]),
+      reviewStrategy: z.enum(["SINGLE", "ADAPTIVE", "PANEL", "FULL"]),
+    })
+    .strict(),
+  limits: z
+    .object({
+      maxRounds: z.number().int().positive(),
+      maxMessages: z.number().int().positive(),
+      maxRuntimeMinutes: z.number().int().positive(),
+      maxToolCalls: z.number().int().positive(),
+    })
+    .strict(),
+  git: z.object({ checkpoints: z.boolean(), autoCommit: z.boolean() }).strict(),
+  artifacts: z
+    .object({ diff: z.boolean(), tests: z.boolean(), logs: z.boolean(), screenshots: z.boolean() })
+    .strict(),
+};
+// What is read back is whatever the config holds (e.g. `project-mutating`, an older free-text model), so it is not narrowed.
+const SettingsSchema = z
+  .object({ ...SettingsShape, executor: z.object({ provider: z.string(), model: z.string().optional() }).strict() })
+  .strict();
+const SettingsPatchSchema = z
+  .object({
+    executor: SettingsShape.executor.partial().strict().optional(),
+    run: SettingsShape.run.optional(),
+    routing: SettingsShape.routing.partial().strict().optional(),
+    limits: SettingsShape.limits.partial().strict().optional(),
+    git: SettingsShape.git.partial().strict().optional(),
+    artifacts: SettingsShape.artifacts.partial().strict().optional(),
+  })
+  .strict();
+
+/** Live state of a session this engine process hosts; absent for sessions it does not run. */
+const LiveStateSchema = z.enum(["created", "running", "cancelling"]);
+const SessionSummaryLiveSchema = SessionSummarySchema.extend({ live: LiveStateSchema.optional() });
+const SeatIdSchema = z.string().min(1).max(100);
+const SessionSeatSchema = z.object({ sessionId: SessionIdSchema, seatId: SeatIdSchema });
+const OkSchema = z.object({ ok: z.literal(true) });
+/** Destructive worktree calls must carry an explicit `confirm: true`. */
+const ConfirmSchema = z.literal(true);
 
 export type RpcAccess = "read" | "write";
 
@@ -204,6 +282,283 @@ export const RpcMethods = {
         }),
       ),
     }),
+  },
+  // Writes and process starts (src/rpc/handlers/*). Refused on connections without write access.
+  "prompt.save": {
+    access: "write",
+    params: z
+      .object({
+        scope: WritableScopeSchema,
+        /** Complete front-matter including `id` (kebab-case; the file is `<id>.md` in the scope). */
+        frontMatter: z.record(z.unknown()),
+        body: z.string().max(256 * 1024),
+      })
+      .strict(),
+    result: z.object({ id: z.string(), scope: WritableScopeSchema }),
+  },
+  "prompt.fork": {
+    access: "write",
+    params: z
+      .object({
+        id: KebabIdSchema,
+        scope: WritableScopeSchema,
+        /** Default: the same id, which overrides the original in `scope`. */
+        newId: KebabIdSchema.optional(),
+      })
+      .strict(),
+    result: z.object({ id: z.string(), scope: WritableScopeSchema }),
+  },
+  "prompt.preview": {
+    access: "read",
+    params: z
+      .object({
+        id: KebabIdSchema,
+        variables: z.record(z.unknown()).default({}),
+        /** Render this text instead of the saved body (an unsaved edit). */
+        body: z.string().max(256 * 1024).optional(),
+      })
+      .strict(),
+    result: z.object({
+      ok: z.boolean(),
+      text: z.string().optional(),
+      /** Variables the template needs that were not given. */
+      missing: z.array(z.string()),
+      message: z.string().optional(),
+    }),
+  },
+  "prompt.validate": {
+    access: "read",
+    params: z
+      .object({ frontMatter: z.record(z.unknown()), body: z.string().max(256 * 1024) })
+      .strict(),
+    result: ValidationSchema.extend({
+      /** Variables the body reads. */
+      variables: z.array(z.string()),
+      /** Used in the body but not declared in front-matter `variables`. */
+      undeclared: z.array(z.string()),
+    }),
+  },
+  "team.save": {
+    access: "write",
+    params: z.object({ name: KebabIdSchema, team: TeamSchema }).strict(),
+    result: z.object({ name: z.string() }),
+  },
+  "team.delete": {
+    access: "write",
+    params: z.object({ name: KebabIdSchema }).strict(),
+    result: z.object({ name: z.string() }),
+  },
+  "team.validate": {
+    access: "read",
+    params: z.object({ team: z.unknown() }).strict(),
+    result: ValidationSchema,
+  },
+  "playbook.list": {
+    access: "read",
+    params: z.object({}).strict().optional(),
+    result: z.object({
+      playbooks: z.array(PlaybookSummarySchema),
+      errors: z.array(PromptLoadErrorSchema),
+    }),
+  },
+  "playbook.get": {
+    access: "read",
+    params: z.object({ id: z.string().min(1).max(100) }).strict(),
+    result: PlaybookSummarySchema.extend({
+      teams: z.record(
+        z.object({
+          description: z.string(),
+          seats: z.array(
+            z.object({
+              provider: z.string(),
+              model: z.string(),
+              role: z.string(),
+              count: z.number(),
+              permissions: z.enum(["read-only", "edit"]),
+            }),
+          ),
+        }),
+      ),
+      stages: z.array(
+        z.object({
+          id: z.string(),
+          kind: z.enum(STAGE_KINDS),
+          team: z.string().optional(),
+          strategy: z.string().optional(),
+          options: z.record(z.unknown()),
+          requireApproval: z.boolean(),
+          next: z.string().optional(),
+          onNeedsWork: z.string().optional(),
+        }),
+      ),
+    }),
+  },
+  "settings.get": {
+    access: "read",
+    params: z.object({}).strict().optional(),
+    result: z.object({
+      /** The effective (user + project) values. */
+      settings: SettingsSchema,
+      /** Secrets never appear: no key value, mask or ciphertext. */
+      keys: z.array(KeySummarySchema),
+    }),
+  },
+  "settings.save": {
+    access: "write",
+    /** Written to the user config (`~/.assentor/config.yaml`); only the given fields change. */
+    params: z.object({ settings: SettingsPatchSchema }).strict(),
+    result: z.object({ settings: SettingsSchema }),
+  },
+  "env.doctor": {
+    access: "write",
+    params: z.object({}).strict().optional(),
+    result: z.object({ items: z.array(z.object({ name: z.string(), ok: z.boolean(), detail: z.string() })) }),
+  },
+  "env.detectClis": {
+    access: "write",
+    params: z.object({}).strict().optional(),
+    result: z.object({
+      clis: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          installed: z.boolean(),
+          available: z.boolean(),
+          version: z.string().optional(),
+          authenticated: z.boolean().optional(),
+          error: z.string().optional(),
+        }),
+      ),
+    }),
+  },
+  "models.discover": {
+    access: "write",
+    params: z.object({ provider: z.enum(SEAT_PROVIDERS) }).strict(),
+    result: z.object({
+      entries: z.array(z.object({ id: z.string(), label: z.string(), source: z.enum(["seed", "discovered", "user"]) })),
+      error: z.string().optional(),
+    }),
+  },
+  // Session control (src/rpc/session-control.ts). Every method that starts, stops, answers or
+  // deletes something is "write". Methods marked "not supported yet" answer NotSupported.
+  "session.create": {
+    access: "write",
+    params: z
+      .object({
+        mode: z.string().min(1).max(50),
+        goal: z.string().min(1).max(20_000),
+        title: z.string().max(200).optional(),
+        /** The host may lower this; a session never runs with more autonomy than it is configured for. */
+        autonomy: z.enum(AUTONOMY_LEVELS).optional(),
+      })
+      .strict(),
+    result: z.object({ sessionId: z.string(), mode: z.string(), autonomy: z.enum(AUTONOMY_LEVELS) }),
+  },
+  "session.start": {
+    access: "write",
+    params: z.object({ sessionId: SessionIdSchema }).strict(),
+    result: z.object({ sessionId: z.string(), live: LiveStateSchema }),
+  },
+  // Not supported yet: no engine pause, and a static session has no prepared resume path.
+  "session.pause": { access: "write", params: z.object({ sessionId: SessionIdSchema }).strict(), result: OkSchema },
+  "session.resume": { access: "write", params: z.object({ sessionId: SessionIdSchema }).strict(), result: OkSchema },
+  "session.cancel": {
+    access: "write",
+    params: z.object({ sessionId: SessionIdSchema }).strict(),
+    result: z.object({ ok: z.literal(true), live: LiveStateSchema }),
+  },
+  "session.list": {
+    access: "read",
+    params: z.object({}).strict().optional(),
+    result: z.object({ sessions: z.array(SessionSummaryLiveSchema) }),
+  },
+  "session.get": {
+    access: "read",
+    params: z.object({ sessionId: SessionIdSchema }).strict(),
+    result: z.object({
+      session: SessionSummaryLiveSchema,
+      /** Pending approval question ids (dynamic modes) or stage ids (static) of a live session. */
+      pendingApprovals: z.array(z.string()),
+    }),
+  },
+  "session.approve": {
+    access: "write",
+    params: z
+      .object({
+        sessionId: SessionIdSchema,
+        /** `questionId` of the `user.question` event (dynamic modes) or the stage id (static modes). */
+        id: z.string().min(1).max(200),
+        /** Static stage gates can only be approved; to refuse one, cancel the session. */
+        decision: z.enum(["approve", "deny"]),
+      })
+      .strict(),
+    result: OkSchema,
+  },
+  "session.export": {
+    access: "read",
+    params: z.object({ sessionId: SessionIdSchema, fromSeq: z.number().int().nonnegative().default(0) }).strict(),
+    result: z.object({ events: z.array(z.record(z.unknown())), truncated: z.boolean() }),
+  },
+  // Not supported yet: no registry reaches a live Supervisor/executor from a session id.
+  "seat.setModel": {
+    access: "write",
+    params: SessionSeatSchema.extend({ model: z.string().min(1).max(200), immediate: z.boolean().optional() }).strict(),
+    result: OkSchema,
+  },
+  "seat.inject": {
+    access: "write",
+    params: SessionSeatSchema.extend({ text: z.string().min(1).max(20_000) }).strict(),
+    result: OkSchema,
+  },
+  "seat.stop": { access: "write", params: SessionSeatSchema.strict(), result: OkSchema },
+  "seat.restart": { access: "write", params: SessionSeatSchema.strict(), result: OkSchema },
+  // Worktrees are addressed by (sessionId, seatId) and checked against the manager's manifest; never by path.
+  "worktree.diff": {
+    access: "read",
+    params: SessionSeatSchema.strict(),
+    result: z.object({
+      baseSha: z.string(),
+      head: z.string(),
+      dirty: z.boolean(),
+      files: z.array(z.string()),
+      diff: z.string(),
+      /** True when `diff` was cut at 512 KiB; `files` is always complete. */
+      truncated: z.boolean(),
+    }),
+  },
+  "worktree.apply": {
+    access: "write",
+    params: SessionSeatSchema.extend({
+      confirm: ConfirmSchema,
+      strategy: z.enum(["merge", "squash", "patch"]).default("squash"),
+      message: z.string().max(500).optional(),
+      /** Repo-relative files or directories the seat may change; anything else aborts the apply. */
+      allowedPaths: z.array(z.string().min(1).max(500)).max(500).optional(),
+    }).strict(),
+    result: z.discriminatedUnion("ok", [
+      z.object({
+        ok: z.literal(true),
+        strategy: z.enum(["merge", "squash", "patch"]),
+        changed: z.boolean(),
+        commit: z.string().optional(),
+        warning: z.string().optional(),
+      }),
+      z.object({
+        ok: z.literal(false),
+        strategy: z.enum(["merge", "squash", "patch"]),
+        conflicts: z.array(z.string()),
+        message: z.string(),
+      }),
+    ]),
+  },
+  "worktree.discard": {
+    access: "write",
+    params: SessionSeatSchema.extend({
+      confirm: ConfirmSchema,
+      /** Also throw away uncommitted changes in the worktree. */
+      force: z.boolean().optional(),
+    }).strict(),
+    result: OkSchema,
   },
 } as const satisfies Record<string, RpcMethodDef>;
 

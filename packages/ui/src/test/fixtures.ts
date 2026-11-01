@@ -168,3 +168,68 @@ export function burstFixture(seats: number, perSeat: number): { id: string; even
   }
   return { id, events };
 }
+
+const NEGOTIATE_REVIEW_ID = "2b3c4d5e-6f70-4a81-92b3-c4d5e6f7a8b9";
+
+/**
+ * One realistic run, end to end: three seats negotiate an approach (debate), an executor
+ * implements it with streamed output, then two reviewers and a panel review it.
+ * `fixtures/session-negotiate-review.ndjson` is this stream, one JSON event per line;
+ * a test fails when the two differ (regenerate with `UPDATE_FIXTURES=1 pnpm vitest run packages/ui`).
+ */
+function negotiateReviewStream(sessionId: string): EngineEvent[] {
+  let seq = 0;
+  const at = (s: number) => new Date(Date.UTC(2026, 9, 31, 9, 0, 0, s * 400)).toISOString();
+  const e = (type: string, data: object, extra: { seatId?: string; stageId?: string } = {}): EngineEvent =>
+    parseEngineEvent({ seq: ++seq, sessionId, ...extra, type, data, at: at(seq) });
+  const spawn = (seatId: string, displayName: string, role: string, permissions: "edit" | "read-only") =>
+    e("seat.spawned", { displayName, provider: "claude-code", transport: "cli", model: "opus", role, permissions }, { seatId });
+  const finding = (key: string, description: string, severity: string, affectedFiles: string[], count: number) =>
+    e("review.finding", { key, description, severity, affectedFiles, agreement: { count, total: 2 } });
+  const deltas = (seatId: string, lines: string[]) => lines.map((text) => e("seat.output.delta", { text: `${text}\n` }, { seatId }));
+
+  return [
+    e("session.created", { title: "Add average() with streaming input" }),
+    spawn("seat-a", "Opus#1", "proposer", "read-only"),
+    spawn("seat-b", "Opus#2", "critic", "read-only"),
+    spawn("seat-c", "Sonnet#1", "critic", "read-only"),
+    spawn("executor", "Executor", "engineer", "edit"),
+    spawn("reviewer-1", "Opus#3", "code-reviewer", "read-only"),
+    spawn("reviewer-2", "Opus#4", "security-reviewer", "read-only"),
+    spawn("panel", "Review panel", "panel", "read-only"),
+    e("session.state", { to: "NEGOTIATING" }),
+    e("stage.started", { kind: "negotiate", strategy: "debate", attempt: 1 }, { stageId: "debate-1" }),
+    e("seat.status", { status: "thinking" }, { seatId: "seat-a" }),
+    e("seat.status", { status: "thinking" }, { seatId: "seat-b" }),
+    e("negotiation.proposal", { round: 1, label: "Proposal A", text: "Stream the file in chunks and keep a running sum and count." }, { stageId: "debate-1" }),
+    e("negotiation.proposal", { round: 1, label: "Proposal B", text: "Load the whole file, then sum." }, { stageId: "debate-1" }),
+    e("negotiation.critique", { round: 1, targetLabel: "Proposal A", text: "A chunk boundary can split a line; carry the partial line.", citations: ["src/average.ts:12"] }, { stageId: "debate-1", seatId: "seat-b" }),
+    e("negotiation.critique", { round: 1, targetLabel: "Proposal B", text: "Reads the whole file into memory.", citations: [] }, { stageId: "debate-1", seatId: "seat-c" }),
+    e("negotiation.consensus", { round: 1, score: 0.5, reached: false }, { stageId: "debate-1" }),
+    e("negotiation.proposal", { round: 2, label: "Proposal A", text: "Stream in chunks, carry the partial line, return NaN when empty." }, { stageId: "debate-1" }),
+    e("negotiation.consensus", { round: 2, score: 0.9, reached: true, preferred: "Proposal A" }, { stageId: "debate-1" }),
+    e("seat.done", { ok: true, summary: "proposal agreed" }, { seatId: "seat-a" }),
+    e("seat.done", { ok: true, summary: "critique sent" }, { seatId: "seat-b" }),
+    e("seat.done", { ok: true, summary: "critique sent" }, { seatId: "seat-c" }),
+    e("session.state", { to: "EXECUTING" }),
+    e("seat.status", { status: "starting" }, { seatId: "executor" }),
+    e("seat.status", { status: "writing" }, { seatId: "executor" }),
+    ...deltas("executor", ["Reading src/average.ts", "Adding averageStream()", "Carrying the partial line between chunks"]),
+    e("seat.tool_call", { name: "editing", summary: "src/average.ts", file: "src/average.ts" }, { seatId: "executor" }),
+    ...deltas("executor", ["Writing tests", "  ✓ sums across chunk boundaries", "  ✓ empty input is NaN"]),
+    e("seat.tokens", { tokensIn: 5200, tokensOut: 1400, costUsd: 0.09 }, { seatId: "executor" }),
+    e("seat.done", { ok: true, summary: "averageStream() added with tests" }, { seatId: "executor" }),
+    e("session.state", { to: "REVIEWING" }),
+    e("seat.status", { status: "thinking" }, { seatId: "reviewer-1" }),
+    e("seat.status", { status: "thinking" }, { seatId: "reviewer-2" }),
+    e("seat.tool_call", { name: "reading", summary: "src/average.ts", file: "src/average.ts" }, { seatId: "reviewer-1" }),
+    e("seat.done", { ok: true, summary: "one minor issue" }, { seatId: "reviewer-1" }),
+    e("seat.done", { ok: true, summary: "no security issues" }, { seatId: "reviewer-2" }),
+    finding("avg-empty", "Empty input returns NaN without a documented contract", "minor", ["src/average.ts"], 1),
+    finding("avg-chunk", "Chunk size is hard-coded", "info", ["src/average.ts", "src/config.ts"], 2),
+    e("review.verdict", { status: "PASS", summary: "Panel [majority] 2 of 2 PASS, 1 minor note", confidence: 0.85 }, { seatId: "panel" }),
+    e("session.state", { to: "DONE" }),
+  ];
+}
+
+export const negotiateReviewFixture = { id: NEGOTIATE_REVIEW_ID, events: negotiateReviewStream(NEGOTIATE_REVIEW_ID) };

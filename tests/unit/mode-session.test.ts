@@ -136,7 +136,7 @@ function dynamicMode(createController: ModeDefinition["createController"]): Mode
 }
 
 describe("mode contract", () => {
-  it("each mode's builder matches its kind; solo, review, negotiate, lead and tdd can run; only solo is CLI-available", () => {
+  it("each mode's builder matches its kind; every mode that can run is CLI-available except lead, pair, redteam, tdd, swarm and debug", () => {
     for (const mode of listModes()) {
       if (mode.kind === "static") expect(mode.createController).toBeUndefined();
       else expect(mode.buildSession).toBeUndefined();
@@ -156,7 +156,8 @@ describe("mode contract", () => {
       "explore",
       "plan",
     ]);
-    expect(listModes().filter((m) => m.available).map((m) => m.id)).toEqual(["solo"]);
+    const held = ["lead", "pair", "redteam", "tdd", "swarm", "debug"];
+    expect(listModes().filter((m) => m.available)).toEqual(listModes().filter((m) => (m.buildSession || m.createController) && !held.includes(m.id)));
   });
 
   it("builds the static graphs from config", async () => {
@@ -548,6 +549,35 @@ describe("autonomy floor for dynamic modes (T02B-02)", () => {
     const auto = await dynamic("autopilot", (ci) => ci.worktrees!.applyTo("main", seat, { strategy: "squash" }), () => "deny", { worktrees: fake });
     await auto.result();
     expect(auto.asked).toEqual([]);
+  });
+
+  it("applyTo refuses when the worktree changed while the user was deciding; nothing lands", async () => {
+    let diff = "v1";
+    const applied: unknown[] = [];
+    const fake = {
+      create: async () => ({}),
+      diff: async () => ({ files: ["a.txt"], diff, head: "h" }),
+      list: async () => [],
+      applyTo: async (target: unknown) => (applied.push(target), { ok: true, strategy: "squash", changed: true }),
+    } as unknown as WorktreeManager;
+    const seat = { sessionId: createId(), seatId: "agent-1.w1" };
+    const errors: string[] = [];
+    const s = await dynamic(
+      "supervised",
+      async (ci) => {
+        await ci.worktrees!.applyTo("main", seat, { strategy: "squash" }).catch((e: Error) => errors.push(e.message));
+        await ci.worktrees!.applyTo("main", seat, { strategy: "squash" }); // unchanged while asked: lands
+      },
+      () => {
+        if (errors.length === 0 && diff === "v1") diff = "v2"; // the first question: the worktree changes meanwhile
+        return "approve";
+      },
+      { worktrees: fake },
+    );
+    await s.result();
+    expect(errors).toEqual(["agent-1.w1 changed while waiting for approval; nothing applied (the work is kept)"]);
+    expect(applied).toEqual(["main"]);
+    expect(s.asked).toHaveLength(2);
   });
 
   it("answer() checks ids and options; cancel resolves open questions", async () => {

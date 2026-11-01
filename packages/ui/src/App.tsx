@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { NegotiationView } from "./features/negotiation/NegotiationView.js";
 import { LeadBoard } from "./features/lead-board/LeadBoard.js";
 import { SeatDrawer } from "./features/seat-drawer/SeatDrawer.js";
@@ -10,6 +10,12 @@ import { SessionBoard } from "./features/session-board/SessionBoard.js";
 import { useEngine } from "./store/context.js";
 import type { ConnectionStatus } from "./store/engineStore.js";
 import { selectHasNegotiation, selectHasReview } from "./store/selectors.js";
+import { useRoute, SECTIONS } from "./shell/route.js";
+import { EmptySection, SectionNav } from "./shell/Sidebar.js";
+import { useConnectionToasts } from "./shell/Toasts.js";
+
+// Dev only: `import.meta.env.DEV` is false in the production build, so this chunk is never emitted.
+const FixturesPage = import.meta.env.DEV ? lazy(() => import("./features/dev/FixturesPage.js")) : undefined;
 
 const CONNECTION_LABEL: Record<ConnectionStatus, string> = {
   connecting: "Connecting…",
@@ -44,6 +50,8 @@ export function App() {
   const connection = useEngine((s) => s.connection);
   const engineVersion = useEngine((s) => s.engineVersion);
   const [theme, setTheme] = useTheme();
+  const route = useRoute();
+  useConnectionToasts(connection);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const openPalette = useCallback(() => setPaletteOpen(true), []);
@@ -72,12 +80,21 @@ export function App() {
           </select>
         </label>
       </header>
-      <aside className="sidebar" aria-label="Sessions">
-        <SessionList />
+      <aside className="sidebar">
+        <SectionNav route={route} />
+        {route === "sessions" ? <SessionList /> : null}
       </aside>
       <main className="main">
         <ConnectionNotice />
-        <SessionPanel />
+        {route === "sessions" ? <SessionPanel /> : null}
+        {route === "dev/fixtures" && FixturesPage ? (
+          <Suspense fallback={<p className="empty">Loading…</p>}>
+            <FixturesPage />
+          </Suspense>
+        ) : null}
+        {SECTIONS.filter((s) => s.id !== "sessions" && s.id === route).map((s) => (
+          <EmptySection key={s.id} id={s.id} label={s.label} />
+        ))}
       </main>
       {paletteOpen ? <CommandPalette onClose={closePalette} /> : null}
       {helpOpen ? <KeyboardHelp onClose={closeHelp} /> : null}

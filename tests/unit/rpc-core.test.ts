@@ -132,13 +132,43 @@ describe("JSON-RPC conformance", () => {
       protocolVersion: 1,
       capabilities: [
         "engine.hello",
+        "env.detectClis",
+        "env.doctor",
         "events.subscribe",
         "events.unsubscribe",
         "models.catalog",
+        "models.discover",
+        "playbook.get",
+        "playbook.list",
+        "prompt.fork",
         "prompt.get",
         "prompt.list",
+        "prompt.preview",
+        "prompt.save",
+        "prompt.validate",
+        "seat.inject",
+        "seat.restart",
+        "seat.setModel",
+        "seat.stop",
+        "session.approve",
+        "session.cancel",
+        "session.create",
+        "session.export",
+        "session.get",
+        "session.list",
+        "session.pause",
+        "session.resume",
+        "session.start",
         "sessions.list",
+        "settings.get",
+        "settings.save",
+        "team.delete",
         "team.list",
+        "team.save",
+        "team.validate",
+        "worktree.apply",
+        "worktree.diff",
+        "worktree.discard",
       ],
     });
     await expect(client.call("events.subscribe", { sessionId: "bad" })).rejects.toBeInstanceOf(RpcRemoteError);
@@ -608,8 +638,16 @@ function writeServer(calls: number[]) {
 }
 
 describe("write access", () => {
-  it("declares every current contract method as read", () => {
-    expect(Object.values(RpcMethods).map((def) => def.access)).toEqual(Object.keys(RpcMethods).map(() => "read"));
+  it("declares only the mutating or process-starting methods as write", () => {
+    const writes = Object.entries(RpcMethods).filter(([, def]) => def.access === "write").map(([name]) => name);
+    expect(writes.sort()).toEqual([
+      "env.detectClis", "env.doctor", "models.discover", "prompt.fork", "prompt.save",
+      "seat.inject", "seat.restart", "seat.setModel", "seat.stop",
+      "session.approve", "session.cancel", "session.create", "session.pause", "session.resume", "session.start",
+      "settings.save", "team.delete", "team.save",
+      "worktree.apply", "worktree.discard",
+    ]);
+    expect(Object.values(RpcMethods).every((def) => def.access === "read" || def.access === "write")).toBe(true);
   });
 
   it("refuses write methods on a connection without write access, and never runs them", async () => {

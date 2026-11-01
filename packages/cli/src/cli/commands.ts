@@ -46,7 +46,7 @@ import {
   resolveCliAdapter,
   type CliTransport,
 } from "#assentor/engine/providers/reviewers/cli/index.js";
-import { expandSeatSpecs } from "#assentor/protocol/seats.js";
+import { expandSeatSpecs, type Team } from "#assentor/protocol/seats.js";
 import { FallbackReviewer } from "#assentor/engine/providers/reviewers/fallback.js";
 import { GeminiReviewer } from "#assentor/engine/providers/reviewers/gemini/index.js";
 import { MockReviewer } from "#assentor/engine/providers/reviewers/mock/index.js";
@@ -70,6 +70,7 @@ import {
 } from "#assentor/engine/seats/index.js";
 import { printPreflight, runPreflight } from "./preflight.js";
 import { RunReporter } from "./ui/reporter.js";
+import type { ModeRunHooks } from "./mode-run.js";
 import { resolveProviderApiKey } from "#assentor/engine/keys/resolve.js";
 
 export interface RunAssentorInput {
@@ -93,10 +94,14 @@ export interface RunAssentorInput {
   autopilot?: boolean;
   /** Overrides config `run.autonomy` / `run.mode`. */
   autonomy?: Autonomy;
-  /** Registry mode (`--mode <id>`). Only `available` modes run; today they all run as solo. */
+  /** Registry mode (`--mode <id>`). Only `available` modes run; solo runs the Supervisor below, others through prepareModeSession. */
   modeId?: ModeId;
   /** Live seat-scoped engine events (T00-07), in log order. Errors thrown here are reported, not propagated. */
   onEngineEvent?: (event: EngineEvent) => void;
+  /** `--mode` runs (not solo): after the session, a retro appends lessons to `.assentor/memory/lessons.md`. */
+  retro?: boolean;
+  /** `--mode` runs (not solo): replace host pieces (tests, embedding hosts). */
+  modeHooks?: ModeRunHooks;
 }
 
 export async function createExecutor(
@@ -508,8 +513,8 @@ function reviewerSeatInfo(
   };
 }
 
-/** Decision policy and seat roles for a `PanelReviewer`, from `modes.review`. */
-function panelPolicyOptions(
+/** Decision policy and seat roles for a `PanelReviewer`, from `modes.review`. Exported for mode-run.ts. */
+export function panelPolicyOptions(
   config: AssentorConfig,
   backends: ReviewerMemberSource[],
 ): Pick<ReviewCoordinatorOptions, "policy" | "tiebreak" | "roles"> {
@@ -520,10 +525,13 @@ function panelPolicyOptions(
   };
 }
 
-async function createMembersFromBackends(input: {
+/** Exported for `run --mode` (mode-run.ts). */
+export async function createMembersFromBackends(input: {
   config: AssentorConfig;
   projectPath: string;
   prompt: string;
+  /** A config team to review with instead of `modes.review` / the legacy reviewers. */
+  team?: { name: string; team: Team };
   onStatus?: (message: string) => void;
   /** Raw status message for the member at this index (one member per backend). */
   onMemberStatus?: (index: number, message: string) => void;
@@ -543,9 +551,9 @@ async function createMembersFromBackends(input: {
     taskText: input.prompt,
   });
   const reviewStrategy = input.config.routing.reviewStrategy as ReviewStrategy;
-  const reviewTeam = input.config.modes.review
-    ? resolveTeams(input.config).review
-    : undefined;
+  const reviewTeam =
+    input.team?.team ??
+    (input.config.modes.review ? resolveTeams(input.config).review : undefined);
   const backends = reviewTeam ? [] : selectReviewerBackends(input.config);
   if (!reviewTeam && backends.length === 0) {
     throw new Error(
@@ -577,7 +585,7 @@ async function createMembersFromBackends(input: {
   if (reviewTeam) {
     const config = input.config;
     const seats = await createReviewerSeats(reviewTeam, {
-      teamName: config.modes.review!.team,
+      teamName: input.team?.name ?? config.modes.review!.team,
       createReviewer: (request) =>
         createReviewer(request.provider, {
           onStatus: request.onStatus,
@@ -790,11 +798,20 @@ function seatEventListener(
   };
 }
 
-export async function runAssentorTask(input: RunAssentorInput) {
+type SoloRun = Awaited<ReturnType<typeof runAssentorTaskBody>>;
+type ModeRun = Awaited<ReturnType<typeof import("./mode-run.js").runModeTask>>;
+
+export function runAssentorTask(input: RunAssentorInput & { modeId?: "solo" }): Promise<SoloRun>;
+export function runAssentorTask(input: RunAssentorInput): Promise<SoloRun | ModeRun>;
+export async function runAssentorTask(input: RunAssentorInput): Promise<SoloRun | ModeRun> {
   assertReviewerOrTeam(input);
   if (input.modeId && !getMode(input.modeId)?.available) {
-    const hint = input.modeId === "review" ? " For a review panel use run --team." : "";
-    throw new Error(`Mode ${input.modeId} is not available yet.${hint}`);
+    throw new Error(`Mode ${input.modeId} is not available yet.`);
+  }
+  if (input.modeId && input.modeId !== "solo") {
+    // Every other mode runs through prepareModeSession; solo keeps the Supervisor path below unchanged.
+    const { runModeTask } = await import("./mode-run.js");
+    return runModeTask({ ...input, modeId: input.modeId });
   }
   const projectPath = path.resolve(input.projectPath);
   const executorLabel = input.executor
@@ -1056,8 +1073,18 @@ export async function resumeAssentorTask(input: {
   team?: string;
   /** Overrides config `run.autonomy` / `run.mode` for this resume. */
   autonomy?: Autonomy;
+  /** Mode sessions only: see `RunAssentorInput.modeHooks`. */
+  modeHooks?: ModeRunHooks;
 }) {
   assertReviewerOrTeam(input);
+  if (input.taskId) {
+    const { readModeRun, resumeModeTask } = await import("./mode-run.js");
+    const record = await readModeRun(input.projectPath, input.taskId);
+    if (record) {
+      const { result } = await resumeModeTask({ ...input, sessionId: input.taskId, record });
+      return result;
+    }
+  }
   const projectPath = path.resolve(input.projectPath);
   const reporter = new RunReporter({
     verbose: input.verbose,
@@ -1360,11 +1387,12 @@ async function doctorTeamLines(options: DoctorOptions): Promise<string[]> {
   return lines;
 }
 
-function attachRunInterrupt(input: {
+/** Exported for mode-run.ts, whose `getSupervisor` cancels the whole mode session. */
+export function attachRunInterrupt(input: {
   reporter: RunReporter;
   getExecutor: () => Executor | undefined;
   getTaskId: () => string | undefined;
-  getSupervisor: () => Supervisor | undefined;
+  getSupervisor: () => Pick<Supervisor, "requestCancel"> | undefined;
 }): () => void {
   let stopping = false;
   const onInterrupt = () => {

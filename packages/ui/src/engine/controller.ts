@@ -1,36 +1,37 @@
-import { RpcClient, type RpcClientTransport } from "#assentor/protocol/rpc-client.js";
 import { createFrameBatcher, type EngineStore } from "../store/engineStore.js";
-import { AuthRejectedError } from "../transport/websocket.js";
+import type { Transport, TransportStatus } from "../transport/types.js";
 
 /**
- * Keeps the UI connected to the engine (T04-06p): handshake, session list
- * refresh, one live subscription for the selected session, and reconnect with
- * backoff that resubscribes from the last applied `seq` (no gaps, no repeats).
+ * Keeps the store in step with a `Transport` (T04-06): on every `open` it says
+ * hello, refreshes the session list and resubscribes the selected session from
+ * its last applied `seq` (no gaps, no repeats). The transport owns reconnecting.
  */
 
 export interface ControllerOptions {
   store: EngineStore;
-  /** Opens an authenticated transport (WebSocket in the app, in-process in tests). */
-  connect: () => Promise<RpcClientTransport>;
+  transport: Transport;
   /** How often to refresh the session list. Default 3 s. */
   listIntervalMs?: number;
-  /** Reconnect delays; the last one repeats. */
-  backoffMs?: number[];
+  /** Delays between `engine.hello` retries on an open link; the last one repeats. Default 1 s, 2 s, 5 s. */
+  helloRetryMs?: number[];
   schedule?: (flush: () => void) => void;
 }
 
 export class EngineController {
-  private client?: RpcClient;
   private unsubscribe?: () => Promise<void>;
   private listTimer?: ReturnType<typeof setInterval>;
-  private reconnectTimer?: ReturnType<typeof setTimeout>;
   private resyncTimer?: ReturnType<typeof setTimeout>;
+  private helloTimer?: ReturnType<typeof setTimeout>;
+  private helloAttempt = 0;
   /** Resubscribes run one at a time, so overlapping selects can't leak a subscription. */
   private subscribeChain: Promise<void> = Promise.resolve();
-  private attempt = 0;
+  /** Bumped on every status change, so work started on an old link can tell it is stale. */
+  private link = 0;
+  private open = false;
   private stopped = false;
   private readonly batcher;
   private readonly offSelect: () => void;
+  private offStatus?: () => void;
 
   constructor(private readonly options: ControllerOptions) {
     this.batcher = createFrameBatcher(options.store, options.schedule);
@@ -43,77 +44,64 @@ export class EngineController {
     });
   }
 
-  async start(): Promise<void> {
-    await this.connect();
+  start(): void {
+    this.offStatus = this.options.transport.onStatus((status) => this.onStatus(status));
   }
 
   stop(): void {
     this.stopped = true;
     this.offSelect();
+    this.offStatus?.();
     clearInterval(this.listTimer);
-    clearTimeout(this.reconnectTimer);
     clearTimeout(this.resyncTimer);
-    this.client?.close();
+    clearTimeout(this.helloTimer);
+    this.options.transport.close();
   }
 
-  private async connect(): Promise<void> {
-    if (this.stopped) {
+  private onStatus(status: TransportStatus): void {
+    this.link += 1;
+    clearTimeout(this.helloTimer);
+    this.helloAttempt = 0;
+    if (status === "open") {
+      this.open = true;
+      void this.onOpen(this.link);
       return;
     }
-    const { store } = this.options;
-    store.getState().setConnection(this.attempt === 0 ? "connecting" : "reconnecting");
-    let transport: RpcClientTransport;
-    try {
-      transport = await this.options.connect();
-    } catch (error) {
-      if (error instanceof AuthRejectedError) {
-        store.getState().setConnection("unauthorized");
-        return; // a new token is needed; retrying would only add failures
-      }
-      this.scheduleReconnect();
-      return;
+    this.open = false;
+    this.unsubscribe = undefined;
+    clearInterval(this.listTimer);
+    clearTimeout(this.resyncTimer);
+    if (status !== "closed") {
+      this.options.store.getState().setConnection(status);
     }
-    const client = new RpcClient(transport);
-    this.client = client;
-    client.onClose(() => {
-      if (this.client === client) {
-        this.client = undefined;
-        this.unsubscribe = undefined;
-        clearInterval(this.listTimer);
-        clearTimeout(this.resyncTimer);
-        this.scheduleReconnect();
-      }
-    });
+  }
+
+  private async onOpen(link: number): Promise<void> {
+    const { store, transport } = this.options;
     try {
-      const hello = await client.call("engine.hello", { client: "assentor-web" });
-      this.attempt = 0;
+      const hello = await transport.call("engine.hello", { client: "assentor-web" });
+      if (link !== this.link) return;
       store.getState().setConnection("connected", hello.engineVersion);
       await this.refreshSessions();
-      if (this.client !== client || client.isClosed) {
-        return; // dropped during the first refresh; onClose already scheduled a reconnect
-      }
+      if (link !== this.link) return; // dropped during the first refresh; the transport reconnects
       clearInterval(this.listTimer);
       this.listTimer = setInterval(() => void this.refreshSessions(), this.options.listIntervalMs ?? 3000);
       await this.resubscribe();
     } catch {
-      client.close();
+      // A dropped link reconnects and reports `open` again (which resets this). On a link that
+      // stays open, the engine refused or failed hello: try again rather than stay on "Connecting…".
+      if (link === this.link && !this.stopped) {
+        const delays = this.options.helloRetryMs ?? [1000, 2000, 5000];
+        const delay = delays[Math.min(this.helloAttempt, delays.length - 1)]!;
+        this.helloAttempt += 1;
+        this.helloTimer = setTimeout(() => void this.onOpen(link), delay);
+      }
     }
-  }
-
-  private scheduleReconnect(): void {
-    if (this.stopped) {
-      return;
-    }
-    const delays = this.options.backoffMs ?? [250, 1000, 2000, 5000];
-    const delay = delays[Math.min(this.attempt, delays.length - 1)]!;
-    this.attempt += 1;
-    this.options.store.getState().setConnection("reconnecting");
-    this.reconnectTimer = setTimeout(() => void this.connect(), delay);
   }
 
   private async refreshSessions(): Promise<void> {
     try {
-      const { sessions } = await this.client!.call("sessions.list");
+      const { sessions } = await this.options.transport.call("sessions.list");
       this.options.store.getState().setSessions(sessions);
     } catch {
       // A failed refresh is retried on the next tick or after reconnecting.
@@ -131,20 +119,20 @@ export class EngineController {
     if (this.stopped) {
       return;
     }
-    const client = this.client;
+    const link = this.link;
     const previous = this.unsubscribe;
     this.unsubscribe = undefined;
     await previous?.().catch(() => undefined);
-    const { store } = this.options;
+    const { store, transport } = this.options;
     const session = store.getState().session;
-    if (!client || !session || client.isClosed) {
+    if (!this.open || !session) {
       return;
     }
     const sessionId = session.id;
     this.batcher.flush(); // apply anything pending before reading lastSeq
     const fromSeq = store.getState().session?.lastSeq ?? 0;
     try {
-      const sub = await client.subscribeEvents(sessionId, fromSeq, {
+      const sub = await transport.subscribe(sessionId, fromSeq, {
         onEvent: (event) => this.batcher.push(sessionId, event),
         onResync: (params) => {
           this.batcher.flush();
@@ -157,13 +145,13 @@ export class EngineController {
           this.resyncTimer = setTimeout(() => void this.resubscribe(), delay);
         },
       });
-      if (store.getState().session?.id !== sessionId || this.client !== client || this.stopped) {
+      if (store.getState().session?.id !== sessionId || this.link !== link || this.stopped) {
         await sub.unsubscribe().catch(() => undefined); // selection or connection changed while subscribing
         return;
       }
       this.unsubscribe = sub.unsubscribe;
     } catch {
-      // The connection dropped; onClose reconnects and resubscribes.
+      // The link dropped; the transport reconnects and the controller resubscribes on `open`.
     }
   }
 }

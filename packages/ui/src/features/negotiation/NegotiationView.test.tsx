@@ -208,7 +208,8 @@ describe("NegotiationView: sessions without negotiation", () => {
       store.getState().select(sessionFixture.id);
       store.getState().applyEvents(sessionFixture.id, sessionFixture.events);
     });
-    expect(container.innerHTML).toBe("");
+    // Only the (empty) notifications region from renderWithStore remains.
+    expect(Array.from(container.children).filter((el) => !el.classList.contains("toasts"))).toHaveLength(0);
     expect(selectHasNegotiation(store.getState())).toBe(false);
     expect(selectHasNegotiation(renderFixtureStore())).toBe(true);
   });

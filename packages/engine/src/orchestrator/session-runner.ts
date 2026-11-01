@@ -70,6 +70,8 @@ export interface StageRunInput {
   plan?: string;
   /** Changes asked for by the review that looped back here. */
   feedback?: string[];
+  /** One line for the user if the session asks before starting this stage (e.g. why a mode picked this tier). */
+  approvalNote?: string;
   /** Unique per stage start in this session, also across resumes. Use it in run ids. */
   attempt: number;
   /** The session's signal. Stop all work when it aborts. */

@@ -68,6 +68,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-04 · RPC handlers: prompts / teams / playbooks / settings
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T04-02
 
+**Merged 2026-10-31 (planner, under the owner's standing merge direction):** `0f5b81b` + O2 fixes `71093fe`, `e00c626`; O2 PASS. Write methods: prompt.save/fork, team.save/delete, settings.save, env.doctor, env.detectClis, models.discover; reads: prompt.preview/validate, team.validate, playbook.list/get, settings.get (keys as {id, provider, name, healthy} via read-only `KeyVault.readSummaries`). settings.save allowlist excludes binaries, verification commands, security, reviewers, teams, modes; executor.model is a ModelId (no flag-like values). Config saves are atomic (temp + rename, through symlinks) and serialized in-process. Open: cross-process lost updates (follow-up lockfile); `keys.*` handlers.
+
 **Status: ✅ preview cut T04-04p done** (`e6107b4` + `793aaf4`, Haiku #2; Sonnet NEEDS_WORK → fixed). Read-only methods in `packages/engine/src/rpc/library.ts`: `prompt.list`, `prompt.get`, `team.list` (config teams expanded to seats, plus the legacy review team when `modes.review` is unset; config errors → `InvalidRequest "Config problem: …"`, paths scrubbed; never `keyId`), `models.catalog` (a `readOnly` `CliModelCatalog`: reads the cache only, never backs up, discovers or writes). Not in this cut: `prompt.save/fork/preview/validate`, `team.save/delete/validate`, playbooks, `settings.*`, `env.*` (writes or process spawns).
 
 **Goal** — Expose existing library/config functions over RPC.
@@ -90,6 +92,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-05 · RPC handlers: sessions / seats / worktrees
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** T04-02, T02-09
 
+**Merged 2026-10-31 (planner, under the owner's standing merge direction):** `401f97f` + O2 fixes `92a7eab`; re-review PASS with nits. `session.create/start/cancel/approve/list/get/export`, `worktree.diff/apply/discard` (apply/discard need `confirm: true`, address worktrees by session + seat via the manifest, refused while the session is live in this or another process). Autonomy = min(host, client, `maxAutonomy`); `serve` caps at supervised (no autopilot from a browser). Created sessions expire after 10 min; export is bounded (5,000 events / ~1 MiB). Not supported yet (NotSupported -32004): session.pause/resume, seat.setModel/inject/stop/restart. Error codes: RateLimited -32003, NotSupported -32004, Rejected -32005. Process note: merge commit `c68ae9e` on the card branch was made with plain `git commit` (no content).
+
 **Deliverables** — `session.create/start/pause/resume/cancel/list/get/approve/export`, `seat.setModel/inject/stop/restart`, `worktree.diff/apply/discard` delegating to `SessionRunner`, `WorktreeManager`; `apply`/`discard` require an explicit `confirm: true` param; all path params validated against project root.
 
 **Reviewer focus** — no path traversal; destructive ops gated; cancellation semantics.
@@ -98,6 +102,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 
 ### T04-06 · UI scaffold, Transport interface, event store
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** T04-02
+
+**Merged 2026-10-31 (planner, under the owner's standing merge direction):** `f9eea2c` + merge `103faa8` + review fixes `f352803`; O review PASS. `Transport` (call/subscribe/onStatus/close) is the single seam; `WebSocketTransport` owns connect/backoff/reconnect; `useRpc()`, `mockTransport`, `closedTransport`; shared contract suite run by both transports; sidebar sections with empty states, toasts (always-present live region), `#/dev/fixtures` dev-only page; reload and 6×50/s burst acceptance tests. No new dependency: TanStack Router/Query/Virtual and Radix are not on the approved list (STATUS §6), so routing is a tiny hash router and the rest is skipped.
 
 **Status: ✅ preview cut T04-06p done** (`837c386` + review fixes; Opus review NEEDS_WORK → fixed → PASS). Review fixes: `EngineController` serializes resubscribes (A→B→A can't leak a server subscription), tracks and clears the resync timer, and only starts the `sessions.list` poller on a live client; the frame batcher appends in place, applies at once past 1,000 pending events and uses a timer while the tab is hidden; the build no longer ships a source map. Full T04-06 (Router/Query/Virtual, transport contract suite, other sections) is still open. Earlier note: `packages/ui/` (Vite 7 + React 18 + TS + Zustand, plain CSS with light/dark/system; Tailwind left out — v4 needs a plugin package not on the approved list). `connectWebSocket` (token handshake), `takeToken` (fragment → sessionStorage, stripped from the URL), `createEngineStore` + `createFrameBatcher` (one apply per animation frame, `reduceSeatEvents` shared with the TUI), `EngineController` (hello, `sessions.list` refresh, one subscription for the selected session, reconnect with backoff, resubscribe from `lastSeq`, `unreadable_log` terminal, `io_error` with backoff), app shell (header, session list, placeholder seat list for T04-07p). Engine code is imported only through `@engine/…` browser-safe modules. Tests: store replay = identical state, 6×50 burst in one frame, controller against the real engine (reconnect without gaps, auth rejection stops retries), App shell, token handling. `pnpm build` now also builds `packages/ui/dist`; `pnpm typecheck` checks `packages/ui/` (app without Node types, tests with). Verified by hand: `assentor serve` on a mock run shows the run and its seats live. Not done: Router/Query/Radix/Virtual, transport contract suite, `/dev/fixtures` page, Prompts/Teams/Playbooks/Settings sections.
 
@@ -288,3 +294,15 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 **Tests** — columns from fixture stream; refused-actions filter; approve requires confirm; override sends RPC.
 
 **Status: preview cut T04-17p** (watch-only, branch `claude/card-t04-17p`). Points 1, 2, 3 and the seat-drawer part of 5 are in `packages/ui/src/features/lead-board/` (`LeadBoard`, `LeadOrgChart`, `LeadLog`), shown for a run whose `mode.selected` is `lead`. Shared reducer (`packages/ui-shared/src/lead.ts`) extended, not forked: six web stages (`leadStages`: Backlog, Assigned, In progress, In review, Accepted, Rejected), owner seat id, reassign and escalation counters, and `actions` (every lead action; `log` stays the terminal's last five). The refused-only switch is a native checkbox with `role="switch"`. Not in this cut: point 4 (approve, override, pin, pause/resume; the server has no write RPCs) and the task's reports in point 5.
+
+---
+
+### T04-18 · Usage view
+**Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T04-06, TE-01
+
+**Goal** — See where tokens and money go, per run.
+
+**Deliverables** — a Usage section (sidebar) and a per-session panel: totals, per seat / stage / model table, cached share, estimate vs actual (TE-09), budget bars with the 50/80% warnings, skills loaded and their cost (TE-07 `skill.loaded`). Data from RPC `usage.get` (TE-01). Read-only.
+
+**Tests** — fixture log → table totals match the ledger; budget bar states; empty state.
+

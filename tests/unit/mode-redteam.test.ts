@@ -129,7 +129,9 @@ interface Setup {
   reviewer: MockReviewer;
   events: EngineEventDraft[];
   controller: AbortController;
-  run: (over?: { autonomy?: "manual" | "supervised" | "autopilot"; extras?: RedteamExtras; config?: typeof config }) => ReturnType<ReturnType<typeof prepareModeSession>["run"]>;
+  /** Every approval question the user was shown (the session's apply gate and the mode's own), in order. */
+  questions: string[];
+  run: (over?: { autonomy?: "manual" | "supervised" | "autopilot"; extras?: RedteamExtras; config?: typeof config; answer?: "approve" | "deny" | "abort" }) => ReturnType<ReturnType<typeof prepareModeSession>["run"]>;
 }
 
 async function setup(
@@ -149,6 +151,7 @@ async function setup(
   const events: EngineEventDraft[] = [];
   const controller = new AbortController();
   const sessionId = createId();
+  const questions: string[] = [];
   const deps: StageRunnerDeps = {
     projectPath: repo,
     scheduler: new SeatScheduler({ sessionId, backoffBaseMs: 1, abortGraceMs: 200 }),
@@ -166,6 +169,7 @@ async function setup(
     builder,
     reviewer,
     events,
+    questions,
     controller,
     run: (over = {}) => {
       const mode = {
@@ -173,7 +177,7 @@ async function setup(
         createController: (i: Parameters<NonNullable<ReturnType<typeof getMode>>["createController"] & object>[0]) =>
           createRedteamController(i, { runCommand, ...over.extras }),
       };
-      // The session itself asks before applying to main unless autopilot (T02B-02); approve those so the mode's own approval is what the tests exercise.
+      // The session itself asks before applying to main unless autopilot; answered here (approve by default).
       const session: ReturnType<typeof prepareModeSession> = prepareModeSession({
         mode,
         sessionId,
@@ -186,8 +190,10 @@ async function setup(
         emit: (e) => {
           events.push(e);
           if (e.type === "user.question") {
-            const { questionId } = e.data as unknown as { questionId: string };
-            queueMicrotask(() => session.answer(questionId, "approve"));
+            const { questionId, question } = e.data as unknown as { questionId: string; question: string };
+            questions.push(question);
+            if (over.answer === "abort") queueMicrotask(() => controller.abort());
+            else queueMicrotask(() => session.answer(questionId, over.answer ?? "approve"));
           }
         },
       });
@@ -205,7 +211,7 @@ function expectTerminalSeatEvents(events: EngineEventDraft[]) {
 }
 
 describe("red-team mode", () => {
-  it("is a dynamic, CLI-unavailable mode", () => {
+  it("is a dynamic mode, not CLI-available until worktrees get dependencies", () => {
     expect(getMode("redteam")).toMatchObject({ kind: "dynamic", available: false, editsCode: true });
   });
 
@@ -233,28 +239,41 @@ describe("red-team mode", () => {
     expect(s.events.at(-1)).toMatchObject({ type: "session.completed" });
   });
 
-  it("supervised without an approval channel keeps the work out of main; with approval it lands", async () => {
-    const blocked = await setup((_t, i) => (i === 0 ? reply([attack(1)]) : reply([], true)));
-    const first = await blocked.run({ autonomy: "supervised" });
+  it("supervised: the session asks once before apply (the mode adds none); yes lands, no keeps the work out of main", async () => {
+    const denied = await setup((_t, i) => (i === 0 ? reply([attack(1)]) : reply([], true)));
+    const noApprove = vi.fn(async () => true);
+    const first = await denied.run({ autonomy: "supervised", answer: "deny", extras: { approve: noApprove } });
     expect(first.status).toBe("blocked");
-    expect(first.reason).toContain("approval needed");
-    expect(await fs.stat(path.join(blocked.repo, "src", "fix-1.txt")).catch(() => undefined)).toBeUndefined();
-    expect(await blocked.manager.list()).toHaveLength(1); // kept for the user
+    expect(first.reason).toContain("not approved");
+    expect(denied.questions).toHaveLength(1);
+    expect(noApprove).not.toHaveBeenCalled();
+    expect(await fs.stat(path.join(denied.repo, "src", "fix-1.txt")).catch(() => undefined)).toBeUndefined();
+    expect(await denied.manager.list()).toHaveLength(1); // kept for the user
 
     const approved = await setup((_t, i) => (i === 0 ? reply([attack(1)]) : reply([], true)));
     const approve = vi.fn(async () => true);
     expect(await approved.run({ autonomy: "supervised", extras: { approve } })).toMatchObject({ status: "completed" });
-    expect(approve).toHaveBeenCalledOnce();
+    expect(approved.questions).toHaveLength(1);
+    expect(approved.questions[0]).toContain("red-team: 1 attack(s) fixed");
+    expect(approve).not.toHaveBeenCalled();
     expect(await fs.stat(path.join(approved.repo, "src", "fix-1.txt"))).toBeTruthy();
   });
 
-  it("manual autonomy does not start any work (no approval channel yet), even with an approve callback", async () => {
+  it("autopilot asks nothing for an ordinary diff", async () => {
+    const s = await setup((_t, i) => (i === 0 ? reply([attack(1)]) : reply([], true)));
+    const approve = vi.fn(async () => true);
+    expect(await s.run({ extras: { approve } })).toMatchObject({ status: "completed" });
+    expect(s.questions).toEqual([]);
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  it("manual autonomy does not start any work, even with an approve callback", async () => {
     const s = await setup(() => reply([attack(1)]));
     const approve = vi.fn(async () => true);
     const result = await s.run({ autonomy: "manual", extras: { approve } });
     expect(approve).not.toHaveBeenCalled();
     expect(result.status).toBe("blocked");
-    expect(result.reason).toContain("approval channel");
+    expect(result.reason).toContain("manual autonomy");
     expect(s.attacker.prompts).toEqual([]);
     expect(await s.manager.list()).toEqual([]);
   });
@@ -529,13 +548,15 @@ describe("red-team mode", () => {
     expect(await fs.stat(path.join(s.repo, "src", "sneaky.txt")).catch(() => undefined)).toBeUndefined();
   });
 
+  const dangerousBuilder = () =>
+    scripted("builder", async (task) => {
+      await fs.writeFile(path.join(task.projectPath, "src", "fix-1.txt"), "fixed\n");
+      await fs.writeFile(path.join(task.projectPath, "src", "run.ts"), 'import { spawn } from "node:child_process";\n');
+      return { status: "completed", summary: "fixed" };
+    });
+
   it("a danger-area diff needs approval even under autopilot", async () => {
-    const dangerous = () =>
-      scripted("builder", async (task) => {
-        await fs.writeFile(path.join(task.projectPath, "src", "fix-1.txt"), "fixed\n");
-        await fs.writeFile(path.join(task.projectPath, "src", "run.ts"), 'import { spawn } from "node:child_process";\n');
-        return { status: "completed", summary: "fixed" };
-      });
+    const dangerous = dangerousBuilder;
     const turn = (_t: ExecutorTask, i: number) => (i === 0 ? reply([attack(1)]) : reply([], true));
     const blocked = await setup(turn, dangerous());
     const first = await blocked.run();
@@ -546,16 +567,36 @@ describe("red-team mode", () => {
     const asked = await setup(turn, dangerous());
     const approve = vi.fn(async () => true);
     expect(await asked.run({ extras: { approve } })).toMatchObject({ status: "completed" });
+    expect(approve).toHaveBeenCalledOnce();
     expect(approve).toHaveBeenCalledWith(expect.stringContaining("danger area: process"));
+    expect(asked.questions).toEqual([]); // autopilot: the mode's question is the only one
+  });
+
+  it("a denied danger-area approval under autopilot blocks and keeps the work", async () => {
+    const turn = (_t: ExecutorTask, i: number) => (i === 0 ? reply([attack(1)]) : reply([], true));
+    const refused = await setup(turn, dangerousBuilder());
+    const no = vi.fn(async () => false);
+    const out = await refused.run({ extras: { approve: no } });
+    expect(out).toMatchObject({ status: "blocked" });
+    expect(out.reason).toContain("not approved");
+    expect(no).toHaveBeenCalledOnce();
+    expect(await fs.stat(path.join(refused.repo, "src", "run.ts")).catch(() => undefined)).toBeUndefined();
+  });
+
+  it("a danger-area diff under supervised is asked once, by the session, with the danger text", async () => {
+    const turn = (_t: ExecutorTask, i: number) => (i === 0 ? reply([attack(1)]) : reply([], true));
+    const sup = await setup(turn, dangerousBuilder());
+    const extra = vi.fn(async () => true);
+    expect(await sup.run({ autonomy: "supervised", extras: { approve: extra } })).toMatchObject({ status: "completed" });
+    expect(sup.questions).toHaveLength(1);
+    expect(sup.questions[0]).toContain("danger area: process");
+    expect(extra).not.toHaveBeenCalled();
   });
 
   it("cancel while waiting for approval resolves the session; nothing is applied", async () => {
     const s = await setup((_t, i) => (i === 0 ? reply([attack(1)]) : reply([], true)));
-    const approve = () => {
-      s.controller.abort();
-      return new Promise<boolean>(() => undefined);
-    };
-    expect((await s.run({ autonomy: "supervised", extras: { approve } })).status).toBe("cancelled");
+    expect((await s.run({ autonomy: "supervised", answer: "abort" })).status).toBe("cancelled");
+    expect(s.questions).toHaveLength(1);
     expect(await fs.stat(path.join(s.repo, "src", "fix-1.txt")).catch(() => undefined)).toBeUndefined();
   });
 
