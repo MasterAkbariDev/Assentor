@@ -67,6 +67,7 @@ export function ReviewView() {
 
   const [severity, setSeverity] = useState<SeverityFilter>("all");
   const [onlyDisagreements, setOnlyDisagreements] = useState(false);
+  const [reviewer, setReviewer] = useState("");
   const uid = useId();
   const noteId = `${uid}-agreement-note`;
   // Agreement data gone (a new run, or no finding has a count): the switch cannot apply, so clear it.
@@ -81,7 +82,13 @@ export function ReviewView() {
     const clash = name !== undefined && reviewers.some((seat) => seat.seatId !== id && seat.displayName === name);
     return name === undefined ? id : clash ? `${name} (${id})` : name;
   };
-  const visible = filterFindings(findings, { severity, onlyDisagreements: onlyDisagreements && agreementKnown });
+  // Reviewers a finding names; the filter is offered only when some finding does.
+  const flaggers = [...new Set(findings.flatMap((f) => f.agentIds))];
+  const visible = filterFindings(findings, {
+    severity,
+    onlyDisagreements: onlyDisagreements && agreementKnown,
+    ...(reviewer && flaggers.includes(reviewer) ? { reviewer } : {}),
+  });
 
   return (
     <section className="review" aria-labelledby={`${uid}-heading`}>
@@ -146,6 +153,19 @@ export function ReviewView() {
           ))}
           <option value="other">other</option>
         </select>
+        {flaggers.length > 0 ? (
+          <>
+            <label htmlFor={`${uid}-reviewer`}>Reviewer</label>
+            <select id={`${uid}-reviewer`} value={reviewer} onChange={(event) => setReviewer(event.target.value)}>
+              <option value="">All</option>
+              {flaggers.map((id) => (
+                <option key={id} value={id}>
+                  {reviewerName(id)}
+                </option>
+              ))}
+            </select>
+          </>
+        ) : null}
         <button
           type="button"
           role="switch"
@@ -183,7 +203,9 @@ export function ReviewView() {
       ) : (
         groupByFile(visible).map((group) => (
           <section key={group.file} className="review-file">
-            <h4 className="review-file-name">{group.file || "No file named"}</h4>
+            <h4 className="review-file-name">
+              {group.file ? <a href={`#/sessions?diff=${encodeURIComponent(group.file)}`}>{group.file}</a> : "No file named"}
+            </h4>
             <ul className="review-findings">
               {group.findings.map((finding, index) => (
                 <FindingItem key={`${finding.key}:${index}`} finding={finding} reviewerName={reviewerName} />

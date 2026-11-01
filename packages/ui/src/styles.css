@@ -374,7 +374,9 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .vote-table tfoot th, .vote-table tfoot td { font-weight: 600; }
 .consensus { margin-bottom: 16px; }
 .consensus-line { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0; font-size: 13px; }
-.consensus-line meter { width: min(240px, 60vw); height: 14px; }
+.consensus-bar { position: relative; display: inline-block; }
+.consensus-line meter { width: min(240px, 60vw); height: 14px; display: block; }
+.consensus-marker { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--text); pointer-events: none; }
 .consensus-value { font-variant-numeric: tabular-nums; }
 .consensus-state { color: var(--muted); }
 .consensus-state.is-reached { color: var(--ok); }

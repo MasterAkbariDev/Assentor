@@ -150,6 +150,27 @@ describe("ReviewView per-reviewer verdicts and panel data", () => {
     expect(container.querySelector(".review-category")?.textContent).toBe("security");
   });
 
+  it("filters findings by reviewer through a labelled select and restores All", () => {
+    const { getByLabelText, getByText, queryByText } = renderReview([
+      ...panelEvents(),
+      ...stream([
+        { type: "review.finding", data: { key: "f2", description: "Style nit", severity: "info", affectedFiles: ["b.ts"], agreement: { count: 1, total: 2 }, reviewerIds: ["reviewer-1"] } },
+      ]).map((e) => ({ ...e, seq: 100 })),
+    ]);
+    const select = getByLabelText("Reviewer") as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual(["All", "Opus#2", "Opus#1"]);
+    fireEvent.change(select, { target: { value: "reviewer-1" } });
+    expect(getByText("Style nit")).toBeTruthy();
+    expect(queryByText("Token compared with ==")).toBeNull();
+    fireEvent.change(select, { target: { value: "" } });
+    expect(getByText("Token compared with ==")).toBeTruthy();
+  });
+
+  it("links each file to the diff view at that file", () => {
+    const { getByRole } = renderReview(panelEvents());
+    expect(getByRole("link", { name: "a.ts" }).getAttribute("href")).toBe("#/sessions?diff=a.ts");
+  });
+
   it("tells two reviewers with the same name apart by seat id", () => {
     const { getByText } = renderReview(
       stream([
