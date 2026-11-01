@@ -151,6 +151,12 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       setNotice(`${item.label}: ${action.reason}`);
       return;
     }
+    if (action.kind === "route") {
+      window.location.hash = action.hash;
+      handledRef.current = focusMain();
+      onClose();
+      return;
+    }
     if (action.kind === "session") {
       select(action.sessionId);
       handledRef.current = focusMain();

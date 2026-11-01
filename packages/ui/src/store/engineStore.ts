@@ -3,6 +3,8 @@ import type { EngineEvent, EngineEventOf, EngineEventType } from "#assentor/prot
 import type { SessionSummary } from "#assentor/protocol/rpc.js";
 import { emptyLeadBoardView, reduceLeadEvents, type LeadBoardView } from "#assentor/ui-shared/lead.js";
 import { reduceSeatEvents, type SeatState } from "#assentor/ui-shared/status.js";
+import { loadRecents, saveRecents } from "./recents.js";
+import { reduceStages, type StageView } from "./stages.js";
 
 /**
  * UI state for the engine connection and the selected session (T04-06p).
@@ -71,6 +73,10 @@ export interface SessionView {
   seatEvents: Record<string, EngineEvent[]>;
   /** The last `NEGOTIATION_EVENT_CAP` events whose type is in `NEGOTIATION_EVENT_TYPES`, oldest first. */
   negotiationEvents: EngineEvent[];
+  /** Stages in the order they first started, from `stage.started` / `stage.completed`. Empty for a solo run. */
+  stages: StageView[];
+  /** Seats with a model switch waiting for their next turn (`seat.model.changed` `pending: true`), seat id to model. */
+  pendingModels: Record<string, string>;
   /** Last applied `seq`; resubscribe from here. */
   lastSeq: number;
   eventCount: number;
@@ -119,11 +125,11 @@ export interface EngineState {
 
 export type EngineStore = StoreApi<EngineState>;
 
-/** How many recently selected runs the command palette keeps. */
-export const RECENT_LIMIT = 5;
+/** How many recently selected runs the command palette keeps (saved in localStorage, see `recents.ts`). */
+export const RECENT_LIMIT = 20;
 
 function emptySession(id: string): SessionView {
-  return { id, seats: {}, seatInfo: {}, seatEvents: {}, negotiationEvents: [], lead: emptyLeadBoardView(), reviewFindings: [], memberVerdicts: {}, prompts: {}, controlTick: 0, lastSeq: 0, eventCount: 0, tokenEvents: 0 };
+  return { id, seats: {}, seatInfo: {}, seatEvents: {}, negotiationEvents: [], lead: emptyLeadBoardView(), reviewFindings: [], memberVerdicts: {}, prompts: {}, stages: [], pendingModels: {}, controlTick: 0, lastSeq: 0, eventCount: 0, tokenEvents: 0 };
 }
 
 export function createEngineStore(): EngineStore {
@@ -131,21 +137,17 @@ export function createEngineStore(): EngineStore {
     connection: "connecting",
     sessions: [],
     sessionsLoaded: false,
-    recentIds: [],
+    recentIds: loadRecents(RECENT_LIMIT),
     setConnection: (connection, engineVersion) =>
       set((s) => ({ connection, engineVersion: engineVersion ?? s.engineVersion })),
     setSessions: (sessions) => set({ sessions, sessionsLoaded: true }),
     select: (id) =>
-      set((s) =>
-        id === s.selectedId
-          ? s
-          : {
-              selectedId: id,
-              openSeatId: undefined,
-              session: id ? emptySession(id) : undefined,
-              recentIds: id ? [id, ...s.recentIds.filter((x) => x !== id)].slice(0, RECENT_LIMIT) : s.recentIds,
-            },
-      ),
+      set((s) => {
+        if (id === s.selectedId) return s;
+        const recentIds = id ? [id, ...s.recentIds.filter((x) => x !== id)].slice(0, RECENT_LIMIT) : s.recentIds;
+        if (id) saveRecents(recentIds);
+        return { selectedId: id, openSeatId: undefined, session: id ? emptySession(id) : undefined, recentIds };
+      }),
     openSeat: (seatId) => set({ openSeatId: seatId }),
     applyEvents: (sessionId, events) =>
       set((s) => {
@@ -153,7 +155,7 @@ export function createEngineStore(): EngineStore {
         if (!current || current.id !== sessionId || events.length === 0) {
           return s;
         }
-        let { seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, lastSeq, eventCount, tokenEvents, state, mode, prompts, controlTick } = current;
+        let { seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, stages, pendingModels, lastSeq, eventCount, tokenEvents, state, mode, prompts, controlTick } = current;
         for (const event of events) {
           if (event.sessionId !== sessionId || event.seq <= lastSeq) {
             continue;
@@ -178,6 +180,13 @@ export function createEngineStore(): EngineStore {
               // Findings follow their verdict: a new decision starts a new list.
               reviewFindings = [];
             }
+          }
+          if (event.type === "stage.started" || event.type === "stage.completed") {
+            stages = reduceStages(stages, event);
+          }
+          if (event.seatId && event.type === "seat.model.changed") {
+            const { [event.seatId]: _gone, ...rest } = pendingModels;
+            pendingModels = event.data.pending ? { ...rest, [event.seatId]: event.data.to } : rest;
           }
           if (event.type === "review.finding") {
             reviewFindings = [...reviewFindings, event].slice(-REVIEW_FINDING_CAP);
@@ -204,7 +213,7 @@ export function createEngineStore(): EngineStore {
           return s;
         }
         return {
-          session: { ...current, seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, lastSeq, eventCount, tokenEvents, mode, prompts, controlTick, ...(state ? { state } : {}) },
+          session: { ...current, seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, stages, pendingModels, lastSeq, eventCount, tokenEvents, mode, prompts, controlTick, ...(state ? { state } : {}) },
         };
       }),
     failSession: (sessionId, message) =>

@@ -11,6 +11,8 @@ const PAUSE_REASON = "the engine has no pause yet";
 afterEach(() => {
   cleanup();
   delete (window.navigator as unknown as { platform?: string }).platform;
+  localStorage.clear();
+  window.location.hash = "";
 });
 
 const SESSIONS: SessionSummary[] = [
@@ -193,9 +195,9 @@ describe("command palette: keyboard and results", () => {
 
     const listbox = getByRole("listbox");
     expect(within(listbox).getAllByRole("option")).toHaveLength(MAX_RESULTS);
-    // 60 runs and 6 write actions: 16 are not drawn.
+    // 60 runs, 3 pages and 6 write actions: 19 are not drawn.
     expect(within(getByRole("dialog", { name: "Command palette" })).getByRole("status").textContent).toBe(
-      "16 more — keep typing to narrow the results",
+      "19 more — keep typing to narrow the results",
     );
   });
 
@@ -206,6 +208,50 @@ describe("command palette: keyboard and results", () => {
     const option = getByRole("option", { name: /Pause the run/ });
     expect(option.id).toMatch(/write_pause$/);
     expect(field().getAttribute("aria-activedescendant")).toBe(option.id);
+  });
+});
+
+describe("command palette: pages and recents", () => {
+  it.each([
+    ["Prompts", "#/prompts"],
+    ["Teams", "#/teams"],
+    ["Playbooks", "#/playbooks"],
+  ])("opens %s: sets the route, closes, and focuses the main panel", (label, hash) => {
+    const { getByRole, queryByRole, getByText } = renderApp();
+    openPalette(getByText("Old run").closest("button") as HTMLElement);
+    fireEvent.change(field(), { target: { value: label } });
+    const option = getByRole("option", { name: new RegExp(label) });
+    expect(option.textContent).toContain("Go to");
+    press(field(), { key: "Enter" });
+    expect(window.location.hash).toBe(hash);
+    expect(queryByRole("dialog", { name: "Command palette" })).toBeNull();
+    expect(document.activeElement?.classList.contains("main")).toBe(true);
+  });
+
+  it("the page opened from the palette is the one on screen", async () => {
+    const { getByRole, findByRole, getByText } = renderApp();
+    openPalette(getByText("Old run").closest("button") as HTMLElement);
+    fireEvent.change(field(), { target: { value: "Teams" } });
+    press(field(), { key: "Enter" });
+    expect(await findByRole("heading", { name: /Teams/ })).toBeTruthy();
+    expect(getByRole("navigation")).toBeTruthy();
+  });
+
+  it("recent runs are saved to localStorage, newest first, and the palette lists them after a reload", () => {
+    const first = renderApp();
+    act(() => {
+      first.store.getState().select("old");
+      first.store.getState().select(sessionFixture.id);
+    });
+    expect(JSON.parse(localStorage.getItem("assentor.recentSessions")!)).toEqual([sessionFixture.id, "old"]);
+    cleanup();
+
+    const second = renderApp();
+    expect(second.store.getState().recentIds).toEqual([sessionFixture.id, "old"]);
+    openPalette(second.getByText("Old run").closest("button") as HTMLElement);
+    const options = within(second.getByRole("listbox")).getAllByRole("option");
+    expect(options.slice(0, 2).map((o) => o.textContent)).toEqual([expect.stringContaining("Implement average()"), expect.stringContaining("Old run")]);
+    expect(options[0]!.textContent).toContain("Recent");
   });
 });
 
@@ -230,6 +276,15 @@ describe("command palette: write actions and views", () => {
     fireEvent.click(option);
     expect(getByRole("dialog", { name: "Command palette" })).toBeTruthy();
     expect(store.getState().selectedId).toBeUndefined();
+  });
+
+  it("keeps /inject disabled with its reason too", () => {
+    const { getByRole, getByText } = renderApp();
+    openPalette(getByText("Old run").closest("button") as HTMLElement);
+    fireEvent.change(field(), { target: { value: "inject" } });
+    const option = getByRole("option", { name: /Send a message to a seat/ });
+    expect(option.getAttribute("aria-disabled")).toBe("true");
+    expect(option.textContent).toContain("the engine can't send text to a running seat yet");
   });
 
   it("lists the views that are on screen and moves focus to one when run", () => {

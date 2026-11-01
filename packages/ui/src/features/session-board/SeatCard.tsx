@@ -1,13 +1,14 @@
-import type { KeyboardEvent } from "react";
+import { memo, type KeyboardEvent } from "react";
+import { ModelPicker } from "./ModelPicker.js";
 import { seatLineModel, STATUS_META, type SeatState } from "#assentor/ui-shared/status.js";
 
 /**
  * One seat on the board. A click, Enter or Space opens the seat drawer for it.
  * The card is the only control on the board. The status icon is decorative;
  * its label sits next to it, so the status is always in text. `now` comes from
- * the board's single ticker.
+ * the board's single ticker. Memoized: a card re-renders only when its own seat (or `now`) changes.
  */
-export function SeatCard({
+export const SeatCard = memo(function SeatCard({
   seat,
   now,
   onOpen,
@@ -46,8 +47,9 @@ export function SeatCard({
       </div>
       <div className="seat-card-name">{line.name}</div>
       <div className="seat-card-meta">
-        {line.model} · {line.role}
+        {line.role}
       </div>
+      <ModelPicker seat={seat} />
       <div className="seat-card-line" title={line.detail || undefined}>
         {line.detail}
       </div>
@@ -58,4 +60,4 @@ export function SeatCard({
       ) : null}
     </article>
   );
-}
+});
