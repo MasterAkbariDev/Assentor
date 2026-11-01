@@ -224,6 +224,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-13 · Settings, Doctor, Onboarding
 **Tier:** 🟢 H · **Review:** S · **Size:** M · **Depends:** T04-06
 
+**Merged 2026-11-01 (planner, under the owner's standing merge direction):** `df0f38d` + review fixes `6f59104`; Sonnet review PASS. Settings form (executor, autonomy, routing, limits, git, artifacts) saves only changed fields; keys read-only (provider, name, health — no secret anywhere; add/delete not in RPC yet); Doctor and CLI detection with copyable engine-documented login commands; first-run onboarding (flag in localStorage, try/catch). Write controls disabled with a reason unless `engine.hello` lists the method. Not done: key management, theme in Settings, CLI paths.
+
 **Allowed files** — `packages/ui/src/features/{settings,onboarding}/*`, tests.
 
 **Spec**

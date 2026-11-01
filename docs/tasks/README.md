@@ -190,7 +190,7 @@ Measure first: TE-01 and TE-10 come first; every saving must pass the TE-10 net-
 | T04-10 | Review view | 🟢 H | S | M | T04-06 |
 | T04-11 | Diff & worktrees view | 🟢 H | S (+O for apply/merge buttons) | M | T04-06 |
 | T04-12 | Prompts / Teams / Playbooks editors | 🟢 H | S | M | T04-06 |
-| T04-13 | Settings, Doctor, Onboarding | 🟢 H | S | M | T04-06 |
+| T04-13 | Settings, Doctor, Onboarding | 🟢 H | S | M | T04-06 ✅ |
 | T04-14 | Command palette + keyboard map | 🟢 H | S | S | T04-06 |
 | T04-15 | `assentor app` launcher ✅ | 🟢 H | S | S | T04-03 |
 | T04-16 | Mode picker (new session) | 🟢 H | S | S | T04-06, T02B-01, T02B-08 |

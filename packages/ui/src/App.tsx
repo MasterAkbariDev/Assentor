@@ -7,6 +7,8 @@ import { KeyboardHelp } from "./features/palette/KeyboardHelp.js";
 import { useShortcuts } from "./features/palette/useShortcuts.js";
 import { ReviewView } from "./features/review/ReviewView.js";
 import { SessionBoard } from "./features/session-board/SessionBoard.js";
+import { Onboarding } from "./features/onboarding/Onboarding.js";
+import { SettingsPage } from "./features/settings/SettingsPage.js";
 import { useEngine } from "./store/context.js";
 import type { ConnectionStatus } from "./store/engineStore.js";
 import { selectHasNegotiation, selectHasReview } from "./store/selectors.js";
@@ -87,12 +89,13 @@ export function App() {
       <main className="main">
         <ConnectionNotice />
         {route === "sessions" ? <SessionPanel /> : null}
+        {route === "settings" ? <SettingsPage /> : null}
         {route === "dev/fixtures" && FixturesPage ? (
           <Suspense fallback={<p className="empty">Loading…</p>}>
             <FixturesPage />
           </Suspense>
         ) : null}
-        {SECTIONS.filter((s) => s.id !== "sessions" && s.id === route).map((s) => (
+        {SECTIONS.filter((s) => s.id !== "sessions" && s.id !== "settings" && s.id === route).map((s) => (
           <EmptySection key={s.id} id={s.id} label={s.label} />
         ))}
       </main>
@@ -151,9 +154,16 @@ export function SessionPanel() {
   const summary = useEngine((s) => s.sessions.find((x) => x.id === s.selectedId));
   const hasReview = useEngine(selectHasReview);
   const hasNegotiation = useEngine(selectHasNegotiation);
+  // The guide waits for a connection and the first session list, so it never shows while runs may exist.
+  const showOnboarding = useEngine((s) => s.connection === "connected" && s.sessionsLoaded && s.sessions.length === 0);
 
   if (!session) {
-    return <p className="empty">Select a run to watch it live.</p>;
+    return (
+      <>
+        <p className="empty">Select a run to watch it live.</p>
+        {showOnboarding ? <Onboarding /> : null}
+      </>
+    );
   }
   if (summary && !summary.hasLiveLog) {
     return <p className="empty">This run was made before live logs existed; there is nothing to stream.</p>;

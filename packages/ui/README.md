@@ -46,7 +46,7 @@ Status: `connecting` → `open`; a lost link goes `reconnecting` → `open`; `un
 
 ## Routing and shell
 
-A tiny hash router (`shell/route.ts`): `#/sessions` (default), `#/prompts`, `#/teams`, `#/playbooks`, `#/settings`. Prompts, Teams, Playbooks and Settings show an empty state until built. TanStack Router, Query and Virtual, Radix and Tailwind are not in the approved dependency set (STATUS §6), so none are used. `useToast()` shows a toast; the shell toasts when the connection drops and returns.
+A tiny hash router (`shell/route.ts`): `#/sessions` (default), `#/prompts`, `#/teams`, `#/playbooks`, `#/settings`. Prompts, Teams and Playbooks show an empty state until built. Settings is built (`features/settings/`): settings form, keys list, Doctor and CLI detection; the first-run guide (`features/onboarding/`) shows in the sessions view while there are no runs. TanStack Router, Query and Virtual, Radix and Tailwind are not in the approved dependency set (STATUS §6), so none are used. `useToast()` shows a toast; the shell toasts when the connection drops and returns.
 
 ## Engine imports
 
