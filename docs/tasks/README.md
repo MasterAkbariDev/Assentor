@@ -184,17 +184,17 @@ Measure first: TE-01 and TE-10 come first; every saving must pass the TE-10 net-
 | T04-04 | RPC handlers: prompts/teams/playbooks/settings | 🟢 H | S | M | T04-02 ✅ |
 | T04-05 | RPC handlers: sessions/seats/worktrees | 🟡 S | O | M | T04-02, T02-09 ✅ |
 | T04-06 | UI scaffold, Transport interface, event store | 🟡 S | O | M | T04-02 ✅ |
-| T04-07 | Session board + SeatCard | 🟢 H | S | M | T04-06 |
-| T04-08 | Seat drawer (transcript, xterm, actions) | 🟢 H | S | M | T04-06 |
-| T04-09 | Negotiation view | 🟢 H | S | M | T04-06 |
-| T04-10 | Review view | 🟢 H | S | M | T04-06 |
+| T04-07 | Session board + SeatCard | 🟢 H | S | M | T04-06 ✅ |
+| T04-08 | Seat drawer (transcript, xterm, actions) | 🟢 H | S | M | T04-06 ✅ |
+| T04-09 | Negotiation view | 🟢 H | S | M | T04-06 ✅ |
+| T04-10 | Review view | 🟢 H | S | M | T04-06 ✅ |
 | T04-11 | Diff & worktrees view | 🟢 H | S (+O for apply/merge buttons) | M | T04-06 ✅ |
 | T04-12 | Prompts / Teams / Playbooks editors | 🟢 H | S | M | T04-06 ✅ |
 | T04-13 | Settings, Doctor, Onboarding | 🟢 H | S | M | T04-06 ✅ |
-| T04-14 | Command palette + keyboard map | 🟢 H | S | S | T04-06 |
+| T04-14 | Command palette + keyboard map | 🟢 H | S | S | T04-06 ✅ |
 | T04-15 | `assentor app` launcher ✅ | 🟢 H | S | S | T04-03 |
 | T04-16 | Mode picker (new session) | 🟢 H | S | S | T04-06, T02B-01, T02B-08 ✅ |
-| T04-17 | Lead team board view | 🟢 H | S | M | T04-06, T02B-18 |
+| T04-17 | Lead team board view | 🟢 H | S | M | T04-06, T02B-18 ✅ |
 | T04-18 | Usage view (tokens, cost, budgets per run) | 🟢 H | S | S | T04-06, TE-01 ✅ |
 
 ### Phase 5 — Desktop (Tauri) · [phase-5-desktop-tauri.md](./phase-5-desktop-tauri.md)
