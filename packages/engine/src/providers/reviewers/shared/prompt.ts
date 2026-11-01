@@ -172,7 +172,7 @@ export function buildReviewPromptParts(input: ReviewPromptInput): AssembledPromp
   return assembleSeatPrompt({
     static: [lines(instructions)],
     shared: [lines(context)],
-    delta: [input.specialtyAddendum ?? "", `Round: ${input.round}`],
+    delta: [input.specialtyAddendum ?? "", `Round: ${input.round}`, "Reply with the JSON object only."],
   });
 }
 

@@ -162,7 +162,7 @@ export class OpenAICompatibleProvider implements AIProvider {
             ...(request.system
               ? [{ role: "system", content: request.system }]
               : []),
-            { role: "user", content: userContent(request) },
+            { role: "user", content: userContent(request, this.baseUrl) },
           ],
         }),
         signal: AbortSignal.timeout(request.timeoutMs ?? this.timeoutMs),
@@ -238,20 +238,31 @@ export class OpenAICompatibleProvider implements AIProvider {
 }
 
 /**
- * Claude models behind an OpenAI-compatible gateway (OpenRouter, LiteLLM) cache
- * only up to explicit `cache_control` breakpoints: one after each non-final
- * prompt block (TE-05). Every other model gets the plain string, whose
- * byte-stable prefix the provider caches on its own; plain OpenAI rejects
- * unknown content fields, so they are never sent to it.
+ * Claude behind an Anthropic endpoint, or behind OpenRouter with an `anthropic/`
+ * model, caches only up to explicit `cache_control` breakpoints (TE-05). One
+ * breakpoint after the static block: it is the part reused across calls; a
+ * second after the shared block costs a 1.25x cache write that concurrent panel
+ * members rarely read back. Every other endpoint gets the plain string, whose
+ * byte-stable prefix it caches on its own; unknown content fields are never sent
+ * to an endpoint that may reject them.
  */
-function userContent(request: AIRequest): string | Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }> {
+function userContent(request: AIRequest, baseUrl: string): string | Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }> {
   const blocks = (request.promptBlocks ?? []).filter((block) => block !== "");
-  if (blocks.length < 2 || !/claude|anthropic/i.test(request.model) || blocks.join("") !== request.prompt) {
+  if (blocks.length < 2 || !acceptsCacheControl(baseUrl, request.model) || blocks.join("") !== request.prompt) {
     return request.prompt;
   }
-  return blocks.map((text, i) =>
-    i < blocks.length - 1 ? { type: "text", text, cache_control: { type: "ephemeral" } } : { type: "text", text },
-  );
+  return [{ type: "text", text: blocks[0]!, cache_control: { type: "ephemeral" } }, { type: "text", text: blocks.slice(1).join("") }];
+}
+
+function acceptsCacheControl(baseUrl: string, model: string): boolean {
+  let host: string;
+  try {
+    host = new URL(baseUrl).hostname;
+  } catch {
+    return false;
+  }
+  if (host === "api.anthropic.com") return true;
+  return host === "openrouter.ai" && model.startsWith("anthropic/");
 }
 
 function extractContent(payload: ChatCompletionResponse): string | undefined {

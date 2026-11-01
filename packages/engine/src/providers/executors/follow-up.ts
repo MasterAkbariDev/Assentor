@@ -6,14 +6,15 @@ import type { Executor, ExecutorResult, ExecutorTask } from "./types.js";
  * checks. When the executor can continue its CLI session and the previous turn
  * completed in one, only `followUp` is sent into that session: it already holds
  * the task, and the provider serves that prefix from its cache. Otherwise a
- * fresh run with the full `task.prompt` (which must already contain the follow-up).
+ * fresh run with the full `task.prompt` (which must already contain the follow-up),
+ * also once when the continue fails (e.g. the session expired) — in a new session.
  * The follow-up travels as quoted data (a warning), never as a supervisor directive.
  */
-export function runFollowUp(executor: Executor, task: ExecutorTask, previous: ExecutorResult | undefined, followUp: string): Promise<ExecutorResult> {
+export async function runFollowUp(executor: Executor, task: ExecutorTask, previous: ExecutorResult | undefined, followUp: string): Promise<ExecutorResult> {
   if (previous?.status !== "completed" || !previous.sessionId || !executor.capabilities().canContinueSession) {
     return executor.run(task);
   }
-  return executor.continue({
+  const continued = await executor.continue({
     taskId: task.taskId,
     projectPath: task.projectPath,
     contract: task.contract,
@@ -29,4 +30,6 @@ export function runFollowUp(executor: Executor, task: ExecutorTask, previous: Ex
       }),
     ],
   });
+  if (continued.status !== "failed") return continued; // cancelled, timeout and interrupts end the turn as before
+  return executor.run({ ...task, newSession: true });
 }

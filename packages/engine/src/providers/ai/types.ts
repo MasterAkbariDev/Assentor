@@ -98,8 +98,8 @@ export interface AIRequest {
   images?: AIImagePart[];
   /**
    * `prompt` in cache order (TE-05, `assembleSeatPrompt` blocks); joined they
-   * equal `prompt`. Claude models get a cache breakpoint after each non-final
-   * non-empty block; other providers cache the byte-stable prefix themselves.
+   * equal `prompt`. Claude on an Anthropic endpoint gets one cache breakpoint
+   * after the first (static) block; other providers cache the byte-stable prefix themselves.
    */
   promptBlocks?: readonly string[];
 }

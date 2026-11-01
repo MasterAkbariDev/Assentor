@@ -5,6 +5,8 @@ import {
   GeminiProvider,
   OpenAICompatibleReviewer,
   PanelReviewer,
+  PRINT_CLI_RECIPES,
+  PrintCliExecutor,
   SeatEventSink,
   assembleSeatPrompt,
   buildReviewPromptParts,
@@ -17,7 +19,7 @@ import {
 import { OpenAICompatibleProvider } from "../../packages/engine/src/providers/ai/openai-compatible.js";
 import { unwrapClaudeJson } from "../../packages/engine/src/providers/reviewers/cli/index.js";
 import { runFollowUp } from "../../packages/engine/src/providers/executors/follow-up.js";
-import type { Executor } from "../../packages/engine/src/providers/executors/types.js";
+import type { Executor, ExecutorResult } from "../../packages/engine/src/providers/executors/types.js";
 
 const key = { id: "k", provider: "openai", name: "test", secret: "sk-test" };
 
@@ -76,6 +78,7 @@ describe("seat prompt order (TE-05)", () => {
     expect(blocks[1]).toContain("Guard average()");
     expect(blocks[2]).toContain("Specialty:");
     expect(blocks[2]).toContain("Round: 2");
+    expect(blocks[2].endsWith("Reply with the JSON object only.")).toBe(true);
     expect(text.indexOf("You are a strict software review agent")).toBe(0);
     expect(text.indexOf("Task contract:")).toBeLessThan(text.indexOf("Specialty:"));
   });
@@ -93,9 +96,9 @@ describe("API seats: cache breakpoints and usage (TE-05)", () => {
     usage: { prompt_tokens: 1200, completion_tokens: 80, prompt_tokens_details: { cached_tokens: 1000 } },
   };
 
-  it("sends Claude models cache_control breakpoints after the static and shared blocks", async () => {
+  it("sends Claude on OpenRouter one cache_control breakpoint, after the static block", async () => {
     const { bodies, fetchFn } = recordingFetch(chatReply);
-    const provider = new OpenAICompatibleProvider({ id: "openrouter", name: "OpenRouter", baseUrl: "https://example.test/v1", fetchFn });
+    const provider = new OpenAICompatibleProvider({ id: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", fetchFn });
     const reviewer = new OpenAICompatibleReviewer({ apiKey: "sk-test", model: "anthropic/claude-sonnet-4", provider, specialtyAddendum: specialtyAddendum("security") });
     const turn = await reviewer.review(reviewInput());
 
@@ -103,11 +106,24 @@ describe("API seats: cache breakpoints and usage (TE-05)", () => {
     const messages = bodies[0]!.messages as Array<{ role: string; content: unknown }>;
     expect(messages[1]!.content).toEqual([
       { type: "text", text: parts.blocks[0], cache_control: { type: "ephemeral" } },
-      { type: "text", text: parts.blocks[1], cache_control: { type: "ephemeral" } },
-      { type: "text", text: parts.blocks[2] },
+      { type: "text", text: parts.blocks[1] + parts.blocks[2] },
     ]);
     expect(turn.result?.status).toBe("PASS");
     expect(turn.usage).toEqual({ tokensIn: 1200, tokensOut: 80, cachedTokens: 1000, turns: 1 });
+  });
+
+  it("sends cache_control to an Anthropic base URL, never to a non-Anthropic one by model name alone", async () => {
+    for (const [baseUrl, model, cached] of [
+      ["https://api.anthropic.com/v1", "claude-sonnet-4", true],
+      ["https://example.test/v1", "claude-sonnet-4", false],
+      ["https://api.openai.com/v1", "anthropic/claude-sonnet-4", false],
+      ["https://openrouter.ai/api/v1", "openai/gpt-4o", false],
+    ] as const) {
+      const { bodies, fetchFn } = recordingFetch(chatReply);
+      const provider = new OpenAICompatibleProvider({ id: "x", name: "X", baseUrl, fetchFn });
+      await provider.generate({ model, prompt: "ab", promptBlocks: ["a", "b"], key });
+      expect(JSON.stringify(bodies[0]).includes("cache_control")).toBe(cached);
+    }
   });
 
   it("sends other models the plain prompt string (byte-stable prefix, no unknown fields)", async () => {
@@ -121,7 +137,7 @@ describe("API seats: cache breakpoints and usage (TE-05)", () => {
 
   it("falls back to the plain prompt when the blocks do not match it", async () => {
     const { bodies, fetchFn } = recordingFetch(chatReply);
-    const provider = new OpenAICompatibleProvider({ id: "openrouter", name: "OpenRouter", baseUrl: "https://example.test/v1", fetchFn });
+    const provider = new OpenAICompatibleProvider({ id: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", fetchFn });
     await provider.generate({ model: "anthropic/claude-sonnet-4", prompt: "abc", promptBlocks: ["a", "x"], key });
     expect((bodies[0]!.messages as Array<{ content: unknown }>)[0]!.content).toBe("abc");
   });
@@ -159,6 +175,17 @@ describe("Claude Code reviewer JSON output (TE-05)", () => {
       expect(unwrapClaudeJson({ code: 0, stdout, stderr: "" })).toEqual({ code: 0, stdout, stderr: "" });
     }
   });
+
+  it("reports an is_error result or an error_* subtype without a result as a failed call", async () => {
+    const isError = JSON.stringify({ type: "result", subtype: "success", is_error: true, result: "Credit balance is too low" });
+    expect(unwrapClaudeJson({ code: 0, stdout: isError, stderr: "" })).toMatchObject({ code: 1, stdout: "", stderr: "Credit balance is too low" });
+    const maxTurns = JSON.stringify({ type: "result", subtype: "error_max_turns", is_error: false });
+    expect(unwrapClaudeJson({ code: 1, stdout: maxTurns, stderr: "" })).toMatchObject({ code: 1, stdout: "", stderr: "claude CLI error: error_max_turns" });
+    const spawnFn = async () => ({ code: 0, stdout: isError, stderr: "" });
+    const turn = await new CliReviewer({ adapter: "claude", binary: "/fake/claude", spawnFn }).review(reviewInput());
+    expect(turn.result).toBeUndefined();
+    expect(turn.error).toContain("Credit balance is too low");
+  });
 });
 
 describe("reviewer token reports reach seat.tokens (TE-05)", () => {
@@ -193,15 +220,18 @@ describe("reviewer token reports reach seat.tokens (TE-05)", () => {
 });
 
 describe("follow-up turns continue the CLI session (TE-05)", () => {
-  function fakeExecutor(canContinueSession: boolean) {
-    const calls: Array<{ kind: "run" | "continue"; prompt?: string; sessionId?: string; message?: unknown }> = [];
+  function fakeExecutor(canContinueSession: boolean, continueStatus: ExecutorResult["status"] = "completed") {
+    const calls: Array<{ kind: "run" | "continue"; prompt?: string; sessionId?: string; message?: unknown; newSession?: boolean }> = [];
     const executor: Executor = {
       name: "fake",
       capabilities: () => ({ canEditFiles: true, canRunCommands: true, canContinueSession, supportsScreenshots: false }),
-      run: async (task) => (calls.push({ kind: "run", prompt: task.prompt }), { status: "completed", summary: "ok", sessionId: "s-2" }),
+      run: async (task) => (
+        calls.push({ kind: "run", prompt: task.prompt, ...(task.newSession ? { newSession: true } : {}) }),
+        { status: "completed", summary: "ok", sessionId: "s-2" }
+      ),
       continue: async (input) => (
         calls.push({ kind: "continue", sessionId: input.sessionId, message: input.messages[0]?.content }),
-        { status: "completed", summary: "ok", sessionId: "s-2" }
+        { status: continueStatus, summary: continueStatus, sessionId: "s-1" }
       ),
       cancel: async () => undefined,
     };
@@ -227,5 +257,35 @@ describe("follow-up turns continue the CLI session (TE-05)", () => {
       await runFollowUp(executor, task, previous, "retry: tests fail");
       expect(calls).toEqual([{ kind: "run", prompt: task.prompt }]);
     }
+  });
+
+  it("falls back to one fresh run in a new session when the continue fails", async () => {
+    const { calls, executor } = fakeExecutor(true, "failed");
+    const result = await runFollowUp(executor, task, done, "retry: tests fail");
+    expect(calls.map((c) => c.kind)).toEqual(["continue", "run"]);
+    expect(calls[1]).toEqual({ kind: "run", prompt: task.prompt, newSession: true });
+    expect(result.status).toBe("completed");
+  });
+
+  it("does not fall back when the continue was cancelled", async () => {
+    const { calls, executor } = fakeExecutor(true, "cancelled");
+    const result = await runFollowUp(executor, task, done, "retry: tests fail");
+    expect(calls.map((c) => c.kind)).toEqual(["continue"]);
+    expect(result.status).toBe("cancelled");
+  });
+
+  it("a print CLI run with newSession does not resume the last session", async () => {
+    const args: string[][] = [];
+    const executor = new PrintCliExecutor({
+      recipe: PRINT_CLI_RECIPES["claude-code"]!,
+      binary: "/tmp/claude",
+      spawnFn: async (request) => (args.push(request.args), { code: 1, stdout: "", stderr: "No conversation found" }),
+    });
+    const base = { taskId: "t", projectPath: "/tmp/p", contract: createEmptyContract("x"), messages: [] };
+    await executor.continue({ ...base, sessionId: "dead", mode: "supervised" });
+    await executor.run({ ...task, newSession: true });
+    expect(args[0]).toContain("dead");
+    expect(args[1]).not.toContain("--resume");
+    expect(args[1]).not.toContain("dead");
   });
 });

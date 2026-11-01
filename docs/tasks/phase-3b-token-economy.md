@@ -91,6 +91,8 @@ Phase exit criteria:
 
 **Goal** — Pay once for the parts of a prompt that never change.
 
+**Savings note:** caching cuts billed cost (cached input is cheaper), not net tokens, which stay the same. The mock benchmark's ≈ −30% fresh (uncached) input for `cache:stable` vs `cache:legacy` is a best case (sequential calls, providers with prefix caching, warm cache) and is unverified on live runs.
+
 **Deliverables**
 1. Stable prompt order everywhere: (static) role prompt + style fragment + skills index → (shared) task/context → (per-seat) delta. A test pins the order.
 2. API seats: Anthropic `cache_control` breakpoints on the static and shared blocks; OpenAI-compatible providers rely on automatic prefix caching (keep prefixes byte-stable). Read cached-token counts from responses into `seat.tokens` (TE-01).

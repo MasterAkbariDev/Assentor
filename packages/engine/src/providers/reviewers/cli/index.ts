@@ -205,20 +205,28 @@ export class ProcessCliTransport implements CliTransport {
 
 /**
  * Claude Code's `--output-format json` reply (TE-05): `stdout` becomes the
- * reply text and `usage` its token counts. Output that is not that object (an
- * older CLI, a crash, a cut-off stream) is returned as it was.
+ * reply text and `usage` its token counts; an error result (`is_error`, `error_*`
+ * subtype) becomes a failed call. Output that is not that object (an older CLI,
+ * a crash, a cut-off stream) is returned as it was.
  */
 export function unwrapClaudeJson(result: CliSpawnResult): CliSpawnResult {
   const raw = result.stdout.trim();
   if (!raw.startsWith("{")) return result;
-  let value: { type?: unknown; result?: unknown };
+  let value: { type?: unknown; result?: unknown; is_error?: unknown; subtype?: unknown };
   try {
     value = JSON.parse(raw) as typeof value;
   } catch {
     return result;
   }
-  if (value?.type !== "result" || typeof value.result !== "string") return result;
+  if (value?.type !== "result") return result;
   const usage = usageOf(value);
+  const subtype = typeof value.subtype === "string" ? value.subtype : "";
+  if (value.is_error === true || subtype.startsWith("error")) {
+    // An error envelope is a failed call (empty stdout, non-zero code), never an answer.
+    const message = typeof value.result === "string" && value.result.trim() ? value.result.trim() : `claude CLI error: ${subtype || "is_error"}`;
+    return { ...result, code: result.code || 1, stdout: "", stderr: message, ...(usage ? { usage } : {}) };
+  }
+  if (typeof value.result !== "string") return result;
   return { ...result, stdout: value.result, ...(usage ? { usage } : {}) };
 }
 
