@@ -15,12 +15,13 @@ export const SECTIONS = [
 
 export type SectionId = (typeof SECTIONS)[number]["id"];
 
-/** `dev/fixtures` exists only in dev builds; it is not in `SECTIONS`, so it never shows in the nav. */
-export type Route = SectionId | "dev/fixtures";
+/** `dev/fixtures` exists only in dev builds; `new-session` is reached from the sidebar. Neither is in `SECTIONS`, so neither shows in the nav. */
+export type Route = SectionId | "dev/fixtures" | "new-session";
 
 export function parseRoute(hash: string): Route {
   const path = hash.replace(/^#\/?/, "");
   if (import.meta.env.DEV && path === "dev/fixtures") return "dev/fixtures";
+  if (path === "new-session") return "new-session";
   return SECTIONS.find((s) => s.id === path)?.id ?? "sessions";
 }
 
