@@ -1,6 +1,8 @@
 import {
+  cliPromptInvocation,
   locateBinary,
   spawnCliProcess,
+  type CliPromptInvocation,
 } from "../../../executors/cli-locator.js";
 import { killProcessTree } from "../../../process/kill-tree.js";
 import {
@@ -44,6 +46,8 @@ export interface PrintCliChildHandle {
 export interface PrintCliSpawnRequest {
   command: string;
   args: string[];
+  /** Prompt for the child's stdin (Windows `.cmd` shims only; see `cliPromptInvocation`). */
+  stdin?: string;
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
@@ -260,11 +264,14 @@ export class PrintCliExecutor implements Executor {
     };
 
     let result: PrintCliSpawnResult;
+    let invocation: CliPromptInvocation | undefined;
     try {
+      invocation = cliPromptInvocation(this.recipe.tool, binary, args, prompt);
       result = await Promise.race([
         this.spawnFn({
           command: binary,
-          args,
+          args: invocation.args,
+          ...(invocation.stdin !== undefined ? { stdin: invocation.stdin } : {}),
           cwd: projectPath,
           env: {
             ...process.env,
@@ -348,6 +355,7 @@ export class PrintCliExecutor implements Executor {
         sessionId: this.sessionId,
       };
     } finally {
+      invocation?.cleanup();
       if (resultGrace) {
         clearTimeout(resultGrace);
       }
@@ -448,12 +456,17 @@ export function defaultPrintCliSpawn(
 ): Promise<PrintCliSpawnResult> {
   return new Promise((resolve, reject) => {
     const child = trackChildProcess(
-      spawnCliProcess(request.command, request.args, {
-        cwd: request.cwd,
-        env: request.env,
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      }),
+      spawnCliProcess(
+        request.command,
+        request.args,
+        {
+          cwd: request.cwd,
+          env: request.env,
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+        },
+        request.stdin,
+      ),
     );
 
     const parser =
