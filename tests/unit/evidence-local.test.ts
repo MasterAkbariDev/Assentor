@@ -190,3 +190,53 @@ describe("evidence pack prompt budget", () => {
     expect(prompt).toContain("cut to fit the prompt budget");
   });
 });
+
+describe("evidence pack prompt packing (TE-03)", () => {
+  function pack() {
+    const p = emptyEvidencePack("/tmp/p", { taskId: "t", round: 1 });
+    p.executorExplanation.whatChanged = "Moved auth into the service layer and removed the duplicate session lookup from the controller.";
+    p.architecture.summary = "Controllers call services; services own transactions; repositories are the only code that touches SQL.";
+    p.git.diff = ["diff --git a/f b/f", "--- a/f", "+++ b/f", "@@ -1,60 +1,61 @@", ...Array.from({ length: 30 }, (_, i) => ` before ${i}`), "+VULNERABLE_LINE", ...Array.from({ length: 30 }, (_, i) => ` after ${i}`)].join("\n");
+    p.relevantFiles = Array.from({ length: 6 }, (_, i) => ({ path: `src/f${i}.ts`, role: "relevant" as const, description: "", content: `line\n`.repeat(900), truncated: false }));
+    return p;
+  }
+  const beforeDecisions = (prompt: string) => prompt.slice(0, prompt.indexOf("## Evidence coverage"));
+  const fenceLines = (text: string) => text.split("\n").filter((line) => line.trimStart().startsWith("```")).length;
+
+  it("with no budget the claims block is unchanged and nothing is packed", () => {
+    const prompt = formatEvidencePackForPrompt(pack());
+    expect(prompt.split("Moved auth into the service layer")).toHaveLength(3);
+    expect(prompt).not.toContain("same text as Section");
+  });
+
+  it("an over-cap diff keeps its changed lines instead of its first 12,000 characters", () => {
+    const p = pack();
+    p.git.diff = ["diff --git a/f b/f", "--- a/f", "+++ b/f", "@@ -1,9000 +1,9001 @@", ...Array.from({ length: 2000 }, (_, i) => ` before line ${i} of padding`), "+VULNERABLE_LINE"].join("\n");
+    const prompt = formatEvidencePackForPrompt(p);
+    expect(prompt).toContain("+VULNERABLE_LINE");
+    expect(prompt).toContain("request via evidenceRequests");
+  });
+
+  it("under a reviewer budget: no repeat of Sections C and K", () => {
+    const prompt = formatEvidencePackForPrompt(pack(), 48_000, 6_000);
+    expect(prompt.split("Moved auth into the service layer")).toHaveLength(2);
+    expect(prompt).toContain("[… same text as Section K above omitted]");
+    expect(prompt).toContain("[… same text as Section C above omitted]");
+  });
+
+  it("under a reviewer budget: the diff's changed lines survive when file bodies give way, markers say how to ask", () => {
+    const prompt = formatEvidencePackForPrompt(pack(), 9_000, 6_000);
+    expect(prompt).toContain("+VULNERABLE_LINE");
+    expect(prompt).toMatch(/lines omitted — request via evidenceRequests\]/);
+    expect(prompt).toMatch(/not delivered|partially/);
+    expect(prompt).toContain("Moved auth into the service layer");
+  });
+
+  it("decision sections never end up inside a code fence, cut by characters or by the packer", () => {
+    for (const [maxChars, budget] of [[9_000, undefined], [9_000, 6_000], [4_000, undefined], [4_000, 1_000], [20_000, 2_500]] as const) {
+      const prompt = formatEvidencePackForPrompt(pack(), maxChars, budget);
+      expect(prompt).toContain("## Evidence coverage");
+      expect(fenceLines(beforeDecisions(prompt)) % 2, `maxChars ${maxChars}, budget ${String(budget)}`).toBe(0);
+    }
+  });
+});

@@ -23,6 +23,7 @@ import {
   type Seat,
   type StageRunnerDeps,
 } from "../../packages/engine/src/index.js";
+import { estimateTokens } from "../../packages/engine/src/usage/tokens.js";
 import { builtinPromptDir, PromptLibrary } from "../../packages/engine/src/prompts/index.js";
 import { SeatScheduler, type SchedulerOptions } from "../../packages/engine/src/seats/index.js";
 import { runShellCommand } from "../../packages/engine/src/process/run-shell.js";
@@ -97,6 +98,7 @@ interface SetupOptions {
   script: MockLeadStep[];
   agents?: Record<string, Agent>;
   lead?: Record<string, unknown>;
+  context?: Record<string, unknown>;
   /** Answers user questions by text; default: approve everything. */
   answer?: (question: string, options: readonly string[] | undefined) => string;
   scheduler?: Partial<SchedulerOptions>;
@@ -122,6 +124,7 @@ async function setup(options: SetupOptions): Promise<Setup> {
   const questions: string[] = [];
   const config = parseAssentorConfig({
     modes: { lead: { lead: { provider: "mock", model: "lead" }, ...options.lead } },
+    ...(options.context ? { context: options.context } : {}),
   });
   const lead = createMockLead(options.script, { ...(options.tokensPerTurn ? { tokensPerTurn: options.tokensPerTurn } : {}) });
   const controller = new AbortController();
@@ -433,6 +436,23 @@ describe("Lead controller", () => {
     expect(resumed.questions).toEqual([expect.stringContaining("Start task T1")]);
     expect(refusals(resumed.events)).toEqual([expect.objectContaining({ action: "assign", reason: "the user did not approve this run" })]);
     expect(resumed.runs).toEqual([]);
+  });
+
+  it("packs the engine state only when context.budgetTokens.lead is set: the headline stays, the rest shrinks", async () => {
+    const run = async (context?: Record<string, unknown>) => {
+      const seen: string[] = [];
+      const s = await setup({ ...(context ? { context } : {}), script: [turn(plan(T1)), (prompt) => (seen.push(prompt), turn({ action: "finish", summary: "stop" }))] });
+      await s.run();
+      return seen[0]!;
+    };
+    const state = (prompt: string) => prompt.slice(prompt.indexOf("## Engine state"));
+    const off = state(await run());
+    expect(off).toContain("Recent log:");
+    const packed = state(await run({ budgetTokens: { lead: 100 } }));
+    expect(packed).toContain("## Engine state");
+    // The budget now binds: the state was longer than 100 tokens, and the cap is respected.
+    expect(estimateTokens(off)).toBeGreaterThan(100);
+    expect(estimateTokens(packed)).toBeLessThanOrEqual(100);
   });
 
   it("renders the library's lead prompt with the caller variables; report text cannot close its <report> block", async () => {

@@ -18,6 +18,7 @@ import { SEAT_PROVIDERS, TeamSchema } from "#assentor/protocol/seats.js";
 import { MODE_ALIASES, MODE_IDS } from "../modes/registry.js";
 import { DangerAreaRuleSchema } from "../modes/danger.js";
 import { DEFAULT_OUTPUT_STYLE, OutputStyleSchema } from "../output/style.js";
+import { ContextConfigSchema } from "../context/budget.js";
 
 const ExecutorProviderSchema = z.preprocess(
   (value) =>
@@ -221,6 +222,8 @@ export const AssentorConfigSchema = z.object({
       screenshots: z.boolean().default(false),
     })
     .default({}),
+  /** Optional per-role token budgets for the context packer (TE-03); nothing is written unless set. */
+  context: ContextConfigSchema.optional(),
   worktrees: z
     .object({
       /**

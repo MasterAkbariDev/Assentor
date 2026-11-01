@@ -162,11 +162,14 @@ describe("saveAssentorConfig", () => {
     });
     const written = await readYaml(file);
 
-    // `output` is left out at its default (TE-02); every other section is written.
+    // `output` is left out at its default (TE-02); `context` (TE-03) is optional with no default.
     expect(Object.keys(written).sort()).toEqual(
-      Object.keys(AssentorConfigSchema.shape).filter((key) => key !== "output").sort(),
+      Object.keys(AssentorConfigSchema.shape).filter((key) => key !== "output" && key !== "context").sort(),
     );
     expect(written.project).toEqual({ path: "." });
+
+    const set = await saveAssentorConfig(dir, parseAssentorConfig({ context: { budgetTokens: { lead: 3000 } } }), { scope: "project" });
+    expect((await readYaml(set)).context).toEqual({ budgetTokens: { lead: 3000 } });
   });
 
   it("does not add output.style to a legacy config", async () => {

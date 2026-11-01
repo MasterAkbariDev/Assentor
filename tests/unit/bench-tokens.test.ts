@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { PromptLibrary } from "../../packages/engine/src/prompts/library.js";
-import { BENCH_TASKS } from "../../scripts/bench/tasks.js";
+import { BENCH_TASKS, BENCH_TASKS_LARGE, type BenchTask } from "../../scripts/bench/tasks.js";
 import { cliUsage } from "../../packages/engine/src/usage/cli-usage.js";
 import {
   gateVariant,
@@ -215,3 +215,40 @@ describe("bench:tokens CLI", () => {
     expect(await main(["--runs", "1", "--gate", "baseline"], io)).toBe(1);
   });
 });
+
+describe("context:packed (TE-03)", () => {
+  const run = (tasks: BenchTask[], ...names: string[]) => runMock({ library, variants: [baseline, ...names.map((n) => resolveVariant(n))], runs: 2, tasks });
+  const row = (report: BenchReport, name: string) => report.variants.find((v) => v.name === name)!;
+
+  it("the lossless part (ships on) changes nothing on fixtures without exact repeats, and never costs tokens or success", () => {
+    for (const tasks of [BENCH_TASKS, BENCH_TASKS_LARGE]) {
+      const report = run(tasks, "context:packed");
+      expect(row(report, "context:packed").promptTokens).toBe(row(report, "baseline").promptTokens);
+      expect(row(report, "context:packed").successRate).toBe(row(report, "baseline").successRate);
+      expect(gateVariant(report, "context:packed").pass).toBe(true);
+    }
+  });
+
+  it("the large refactor fixture is a passing run whose repeats differ", () => {
+    const refactor = BENCH_TASKS_LARGE.find((t) => t.id === "refactor")!;
+    expect(refactor.variables.testOutput).not.toMatch(/FAIL|AssertionError/);
+    expect(new Set(refactor.variables.testOutput!.split("\n\n")).size).toBeGreaterThan(10);
+  });
+
+  it("budget cuts (ship off) cut prompt tokens on the large fixtures with success unchanged", () => {
+    const report = run(BENCH_TASKS_LARGE, "context:packed@2500", "context:packed@300");
+    expect(row(report, "context:packed@2500").promptTokens).toBeLessThan(row(report, "baseline").promptTokens * 0.95);
+    expect(row(report, "context:packed@2500").successRate).toBe(1);
+    expect(row(report, "context:packed@300").successRate).toBe(1);
+  });
+
+  it("the mock seat is blind when a needed line is gone, so a blunt cut fails the review", () => {
+    const blunt = runMock({ library, variants: [baseline, { ...variant("blunt", { contextScale: 0.2 }) }], runs: 1 });
+    expect(row(blunt, "blunt").successRate).toBeLessThan(1);
+  });
+
+  it("rejects a malformed packed variant", () => {
+    expect(() => resolveVariant("context:everything")).toThrow(/Unknown variant/);
+  });
+});
+

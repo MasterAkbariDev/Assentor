@@ -18,6 +18,12 @@ export interface BenchTask {
   /** Variables rendered into the role prompt. */
   variables: Record<string, string>;
   files: Record<string, string>;
+  /**
+   * Strings the seat's prompt must still contain for a competent seat to get the task right (the vulnerable
+   * line to review, the first failing assertion). The mock seat is blind without them, so a variant that cuts
+   * context it needs fails the task instead of just looking smaller.
+   */
+  needs?: string[];
   check(result: TaskResult): boolean;
   mock: {
     output: string;
@@ -111,7 +117,58 @@ export function cartTotal(lines: Line[]): number {
 }
 `;
 
-const USERS_DIFF = `diff --git a/src/users.ts b/src/users.ts
+/** A module of `count` small query helpers, the shape of a real src/users.ts. */
+const userHelpers = (count: number) =>
+  Array.from(
+    { length: count },
+    (_, i) => `export async function listUsersBy${i}(value: string, limit = 50) {
+  // Admin listing ${i}: filter on column c${i}, newest first.
+  const rows = await db.query("SELECT id, name FROM users WHERE c${i} = $1 ORDER BY id DESC LIMIT $2", [value, limit]);
+  return rows.map((row) => ({ id: row.id, name: row.name }));
+}
+`,
+  ).join("\n");
+
+const USERS_BEFORE = `import { db } from "./db.js";
+
+export async function findUser(id: number) {
+  return db.query("SELECT id, name FROM users WHERE id = $1", [id]);
+}
+
+${userHelpers(24)}`;
+
+const SEARCH_USERS = `export async function searchUsers(name: string) {
+  // Search by name for the admin page.
+  return db.query(\`SELECT id, name, email FROM users WHERE name LIKE '%\${name}%'\`);
+}`;
+
+const beforeLines = USERS_BEFORE.split("\n");
+const addedLines = ["", ...SEARCH_USERS.split("\n")];
+
+/** The change as a function-context diff (the whole file around the hunk), which is what a "show me the function" diff looks like. */
+const USERS_DIFF_LARGE = [
+  "diff --git a/src/users.ts b/src/users.ts",
+  "--- a/src/users.ts",
+  "+++ b/src/users.ts",
+  `@@ -1,${beforeLines.length} +1,${beforeLines.length + addedLines.length} @@`,
+  ...beforeLines.map((line) => ` ${line}`),
+  ...addedLines.map((line) => `+${line}`),
+  "",
+].join("\n");
+
+/** What an evidence pack carries next to the diff: the project tree, the callee and the new file in full. */
+const USERS_EVIDENCE = [
+  "### Project structure",
+  "src/db.ts, src/users.ts, src/routes/admin.ts, tests/users.test.ts, package.json",
+  "",
+  "### src/db.ts",
+  "db.query(sql, params?) passes params to the driver as bound parameters.",
+  "",
+  "### src/users.ts (after the change)",
+  [...beforeLines, ...addedLines].join("\n"),
+].join("\n");
+
+const USERS_DIFF_SMALL = `diff --git a/src/users.ts b/src/users.ts
 --- a/src/users.ts
 +++ b/src/users.ts
 @@ -1,9 +1,14 @@
@@ -126,6 +183,19 @@ const USERS_DIFF = `diff --git a/src/users.ts b/src/users.ts
 +  return db.query(\`SELECT id, name, email FROM users WHERE name LIKE '%\${name}%'\`);
 +}
 `;
+
+/**
+ * A passing run of a service's suite with the noise real runs have: a retry warning per attempt (the attempt and the
+ * delay differ, so no two blocks are identical) and one line per test file. No failing test: this is the baseline run
+ * a refactor starts from.
+ */
+const NOISY_PASSING_RUN = [
+  " RUN  v3.2.7 /work/pricing",
+  ...Array.from({ length: 14 }, (_, i) => `[warn] connect ECONNREFUSED 127.0.0.1:5432, retry ${i + 1}/14 in ${200 * 2 ** Math.min(i, 5)}ms\n    at connect (src/net/pool.ts:41:11)\n    at retry (src/net/pool.ts:77:5)\n    at Pool.acquire (src/net/pool.ts:102:9)\n`),
+  ...Array.from({ length: 12 }, (_, i) => ` ✓ tests/suite${i}.test.ts (${4 + i} tests) ${20 + i * 7}ms`),
+  " Test Files  12 passed (12)",
+  "      Tests  126 passed (126)",
+].join("\n");
 
 export const BENCH_TASKS: BenchTask[] = [
   {
@@ -268,10 +338,11 @@ export function cartTotal(lines: Line[]): number {
     variables: {
       goal: "Add a user search for the admin page.",
       acceptanceCriteria: "- searchUsers(name) returns users whose name contains the text\n- no SQL injection",
-      diff: USERS_DIFF,
+      diff: USERS_DIFF_SMALL,
       evidence: "src/db.ts: db.query(sql, params?) passes params to the driver as bound parameters.",
     },
     files: {},
+    needs: ["name LIKE '%${name}%'"],
     check: ({ output }) => {
       const review = lastJson(output);
       return review?.status === "NEEDS_WORK" && /inject/i.test(JSON.stringify(review.issues ?? []));
@@ -350,3 +421,15 @@ export function cartTotal(lines: Line[]): number {
     },
   },
 ];
+
+/**
+ * The same tasks with the bulk real prompts carry: a function-context diff and the changed file in full next to it
+ * (review), a noisy passing run (refactor). `bench:tokens --fixtures large`. The original fixtures stay the default.
+ */
+export const BENCH_TASKS_LARGE: BenchTask[] = BENCH_TASKS.map((task) =>
+  task.id === "review"
+    ? { ...task, variables: { ...task.variables, diff: USERS_DIFF_LARGE, evidence: USERS_EVIDENCE } }
+    : task.id === "refactor"
+      ? { ...task, variables: { ...task.variables, testOutput: NOISY_PASSING_RUN } }
+      : task,
+);

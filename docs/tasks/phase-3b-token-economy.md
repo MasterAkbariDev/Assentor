@@ -58,6 +58,8 @@ Phase exit criteria:
 ### TE-03 · Context packer (budgeted context assembly)
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** TE-01
 
+**Built (branch `claude/card-te-03`, not merged):** `packages/engine/src/context/`. **ON by default (lossless):** identical proposals sent once, identical repeated blocks in failing-test output / history merged with a count, over-cap diffs keep their changed lines (`fitDiffChars`) instead of the first N characters, code fences closed after any cut. **OFF by default (every budget cut):** `context.budgetTokens.{reviewer,negotiation,lead,coder}` (unset or 0 = no cuts; nothing written on save; budgets are passed from the loaded config to each call site, no process state): reviewer evidence packing, negotiation shrink, Lead engine-state shrink, coder first-error+tail, ±3 diff context. Mock numbers (docs/benchmarks/tokens.md): the lossless part saves 0% on the original fixtures and on realistic large fixtures (their repeats differ); budget cuts save -8.5% (2500 tokens) / -21.9% (1000) on the large fixtures with success unchanged, and 0% on the original (too small to cut). The mock cannot show quality loss from cutting real contexts, so **turning any budget on needs the owner's live A/B** (`bench:tokens --live --variants context:packed@<tokens> --fixtures large`).
+
 **Goal** — One place that builds what a seat sees, under a token budget, instead of ad-hoc slicing in each mode.
 
 **Deliverables**

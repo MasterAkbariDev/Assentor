@@ -2,16 +2,18 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { PromptLibrary } from "#assentor/engine/prompts/library.js";
+import { BENCH_TASKS, BENCH_TASKS_LARGE } from "./tasks.js";
 import { gateVariant, renderReport, resolveVariant, runLive, runMock, type BenchReport } from "./tokens.js";
 
-const USAGE = `pnpm bench:tokens [--variants baseline,style:concise,profile:economy,skills:<a>+<b>] [--runs N]
-                  [--gate <variant>] [--json] [--out <file.md>] [--model <id for the token estimate>]
+const USAGE = `pnpm bench:tokens [--variants baseline,style:concise,profile:economy,skills:<a>+<b>,context:packed[@<tokens>]] [--runs N]
+                  [--gate <variant>] [--fixtures original|large] [--json] [--out <file.md>] [--model <id for the token estimate>]
                   [--live --budget <tokens> --executor <provider> [--executor-model <model>]]`;
 
 const HEADER = `# Token benchmark (TE-10)
 
 Net tokens per successful task = all prompt + output tokens of every call, follow-up turn and retry, divided by the tasks that passed their check. Cached tokens are part of the prompt column. \`always-on\` is the text a variant adds to every seat prompt.
 
+- \`context:packed\` (TE-03) sends the task context through the engine's context packer (\`packPromptVariables\`): lossless merging of repeats only, or with budget cuts as \`context:packed@<tokens>\`; \`baseline\` sends it unpacked. \`--fixtures large\` swaps in the bulkier review and refactor contexts. A mock seat is blind when a line its task needs (\`needs\` in the fixtures) is cut, so a variant that over-cuts fails instead of looking small.
 - **Mock** numbers (below, regenerated with \`--out\`) measure prompt structure only: replies are scripted, so they cannot show behavioural savings.
 - **Live** numbers come from real CLIs, run by the owner: \`pnpm bench:tokens --live --budget 300000 --executor claude-code --variants <v> --gate <v>\`. Paste the output under a dated heading; it is the evidence for turning a variant on by default (gate: net tokens per success down ≥ 10%, no success-rate drop, always-on text ≤ 300 tokens).
 
@@ -35,18 +37,21 @@ export async function main(argv: string[], io = { out: (s: string) => process.st
     const runs = Number(values.runs ?? 3);
     if (!Number.isInteger(runs) || runs < 1) throw new Error("--runs must be a positive integer");
     const library = PromptLibrary.loadBuiltinSync();
+    if (values.fixtures !== undefined && values.fixtures !== "original" && values.fixtures !== "large") throw new Error("--fixtures must be original or large");
+    const tasks = values.fixtures === "large" ? BENCH_TASKS_LARGE : BENCH_TASKS;
     if (values.live || values.budget || values.executor) {
       report = await runLive({
         library,
         variants,
         runs,
+        tasks,
         live: Boolean(values.live),
         budgetTokens: Number(values.budget ?? 0),
         executor: values.executor ?? "claude-code",
         ...(values["executor-model"] ? { executorModel: values["executor-model"] } : {}),
       });
     } else {
-      report = runMock({ library, variants, runs, ...(values.model ? { model: values.model } : {}) });
+      report = runMock({ library, variants, runs, tasks, ...(values.model ? { model: values.model } : {}) });
     }
   } catch (error) {
     io.err(`${error instanceof Error ? error.message : String(error)}\n${USAGE}\n`);
@@ -68,6 +73,7 @@ function parse(argv: string[]) {
       variants: { type: "string" },
       runs: { type: "string" },
       gate: { type: "string" },
+      fixtures: { type: "string" },
       json: { type: "boolean" },
       out: { type: "string" },
       model: { type: "string" },
