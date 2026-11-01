@@ -1,7 +1,9 @@
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { promises as fs, readFileSync, unlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { ensureAssentorGitignored, sessionPaths } from "../persistence/paths.js";
 import {
   parseEngineEvent,
@@ -258,7 +260,9 @@ export class RunLockedError extends Error {
         owner
           ? `Task ${sessionId} is already running in process ${owner.pid} on ${owner.host} (since ${owner.startedAt})`
           : `Task ${sessionId} is already running in another process`
-      }. Wait for it to finish or stop it; if no Assentor run is active for it, delete ${lockFile}.`,
+      }. Wait for that run to finish, or stop it. It is safe to delete ${lockFile} only when ${
+        owner ? `process ${owner.pid} on ${owner.host} is no longer running` : "no process is running"
+      } an Assentor run or resume of this task (for example it crashed); never delete it while one is.`,
     );
     this.name = "RunLockedError";
   }
@@ -458,7 +462,32 @@ async function isStaleLock(file: string, owner: LockOwner | undefined): Promise<
     // containers that always run as pid 1): stale.
     return !ownTokens.has(owner.token);
   }
-  return !isProcessAlive(owner.pid);
+  if (!isProcessAlive(owner.pid)) {
+    return true;
+  }
+  // A live pid whose process started after the lock was taken is a different process (pid reuse).
+  const started = await processStartMs(owner.pid);
+  const locked = Date.parse(owner.startedAt);
+  return started !== undefined && !Number.isNaN(locked) && started > locked + 1_000;
+}
+
+const execFileAsync = promisify(execFile);
+
+/** When process `pid` started, from POSIX `ps` (second resolution); undefined on Windows or when unknown. */
+async function processStartMs(pid: number): Promise<number | undefined> {
+  if (process.platform === "win32") {
+    return undefined;
+  }
+  try {
+    const { stdout } = await execFileAsync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      env: { ...process.env, LC_ALL: "C" },
+      timeout: 2_000,
+    });
+    const ms = Date.parse(stdout.trim());
+    return Number.isNaN(ms) ? undefined : ms;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Resolve when `work` settles, or after `ms` (no limit when undefined). Never rejects. */

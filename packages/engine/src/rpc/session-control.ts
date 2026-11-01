@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import { EventLog, EventLogLockedError, RunLockedError, acquireRunLock, isSessionLogLocked, isSessionRunLocked, type RunLock } from "../events/log.js";
+import { EventLog, EventLogLockedError, RunLockedError, acquireRunLock, isSessionLogLocked, type RunLock } from "../events/log.js";
 import { sessionPaths } from "../persistence/paths.js";
 import { createId, isId } from "../core/ids.js";
 import type { ModeDefinition } from "../modes/registry.js";
@@ -102,11 +102,26 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
     return { sessionId, seatId };
   };
 
-  /** Worktrees of a session that is running (here or in another process) are not changed from outside. */
-  const assertIdle = async (sessionId: string) => {
+  const takeRunLock = async (sessionId: string): Promise<RunLock> => {
+    try {
+      return await acquireRunLock(projectPath, sessionId);
+    } catch (error) {
+      throw error instanceof RunLockedError ? rejected("another process is running this session") : asRpcError(error);
+    }
+  };
+
+  /**
+   * Worktrees of a session that is running (here or in another process) are not changed from outside.
+   * The run lock is held for the whole change, so a CLI resume cannot start in the middle of it.
+   */
+  const whileIdle = async <T>(sessionId: string, work: () => Promise<T>): Promise<T> => {
     if (sessions.has(sessionId)) throw rejected("the session is live; cancel it first");
-    if ((await isSessionRunLocked(projectPath, sessionId)) || (await isSessionLogLocked(projectPath, sessionId))) {
-      throw rejected("another process is running this session");
+    const lock = await takeRunLock(sessionId);
+    try {
+      if (await isSessionLogLocked(projectPath, sessionId)) throw rejected("another process is running this session");
+      return await work();
+    } finally {
+      await lock.release().catch(() => undefined);
     }
   };
 
@@ -186,13 +201,8 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
     "session.start": async ({ sessionId }) => {
       const live = liveOf(sessionId);
       if (live.state !== "created") throw rejected(`session is already ${live.state}`);
-      let runLock: RunLock;
+      const runLock = await takeRunLock(sessionId);
       let log: EventLog;
-      try {
-        runLock = await acquireRunLock(projectPath, sessionId);
-      } catch (error) {
-        throw error instanceof RunLockedError ? rejected("another process is running this session") : asRpcError(error);
-      }
       try {
         log = await EventLog.open(projectPath, sessionId);
       } catch (error) {
@@ -276,28 +286,30 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
     // The target is always the main checkout; the caller's confirm: true is the approval.
     "worktree.apply": async ({ sessionId, seatId, strategy, message, allowedPaths }) => {
       const key = await seatKey(sessionId, seatId);
-      await assertIdle(sessionId);
-      try {
-        const result = await manager.applyTo("main", key, {
-          strategy,
-          ...(message ? { message } : {}),
-          ...(allowedPaths ? { allowedPaths } : {}),
-        });
-        return result.ok ? result : { ...result, message: scrubPaths(result.message) };
-      } catch (error) {
-        throw asRpcError(error);
-      }
+      return whileIdle(sessionId, async () => {
+        try {
+          const result = await manager.applyTo("main", key, {
+            strategy,
+            ...(message ? { message } : {}),
+            ...(allowedPaths ? { allowedPaths } : {}),
+          });
+          return result.ok ? result : { ...result, message: scrubPaths(result.message) };
+        } catch (error) {
+          throw asRpcError(error);
+        }
+      });
     },
 
     "worktree.discard": async ({ sessionId, seatId, force }) => {
       const key = await seatKey(sessionId, seatId);
-      await assertIdle(sessionId);
-      try {
-        await manager.discard(key, { force: force === true });
-      } catch (error) {
-        throw asRpcError(error);
-      }
-      return { ok: true as const };
+      return whileIdle(sessionId, async () => {
+        try {
+          await manager.discard(key, { force: force === true });
+        } catch (error) {
+          throw asRpcError(error);
+        }
+        return { ok: true as const };
+      });
     },
   });
   return server;

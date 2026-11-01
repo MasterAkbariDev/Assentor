@@ -24,7 +24,7 @@ import {
   type StageRunnerDeps,
   type StageSpec,
 } from "../../packages/engine/src/index.js";
-import { EventLog, isSessionRunLocked } from "../../packages/engine/src/events/log.js";
+import { acquireRunLock, EventLog, isSessionRunLocked } from "../../packages/engine/src/events/log.js";
 import { killProcessTree } from "../../packages/engine/src/process/kill-tree.js";
 import { RpcMethods } from "../../packages/protocol/src/rpc.js";
 import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
@@ -415,6 +415,32 @@ describe("worktrees", () => {
     }
     expect(await wm.list(S1)).toHaveLength(1);
     expect(await fs.readFile(path.join(projectPath, "a.txt"), "utf8")).toBe("one\n");
+  });
+
+  it("apply and discard hold the session's run lock while they work, so a resume cannot start meanwhile", async () => {
+    const { client, wm, projectPath } = await setup();
+    await seatWithChange(wm);
+    const heldDuring: boolean[] = [];
+    const realApply = wm.applyTo.bind(wm);
+    vi.spyOn(wm, "applyTo").mockImplementationOnce(async (...args) => {
+      heldDuring.push(await isSessionRunLocked(projectPath, S1));
+      return realApply(...args);
+    });
+    const key = { sessionId: S1, seatId: "opus-1", confirm: true as const };
+    expect(await client.call("worktree.apply", key)).toMatchObject({ ok: true });
+    expect(heldDuring).toEqual([true]);
+    expect(await isSessionRunLocked(projectPath, S1)).toBe(false);
+
+    // While a resume holds the lock (taken here in-process), the change is refused and nothing moves.
+    await seatWithChange(wm, S1, "opus-2");
+    const resume = await acquireRunLock(projectPath, S1);
+    const refused = await failure(client.call("worktree.discard", { ...key, seatId: "opus-2", force: true }));
+    expect(refused.code).toBe(RpcErrorCode.Rejected);
+    expect(refused.message).toContain("another process is running this session");
+    expect((await wm.list(S1)).map((w) => w.seatId)).toContain("opus-2");
+    await resume.release();
+    expect(await client.call("worktree.discard", { ...key, seatId: "opus-2", force: true })).toEqual({ ok: true });
+    expect(await isSessionRunLocked(projectPath, S1)).toBe(false);
   });
 
   it("apply with confirm lands the work on the main checkout", async () => {

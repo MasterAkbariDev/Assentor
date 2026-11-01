@@ -15,6 +15,9 @@ import {
 import type { KeyStatus } from "../providers/ai/types.js";
 import { createSeededModelRegistry } from "../models/index.js";
 import { TaskStore, type TaskSnapshot } from "../persistence/store.js";
+import { sessionPaths } from "../persistence/paths.js";
+import { acquireRunLock } from "../events/log.js";
+import { isId } from "../core/ids.js";
 import {
   createDefaultProviderRegistry,
   type AIProvider,
@@ -35,6 +38,7 @@ import {
 } from "../self/index.js";
 import { CMD_UNSAFE_ARG } from "../executors/cli-locator.js";
 import { AuditLog, type AuditEvent } from "./audit.js";
+import { promises as fs } from "node:fs";
 import path from "node:path";
 
 export interface AssentorServices {
@@ -286,11 +290,19 @@ export async function listProjectTasks(
   return snaps;
 }
 
+/** Refuses (RunLockedError, naming the holder) while a run or resume holds the task (FU-15). */
 export async function deleteProjectTask(
   projectPath: string,
   taskId: string,
 ): Promise<void> {
-  await TaskStore.remove(projectPath, taskId);
+  const lock = isId(taskId) ? await acquireRunLock(projectPath, taskId) : undefined;
+  try {
+    await TaskStore.remove(projectPath, taskId);
+  } finally {
+    await lock?.release();
+    // A task with no live log had no session dir: drop the one the lock made (only if empty).
+    if (lock) await fs.rmdir(sessionPaths(projectPath, taskId).root).catch(() => undefined);
+  }
 }
 
 export async function loadAuditEvents(

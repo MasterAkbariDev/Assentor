@@ -11,6 +11,7 @@ import {
   sessionPaths,
 } from "../../packages/engine/src/index.js";
 import { resumeAssentorTask, runAssentorTask } from "../../packages/cli/src/cli/commands.js";
+import { deleteProjectTask } from "../../packages/engine/src/services/app.js";
 
 // FU-15: one task-level run lock per task/session, held for a whole run or resume.
 
@@ -38,9 +39,9 @@ afterEach(async () => {
 });
 
 const lockFile = (id: string) => path.join(sessionPaths(projectPath, id).root, "run.lock");
-const writeOwner = async (id: string, pid: number) => {
+const writeOwner = async (id: string, pid: number, startedAt = new Date().toISOString()) => {
   await fs.mkdir(path.dirname(lockFile(id)), { recursive: true });
-  await fs.writeFile(lockFile(id), `${JSON.stringify({ pid, host: os.hostname(), startedAt: "2026-01-01T00:00:00.000Z", token: "other" })}\n`);
+  await fs.writeFile(lockFile(id), `${JSON.stringify({ pid, host: os.hostname(), startedAt, token: "other" })}\n`);
 };
 
 describe("acquireRunLock", () => {
@@ -66,6 +67,21 @@ describe("acquireRunLock", () => {
     const lock = await acquireRunLock(projectPath, id);
     expect(JSON.parse(await fs.readFile(lockFile(id), "utf8"))).toMatchObject({ pid: process.pid });
     await lock.release();
+  });
+
+  it.skipIf(process.platform === "win32")("a live pid that started after the lock was taken is a reused pid: stale", async () => {
+    const id = createId();
+    await writeOwner(id, process.ppid, "2000-01-01T00:00:00.000Z");
+    expect(await isSessionRunLocked(projectPath, id)).toBe(false);
+    await (await acquireRunLock(projectPath, id)).release();
+  });
+
+  it("the error says which file to delete and when that is safe", async () => {
+    const id = createId();
+    await writeOwner(id, process.ppid);
+    await expect(acquireRunLock(projectPath, id)).rejects.toThrow(
+      `It is safe to delete ${lockFile(id)} only when process ${process.ppid} on ${os.hostname()} is no longer running an Assentor run or resume of this task`,
+    );
   });
 
   it("an unreadable lock is held during the grace period, then taken over", async () => {
@@ -111,5 +127,25 @@ describe("solo run and resume", { timeout: 60_000 }, () => {
     await resumeAssentorTask({ projectPath, taskId: result.taskId });
     expect(await isSessionRunLocked(projectPath, result.taskId)).toBe(false);
     await expect(fs.stat(lockFile(result.taskId))).rejects.toThrow();
+  });
+
+  it("delete (TUI) is refused while a run holds the task, then removes it and leaves no lock behind", async () => {
+    const { result } = await run();
+    const taskDir = path.join(projectPath, ".assentor", "tasks", result.taskId);
+    await writeOwner(result.taskId, process.ppid);
+    await expect(deleteProjectTask(projectPath, result.taskId)).rejects.toThrow(
+      `Task ${result.taskId} is already running in process ${process.ppid} on ${os.hostname()}`,
+    );
+    await expect(fs.stat(taskDir)).resolves.toBeDefined();
+    await fs.rm(lockFile(result.taskId));
+    await deleteProjectTask(projectPath, result.taskId);
+    await expect(fs.stat(taskDir)).rejects.toThrow();
+    await expect(fs.stat(lockFile(result.taskId))).rejects.toThrow();
+
+    // A task without a session dir does not get an empty one from the lock.
+    const bare = createId();
+    await fs.mkdir(path.join(projectPath, ".assentor", "tasks", bare), { recursive: true });
+    await deleteProjectTask(projectPath, bare);
+    await expect(fs.stat(sessionPaths(projectPath, bare).root)).rejects.toThrow();
   });
 });
