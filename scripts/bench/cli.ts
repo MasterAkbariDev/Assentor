@@ -4,7 +4,7 @@ import { parseArgs } from "node:util";
 import { PromptLibrary } from "#assentor/engine/prompts/library.js";
 import { gateVariant, renderReport, resolveVariant, runLive, runMock, type BenchReport } from "./tokens.js";
 
-const USAGE = `pnpm bench:tokens [--variants baseline,style:concise,profile:economy,skills:<a>+<b>] [--runs N]
+const USAGE = `pnpm bench:tokens [--variants baseline,style:concise,profile:economy,cache:stable,cache:legacy,skills:<a>+<b>] [--runs N]
                   [--gate <variant>] [--json] [--out <file.md>] [--model <id for the token estimate>]
                   [--live --budget <tokens> --executor <provider> [--executor-model <model>]]`;
 
