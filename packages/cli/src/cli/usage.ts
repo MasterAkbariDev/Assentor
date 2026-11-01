@@ -38,6 +38,8 @@ export function formatUsage(report: UsageReport, options: { concise?: boolean } 
   for (const [label, t] of rows) {
     lines.push(`  ${label.padEnd(width)}${cell(String(t.calls))}${cell(n(t.tokensIn))}${cell(n(t.tokensOut))}${cell(n(t.cachedTokens))}`);
   }
+  if (report.skippedLines) lines.push(`  ${report.skippedLines} unreadable log line(s) skipped`);
+  if (report.truncated) lines.push("  log too long: totals cover its start only");
   for (const w of report.warnings) {
     lines.push(`  budget ${w.budget}${w.seatId ? ` (${w.seatId})` : ""} passed ${w.threshold * 100}%: ${w.used} of ${w.limit}`);
   }
@@ -53,8 +55,7 @@ export async function usageCommand(input: {
   err: (line: string) => void;
 }): Promise<number> {
   const projectPath = path.resolve(input.projectPath);
-  const { readSessionEvents } = await import("#assentor/engine/events/log.js");
-  const { usageFromEvents } = await import("#assentor/engine/usage/ledger.js");
+  const { readSessionUsage } = await import("#assentor/engine/usage/read.js");
   let sessionId = input.sessionId;
   if (!sessionId) {
     const { listSessions } = await import("#assentor/engine/rpc/sessions.js");
@@ -65,7 +66,7 @@ export async function usageCommand(input: {
     }
   }
   try {
-    const report = usageFromEvents(await readSessionEvents(projectPath, sessionId), sessionId);
+    const report = await readSessionUsage(projectPath, sessionId);
     if (input.json) {
       input.out(JSON.stringify(report, null, 2));
     } else {

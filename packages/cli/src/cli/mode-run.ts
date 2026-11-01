@@ -250,7 +250,8 @@ export async function resumeModeTask(input: Omit<RunAssentorInput, "prompt" | "m
 function noteEvent(reporter: RunReporter, event: EngineEvent): void {
   const data = event.data as Record<string, unknown>;
   if (event.type === "seat.error") reporter.note(`✗ ${event.seatId}: ${String(data.message ?? "")}`);
-  else if (event.type === "session.warning") reporter.note(`warning: ${String(data.message ?? "")}`);
+  // Budget warnings are printed by the reporter itself.
+  else if (event.type === "session.warning" && data.kind !== "budget") reporter.note(`warning: ${String(data.message ?? "")}`);
   else if (event.type === "seat.spawned") reporter.note(`seat ${event.seatId}: ${String(data.provider)}/${String(data.model)} (${String(data.role)})`);
 }
 

@@ -67,6 +67,8 @@ const SeatTokens = z
     costUsd: z.number().nonnegative().optional(),
     /** Input tokens served from the provider's prompt cache; a part of `tokensIn`. Absent in older logs. */
     cachedTokens: z.number().nonnegative().optional(),
+    /** Model turns this report covers (a CLI run makes several); absent = 1. */
+    turns: z.number().int().positive().optional(),
   })
   .passthrough();
 const SeatModelChanged = z

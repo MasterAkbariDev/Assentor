@@ -5,9 +5,9 @@ import { PromptLibrary } from "../../packages/engine/src/prompts/library.js";
 import {
   ALWAYS_ON_CAP_TOKENS,
   checkPromptSizes,
+  defaultAlwaysOn,
   promptSizes,
   REPO_ROOT,
-  resolveVariant,
   type PromptSizes,
 } from "../../scripts/bench/tokens.js";
 
@@ -19,8 +19,8 @@ import {
  */
 const SNAPSHOT = path.join(REPO_ROOT, "scripts/bench/prompt-sizes.json");
 const library = PromptLibrary.loadBuiltinSync();
-/** What the default config sends with every seat prompt besides the role text (empty until TE-02/TE-07 land). */
-const current = promptSizes(library, resolveVariant("baseline").alwaysOn);
+/** Role text plus what the default config adds to every seat prompt: its style fragment and skills index, from the shipped files. */
+const current = promptSizes(library, defaultAlwaysOn());
 
 /** A "be brief" saver pasted into every prompt: about 600 tokens. */
 const BLOATED_SAVER = `## Token saver\n${"- Be brief: answer first, no preamble, no restating the task, no closing summary.\n".repeat(30)}`;
@@ -35,9 +35,12 @@ describe("prompt-size snapshot", () => {
     expect(Object.keys(current.prompts).length).toBeGreaterThan(30);
   });
 
-  it("fails growth over 5% and passes growth under it", () => {
+  it("fails a change over 5% either way and passes one under it", () => {
     const snapshot: PromptSizes = { prompts: { a: 1000, b: 1000 }, extra: 0 };
-    expect(checkPromptSizes({ prompts: { a: 1040, b: 900 }, extra: 0 }, snapshot)).toEqual([]);
+    expect(checkPromptSizes({ prompts: { a: 1040, b: 960 }, extra: 0 }, snapshot)).toEqual([]);
+    expect(checkPromptSizes({ prompts: { a: 1000, b: 900 }, extra: 0 }, snapshot)).toEqual([
+      "b: 900 tokens, -10% under the snapshot (1000) — update it to tighten the pin",
+    ]);
     expect(checkPromptSizes({ prompts: { a: 1060, b: 1000 }, extra: 0 }, snapshot)).toEqual([
       "a: 1060 tokens, +6% over the snapshot (1000); more than +5%",
     ]);

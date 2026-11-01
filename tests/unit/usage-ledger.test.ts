@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,14 +6,17 @@ import { createId } from "../../packages/engine/src/core/ids.js";
 import { sessionPaths } from "../../packages/engine/src/persistence/paths.js";
 import { readSessionEvents } from "../../packages/engine/src/events/log.js";
 import { UsageLedger, usageFromEvents } from "../../packages/engine/src/usage/ledger.js";
+import { readSessionUsage } from "../../packages/engine/src/usage/read.js";
 import { createEngineRpcServer } from "../../packages/engine/src/rpc/engine.js";
 import { createInProcessTransport } from "../../packages/engine/src/rpc/transports.js";
 import { RpcClient, RpcRemoteError } from "../../packages/protocol/src/rpc-client.js";
 import { UsageReportSchema } from "../../packages/protocol/src/rpc.js";
 import { formatUsage, formatUsageLine, usageCommand } from "../../packages/cli/src/cli/usage.js";
+import { RunReporter } from "../../packages/cli/src/cli/ui/reporter.js";
 
 const dirs: string[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(dirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 
@@ -89,6 +92,38 @@ describe("UsageLedger", () => {
   });
 });
 
+describe("ledger pricing and turns", () => {
+  it("prices cached input at the cached rate when the table has one, and counts a CLI run's turns as calls", () => {
+    const ev = (data: Record<string, unknown>) =>
+      ({ seq: 1, sessionId: "s", seatId: "a", at: "", type: "seat.tokens", data }) as never;
+    const spawned = { seq: 0, sessionId: "s", seatId: "a", at: "", type: "seat.spawned", data: { displayName: "a", provider: "anthropic", transport: "cli", model: "m", role: "builder", permissions: "edit" } } as never;
+    const priced = usageFromEvents([spawned, ev({ tokensIn: 1_000_000, tokensOut: 0, cachedTokens: 800_000, turns: 5 })], "s", {
+      "anthropic/m": { inPerMTok: 3, outPerMTok: 15, cachedInPerMTok: 0.3 },
+    });
+    expect(priced.total.costUsd).toBeCloseTo(0.2 * 3 + 0.8 * 0.3);
+    expect(priced.total.calls).toBe(5);
+    const noCachedRate = usageFromEvents([spawned, ev({ tokensIn: 1_000_000, tokensOut: 0, cachedTokens: 800_000 })], "s", {
+      "anthropic/m": { inPerMTok: 3, outPerMTok: 15 },
+    });
+    expect(noCachedRate.total.costUsd).toBeCloseTo(3);
+  });
+});
+
+describe("readSessionUsage", () => {
+  it("skips and counts unreadable lines, and stops at the line cap", async () => {
+    const { projectPath, sessionId } = await fixture();
+    const file = sessionPaths(projectPath, sessionId).events;
+    await fs.appendFile(file, "{not json\n" + JSON.stringify({ seq: 99, sessionId, at: "bad", type: "seat.tokens", data: {} }) + "\n");
+    const report = await readSessionUsage(projectPath, sessionId);
+    expect(report.total.tokensIn).toBe(3350);
+    expect(report.skippedLines).toBe(2);
+    expect(report.truncated).toBeUndefined();
+    const capped = await readSessionUsage(projectPath, sessionId, 4);
+    expect(capped).toMatchObject({ truncated: true, total: { calls: 1 } });
+    expect((await readSessionUsage(projectPath, createId())).total.calls).toBe(0);
+  });
+});
+
 describe("usage report output", () => {
   it("prints one line when nothing was reported, a table otherwise", async () => {
     expect(formatUsage(usageFromEvents([]))).toEqual(["Usage: no token counts reported by these seats"]);
@@ -132,5 +167,26 @@ describe("usage.get RPC", () => {
     } finally {
       client.close();
     }
+  });
+});
+
+describe("RunReporter", () => {
+  it("prints a budget warning live as one line, and the usage table at the end", () => {
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((line?: unknown) => void logs.push(String(line)));
+    const reporter = new RunReporter({ executorName: "e", reviewerName: "r" });
+    const base = { sessionId: "s", at: "2026-10-31T10:00:00.000Z" };
+    reporter.onEngineEvent({ ...base, seq: 1, type: "seat.tokens", seatId: "executor", data: { tokensIn: 600, tokensOut: 0 } });
+    reporter.onEngineEvent({
+      ...base,
+      seq: 2,
+      type: "session.warning",
+      data: { kind: "budget", message: "session tokens budget at 50% (600 of 1000)", budget: "session.tokens", threshold: 0.5, used: 600, limit: 1000 },
+    });
+    reporter.onEngineEvent({ ...base, seq: 3, type: "session.warning", data: { kind: "pair-navigator", message: "not mine" } });
+    expect(logs.filter((l) => l.includes("budget"))).toEqual([expect.stringContaining("⚠ session tokens budget at 50% (600 of 1000)")]);
+    reporter.printUsage();
+    expect(logs.some((l) => l.includes("Usage: 600 tokens"))).toBe(true);
+    reporter.dispose();
   });
 });

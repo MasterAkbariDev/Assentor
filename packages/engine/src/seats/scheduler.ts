@@ -44,6 +44,8 @@ export interface Usage {
   tokensIn: number;
   tokensOut: number;
   costUsd: number;
+  /** Input tokens served from a prompt cache (part of `tokensIn`); passed through to `seat.tokens`, not budgeted. */
+  cachedTokens?: number;
 }
 
 export interface BudgetLimits {
@@ -88,6 +90,8 @@ export interface RunOptions {
   classify?: (error: unknown) => RateLimitVerdict;
   /** Overrides the scheduler's default max attempts. */
   maxAttempts?: number;
+  /** Stage the job belongs to; set on its `seat.tokens` events. */
+  stageId?: string;
 }
 
 export interface SchedulerOptions {
@@ -425,10 +429,12 @@ export class SeatScheduler {
               type: "seat.tokens",
               sessionId: this.options.sessionId,
               seatId: seat.id,
+              ...(runOptions.stageId ? { stageId: runOptions.stageId } : {}),
               data: {
                 tokensIn: Math.max(0, delta.tokensIn ?? 0),
                 tokensOut: Math.max(0, delta.tokensOut ?? 0),
                 ...(delta.costUsd !== undefined ? { costUsd: Math.max(0, delta.costUsd) } : {}),
+                ...(delta.cachedTokens !== undefined ? { cachedTokens: Math.max(0, delta.cachedTokens) } : {}),
               },
             });
             addUsage(usage, delta);

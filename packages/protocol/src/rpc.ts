@@ -125,6 +125,10 @@ export const UsageReportSchema = z.object({
   /** `seat.retry` events. */
   retries: z.number().int().nonnegative(),
   warnings: z.array(BudgetWarningSchema),
+  /** Log lines that could not be read and were skipped. */
+  skippedLines: z.number().int().positive().optional(),
+  /** True when the log was longer than the reader's line cap; totals cover the start only. */
+  truncated: z.boolean().optional(),
 });
 export type UsageReport = z.infer<typeof UsageReportSchema>;
 

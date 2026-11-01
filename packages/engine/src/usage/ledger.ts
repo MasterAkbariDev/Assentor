@@ -8,7 +8,9 @@ import type { PricingTable } from "../estimate/cost.js";
  *
  * - `cachedTokens` (when a provider reports it) is a part of `tokensIn`.
  * - Cost is the event's `costUsd`; without one, the seat's `provider/model`
- *   price from `pricing` (`estimate/cost.ts`) when known, else 0.
+ *   price from `pricing` (`estimate/cost.ts`) when known (cached input at
+ *   `cachedInPerMTok`, else at the full input price), else 0.
+ * - `calls` counts model turns: a report's `turns` (a CLI run), else 1.
  * - A seat's model comes from `seat.spawned`, then `seat.model.changed`.
  * - Budget warnings are the scheduler's `session.warning` events of kind `budget`.
  */
@@ -53,15 +55,22 @@ export class UsageLedger {
         const seatId = event.seatId ?? "-";
         const model = this.seatModel.get(seatId) ?? "unknown";
         const { tokensIn, tokensOut } = event.data;
+        const cached = Math.min(tokensIn, event.data.cachedTokens ?? 0);
         const price = this.pricing[model];
         const costUsd =
-          event.data.costUsd ?? (price ? (tokensIn * price.inPerMTok + tokensOut * price.outPerMTok) / 1_000_000 : 0);
+          event.data.costUsd ??
+          (price
+            ? ((tokensIn - cached) * price.inPerMTok +
+                cached * (price.cachedInPerMTok ?? price.inPerMTok) +
+                tokensOut * price.outPerMTok) /
+              1_000_000
+            : 0);
         const delta: UsageTotals = {
           tokensIn,
           tokensOut,
-          cachedTokens: event.data.cachedTokens ?? 0,
+          cachedTokens: cached,
           costUsd,
-          calls: 1,
+          calls: event.data.turns ?? 1,
         };
         add(this.report.total, delta);
         add((this.report.bySeat[seatId] ??= zero()), delta);

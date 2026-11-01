@@ -4,11 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { EngineEvent } from "#assentor/protocol/events.js";
+import { parseAssentorConfig } from "#assentor/engine/config/load.js";
 import { splitPromptFile } from "#assentor/engine/prompts/format.js";
 import type { PromptLibrary } from "#assentor/engine/prompts/library.js";
 import { templateVariables } from "#assentor/engine/prompts/template.js";
 import { UsageLedger } from "#assentor/engine/usage/ledger.js";
 import { estimateTokens } from "#assentor/engine/usage/tokens.js";
+import { cliUsage } from "#assentor/engine/usage/cli-usage.js";
 import { BENCH_TASKS, type BenchTask, type TaskResult } from "./tasks.js";
 
 /**
@@ -20,8 +22,10 @@ import { BENCH_TASKS, type BenchTask, type TaskResult } from "./tasks.js";
 
 /** Hard cap for style + skills-index text sent with every seat prompt. */
 export const ALWAYS_ON_CAP_TOKENS = 300;
-/** Growth of a role prompt's always-on part allowed before the snapshot must be updated. */
+/** Change (growth or shrink) of a role prompt's always-on part allowed before the snapshot must be updated. */
 export const PROMPT_GROWTH_LIMIT = 0.05;
+/** Largest drop in the cached share of prompt tokens (fraction points) a variant may cause. */
+export const CACHE_DROP_LIMIT = 0.05;
 /** A live variant must cut net tokens per success by this much. */
 export const LIVE_MIN_SAVING = 0.1;
 /** Follow-up turns a mock seat gets when its reply fails the task check. */
@@ -57,40 +61,72 @@ export interface Variant {
   mock?: MockScript;
 }
 
-/**
- * `baseline`, `style:<name>`, `profile:<name>` or `skills:<a>+<b>`. Features
- * that are not built yet resolve to a no-op with a note, so the harness never
- * depends on them.
- */
-export function resolveVariant(name: string, root = REPO_ROOT): Variant {
-  const [kind, value = ""] = name.split(":", 2) as [string, string?];
-  if (name === "baseline") {
-    return { name, overlay: {}, alwaysOn: "", notes: [] };
+/** A style fragment as shipped (`prompts/builtin/style-<name>.md`); empty with a note when it does not exist. */
+function styleText(style: string, root: string, notes: string[]): string {
+  const file = path.join(root, "prompts", "builtin", `style-${style}.md`);
+  if (!existsSync(file)) {
+    if (style !== "normal") notes.push(`style-${style}.md is not built yet (TE-02): no effect`);
+    return "";
   }
-  if (kind === "style" && value) {
-    const file = path.join(root, "prompts", "builtin", `style-${value}.md`);
-    if (!existsSync(file)) {
-      return { name, overlay: { style: value }, alwaysOn: "", notes: [`style-${value}.md is not built yet (TE-02): no effect`] };
-    }
-    const text = readFileSync(file, "utf8");
-    return { name, overlay: { style: value }, alwaysOn: text.startsWith("---") ? splitPromptFile(text).body : text.trim(), notes: [] };
-  }
-  if (kind === "profile" && value) {
-    return { name, overlay: { profile: value }, alwaysOn: "", notes: ["profiles are not built yet (TE-06): no effect in the mock; live runs need the feature"] };
-  }
-  if (kind === "skills" && value) {
-    const skills = value.split("+");
-    const notes: string[] = [];
-    const index = skills.flatMap((skill) => {
+  const text = readFileSync(file, "utf8");
+  return text.startsWith("---") ? splitPromptFile(text).body : text.trim();
+}
+
+/** The skills index lines (name + description) for skills that exist; a note for each that does not. */
+function skillsIndex(skills: string[], root: string, notes: string[]): string {
+  return skills
+    .flatMap((skill) => {
       const file = path.join(root, "skills", skill, "SKILL.md");
       if (!existsSync(file)) {
         notes.push(`skill ${skill} is not built yet (TE-07/08): no effect`);
         return [];
       }
-      const description = String(splitPromptFile(readFileSync(file, "utf8")).frontMatter.description ?? "");
-      return [`- ${skill}: ${description}`];
-    });
-    return { name, overlay: { skills }, alwaysOn: index.join("\n"), notes };
+      return [`- ${skill}: ${String(splitPromptFile(readFileSync(file, "utf8")).frontMatter.description ?? "")}`];
+    })
+    .join("\n");
+}
+
+/** Style and skills of the default config (`output.style`, `skills.enabled` once TE-02/TE-07 add them). */
+function defaults(): { style: string; skills: string[] } {
+  const config = parseAssentorConfig({}) as { output?: { style?: string }; skills?: { enabled?: string[] } };
+  return { style: config.output?.style ?? "normal", skills: config.skills?.enabled ?? [] };
+}
+
+const joinParts = (...parts: string[]) => parts.filter(Boolean).join("\n\n");
+
+/**
+ * What the default config sends with every seat prompt besides the role text:
+ * its style fragment plus its skills index, read from the shipped files.
+ * shortcut: rebuilt here from config + files because the engine has no seat-prompt
+ * assembly for styles/skills yet; TE-02/TE-07 must expose theirs and this must call it.
+ */
+export function defaultAlwaysOn(root = REPO_ROOT): string {
+  const { style, skills } = defaults();
+  return joinParts(styleText(style, root, []), skillsIndex(skills, root, []));
+}
+
+/**
+ * `baseline`, `style:<name>`, `profile:<name>` or `skills:<a>+<b>`, each on top
+ * of the default config. Features that are not built yet resolve to a no-op
+ * with a note, so the harness never depends on them.
+ */
+export function resolveVariant(name: string, root = REPO_ROOT): Variant {
+  const [kind, value = ""] = name.split(":", 2) as [string, string?];
+  const base = defaults();
+  const notes: string[] = [];
+  if (name === "baseline") {
+    return { name, overlay: {}, alwaysOn: defaultAlwaysOn(root), notes };
+  }
+  if (kind === "style" && value) {
+    return { name, overlay: { style: value }, alwaysOn: joinParts(styleText(value, root, notes), skillsIndex(base.skills, root, [])), notes };
+  }
+  if (kind === "profile" && value) {
+    notes.push("profiles are not built yet (TE-06): no effect in the mock; live runs need the feature");
+    return { name, overlay: { profile: value }, alwaysOn: defaultAlwaysOn(root), notes };
+  }
+  if (kind === "skills" && value) {
+    const skills = [...new Set([...base.skills, ...value.split("+")])];
+    return { name, overlay: { skills }, alwaysOn: joinParts(styleText(base.style, root, []), skillsIndex(skills, root, notes)), notes };
   }
   throw new Error(`Unknown variant "${name}" (use baseline, style:<name>, profile:<name> or skills:<a>+<b>)`);
 }
@@ -148,6 +184,9 @@ export function checkPromptSizes(current: PromptSizes, snapshot: PromptSizes): s
       problems.push(`${id}: not in the snapshot (${tokens} tokens) — update it`);
     } else if (tokens > pinned * (1 + PROMPT_GROWTH_LIMIT)) {
       problems.push(`${id}: ${tokens} tokens, +${pct(tokens / pinned - 1)} over the snapshot (${pinned}); more than +${pct(PROMPT_GROWTH_LIMIT)}`);
+    } else if (tokens < pinned * (1 - PROMPT_GROWTH_LIMIT)) {
+      // A smaller prompt is good; pin it so later growth is measured from there.
+      problems.push(`${id}: ${tokens} tokens, ${pct(tokens / pinned - 1)} under the snapshot (${pinned}) — update it to tighten the pin`);
     }
   }
   for (const id of Object.keys(snapshot.prompts)) {
@@ -182,6 +221,8 @@ export interface VariantResult {
   promptTokens: number;
   outputTokens: number;
   cachedTokens: number;
+  /** cachedTokens / promptTokens: prompt tokens served from the cache. */
+  cachedShare: number;
   calls: number;
   retries: number;
   successRate: number;
@@ -302,30 +343,6 @@ export function runMock(options: BenchOptions): BenchReport {
   return summarize("mock", options, tasks, model, attempts);
 }
 
-/** Usage a CLI printed (Claude Code stream-json `result`, or an OpenAI-style `usage`); undefined when it printed none. */
-export function cliUsage(raw: string): Pick<Attempt, "tokensIn" | "tokensOut" | "cachedTokens" | "calls"> | undefined {
-  for (const line of raw.split("\n").reverse()) {
-    let value: { usage?: Record<string, unknown>; num_turns?: unknown };
-    try {
-      value = JSON.parse(line) as typeof value;
-    } catch {
-      continue;
-    }
-    const usage = value?.usage;
-    const num = (key: string) => (typeof usage?.[key] === "number" ? (usage[key] as number) : 0);
-    const calls = typeof value.num_turns === "number" ? value.num_turns : 1;
-    if (typeof usage?.input_tokens === "number") {
-      const cached = num("cache_read_input_tokens");
-      return { tokensIn: num("input_tokens") + cached + num("cache_creation_input_tokens"), tokensOut: num("output_tokens"), cachedTokens: cached, calls };
-    }
-    if (typeof usage?.prompt_tokens === "number") {
-      const details = usage.prompt_tokens_details as { cached_tokens?: number } | undefined;
-      return { tokensIn: num("prompt_tokens"), tokensOut: num("completion_tokens"), cachedTokens: details?.cached_tokens ?? 0, calls };
-    }
-  }
-  return undefined;
-}
-
 export interface LiveOptions extends BenchOptions {
   /** Must be true: live runs spend real tokens. */
   live: boolean;
@@ -366,7 +383,9 @@ export async function runLive(options: LiveOptions): Promise<BenchReport> {
           const result = await executor.run({ taskId: createId(), projectPath: dir, contract: buildContract(task.variables.goal ?? task.id), prompt });
           const output = result.summary;
           const reported = cliUsage(result.rawOutput ?? "");
-          const usage = reported ?? {
+          const usage = reported
+            ? { tokensIn: reported.tokensIn, tokensOut: reported.tokensOut, cachedTokens: reported.cachedTokens, calls: reported.turns }
+            : {
             tokensIn: estimateTokens(prompt, model),
             tokensOut: estimateTokens(result.rawOutput ?? output, model),
             cachedTokens: 0,
@@ -423,6 +442,7 @@ function summarize(runner: BenchReport["runner"], options: BenchOptions, tasks: 
       promptTokens: mean((a) => a.tokensIn),
       outputTokens: mean((a) => a.tokensOut),
       cachedTokens: mean((a) => a.cachedTokens),
+      cachedShare: mean((a) => a.tokensIn) > 0 ? mean((a) => a.cachedTokens) / mean((a) => a.tokensIn) : 0,
       calls: mean((a) => a.calls),
       retries: mean((a) => a.retries),
       successRate: mine.length ? mine.filter((a) => a.success).length / mine.length : 0,
@@ -443,8 +463,9 @@ function summarize(runner: BenchReport["runner"], options: BenchOptions, tasks: 
 /**
  * Live: net tokens per success down ≥ 10%, no success-rate drop, always-on text within the cap.
  * Mock (structure only): always-on text within the cap, no success-rate drop, and net tokens per
- * success up by no more than the always-on budget explains (cap × baseline calls per success) —
- * so extra turns, retries or longer prompts fail even when replies get shorter.
+ * success up by no more than the variant's own extra always-on text explains (its tokens × baseline
+ * calls per success) — so extra turns, retries or longer prompts fail even when replies get shorter.
+ * Both: the cached share of prompt tokens may not drop more than CACHE_DROP_LIMIT points.
  */
 export function gateVariant(report: BenchReport, name: string): { pass: boolean; reasons: string[] } {
   const base = report.variants.find((v) => v.name === "baseline");
@@ -456,6 +477,11 @@ export function gateVariant(report: BenchReport, name: string): { pass: boolean;
   if (variant.alwaysOnTokens > ALWAYS_ON_CAP_TOKENS) {
     reasons.push(`always-on text is ${variant.alwaysOnTokens} tokens per seat prompt, over the ${ALWAYS_ON_CAP_TOKENS}-token cap`);
   }
+  if (variant.cachedShare < base.cachedShare - CACHE_DROP_LIMIT) {
+    reasons.push(
+      `cached share of prompt tokens fell to ${pct(variant.cachedShare)} from the baseline's ${pct(base.cachedShare)} (more than ${pct(CACHE_DROP_LIMIT)} points): the prompt prefix is no longer stable`,
+    );
+  }
   if (variant.successRate < base.successRate) {
     reasons.push(`success rate ${pct(variant.successRate)} is below the baseline's ${pct(base.successRate)}`);
   }
@@ -465,12 +491,16 @@ export function gateVariant(report: BenchReport, name: string): { pass: boolean;
       reasons.push(`net tokens per successful task ${signed(change)} vs baseline; needs ${signed(-LIVE_MIN_SAVING)} or better`);
     }
   } else {
+    // The variant may cost what its own extra always-on text costs on every call (+1 per call for the joining
+    // newlines), nothing more. Note: the mock adds that text itself; it does not call the engine's prompt
+    // assembly yet, so TE-03/04/05 must hook their packer, summaries and cache order into mockAttempt.
     const successes = base.successRate * report.tasks.length;
-    const allowance = successes > 0 ? (ALWAYS_ON_CAP_TOKENS * base.calls) / successes : 0;
+    const extraPerCall = Math.max(0, variant.alwaysOnTokens - base.alwaysOnTokens) + 1;
+    const allowance = successes > 0 ? (extraPerCall * base.calls) / successes : 0;
     const growth = variant.netPerSuccess.mean - base.netPerSuccess.mean;
     if (!(growth <= allowance)) {
       reasons.push(
-        `net tokens per successful task ${signed(change)} (+${Math.round(growth)}) vs baseline, more than the always-on budget allows (+${Math.round(allowance)}): extra turns, retries or prompt growth`,
+        `net tokens per successful task ${signed(change)} (+${Math.round(growth)}) vs baseline, more than its always-on text explains (+${Math.round(allowance)}): extra turns, retries or prompt growth`,
       );
     }
   }

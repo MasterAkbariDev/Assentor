@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { PromptLibrary } from "../../packages/engine/src/prompts/library.js";
 import { BENCH_TASKS } from "../../scripts/bench/tasks.js";
+import { cliUsage } from "../../packages/engine/src/usage/cli-usage.js";
 import {
-  cliUsage,
   gateVariant,
   renderReport,
   resolveVariant,
@@ -61,9 +61,11 @@ describe("mock runner", () => {
     expect(saver.netPerSuccess.mean).toBeGreaterThan(base.netPerSuccess.mean * 1.3);
     const gate = gateVariant(report, "bloated-saver");
     expect(gate.pass).toBe(false);
-    expect(gate.reasons[0]).toMatch(/always-on text is \d+ tokens per seat prompt, over the 300-token cap/);
-    expect(gate.reasons[1]).toMatch(/^net tokens per successful task \+\d+(\.\d)?% .* more than the always-on budget allows/);
-    expect(gateVariant({ ...report, runner: "live" }, "bloated-saver").pass).toBe(false);
+    // Mock: its growth is exactly its always-on text on every call, so the cap is what rejects it.
+    expect(gate.reasons).toEqual([expect.stringMatching(/^always-on text is \d+ tokens per seat prompt, over the 300-token cap$/)]);
+    expect(gateVariant({ ...report, runner: "live" }, "bloated-saver").reasons[1]).toMatch(
+      /^net tokens per successful task \+\d+(\.\d)?% vs baseline; needs -10% or better$/,
+    );
   });
 
   it("the owner's case: an injected saver body plus extra reads about doubles net tokens per task", () => {
@@ -94,10 +96,22 @@ describe("mock runner", () => {
     expect(gateVariant(report, "drops-handoff").pass).toBe(false);
   });
 
-  it("reports cached tokens, and a prefix that changes per call loses them", () => {
+  it("reports cached tokens, and the gate fails a variant whose changing prefix loses the cache", () => {
     const report = bench(variant("unstable", { unstablePrefix: true }));
     expect(result(report, "unstable").cachedTokens).toBe(0);
-    expect(result(report, "baseline").cachedTokens).toBeGreaterThan(0);
+    expect(result(report, "baseline").cachedShare).toBeGreaterThan(0.3);
+    for (const runner of ["mock", "live"] as const) {
+      expect(gateVariant({ ...report, runner }, "unstable").reasons[0]).toMatch(
+        /^cached share of prompt tokens fell to 0% from the baseline's \d+(\.\d)?% .*prefix is no longer stable$/,
+      );
+    }
+  });
+
+  it("the mock allowance is the variant's own always-on text: within the cap is not a free pass", () => {
+    const small = "- answer-first: lead with the result.\n".repeat(4); // about 40 tokens
+    const report = bench(variant("small", {}, small), variant("small-extra-turn", { extraTurns: 1 }, small));
+    expect(gateVariant(report, "small")).toEqual({ pass: true, reasons: [] });
+    expect(gateVariant(report, "small-extra-turn").reasons).toEqual([expect.stringMatching(/^net tokens per successful task \+/)]);
   });
 
   it("a no-op variant passes the mock gate", () => {
@@ -116,6 +130,7 @@ describe("gate thresholds (live)", () => {
     promptTokens: 0,
     outputTokens: 0,
     cachedTokens: 0,
+    cachedShare: 0,
     calls: 5,
     retries: 0,
     successRate,
@@ -174,12 +189,12 @@ describe("live runner", () => {
       JSON.stringify({ type: "assistant", message: {} }),
       JSON.stringify({ type: "result", num_turns: 4, usage: { input_tokens: 100, cache_read_input_tokens: 900, cache_creation_input_tokens: 50, output_tokens: 200 } }),
     ].join("\n");
-    expect(cliUsage(claude)).toEqual({ tokensIn: 1050, tokensOut: 200, cachedTokens: 900, calls: 4 });
+    expect(cliUsage(claude)).toEqual({ tokensIn: 1050, tokensOut: 200, cachedTokens: 900, turns: 4 });
     expect(cliUsage(JSON.stringify({ usage: { prompt_tokens: 10, completion_tokens: 2, prompt_tokens_details: { cached_tokens: 4 } } }))).toEqual({
       tokensIn: 10,
       tokensOut: 2,
       cachedTokens: 4,
-      calls: 1,
+      turns: 1,
     });
     expect(cliUsage("plain text\n")).toBeUndefined();
   });

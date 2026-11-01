@@ -140,6 +140,9 @@ export class RunReporter {
    */
   onEngineEvent(event: EngineEvent): void {
     this.usage.add(event);
+    if (event.type === "session.warning" && event.data.kind === "budget") {
+      this.note(`⚠ ${event.data.message ?? "budget warning"}`);
+    }
     if (event.seatId?.startsWith("reviewer-")) {
       this.reviewerSeats = reduceSeatEvents(this.reviewerSeats, event);
     }

@@ -18,6 +18,7 @@ import type {
   ReviewInput,
 } from "../providers/reviewers/types.js";
 import { redactSecrets } from "../security/redact.js";
+import { cliUsage, type CliUsage } from "../usage/cli-usage.js";
 import { fromSupervisorEvent, type SupervisorEventContext } from "./engine-events.js";
 import type { SupervisorEvent } from "./supervisor.js";
 
@@ -264,9 +265,11 @@ export class SeatEventSink {
       // Stream-json executors put their whole protocol transcript here; the
       // seat's own events already carry what a UI needs.
       const data = draft.data as Record<string, unknown>;
+      let usage: CliUsage | undefined;
       if (typeof data.rawOutput === "string") {
         const { rawOutput, ...rest } = data;
         draft.data = { ...rest, rawOutputChars: rawOutput.length } as typeof draft.data;
+        usage = cliUsage(rawOutput);
       }
       const ending = SESSION_END[event.type];
       if (ending) {
@@ -274,6 +277,24 @@ export class SeatEventSink {
         this.closeOpenTurns(ending);
       }
       this.emit(draft);
+      // Token use of the executor turn (TE-01). This is the only source for
+      // supervisor executor turns; the scheduler emits seat.tokens only for jobs
+      // that call reportUsage, which these turns never do.
+      if (usage && draft.seatId) {
+        this.emit({
+          type: "seat.tokens",
+          sessionId: this.sessionId,
+          seatId: draft.seatId,
+          ...(draft.stageId ? { stageId: draft.stageId } : {}),
+          data: {
+            tokensIn: usage.tokensIn,
+            tokensOut: usage.tokensOut,
+            cachedTokens: usage.cachedTokens,
+            turns: usage.turns,
+            ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
+          },
+        });
+      }
       // The panel seat gets `starting` from review.started but its verdict is a
       // review.verdict, not a seat event: end the reviewer-scoped turn here.
       if (event.type === "review.completed" && draft.seatId && this.openTurns.has(draft.seatId)) {

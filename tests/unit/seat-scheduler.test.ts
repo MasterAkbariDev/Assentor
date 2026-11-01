@@ -242,6 +242,15 @@ describe("budgets", () => {
     ]);
   });
 
+  it("passes cached tokens and the job's stage through to seat.tokens", async () => {
+    const { scheduler, events } = setup();
+    const [seat] = claude(1);
+    await scheduler.run(seat!, async (ctx) => ctx.reportUsage({ tokensIn: 10, tokensOut: 2, cachedTokens: 6 }), { stageId: "plan" });
+    expect(events.filter((e) => e.type === "seat.tokens").map((e) => [e.stageId, e.data])).toEqual([
+      ["plan", { tokensIn: 10, tokensOut: 2, cachedTokens: 6 }],
+    ]);
+  });
+
   it("warns once per threshold for the session budget", async () => {
     const { scheduler, events } = setup({ sessionBudget: { maxTokens: 100 } });
     const [seat] = claude(1);

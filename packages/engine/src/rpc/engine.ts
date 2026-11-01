@@ -1,8 +1,7 @@
 import path from "node:path";
 import { RPC_PROTOCOL_VERSION, RpcErrorCode, type SessionSummary } from "#assentor/protocol/rpc.js";
 import { isId } from "../core/ids.js";
-import { readSessionEvents } from "../events/log.js";
-import { usageFromEvents } from "../usage/ledger.js";
+import { readSessionUsage } from "../usage/read.js";
 import { getLocalVersionSync } from "../self/version.js";
 import { registerHandlerMethods } from "./handlers/index.js";
 import { registerLibraryMethods } from "./library.js";
@@ -83,7 +82,7 @@ export function createEngineRpcServer(options: EngineRpcOptions): RpcServer {
       if (!isId(sessionId)) {
         throw new RpcError(RpcErrorCode.InvalidParams, `Invalid session id: ${sessionId}`);
       }
-      return usageFromEvents(await readSessionEvents(projectPath, sessionId), sessionId);
+      return readSessionUsage(projectPath, sessionId);
     },
   });
 
