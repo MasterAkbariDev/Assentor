@@ -24,7 +24,9 @@ import {
   EXISTING_WORK_STRATEGY,
   getMode,
   STAGE_DENIED,
+  type ControllerCommand,
   type ControllerWorktrees,
+  type ModeController,
   type ModeControllerInput,
   type ModeDefinition,
   type ModeHostServices,
@@ -147,6 +149,10 @@ export interface PreparedModeSession {
    * same turn once more; whoever awaited it sees only the second result. Returns why not.
    */
   restartSeat(seatId: string): string | undefined;
+   * FU-18b: a user command for the running controller (Lead's override, pin, pause, resume).
+   * Returns why it was refused (no controller yet, a mode without controls, the controller's own refusal).
+   */
+  control(command: ControllerCommand): string | undefined;
 }
 
 /** Every reason a mode cannot start; nothing was started. */
@@ -252,6 +258,7 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
       resume: seatControls.resume,
       injectSeat: seatControls.inject,
       restartSeat: seatControls.restart,
+      control: () => `${mode.id} mode takes no lead controls`,
       run: async () => {
         claim();
         try {
@@ -279,6 +286,8 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
     return approved;
   };
 
+  /** Set while the controller runs; `control` reaches it. */
+  let live: ModeController | undefined;
   return {
     mode,
     autonomy,
@@ -290,6 +299,8 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
     resume: seatControls.resume,
     injectSeat: seatControls.inject,
     restartSeat: seatControls.restart,
+    control: (command) =>
+      !live ? "the session's controller is not running" : live.control ? live.control(command) : `${mode.id} mode takes no lead controls`,
     run: async () => {
       claim();
       selected();
@@ -341,6 +352,7 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
           emit,
           ...(input.worktrees ? { worktrees: gateWorktrees(input.worktrees, autonomy, requestApproval) } : {}),
         });
+        live = controller;
         const result = await controller.run();
         // Like a stage: a result that arrives while cancelling is not trusted.
         if (signal.aborted) return finish("cancelled", "cancelled");
@@ -352,6 +364,7 @@ export function prepareModeSession(input: ModeSessionInput): PreparedModeSession
         if (signal.aborted) return finish("cancelled", "cancelled");
         return finish("failed", `controller failed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
+        live = undefined;
         questions.closeAll();
         seatControls.close();
       }

@@ -164,7 +164,8 @@ const ModeSelected = z
   .passthrough();
 const LeadTurn = z.object({ turn: z.number().int().positive(), note: z.string().optional() }).passthrough();
 const LeadAction = z
-  .object({ action: z.string(), accepted: z.boolean(), reason: z.string().optional() })
+  // `by: "user"` (FU-18b): an override, pin, pause or resume from a client, not the lead's own action.
+  .object({ action: z.string(), accepted: z.boolean(), reason: z.string().optional(), by: z.enum(["lead", "user"]).optional() })
   .passthrough();
 const TaskEvent = z.object({ taskId: z.string() }).passthrough();
 const TaskAssigned = TaskEvent.extend({ seatId: z.string() });

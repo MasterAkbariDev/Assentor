@@ -4,6 +4,7 @@ import { sessionPaths } from "../persistence/paths.js";
 import { createId, isId } from "../core/ids.js";
 import type { ModeDefinition } from "../modes/registry.js";
 import { ModeValidationError, prepareModeSession, type ModeSessionInput, type PreparedModeSession } from "../modes/session.js";
+import type { ControllerCommand } from "../modes/registry.js";
 import { WorktreeError, WorktreeManager } from "../worktrees/manager.js";
 import type { Autonomy } from "../core/run-mode.js";
 import { AUTONOMY_LEVELS, safeParseEngineEvent, type EngineEventDraft } from "#assentor/protocol/events.js";
@@ -138,6 +139,10 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
     if (refused) throw rejected(refused);
     return { ok: true as const };
   };
+
+  /** Lead controls (FU-18b): a running Lead session of this engine (so its run lock is ours); the controller may refuse. */
+  const leadCall = (sessionId: string, command: ControllerCommand) =>
+    seatCall(sessionId, (p) => (p.mode.id === "lead" ? p.control(command) : `session is ${p.mode.id} mode, not lead`));
 
   const finish = async (sessionId: string, live: Live, run: Promise<unknown>) => {
     const emit = emitFor(live);
@@ -297,6 +302,11 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
         }
       });
     },
+
+    "lead.override": ({ sessionId, taskId, seatId }) => leadCall(sessionId, { kind: "override", taskId, seatId }),
+    "lead.pin": ({ sessionId, taskId, model }) => leadCall(sessionId, { kind: "pin", taskId, model }),
+    "lead.pause": ({ sessionId }) => leadCall(sessionId, { kind: "pause" }),
+    "lead.resume": ({ sessionId }) => leadCall(sessionId, { kind: "resume" }),
 
     "worktree.discard": async ({ sessionId, seatId, force }) => {
       const key = await seatKey(sessionId, seatId);
