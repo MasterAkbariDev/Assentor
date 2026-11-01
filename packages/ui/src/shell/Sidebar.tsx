@@ -13,9 +13,6 @@ export function SectionNav({ route }: { route: Route }) {
 }
 
 const EMPTY: Record<string, string> = {
-  prompts: "Prompt library: browse and edit the prompts your seats use. Not built yet; for now they live in .assentor/prompts.",
-  teams: "Teams: saved seat line-ups to start a run from. Not built yet; for now use the CLI.",
-  playbooks: "Playbooks: reusable run recipes. Not built yet; for now use the CLI.",
   settings: "Settings: providers, models and budgets. Not built yet; for now edit the config file or use the TUI.",
 };
 

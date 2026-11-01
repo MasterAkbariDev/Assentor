@@ -24,6 +24,12 @@ export interface Transport {
   subscribe(sessionId: string, fromSeq: number, handlers: SubscribeHandlers): Promise<{ unsubscribe(): Promise<void> }>;
   /** Called at once with the current status, then on every change. Returns the remover. */
   onStatus(listener: (status: TransportStatus) => void): () => void;
+  /**
+   * True while the link is `open` and the engine granted this connection write access
+   * (`serve --allow-write` and the auth frame's `write: true`). Reads work either way.
+   * Set before the `open` status is announced, so `onStatus` listeners can read it.
+   */
+  readonly canWrite: boolean;
   /** End the link for good: status `closed`, pending calls reject. */
   close(): void;
 }

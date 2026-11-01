@@ -5,6 +5,9 @@ import { SeatDrawer } from "./features/seat-drawer/SeatDrawer.js";
 import { CommandPalette } from "./features/palette/CommandPalette.js";
 import { KeyboardHelp } from "./features/palette/KeyboardHelp.js";
 import { useShortcuts } from "./features/palette/useShortcuts.js";
+import { PlaybooksView } from "./features/playbooks/PlaybooksView.js";
+import { PromptsView } from "./features/prompts/PromptsView.js";
+import { TeamsView } from "./features/teams/TeamsView.js";
 import { ReviewView } from "./features/review/ReviewView.js";
 import { SessionBoard } from "./features/session-board/SessionBoard.js";
 import { useEngine } from "./store/context.js";
@@ -92,7 +95,10 @@ export function App() {
             <FixturesPage />
           </Suspense>
         ) : null}
-        {SECTIONS.filter((s) => s.id !== "sessions" && s.id === route).map((s) => (
+        {route === "prompts" ? <PromptsView /> : null}
+        {route === "teams" ? <TeamsView /> : null}
+        {route === "playbooks" ? <PlaybooksView /> : null}
+        {SECTIONS.filter((s) => s.id === "settings" && s.id === route).map((s) => (
           <EmptySection key={s.id} id={s.id} label={s.label} />
         ))}
       </main>

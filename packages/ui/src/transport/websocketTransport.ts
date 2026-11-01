@@ -7,7 +7,7 @@ const STABLE_MS = 2000;
 
 export interface WebSocketTransportOptions {
   /** Opens an authenticated link (`connectWebSocket` in the app, in-process in tests). */
-  connect: () => Promise<RpcClientTransport>;
+  connect: () => Promise<RpcClientTransport & { writeGranted?: boolean }>;
   /** Reconnect delays; the last one repeats. */
   backoffMs?: number[];
 }
@@ -16,12 +16,17 @@ export interface WebSocketTransportOptions {
 export class WebSocketTransport implements Transport {
   private client?: RpcClient;
   private status: TransportStatus = "connecting";
+  private writeGranted = false;
   private readonly listeners = new Set<(status: TransportStatus) => void>();
   private timer?: ReturnType<typeof setTimeout>;
   private attempt = 0;
 
   constructor(private readonly options: WebSocketTransportOptions) {
     void this.connect();
+  }
+
+  get canWrite(): boolean {
+    return this.status === "open" && this.writeGranted;
   }
 
   call<M extends RpcMethodName>(method: M, ...args: RpcCallArgs<M>): Promise<RpcResult<M>> {
@@ -55,13 +60,14 @@ export class WebSocketTransport implements Transport {
       return; // closed is final
     }
     this.status = status;
+    if (status !== "open") this.writeGranted = false;
     for (const listener of [...this.listeners]) {
       listener(status);
     }
   }
 
   private async connect(): Promise<void> {
-    let link: RpcClientTransport;
+    let link: RpcClientTransport & { writeGranted?: boolean };
     try {
       link = await this.options.connect();
     } catch (error) {
@@ -87,6 +93,7 @@ export class WebSocketTransport implements Transport {
         this.scheduleReconnect();
       }
     });
+    this.writeGranted = link.writeGranted === true; // before `open`, so listeners see it
     this.setStatus("open");
   }
 

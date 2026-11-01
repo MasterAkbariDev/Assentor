@@ -7,6 +7,8 @@ export interface MockTransportOptions {
   /** Each session's recorded events, by session id. */
   sessions?: Record<string, EngineEvent[]>;
   engineVersion?: string;
+  /** Whether this connection was granted writes (default true). Reads work either way. */
+  canWrite?: boolean;
   /** Answers for other methods; an unlisted method rejects. */
   handlers?: { [M in RpcMethodName]?: (params: RpcParams<M> | undefined) => RpcResult<M> | Promise<RpcResult<M>> };
 }
@@ -46,6 +48,9 @@ export function mockTransport(options: MockTransportOptions = {}): MockTransport
   };
 
   return {
+    get canWrite() {
+      return status === "open" && options.canWrite !== false;
+    },
     calls,
     async call(method, ...args: RpcCallArgs<RpcMethodName>) {
       const params = args[0];

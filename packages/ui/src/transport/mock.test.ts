@@ -18,6 +18,7 @@ runTransportContract("mockTransport", async () => {
       transport.emit(event);
       return event;
     },
+    writeGranted: true,
     drop: () => transport.drop(),
     dispose: () => undefined,
   };

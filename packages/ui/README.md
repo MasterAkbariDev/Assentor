@@ -21,6 +21,7 @@ pnpm test              # UI tests run with the rest (jsdom per file)
 | `src/store/selectors.ts` | Named selectors (`selectSeats`, `isLiveSeat`) and `groupSeats` (executor, reviewers, other). |
 | `src/features/session-board/` | Session board: `SessionBoard` (grid and the one elapsed ticker, `useNow`), `SeatCard` (opens the drawer). |
 | `src/features/seat-drawer/` | Read-only seat drawer: `SeatDrawer` (panel, tabs, focus), `SeatActivity`, `SeatOutput`, `SeatInfo`, `activity.ts` (row text). |
+| `src/features/{prompts,teams,playbooks}/` | Library screens (T04-12): prompt editor (front-matter form, plain textarea body, validate, preview, save/fork), team seat-table editor (validate, save, delete), read-only playbook list and stages. `prompts/shared.tsx` has the unsaved-changes guard, debounce and write note. |
 | `src/transport/types.ts` | `Transport` (`call`, `subscribe`, `onStatus`, `close`): the single seam to the engine. |
 | `src/transport/websocketTransport.ts` | `WebSocketTransport`: connects, reconnects with backoff, wraps the typed RPC client. |
 | `src/transport/mock.ts` | `mockTransport()` for tests and the fixtures page. |
@@ -46,7 +47,7 @@ Status: `connecting` → `open`; a lost link goes `reconnecting` → `open`; `un
 
 ## Routing and shell
 
-A tiny hash router (`shell/route.ts`): `#/sessions` (default), `#/prompts`, `#/teams`, `#/playbooks`, `#/settings`. Prompts, Teams, Playbooks and Settings show an empty state until built. TanStack Router, Query and Virtual, Radix and Tailwind are not in the approved dependency set (STATUS §6), so none are used. `useToast()` shows a toast; the shell toasts when the connection drops and returns.
+A tiny hash router (`shell/route.ts`): `#/sessions` (default), `#/prompts`, `#/teams`, `#/playbooks`, `#/settings`. Settings shows an empty state until built. TanStack Router, Query and Virtual, Radix and Tailwind are not in the approved dependency set (STATUS §6), so none are used. `useToast()` shows a toast; the shell toasts when the connection drops and returns.
 
 ## Engine imports
 
@@ -104,4 +105,5 @@ act(() => {
 
 - `serve`'s CSP allows no inline scripts and no inline `<style>` blocks; use CSS classes in `styles.css`.
 - Never log or render the token.
-- Keep the UI read-only until write methods exist on the engine.
+- Writes: `WebSocketTransport` always sends `{"auth":token,"write":true}`; the server grants it only under `serve --allow-write` and replies `{"auth":"ok","write":<granted>}`. `transport.canWrite` (and `useCanWrite()`) is true only while open and granted; reads work either way. Disable write controls when it is false and say why (`WriteNote`). `mockTransport({ canWrite })` defaults to true.
+- No CodeMirror (not an approved dependency): prompt bodies use a monospace `<textarea>`.

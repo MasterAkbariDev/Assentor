@@ -71,10 +71,10 @@ describe("sections and useRpc", () => {
     expect(getByText("Select a run to watch it live.")).toBeTruthy();
 
     act(() => {
-      window.location.hash = "#/teams";
+      window.location.hash = "#/settings";
     });
-    expect(await findByText(/Teams: saved seat line-ups/)).toBeTruthy();
-    expect(getByRole("link", { name: "Teams" }).getAttribute("aria-current")).toBe("page");
+    expect(await findByText(/Settings: providers/)).toBeTruthy();
+    expect(getByRole("link", { name: "Settings" }).getAttribute("aria-current")).toBe("page");
     expect(queryByText("Select a run to watch it live.")).toBeNull();
   });
 

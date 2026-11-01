@@ -25,7 +25,7 @@ runTransportContract("WebSocketTransport", async () => {
     connect: async () => {
       const { client } = createInProcessTransport(server);
       links.push(client);
-      return client;
+      return Object.assign(client, { writeGranted: true }); // in-process links are trusted: writes allowed
     },
   });
   return {
@@ -33,6 +33,7 @@ runTransportContract("WebSocketTransport", async () => {
     sessionId,
     events,
     emit: () => log.append({ type: "session.state", sessionId, data: { to: "DONE" } }),
+    writeGranted: true,
     drop: () => links.at(-1)!.close(),
     dispose: async () => {
       await log.close();
