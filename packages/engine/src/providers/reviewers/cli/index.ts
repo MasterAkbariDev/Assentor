@@ -10,7 +10,7 @@ import { requestedModel } from "../../executors/cli-print/recipes.js";
 import { isCursorAppBinary } from "../../executors/cursor/index.js";
 import { killProcessTree } from "../../../process/kill-tree.js";
 import { trackChildProcess } from "../../../process/tracker.js";
-import { reportedModel, usageOf, type CliUsage } from "../../../usage/cli-usage.js";
+import { claudeReportedModel, usageOf, type CliUsage } from "../../../usage/cli-usage.js";
 import {
   asReviewInput,
   buildReviewPrompt,
@@ -233,7 +233,7 @@ export function unwrapClaudeJson(result: CliSpawnResult): CliSpawnResult {
   }
   if (value?.type !== "result") return result;
   const usage = usageOf(value);
-  const model = reportedModel(raw);
+  const model = claudeReportedModel(raw);
   const subtype = typeof value.subtype === "string" ? value.subtype : "";
   if (value.is_error === true || subtype.startsWith("error")) {
     // An error envelope is a failed call (empty stdout, non-zero code), never an answer.

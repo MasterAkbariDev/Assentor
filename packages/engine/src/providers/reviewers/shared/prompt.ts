@@ -12,7 +12,7 @@ import type { PhaseProgress } from "#assentor/protocol/review-result.js";
 import type { ProjectReviewEvidencePack } from "../../../review/evidence-pack.js";
 import { evidencePackToMarkdown } from "../../../review/persist.js";
 import type { AIImagePart, AITokenUsage } from "../../ai/types.js";
-import { reportedModel } from "../../../usage/cli-usage.js";
+import { apiReportedModel } from "../../../usage/cli-usage.js";
 import { ArtifactType } from "../../../artifacts/types.js";
 import { closeOpenFence, compactDiff, packContext, type ContextSection } from "../../../context/pack.js";
 import { assembleSeatPrompt, type AssembledPrompt } from "../../../prompts/assemble.js";
@@ -379,7 +379,7 @@ export function reviewResultFromModelText(raw: string): ReviewerTurnResult {
 
 /** `turn` with an API call's reported tokens as its usage (one model turn) and the model its raw reply names (FU-17). */
 export function withTokens(turn: ReviewerTurnResult, tokens: AITokenUsage | undefined, raw?: string): ReviewerTurnResult {
-  const model = reportedModel(raw);
+  const model = apiReportedModel(raw);
   return { ...turn, ...(tokens ? { usage: { ...tokens, turns: 1 } } : {}), ...(model ? { model } : {}) };
 }
 

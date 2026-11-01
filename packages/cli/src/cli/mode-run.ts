@@ -435,6 +435,7 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
         const adjudicator = await panelAdjudicator(
           (REVIEW_POLICIES as readonly string[]).includes(policy as string) ? (policy as string) : config.modes.review?.policy,
           projectPath,
+          { onUsage: (usage) => emitUsage("adjudicator", usage, stage?.id) },
         );
         const panel = new PanelReviewer({
           name: `panel:${team?.name ?? "review"}`,

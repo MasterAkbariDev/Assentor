@@ -56,6 +56,11 @@ export class RoutingEngine {
 
   constructor(private readonly options: RoutingEngineOptions) {}
 
+  /** True when some provider, model and enabled key could serve `request` now (no call is made). */
+  canRoute(request: Omit<RoutingRequest, "prompt">): boolean {
+    return this.buildFallbackChain({ ...request, prompt: "" }, request.preference ?? "BALANCED").length > 0;
+  }
+
   async generate(request: RoutingRequest): Promise<{
     response: AIResponse;
     decision: RoutingDecision;

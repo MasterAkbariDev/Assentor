@@ -18,7 +18,7 @@ import type {
   ReviewInput,
 } from "../providers/reviewers/types.js";
 import { redactSecrets } from "../security/redact.js";
-import { cliUsage, reportedModel, type CliUsage } from "../usage/cli-usage.js";
+import { claudeReportedModel, cliUsage, type CliUsage } from "../usage/cli-usage.js";
 import { fromSupervisorEvent, type SupervisorEventContext } from "./engine-events.js";
 import type { SupervisorEvent } from "./supervisor.js";
 
@@ -122,8 +122,8 @@ export class SeatEventSink {
   private readonly lastStatus = new Map<string, string>();
   /** Seats whose current turn has started but not reported done or error. */
   private readonly openTurns = new Set<string>();
-  /** Requested model per seat (`seat.spawned`, applied `seat.model.changed`); a panel seat has none. */
-  private readonly requestedModels = new Map<string, string>();
+  /** Provider and requested model per seat (`seat.spawned`, applied `seat.model.changed`); a panel seat has none. */
+  private readonly requestedModels = new Map<string, { provider: string; model: string }>();
 
   constructor(options: SeatEventSinkOptions) {
     this.sessionId = options.sessionId;
@@ -274,7 +274,9 @@ export class SeatEventSink {
         draft.data = { ...rest, rawOutputChars: rawOutput.length } as typeof draft.data;
         usage = cliUsage(rawOutput);
         if (draft.seatId) {
-          draft.data = { ...draft.data, ...this.modelFields(draft.seatId, reportedModel(rawOutput)) };
+          // Only Claude Code's structured output names its model; a plain-text CLI's output is model-written.
+          const claude = this.requestedModels.get(draft.seatId)?.provider === "claude-code";
+          draft.data = { ...draft.data, ...this.modelFields(draft.seatId, claude ? claudeReportedModel(rawOutput) : undefined) };
         }
       } else if (event.type === "review.completed" && draft.seatId) {
         const reported = typeof data.reportedModel === "string" ? data.reportedModel : undefined;
@@ -322,7 +324,7 @@ export class SeatEventSink {
    * model (a panel) or one never spawned here.
    */
   modelFields(seatId: string, reported: string | undefined): { reportedModel?: string; requestedModel?: string } {
-    const requested = this.requestedModels.get(seatId);
+    const requested = this.requestedModels.get(seatId)?.model;
     if (requested === undefined) return {};
     const reportedModel = reported ?? "unverified";
     return reportedModel.toLowerCase() === requested.toLowerCase()
@@ -334,9 +336,10 @@ export class SeatEventSink {
     const data = draft.data as { provider?: unknown; model?: unknown; to?: unknown; pending?: unknown };
     if (!draft.seatId) return;
     if (draft.type === "seat.spawned" && data.provider !== "panel" && typeof data.model === "string") {
-      this.requestedModels.set(draft.seatId, data.model);
+      this.requestedModels.set(draft.seatId, { provider: String(data.provider), model: data.model });
     } else if (draft.type === "seat.model.changed" && data.pending === false && typeof data.to === "string") {
-      if (this.requestedModels.has(draft.seatId)) this.requestedModels.set(draft.seatId, data.to);
+      const seat = this.requestedModels.get(draft.seatId);
+      if (seat) seat.model = data.to;
     }
   }
 

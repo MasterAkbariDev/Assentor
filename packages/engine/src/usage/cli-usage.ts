@@ -57,35 +57,64 @@ export function usageOf(value: unknown): CliUsage | undefined {
   return undefined;
 }
 
+/** Placeholders like `<synthetic>` are not models. */
+const modelName = (x: unknown) => (typeof x === "string" && x.trim() && !x.trim().startsWith("<") ? x.trim() : undefined);
+
 /**
- * The model a CLI or API reply says it ran (FU-17), or undefined when it names
- * none: then the model is unverified. Reads a top-level `model` (Claude Code's
- * stream-json `system` line, Cursor's, an OpenAI-style body), an assistant
- * line's `message.model`, Gemini's `modelVersion`, or Claude Code's JSON
- * result `modelUsage` (the model with the most output tokens). Never falls back
- * to the requested model.
+ * The model Claude Code says it ran (FU-17), from its stream-json or JSON
+ * output only, or undefined (unverified). Reads only envelope lines the CLI
+ * writes: `system` (`model`), `assistant` (`message.model`) and `result`
+ * (`modelUsage`, the model with the most output tokens). Model-written text
+ * lives inside those envelopes as strings, so it cannot pose as one; never call
+ * this on a plain-text CLI's output.
  */
-export function reportedModel(raw: string | undefined): string | undefined {
+export function claudeReportedModel(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
   for (const doc of [raw, ...raw.split("\n")]) {
-    const text = doc.trim();
-    if (!text.startsWith("{") || !/"model/.test(text)) continue;
-    try {
-      const model = modelOf(JSON.parse(text));
-      if (model) return model;
-    } catch {
-      // Not one JSON document; try the next line.
-    }
+    const value = parseObject(doc);
+    if (!value) continue;
+    const model =
+      value.type === "system"
+        ? modelName(value.model)
+        : value.type === "assistant"
+          ? modelName((value.message as { model?: unknown } | undefined)?.model)
+          : value.type === "result"
+            ? mainModel(value.modelUsage)
+            : undefined;
+    if (model) return model;
   }
   return undefined;
 }
 
-function modelOf(value: unknown): string | undefined {
-  const v = (value ?? {}) as { model?: unknown; message?: { model?: unknown }; modelVersion?: unknown; modelUsage?: unknown };
-  // `<synthetic>` and the like are placeholders, not models.
-  const name = (x: unknown) => (typeof x === "string" && x.trim() && !x.trim().startsWith("<") ? x.trim() : undefined);
-  const usage = v.modelUsage && typeof v.modelUsage === "object" ? Object.entries(v.modelUsage as Record<string, { outputTokens?: unknown }>) : [];
-  const out = (entry: (typeof usage)[number]) => (typeof entry[1]?.outputTokens === "number" ? entry[1].outputTokens : 0);
-  const main = usage.sort((a, b) => out(b) - out(a))[0]?.[0];
-  return name(v.model) ?? name(v.message?.model) ?? name(v.modelVersion) ?? name(main);
+/**
+ * The model an API reply body names (FU-17), or undefined: an OpenAI-style
+ * `chat.completion` body's `model`, or a Gemini body's `modelVersion`. The body
+ * is the provider's own JSON, so the model's text cannot set these fields.
+ */
+export function apiReportedModel(raw: string | undefined): string | undefined {
+  const value = parseObject(raw ?? "");
+  if (!value) return undefined;
+  if (typeof value.object === "string" && value.object.startsWith("chat.completion")) return modelName(value.model);
+  return Array.isArray(value.candidates) ? modelName(value.modelVersion) : undefined;
+}
+
+function parseObject(doc: string): Record<string, unknown> | undefined {
+  const text = doc.trim();
+  if (!text.startsWith("{") || !text.includes('"model')) return undefined;
+  try {
+    const value: unknown = JSON.parse(text);
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function mainModel(modelUsage: unknown): string | undefined {
+  if (!modelUsage || typeof modelUsage !== "object") return undefined;
+  const out = (entry: unknown) => {
+    const tokens = (entry as { outputTokens?: unknown } | undefined)?.outputTokens;
+    return typeof tokens === "number" ? tokens : 0;
+  };
+  const [top] = Object.entries(modelUsage).sort((a, b) => out(b[1]) - out(a[1]));
+  return modelName(top?.[0]);
 }

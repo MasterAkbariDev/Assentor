@@ -5,6 +5,7 @@ import {
   type ReviewerFinding,
 } from "../agents/routed-reviewer.js";
 import type { LogicalAgentProfile } from "../agents/index.js";
+import type { CliUsage } from "../usage/cli-usage.js";
 import { IssueCategory } from "#assentor/protocol/review-result.js";
 import {
   makeReviewResult,
@@ -74,6 +75,8 @@ export interface ReviewCoordinatorOptions {
   /** Optional LLM adjudicator; when omitted, uses deterministic weighted merge. */
   routing?: RoutingEngine;
   adjudicatorProfile?: LogicalAgentProfile;
+  /** Token use of each adjudicator call, for the host's usage ledger and budgets. */
+  onAdjudicatorUsage?: (usage: CliUsage) => void;
   goal?: string;
   acceptanceCriteria?: string[];
   /** Decision policy; default `security-veto`. */
@@ -102,6 +105,7 @@ export class ReviewCoordinator {
   private readonly reviewers: Reviewer[];
   private readonly routing?: RoutingEngine;
   private readonly adjudicatorProfile?: LogicalAgentProfile;
+  private readonly onAdjudicatorUsage?: (usage: CliUsage) => void;
   private readonly goal: string;
   private readonly acceptanceCriteria: string[];
   readonly policy: ReviewPolicy;
@@ -114,6 +118,7 @@ export class ReviewCoordinator {
     this.reviewers = [...options.reviewers];
     this.routing = options.routing;
     this.adjudicatorProfile = options.adjudicatorProfile;
+    this.onAdjudicatorUsage = options.onAdjudicatorUsage;
     this.goal = options.goal ?? "";
     this.acceptanceCriteria = options.acceptanceCriteria ?? [];
     this.policy = options.policy ?? "security-veto";
@@ -344,14 +349,31 @@ export class ReviewCoordinator {
               .join("; ")}`,
         )
         .join("\n");
-      const decision = await adjudicate({
-        routing: this.routing,
-        profile: this.adjudicatorProfile,
-        goal: this.goal,
-        acceptanceCriteria: this.acceptanceCriteria,
-        findings,
-        evidenceSummary,
-      });
+      let decision: Awaited<ReturnType<typeof adjudicate>>;
+      try {
+        decision = await adjudicate({
+          routing: this.routing,
+          profile: this.adjudicatorProfile,
+          goal: this.goal,
+          acceptanceCriteria: this.acceptanceCriteria,
+          findings,
+          evidenceSummary,
+        });
+      } catch (error) {
+        // No route, no key, a provider error: the deterministic merge decides instead.
+        const merged = weightedMerge(findings, total);
+        return makeReviewResult({
+          ...merged,
+          summary: truncate(`Adjudicator unavailable (${errorText(error)}); most severe verdict wins. ${merged.summary}`, 500),
+        });
+      }
+      if (decision.usage) {
+        try {
+          this.onAdjudicatorUsage?.(decision.usage);
+        } catch {
+          // Usage reporting must not change the verdict.
+        }
+      }
       if (decision.raw) {
         return normalizeResult(decision.raw);
       }
@@ -795,7 +817,10 @@ function withoutUnsupportedClaims(
   }
   return makeReviewResult({
     ...result,
-    summary: truncate(`${result.summary} Unverified security claim(s) sent for verification, not as changes: ${describeClaims(unsupported)}`, 500),
+    summary: truncate(
+      `${result.summary} Unverified security claim(s) ${fresh.length > 0 ? "sent for verification" : "already sent for verification and still unsupported"}, not sent as changes: ${describeClaims(unsupported)}`,
+      500,
+    ),
     issues,
     requiredChanges,
     evidenceRequests: dedupeEvidenceRequests([
