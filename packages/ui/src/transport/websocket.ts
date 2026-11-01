@@ -2,7 +2,7 @@ import type { RpcClientTransport } from "#assentor/protocol/rpc-client.js";
 
 /**
  * `RpcClientTransport` over the `assentor serve` WebSocket (T04-06p). The first
- * frame is the auth handshake (`{"auth": token}` → `{"auth":"ok"}`); only then
+ * frame is the auth handshake (`{"auth": token, "write": true}` → `{"auth":"ok","write":<granted>}`; the UI always asks, the server decides); only then
  * does the transport resolve and start passing RPC frames.
  */
 
@@ -26,11 +26,14 @@ export interface WebSocketLike {
   onerror: ((event: unknown) => void) | null;
 }
 
+/** A link plus whether the engine granted this connection write access. */
+export type WriteAwareLink = RpcClientTransport & { writeGranted: boolean };
+
 export function connectWebSocket(
   url: string,
   token: string,
   createSocket: (url: string) => WebSocketLike = (u) => new WebSocket(u) as unknown as WebSocketLike,
-): Promise<RpcClientTransport> {
+): Promise<WriteAwareLink> {
   return new Promise((resolve, reject) => {
     const socket = createSocket(url);
     let messageListener: (frame: string) => void = () => undefined;
@@ -38,7 +41,8 @@ export function connectWebSocket(
     let ready = false;
     let closed = false;
 
-    const transport: RpcClientTransport = {
+    const transport: WriteAwareLink = {
+      writeGranted: false,
       send(frame) {
         if (!closed) {
           socket.send(frame);
@@ -55,13 +59,15 @@ export function connectWebSocket(
       },
     };
 
-    socket.onopen = () => socket.send(JSON.stringify({ auth: token }));
+    socket.onopen = () => socket.send(JSON.stringify({ auth: token, write: true }));
     socket.onmessage = (event) => {
       const frame = typeof event.data === "string" ? event.data : "";
       if (!ready) {
         try {
-          if ((JSON.parse(frame) as { auth?: unknown }).auth === "ok") {
+          const reply = JSON.parse(frame) as { auth?: unknown; write?: unknown };
+          if (reply.auth === "ok") {
             ready = true;
+            transport.writeGranted = reply.write === true;
             resolve(transport);
           }
         } catch {

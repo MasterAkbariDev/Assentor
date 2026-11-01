@@ -8,5 +8,6 @@ export const closedTransport: Transport = {
     listener("closed");
     return () => undefined;
   },
+  canWrite: false,
   close: () => undefined,
 };

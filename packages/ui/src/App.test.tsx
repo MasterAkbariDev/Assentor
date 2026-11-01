@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { useEffect, useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
-import { act, cleanup } from "@testing-library/react";
+import { act, cleanup, waitFor } from "@testing-library/react";
 import { App } from "./App.js";
 import { renderWithStore } from "./test/render.js";
 import { sessionFixture } from "./test/fixtures.js";
@@ -63,18 +63,17 @@ describe("sections and useRpc", () => {
     window.location.hash = "";
   });
 
-  it("lists every section, shows an empty state for the unbuilt ones, and keeps Sessions the default", async () => {
-    const { getByRole, getByText, queryByText, findByText } = renderWithStore(<App />);
+  it("lists every section, all built, and keeps Sessions the default", async () => {
+    const { getByRole, getByText, queryByText } = renderWithStore(<App />);
     const nav = getByRole("navigation", { name: "Sections" });
     expect(Array.from(nav.querySelectorAll("a")).map((a) => a.textContent)).toEqual(["Sessions", "Prompts", "Teams", "Playbooks", "Usage", "Settings"]);
     expect(queryByText(/Not built yet/)).toBeNull();
     expect(getByText("Select a run to watch it live.")).toBeTruthy();
 
     act(() => {
-      window.location.hash = "#/teams";
+      window.location.hash = "#/settings";
     });
-    expect(await findByText(/Teams: saved seat line-ups/)).toBeTruthy();
-    expect(getByRole("link", { name: "Teams" }).getAttribute("aria-current")).toBe("page");
+    await waitFor(() => expect(getByRole("link", { name: "Settings" }).getAttribute("aria-current")).toBe("page"));
     expect(queryByText("Select a run to watch it live.")).toBeNull();
   });
 
