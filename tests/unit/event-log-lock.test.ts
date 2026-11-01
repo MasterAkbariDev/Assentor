@@ -84,7 +84,7 @@ describe("EventLog writer lock", () => {
     await writeLock(lockFile(projectPath, sessionId), {
       pid,
       host: os.hostname(),
-      startedAt: "2026-10-25T00:00:00.000Z",
+      startedAt: new Date().toISOString(), // after the live process started: its lock, not a reused pid
       token: "other",
     });
     await expect(EventLog.open(projectPath, sessionId)).rejects.toThrow(`process ${pid}`);
