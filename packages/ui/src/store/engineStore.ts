@@ -89,6 +89,8 @@ export interface EngineState {
   connection: ConnectionStatus;
   engineVersion?: string;
   sessions: SessionSummary[];
+  /** True once `setSessions` has run at least once (the first list has arrived). */
+  sessionsLoaded: boolean;
   selectedId?: string;
   /** Session ids, most recently selected first (at most `RECENT_LIMIT`). The command palette's "Recent" group. */
   recentIds: string[];
@@ -117,10 +119,11 @@ export function createEngineStore(): EngineStore {
   return createStore<EngineState>()((set) => ({
     connection: "connecting",
     sessions: [],
+    sessionsLoaded: false,
     recentIds: [],
     setConnection: (connection, engineVersion) =>
       set((s) => ({ connection, engineVersion: engineVersion ?? s.engineVersion })),
-    setSessions: (sessions) => set({ sessions }),
+    setSessions: (sessions) => set({ sessions, sessionsLoaded: true }),
     select: (id) =>
       set((s) =>
         id === s.selectedId

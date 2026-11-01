@@ -154,13 +154,14 @@ export function SessionPanel() {
   const summary = useEngine((s) => s.sessions.find((x) => x.id === s.selectedId));
   const hasReview = useEngine(selectHasReview);
   const hasNegotiation = useEngine(selectHasNegotiation);
-  const noRuns = useEngine((s) => s.sessions.length === 0);
+  // The guide waits for a connection and the first session list, so it never shows while runs may exist.
+  const showOnboarding = useEngine((s) => s.connection === "connected" && s.sessionsLoaded && s.sessions.length === 0);
 
   if (!session) {
     return (
       <>
         <p className="empty">Select a run to watch it live.</p>
-        {noRuns ? <Onboarding /> : null}
+        {showOnboarding ? <Onboarding /> : null}
       </>
     );
   }

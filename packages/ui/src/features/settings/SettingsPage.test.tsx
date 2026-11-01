@@ -70,6 +70,7 @@ describe("SettingsPage: form", () => {
     expect(rounds.getAttribute("aria-invalid")).toBe("true");
     expect(rounds.getAttribute("aria-describedby")).toBe("settings-maxRounds-error");
     expect(error.id).toBe("settings-maxRounds-error");
+    expect(error.getAttribute("role")).toBe("alert");
     expect((getByRole("button", { name: "Save settings" }) as HTMLButtonElement).disabled).toBe(true);
     expect((transport as ReturnType<typeof mockTransport>).calls.some((c) => c.method === "settings.save")).toBe(false);
   });

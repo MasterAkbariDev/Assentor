@@ -66,12 +66,15 @@ const isWholeNumber = (text: string): boolean => {
 export function validate(form: SettingsForm, original: SettingsForm): FieldErrors {
   const errors: FieldErrors = {};
   const model = form.executor.model.trim();
-  if (model === "") {
-    // The patch cannot unset a model, so a blank field would be silently ignored.
-    if (original.executor.model !== "") errors["executor.model"] = "A model is set. Type AUTO to use the provider's default.";
-  } else {
-    const result = ModelIdSchema.safeParse(model);
-    if (!result.success) errors["executor.model"] = result.error.issues[0]?.message ?? "Not a valid model id.";
+  // Only a changed model is checked: a legacy free-text value loaded from config must not block other saves.
+  if (model !== original.executor.model.trim()) {
+    if (model === "") {
+      // The patch cannot unset a model, so a blank field would be silently ignored.
+      errors["executor.model"] = "A model is set. Type AUTO to use the provider's default.";
+    } else {
+      const result = ModelIdSchema.safeParse(model);
+      if (!result.success) errors["executor.model"] = result.error.issues[0]?.message ?? "Not a valid model id.";
+    }
   }
   for (const { key, label } of LIMIT_FIELDS) {
     if (!isWholeNumber(form.limits[key])) errors[`limits.${key}`] = `${label}: enter a whole number of at least 1.`;
@@ -101,7 +104,8 @@ export function buildPatch(form: SettingsForm, original: SettingsForm): Settings
   if (routing) patch.routing = routing;
   const limits: NonNullable<SettingsPatch["limits"]> = {};
   for (const { key } of LIMIT_FIELDS) {
-    if (form.limits[key].trim() !== original.limits[key]) limits[key] = Number(form.limits[key].trim());
+    // Numeric compare: "007" and "7" are the same limit.
+    if (Number(form.limits[key]) !== Number(original.limits[key])) limits[key] = Number(form.limits[key].trim());
   }
   if (Object.keys(limits).length > 0) patch.limits = limits;
   const git = changedKeys(form.git, original.git);

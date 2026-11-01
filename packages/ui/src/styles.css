@@ -661,7 +661,7 @@ button.lead-task-open:focus-visible { outline: 2px solid var(--accent); outline-
 .settings-actions { display: grid; gap: 6px; justify-items: start; }
 .check-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 14px; }
 .check { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); overflow-wrap: anywhere; }
-.check-detail { margin: 4px 0 0; font-size: 12px; color: var(--muted); white-space: pre-wrap; }
+.check-detail { margin: 4px 0 0; font-size: 12px; color: var(--muted); white-space: pre-wrap; max-height: 10em; overflow: auto; overflow-wrap: anywhere; }
 .check-ok { color: var(--ok); }
 .check-fail { color: var(--error); }
 .check-muted { color: var(--muted); }

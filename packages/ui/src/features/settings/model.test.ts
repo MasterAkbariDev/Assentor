@@ -54,6 +54,30 @@ describe("settings model", () => {
     expect(validate(structuredClone(original), original)).toEqual({});
   });
 
+  it("does not validate a legacy model that was not changed, so other fields still save", () => {
+    const loaded = { ...view, executor: { provider: "claude-code", model: "gpt 5" } };
+    const original = toForm(loaded);
+    const form = structuredClone(original);
+    form.limits.maxRounds = "4";
+    expect(validate(form, original)).toEqual({});
+    expect(buildPatch(form, original)).toEqual({ limits: { maxRounds: 4 } });
+  });
+
+  it("validates a legacy model once the user changes it", () => {
+    const original = toForm({ ...view, executor: { provider: "claude-code", model: "gpt 5" } });
+    const form = structuredClone(original);
+    form.executor.model = "gpt 6";
+    expect(validate(form, original)["executor.model"]).toMatch(/AUTO/);
+  });
+
+  it("treats numerically equal limits as unchanged", () => {
+    const original = toForm({ ...view, limits: { ...view.limits, maxRounds: 7 } });
+    const form = structuredClone(original);
+    form.limits.maxRounds = "007";
+    expect(validate(form, original)).toEqual({});
+    expect(buildPatch(form, original)).toEqual({});
+  });
+
   it("names a login command only for CLIs the engine documents one for", () => {
     expect(LOGIN_HINTS["claude-code"]).toBe("claude");
     expect(LOGIN_HINTS.codex).toBeUndefined();

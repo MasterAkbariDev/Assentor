@@ -49,7 +49,7 @@ function Field({
       <label htmlFor={id}>{label}</label>
       {children({ id, "aria-invalid": error ? true : undefined, "aria-describedby": describedBy })}
       {hint ? <p id={`${id}-hint`} className="field-hint">{hint}</p> : null}
-      {error ? <p id={`${id}-error`} className="field-error">{error}</p> : null}
+      {error ? <p id={`${id}-error`} className="field-error" role="alert">{error}</p> : null}
     </div>
   );
 }
