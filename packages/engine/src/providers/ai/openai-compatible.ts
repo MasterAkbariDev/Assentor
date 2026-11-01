@@ -26,6 +26,11 @@ interface ChatCompletionResponse {
     message?: { content?: string | Array<{ type?: string; text?: string }> };
   }>;
   error?: { message?: string };
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    prompt_tokens_details?: { cached_tokens?: number };
+  };
 }
 
 interface ModelsListResponse {
@@ -157,7 +162,7 @@ export class OpenAICompatibleProvider implements AIProvider {
             ...(request.system
               ? [{ role: "system", content: request.system }]
               : []),
-            { role: "user", content: request.prompt },
+            { role: "user", content: userContent(request) },
           ],
         }),
         signal: AbortSignal.timeout(request.timeoutMs ?? this.timeoutMs),
@@ -199,11 +204,21 @@ export class OpenAICompatibleProvider implements AIProvider {
           raw: rawText,
         });
       }
+      const usage = payload.usage;
       return {
         text,
         model: request.model,
         provider: this.id,
         raw: rawText,
+        ...(typeof usage?.prompt_tokens === "number"
+          ? {
+              tokens: {
+                tokensIn: usage.prompt_tokens,
+                tokensOut: usage.completion_tokens ?? 0,
+                cachedTokens: usage.prompt_tokens_details?.cached_tokens ?? 0,
+              },
+            }
+          : {}),
       };
     } catch (error) {
       if (error instanceof ProviderRequestError) {
@@ -220,6 +235,23 @@ export class OpenAICompatibleProvider implements AIProvider {
       });
     }
   }
+}
+
+/**
+ * Claude models behind an OpenAI-compatible gateway (OpenRouter, LiteLLM) cache
+ * only up to explicit `cache_control` breakpoints: one after each non-final
+ * prompt block (TE-05). Every other model gets the plain string, whose
+ * byte-stable prefix the provider caches on its own; plain OpenAI rejects
+ * unknown content fields, so they are never sent to it.
+ */
+function userContent(request: AIRequest): string | Array<{ type: "text"; text: string; cache_control?: { type: "ephemeral" } }> {
+  const blocks = (request.promptBlocks ?? []).filter((block) => block !== "");
+  if (blocks.length < 2 || !/claude|anthropic/i.test(request.model) || blocks.join("") !== request.prompt) {
+    return request.prompt;
+  }
+  return blocks.map((text, i) =>
+    i < blocks.length - 1 ? { type: "text", text, cache_control: { type: "ephemeral" } } : { type: "text", text },
+  );
 }
 
 function extractContent(payload: ChatCompletionResponse): string | undefined {

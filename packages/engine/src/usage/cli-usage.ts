@@ -21,31 +21,38 @@ export function cliUsage(raw: string): CliUsage | undefined {
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i]!.trim();
     if (!line.startsWith("{") || !line.includes('"usage"')) continue;
-    let value: { usage?: Record<string, unknown>; num_turns?: unknown; total_cost_usd?: unknown };
+    let value: unknown;
     try {
-      value = JSON.parse(line) as typeof value;
+      value = JSON.parse(line);
     } catch {
       continue;
     }
-    const usage = value?.usage;
-    if (!usage || typeof usage !== "object") continue;
-    const num = (key: string) => (typeof usage[key] === "number" ? (usage[key] as number) : 0);
-    const turns = typeof value.num_turns === "number" ? value.num_turns : 1;
-    const cost = typeof value.total_cost_usd === "number" ? { costUsd: value.total_cost_usd } : {};
-    if (typeof usage.input_tokens === "number") {
-      const cached = num("cache_read_input_tokens");
-      return {
-        tokensIn: num("input_tokens") + cached + num("cache_creation_input_tokens"),
-        tokensOut: num("output_tokens"),
-        cachedTokens: cached,
-        turns,
-        ...cost,
-      };
-    }
-    if (typeof usage.prompt_tokens === "number") {
-      const details = usage.prompt_tokens_details as { cached_tokens?: number } | undefined;
-      return { tokensIn: num("prompt_tokens"), tokensOut: num("completion_tokens"), cachedTokens: details?.cached_tokens ?? 0, turns, ...cost };
-    }
+    const usage = usageOf(value);
+    if (usage) return usage;
+  }
+  return undefined;
+}
+
+/** The usage of one parsed result object (a stream-json `result` line, Claude Code's `--output-format json` reply, an OpenAI-style body). */
+export function usageOf(value: unknown): CliUsage | undefined {
+  const { usage, num_turns, total_cost_usd } = (value ?? {}) as { usage?: Record<string, unknown>; num_turns?: unknown; total_cost_usd?: unknown };
+  if (!usage || typeof usage !== "object") return undefined;
+  const num = (key: string) => (typeof usage[key] === "number" ? (usage[key] as number) : 0);
+  const turns = typeof num_turns === "number" && num_turns >= 1 ? Math.round(num_turns) : 1;
+  const cost = typeof total_cost_usd === "number" ? { costUsd: total_cost_usd } : {};
+  if (typeof usage.input_tokens === "number") {
+    const cached = num("cache_read_input_tokens");
+    return {
+      tokensIn: num("input_tokens") + cached + num("cache_creation_input_tokens"),
+      tokensOut: num("output_tokens"),
+      cachedTokens: cached,
+      turns,
+      ...cost,
+    };
+  }
+  if (typeof usage.prompt_tokens === "number") {
+    const details = usage.prompt_tokens_details as { cached_tokens?: number } | undefined;
+    return { tokensIn: num("prompt_tokens"), tokensOut: num("completion_tokens"), cachedTokens: details?.cached_tokens ?? 0, turns, ...cost };
   }
   return undefined;
 }

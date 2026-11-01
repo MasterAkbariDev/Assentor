@@ -24,6 +24,12 @@ interface GeminiResponse {
     };
   }>;
   error?: { message?: string; status?: string; code?: number };
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    thoughtsTokenCount?: number;
+    cachedContentTokenCount?: number;
+  };
 }
 
 const DEFAULT_MODELS: ModelInfo[] = [
@@ -252,11 +258,22 @@ export class GeminiProvider implements AIProvider {
           raw: rawText,
         });
       }
+      const usage = payload.usageMetadata;
       return {
         text,
         model: request.model,
         provider: this.id,
         raw: rawText,
+        ...(typeof usage?.promptTokenCount === "number"
+          ? {
+              tokens: {
+                tokensIn: usage.promptTokenCount,
+                // Thinking tokens are billed as output.
+                tokensOut: (usage.candidatesTokenCount ?? 0) + (usage.thoughtsTokenCount ?? 0),
+                cachedTokens: usage.cachedContentTokenCount ?? 0,
+              },
+            }
+          : {}),
       };
     } catch (error) {
       if (error instanceof ProviderRequestError) {

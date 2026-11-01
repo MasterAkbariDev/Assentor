@@ -8,6 +8,7 @@ import { requestedModel } from "../../executors/cli-print/recipes.js";
 import { isCursorAppBinary } from "../../executors/cursor/index.js";
 import { killProcessTree } from "../../../process/kill-tree.js";
 import { trackChildProcess } from "../../../process/tracker.js";
+import { usageOf, type CliUsage } from "../../../usage/cli-usage.js";
 import {
   asReviewInput,
   buildReviewPrompt,
@@ -39,6 +40,8 @@ export interface CliSpawnResult {
   stderr: string;
   timedOut?: boolean;
   signal?: NodeJS.Signals | null;
+  /** Token use the CLI reported (Claude Code's JSON output); `stdout` is then the reply text alone. */
+  usage?: CliUsage;
 }
 
 export type CliSpawnFn = (request: CliSpawnRequest) => Promise<CliSpawnResult>;
@@ -188,7 +191,7 @@ export class ProcessCliTransport implements CliTransport {
       model: this.model,
     });
     this.lastCommand = { command: this.binary, args, cwd: input.cwd };
-    return this.spawnFn({
+    const result = await this.spawnFn({
       command: this.binary,
       args,
       cwd: input.cwd,
@@ -196,7 +199,27 @@ export class ProcessCliTransport implements CliTransport {
       timeoutMs: input.timeoutMs,
       ...(input.signal ? { signal: input.signal } : {}),
     });
+    return this.adapter === "claude" ? unwrapClaudeJson(result) : result;
   }
+}
+
+/**
+ * Claude Code's `--output-format json` reply (TE-05): `stdout` becomes the
+ * reply text and `usage` its token counts. Output that is not that object (an
+ * older CLI, a crash, a cut-off stream) is returned as it was.
+ */
+export function unwrapClaudeJson(result: CliSpawnResult): CliSpawnResult {
+  const raw = result.stdout.trim();
+  if (!raw.startsWith("{")) return result;
+  let value: { type?: unknown; result?: unknown };
+  try {
+    value = JSON.parse(raw) as typeof value;
+  } catch {
+    return result;
+  }
+  if (value?.type !== "result" || typeof value.result !== "string") return result;
+  const usage = usageOf(value);
+  return { ...result, stdout: value.result, ...(usage ? { usage } : {}) };
 }
 
 export interface CliReviewerOptions {
@@ -333,7 +356,7 @@ export class CliReviewer implements Reviewer {
     }
 
     this.onStatus?.(`${this.adapter} CLI reviewer responded`);
-    return parsed;
+    return result.usage ? { ...parsed, usage: result.usage } : parsed;
   }
 }
 
@@ -414,7 +437,8 @@ function buildCliArgs(
   const model = requestedModel(context.model);
   const modelArgs = model ? ["--model", model] : [];
   if (adapter === "claude") {
-    return ["-p", "--output-format", "text", ...modelArgs, ...extraArgs, prompt];
+    // JSON, not text: the reply carries its token counts (unwrapped in ProcessCliTransport.run).
+    return ["-p", "--output-format", "json", ...modelArgs, ...extraArgs, prompt];
   }
   if (adapter === "cursor") {
     const args: string[] = [];

@@ -3,6 +3,7 @@ import type { ProtocolMessage } from "#assentor/protocol/messages.js";
 import type { ReviewResult, PhaseProgress } from "#assentor/protocol/review-result.js";
 import type { ProjectReviewEvidencePack } from "../../review/evidence-pack.js";
 import type { CorrelatedFinding } from "../../review/ranking.js";
+import type { CliUsage } from "../../usage/cli-usage.js";
 
 export interface ReviewInput {
   taskId: string;
@@ -56,6 +57,10 @@ export interface ReviewerTurnResult {
    * decides from the error text.
    */
   retryable?: boolean;
+  /** Token use of this turn when the transport reports it (API seats, Claude Code CLI) (TE-05). */
+  usage?: CliUsage;
+  /** Set by a panel: each member's reported token use, by the member's seat id. */
+  memberUsage?: Array<{ seatId: string; usage: CliUsage }>;
   /** Set by a panel with a result: its decision policy and the findings correlated across members. */
   policy?: string;
   correlated?: CorrelatedFinding[];

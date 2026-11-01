@@ -11,10 +11,11 @@ import type { ProtocolMessage } from "#assentor/protocol/messages.js";
 import type { PhaseProgress } from "#assentor/protocol/review-result.js";
 import type { ProjectReviewEvidencePack } from "../../../review/evidence-pack.js";
 import { evidencePackToMarkdown } from "../../../review/persist.js";
-import type { AIImagePart } from "../../ai/types.js";
+import type { AIImagePart, AITokenUsage } from "../../ai/types.js";
 import { ArtifactType } from "../../../artifacts/types.js";
+import { assembleSeatPrompt, type AssembledPrompt } from "../../../prompts/assemble.js";
 
-export function buildReviewPrompt(input: {
+export interface ReviewPromptInput {
   contract: TaskContract;
   round: number;
   artifacts: ReviewArtifactRef[];
@@ -23,7 +24,18 @@ export function buildReviewPrompt(input: {
   specialtyAddendum?: string;
   phaseProgress?: PhaseProgress;
   autopilot?: boolean;
-}): string {
+}
+
+export function buildReviewPrompt(input: ReviewPromptInput): string {
+  return buildReviewPromptParts(input).text;
+}
+
+/**
+ * The review prompt in cache order (TE-05): instructions and schema (static),
+ * then the contract and evidence every panel member gets byte-for-byte
+ * (shared), then this member's specialty and the round (delta).
+ */
+export function buildReviewPromptParts(input: ReviewPromptInput): AssembledPrompt {
   const packBlock = input.evidencePack
     ? formatEvidencePackForPrompt(input.evidencePack)
     : "";
@@ -51,7 +63,8 @@ export function buildReviewPrompt(input: {
     )
     .join("\n");
 
-  return [
+  const lines = (list: string[]) => list.filter((line) => line !== "").join("\n");
+  const instructions = [
     "You are a strict software review agent for Assentor.",
     "Do NOT guess about project state. If evidence is insufficient, return NEEDS_WORK with evidenceRequests.",
     "Never invent file contents, test results, git state, or architecture.",
@@ -139,9 +152,8 @@ export function buildReviewPrompt(input: {
     "Rules: confidence MUST be a float between 0 and 1 inclusive (e.g. 0.85). Do NOT use 0–100 percentages.",
     "issues[].evidence and issues[].affectedFiles MUST be JSON arrays of strings, never a single string.",
     "requiredChanges and optionalChanges MUST be JSON arrays of strings.",
-    "",
-    input.specialtyAddendum ? `${input.specialtyAddendum}\n` : "",
-    `Round: ${input.round}`,
+  ];
+  const context = [
     "Task contract:",
     JSON.stringify(input.contract, null, 2),
     "",
@@ -156,9 +168,12 @@ export function buildReviewPrompt(input: {
     "",
     "Recent messages:",
     messageBlock || "(none)",
-  ]
-    .filter((line) => line !== "")
-    .join("\n");
+  ];
+  return assembleSeatPrompt({
+    static: [lines(instructions)],
+    shared: [lines(context)],
+    delta: [input.specialtyAddendum ?? "", `Round: ${input.round}`],
+  });
 }
 
 const MAX_INLINED_FILES = 16;
@@ -280,6 +295,11 @@ export function reviewResultFromModelText(raw: string): ReviewerTurnResult {
     result: parsed.data,
     rawOutput: typeof raw === "string" ? raw : JSON.stringify(raw),
   };
+}
+
+/** `turn` with an API call's reported tokens as its usage (one model turn). */
+export function withTokens(turn: ReviewerTurnResult, tokens: AITokenUsage | undefined): ReviewerTurnResult {
+  return tokens ? { ...turn, usage: { ...tokens, turns: 1 } } : turn;
 }
 
 export function asReviewInput(

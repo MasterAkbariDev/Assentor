@@ -1,7 +1,8 @@
 import {
   asReviewInput,
-  buildReviewPrompt,
+  buildReviewPromptParts,
   reviewResultFromModelText,
+  withTokens,
 } from "../shared/prompt.js";
 import type {
   ReviewContinuation,
@@ -86,7 +87,7 @@ export class OpenAICompatibleReviewer implements Reviewer {
       };
     }
 
-    const prompt = buildReviewPrompt({
+    const { text: prompt, blocks } = buildReviewPromptParts({
       ...asReviewInput(input),
       specialtyAddendum: this.specialtyAddendum,
     });
@@ -101,6 +102,7 @@ export class OpenAICompatibleReviewer implements Reviewer {
       const response = await this.provider.generate({
         model: this.model,
         prompt,
+        promptBlocks: blocks,
         system:
           "You are Assentor's reviewer. Reply with JSON only. Do not guess missing evidence.",
         key,
@@ -108,7 +110,7 @@ export class OpenAICompatibleReviewer implements Reviewer {
         jsonMode: true,
         timeoutMs: this.timeoutMs,
       });
-      return reviewResultFromModelText(response.text);
+      return withTokens(reviewResultFromModelText(response.text), response.tokens);
     } catch (error) {
       if (error instanceof ProviderRequestError) {
         return {

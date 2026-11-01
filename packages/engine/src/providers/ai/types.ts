@@ -96,6 +96,21 @@ export interface AIRequest {
   key: ApiKeyRef;
   /** Optional vision inputs (Gemini inlineData, etc.). */
   images?: AIImagePart[];
+  /**
+   * `prompt` in cache order (TE-05, `assembleSeatPrompt` blocks); joined they
+   * equal `prompt`. Claude models get a cache breakpoint after each non-final
+   * non-empty block; other providers cache the byte-stable prefix themselves.
+   */
+  promptBlocks?: readonly string[];
+}
+
+/** Token counts a provider reported for one call (TE-05). */
+export interface AITokenUsage {
+  /** All input tokens, cached ones included. */
+  tokensIn: number;
+  tokensOut: number;
+  /** Input tokens served from the provider's prompt cache. */
+  cachedTokens: number;
 }
 
 export interface AIResponse {
@@ -104,6 +119,8 @@ export interface AIResponse {
   provider: string;
   raw?: string;
   usage?: UsageInfo;
+  /** Token counts from the response, when the provider reports them. */
+  tokens?: AITokenUsage;
 }
 
 export interface AIProvider {
