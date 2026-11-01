@@ -24,7 +24,7 @@ import {
   type StageRunnerDeps,
   type StageSpec,
 } from "../../packages/engine/src/index.js";
-import { EventLog } from "../../packages/engine/src/events/log.js";
+import { acquireRunLock, EventLog, isSessionRunLocked } from "../../packages/engine/src/events/log.js";
 import { killProcessTree } from "../../packages/engine/src/process/kill-tree.js";
 import { RpcMethods } from "../../packages/protocol/src/rpc.js";
 import { SeatScheduler } from "../../packages/engine/src/seats/index.js";
@@ -202,6 +202,24 @@ describe("session lifecycle", () => {
     expect((await client.call("session.get", { sessionId: created.sessionId })).session).toMatchObject({ hasLiveLog: true });
   });
 
+  it("start is refused while another process holds the session's run lock; a finished run releases its own", async () => {
+    const { client, projectPath } = await setup({ mode: dynamicMode(async () => undefined) });
+    const { sessionId } = await client.call("session.create", { mode: "lead", goal: "g" });
+    const lock = path.join(projectPath, ".assentor", "sessions", sessionId, "run.lock");
+    await fs.mkdir(path.dirname(lock), { recursive: true });
+    await fs.writeFile(lock, `${JSON.stringify({ pid: process.ppid, host: os.hostname(), startedAt: new Date().toISOString(), token: "other" })}\n`);
+    const refused = await failure(client.call("session.start", { sessionId }));
+    expect(refused.code).toBe(RpcErrorCode.Rejected);
+    expect(refused.message).toContain("another process is running this session");
+    // Still created, and the other process's lock is untouched; once it is gone the start goes ahead.
+    expect((await client.call("session.get", { sessionId })).session.live).toBe("created");
+    expect(JSON.parse(await fs.readFile(lock, "utf8"))).toMatchObject({ token: "other" });
+    await fs.rm(lock);
+    await client.call("session.start", { sessionId });
+    await until(async () => (await client.call("session.get", { sessionId })).session.live === undefined);
+    expect(await isSessionRunLocked(projectPath, sessionId)).toBe(false);
+  });
+
   it("start runs once; unknown, foreign and malformed ids are rejected", async () => {
     const { client } = await setup({ mode: dynamicMode(async (i) => void (await i.ask({ question: "wait?" }))) });
     const { sessionId } = await client.call("session.create", { mode: "lead", goal: "g" });
@@ -230,15 +248,17 @@ describe("session lifecycle", () => {
       i.signal.addEventListener("abort", () => (seenAbort = true));
       approved = await i.requestApproval({ question: "go?" });
     });
-    const { client } = await setup({ mode });
+    const { client, projectPath } = await setup({ mode });
     const { sessionId } = await client.call("session.create", { mode: "lead", goal: "g" });
     await client.call("session.start", { sessionId });
     await until(async () => (await client.call("session.get", { sessionId })).pendingApprovals.length === 1);
+    expect(await isSessionRunLocked(projectPath, sessionId)).toBe(true);
 
     expect(await client.call("session.cancel", { sessionId })).toEqual({ ok: true, live: "cancelling" });
     await until(async () => (await client.call("session.get", { sessionId })).session.live === undefined);
     expect(seenAbort).toBe(true);
     expect(approved).toBe(false);
+    expect(await isSessionRunLocked(projectPath, sessionId)).toBe(false);
     const { events } = await client.call("session.export", { sessionId });
     expect(events.find((e) => e.type === "session.failed")).toMatchObject({ data: { status: "cancelled" } });
     // Gone from the live set: further control is refused.
@@ -397,6 +417,32 @@ describe("worktrees", () => {
     expect(await fs.readFile(path.join(projectPath, "a.txt"), "utf8")).toBe("one\n");
   });
 
+  it("apply and discard hold the session's run lock while they work, so a resume cannot start meanwhile", async () => {
+    const { client, wm, projectPath } = await setup();
+    await seatWithChange(wm);
+    const heldDuring: boolean[] = [];
+    const realApply = wm.applyTo.bind(wm);
+    vi.spyOn(wm, "applyTo").mockImplementationOnce(async (...args) => {
+      heldDuring.push(await isSessionRunLocked(projectPath, S1));
+      return realApply(...args);
+    });
+    const key = { sessionId: S1, seatId: "opus-1", confirm: true as const };
+    expect(await client.call("worktree.apply", key)).toMatchObject({ ok: true });
+    expect(heldDuring).toEqual([true]);
+    expect(await isSessionRunLocked(projectPath, S1)).toBe(false);
+
+    // While a resume holds the lock (taken here in-process), the change is refused and nothing moves.
+    await seatWithChange(wm, S1, "opus-2");
+    const resume = await acquireRunLock(projectPath, S1);
+    const refused = await failure(client.call("worktree.discard", { ...key, seatId: "opus-2", force: true }));
+    expect(refused.code).toBe(RpcErrorCode.Rejected);
+    expect(refused.message).toContain("another process is running this session");
+    expect((await wm.list(S1)).map((w) => w.seatId)).toContain("opus-2");
+    await resume.release();
+    expect(await client.call("worktree.discard", { ...key, seatId: "opus-2", force: true })).toEqual({ ok: true });
+    expect(await isSessionRunLocked(projectPath, S1)).toBe(false);
+  });
+
   it("apply with confirm lands the work on the main checkout", async () => {
     const { client, wm, projectPath } = await setup();
     await seatWithChange(wm);
@@ -455,10 +501,10 @@ describe("worktrees", () => {
     expect(await client.call("worktree.apply", key)).toMatchObject({ ok: true, changed: true });
   });
 
-  it("apply and discard are refused while another live process holds the session's writer lock", async () => {
+  it.each(["writer.lock", "run.lock"])("apply and discard are refused while another live process holds the session's %s", async (name) => {
     const { client, wm, projectPath } = await setup();
     await seatWithChange(wm);
-    const lock = path.join(projectPath, ".assentor", "sessions", S1, "writer.lock");
+    const lock = path.join(projectPath, ".assentor", "sessions", S1, name);
     await fs.mkdir(path.dirname(lock), { recursive: true });
     // The parent process is alive and is not this one.
     await fs.writeFile(lock, `${JSON.stringify({ pid: process.ppid, host: os.hostname(), startedAt: new Date().toISOString(), token: "other" })}\n`);

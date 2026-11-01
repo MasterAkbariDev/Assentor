@@ -1,4 +1,4 @@
-export { EventLog, EventLogLockedError, readSessionEvents } from "./log.js";
+export { EventLog, EventLogLockedError, RunLockedError, acquireRunLock, isSessionRunLocked, readSessionEvents, type RunLock } from "./log.js";
 export { sessionPaths } from "../persistence/paths.js";
 export {
   createDeltaCoalescer,
