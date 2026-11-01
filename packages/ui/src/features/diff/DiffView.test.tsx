@@ -265,4 +265,14 @@ describe("DiffView", () => {
       window.location.hash = "";
     }
   });
+
+  it("says so when the linked file is not in the diff", async () => {
+    window.location.hash = "#/sessions?diff=nope.ts";
+    try {
+      const v = setup();
+      await v.findByText("nope.ts: file not in this diff.");
+    } finally {
+      window.location.hash = "";
+    }
+  });
 });

@@ -65,6 +65,7 @@ function DiffBody({ target }: { target: string | undefined }) {
   const sessionId = useEngine((s) => s.session?.id);
   const state = useEngine((s) => s.session?.state);
   const seats = useEngine(selectSeats);
+  const seatInfo = useEngine((s) => s.session?.seatInfo);
   const [canWrite, setCanWrite] = useState(false);
   // undefined = not known yet (treated as blocked), null = not live here.
   const [live, setLive] = useState<string | null | undefined>();
@@ -125,8 +126,10 @@ function DiffBody({ target }: { target: string | undefined }) {
     if (live !== undefined) wasLive.current = Boolean(live);
   }, [live, seatId, load]);
 
-  // A file link: show the executor's worktree (else the first seat) at that file.
-  const firstSeat = (groupSeats(seats ?? {}).find((g) => g.key === "executor") ?? groupSeats(seats ?? {})[0])?.seats[0]?.seatId;
+  // A file link: show the executor's worktree (else a seat that can edit, so has one) at that file.
+  const firstSeat =
+    groupSeats(seats ?? {}).find((g) => g.key === "executor")?.seats[0]?.seatId ??
+    Object.values(seats ?? {}).find((s) => seatInfo?.[s.seatId]?.permissions === "edit")?.seatId;
   useEffect(() => {
     if (target && !seatId && firstSeat) void load(firstSeat);
   }, [target, seatId, firstSeat, load]);
@@ -177,6 +180,11 @@ function DiffBody({ target }: { target: string | undefined }) {
             </button>
           </div>
           {blocked ? <p className="diff-meta" role="note">{blocked}</p> : null}
+          {target && !diff.files.includes(target) ? (
+            <p className="notice warn" role="status">
+              {target}: file not in this diff.
+            </p>
+          ) : null}
           <DiffViewer diff={diff} file={file} onFile={setFile} />
         </>
       ) : null}

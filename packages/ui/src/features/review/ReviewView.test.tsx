@@ -123,8 +123,8 @@ describe("ReviewView per-reviewer verdicts and panel data", () => {
   it("shows each member's own verdict and confidence on its row", () => {
     const { container, getByText } = renderReview(panelEvents());
     const rows = Array.from(container.querySelectorAll(".review-reviewer")).map((el) => el.textContent ?? "");
-    expect(rows.find((r) => r.includes("Opus#1"))).toContain("Verdict Pass · confidence 0.9");
-    expect(rows.find((r) => r.includes("Opus#2"))).toContain("Verdict Needs work · confidence 0.6");
+    expect(rows.find((r) => r.includes("Opus#1"))).toContain("Verdict Pass · confidence 90%");
+    expect(rows.find((r) => r.includes("Opus#2"))).toContain("Verdict Needs work · confidence 60%");
     expect(rows.find((r) => r.includes("Review panel"))).not.toContain("Verdict");
     expect(getByText(/Each row shows the seat's run status and its own verdict/)).toBeTruthy();
   });
@@ -159,7 +159,9 @@ describe("ReviewView per-reviewer verdicts and panel data", () => {
     ]);
     const select = getByLabelText("Reviewer") as HTMLSelectElement;
     expect(Array.from(select.options).map((o) => o.textContent)).toEqual(["All", "Opus#2", "Opus#1"]);
+    expect(getByText("Showing 2 of 2 findings.")).toBeTruthy();
     fireEvent.change(select, { target: { value: "reviewer-1" } });
+    expect(getByText("Showing 1 of 2 findings.")).toBeTruthy();
     expect(getByText("Style nit")).toBeTruthy();
     expect(queryByText("Token compared with ==")).toBeNull();
     fireEvent.change(select, { target: { value: "" } });
@@ -360,7 +362,7 @@ describe("ReviewView decision and safety", () => {
     const { getByRole } = renderReview(panelStream());
     const banner = getByRole("status");
     expect(banner.textContent).toContain("Decision: Needs work");
-    expect(banner.textContent).toContain("confidence 0.8");
+    expect(banner.textContent).toContain("confidence 80%");
     expect(banner.textContent).toContain("Policy: unanimous");
     expect(banner.textContent).toContain("Panel [unanimous] Opus#1 PASS, Opus#2 NEEDS_WORK. Changes required");
   });

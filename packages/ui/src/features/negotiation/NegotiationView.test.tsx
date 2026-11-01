@@ -202,6 +202,23 @@ describe("NegotiationView: threshold and decision from the stream", () => {
   });
 });
 
+describe("NegotiationView: decision without a winner", () => {
+  it("says plain 'none' and shows the rationale", () => {
+    const events: EngineEvent[] = [
+      { seq: 1, sessionId: "nw", at: "2026-10-25T11:00:00.000Z", type: "stage.started", stageId: "d", data: { kind: "negotiate", strategy: "vote", attempt: 1 } } as EngineEvent,
+      { seq: 2, sessionId: "nw", at: "2026-10-25T11:00:01.000Z", type: "negotiation.proposal", stageId: "d", data: { round: 1, label: "Proposal A", text: "Plan A." } } as EngineEvent,
+      { seq: 3, sessionId: "nw", at: "2026-10-25T11:00:02.000Z", type: "negotiation.decided", stageId: "d", data: { rationale: "no valid ballots" } } as EngineEvent,
+    ];
+    const { store, getByText } = renderWithStore(<NegotiationView />);
+    act(() => {
+      store.getState().select("nw");
+      store.getState().applyEvents("nw", events);
+    });
+    expect(getByText("Winner: none")).toBeTruthy();
+    expect(getByText("no valid ballots")).toBeTruthy();
+  });
+});
+
 describe("NegotiationView: run labels and no-consensus runs", () => {
   it("names each run in the picker with its strategy, stage and attempt", () => {
     const { container } = renderFixture();

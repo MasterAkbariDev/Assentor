@@ -51,6 +51,9 @@ function toneOf(severity: string): StatusTone {
   return (SEVERITY_TONE as Record<string, StatusTone | undefined>)[severity] ?? "muted";
 }
 
+/** Confidence is 0 to 1 in the event; shown as a percentage. */
+const pct = (c: number) => `${Math.round(c * 100)}%`;
+
 export function ReviewView() {
   const verdict = useEngine(selectReviewVerdict);
   const findingEvents = useEngine(selectReviewFindings);
@@ -124,7 +127,7 @@ export function ReviewView() {
                 {own ? (
                   <span className="review-reviewer-verdict">
                     Verdict {DECISION_LABEL[own.data.status] ?? own.data.status}
-                    {own.data.confidence !== undefined ? ` · confidence ${own.data.confidence}` : ""}
+                    {own.data.confidence !== undefined ? ` · confidence ${pct(own.data.confidence)}` : ""}
                   </span>
                 ) : null}
                 {seat.detail ? <span className="review-reviewer-detail">{seat.detail}</span> : null}
@@ -196,6 +199,10 @@ export function ReviewView() {
         </p>
       ) : null}
 
+      <p className="review-note" aria-live="polite" aria-atomic="true">
+        {findings.length > 0 ? `Showing ${visible.length} of ${findings.length} findings.` : ""}
+      </p>
+
       {findings.length === 0 ? (
         <p className="empty">No findings in this run.</p>
       ) : visible.length === 0 ? (
@@ -225,7 +232,7 @@ function DecisionBanner({ decision, singleReviewer }: { decision: ReviewDecision
       <p className="review-verdict-status">
         Decision: {DECISION_LABEL[decision.status] ?? decision.status}
         {decision.confidence !== undefined ? (
-          <span className="review-verdict-confidence"> · confidence {decision.confidence}</span>
+          <span className="review-verdict-confidence"> · confidence {pct(decision.confidence)}</span>
         ) : null}
       </p>
       <p className="review-policy">

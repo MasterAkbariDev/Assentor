@@ -342,7 +342,7 @@ function DecisionCard({ run, name }: DecisionCardProps) {
       </p>
       {decided ? (
         <p className="decision-winner">
-          Winner: {decided.winner ?? "none (a synthesized answer)"}
+          Winner: {decided.winner ?? "none"}
         </p>
       ) : null}
       {decided ? <p className="decision-rationale">{decided.rationale}</p> : null}

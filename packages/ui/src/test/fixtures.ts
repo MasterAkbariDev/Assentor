@@ -224,11 +224,11 @@ function negotiateReviewStream(sessionId: string): EngineEvent[] {
     e("seat.status", { status: "thinking" }, { seatId: "reviewer-1" }),
     e("seat.status", { status: "thinking" }, { seatId: "reviewer-2" }),
     e("seat.tool_call", { name: "reading", summary: "src/average.ts", file: "src/average.ts" }, { seatId: "reviewer-1" }),
-    e("seat.done", { ok: true, summary: "one minor issue" }, { seatId: "reviewer-1" }),
-    e("seat.done", { ok: true, summary: "no security issues" }, { seatId: "reviewer-2" }),
     // Engine order (FU-08): the merged verdict first, then its findings (a merged verdict clears the previous round's findings).
     e("review.verdict", { status: "PASS", summary: "one minor issue", confidence: 0.8, panelMember: true }, { seatId: "reviewer-1" }),
+    e("seat.done", { ok: true, summary: "one minor issue" }, { seatId: "reviewer-1" }),
     e("review.verdict", { status: "PASS", summary: "no security issues", confidence: 0.9, panelMember: true }, { seatId: "reviewer-2" }),
+    e("seat.done", { ok: true, summary: "no security issues" }, { seatId: "reviewer-2" }),
     e("review.verdict", { status: "PASS", summary: "Panel [majority] 2 of 2 PASS, 1 minor note", confidence: 0.85, policy: "majority" }, { seatId: "panel" }),
     finding("avg-empty", "Empty input returns NaN without a documented contract", "minor", ["src/average.ts"], ["reviewer-1"]),
     finding("avg-chunk", "Chunk size is hard-coded", "info", ["src/average.ts", "src/config.ts"], ["reviewer-1", "reviewer-2"]),
