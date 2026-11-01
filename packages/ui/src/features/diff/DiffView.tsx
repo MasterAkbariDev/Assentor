@@ -1,7 +1,7 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { RpcResult } from "#assentor/protocol/rpc.js";
 import { useEngine } from "../../store/context.js";
-import { selectSeats } from "../../store/selectors.js";
+import { groupSeats, selectSeats } from "../../store/selectors.js";
 import { useRpc } from "../../transport/context.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { parseUnifiedDiff } from "./diffModel.js";
@@ -24,9 +24,29 @@ const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const NO_WORKTREE = "No worktree for this seat.";
 const sameDiff = (a: Diff, b: Diff) => a.head === b.head && a.baseSha === b.baseSha && a.dirty === b.dirty && a.truncated === b.truncated && a.diff === b.diff && a.files.length === b.files.length && a.files.every((f, i) => f === b.files[i]);
 
+const subscribeHash = (fn: () => void) => {
+  window.addEventListener("hashchange", fn);
+  return () => window.removeEventListener("hashchange", fn);
+};
+
+/** The file a `#/sessions?diff=<path>` link (the review view's file links) asks for. */
+function useDiffTarget(): string | undefined {
+  const hash = useSyncExternalStore(subscribeHash, () => window.location.hash);
+  const raw = /[?&]diff=([^&]*)/.exec(hash)?.[1];
+  try {
+    return raw ? decodeURIComponent(raw) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Collapsed section of the session panel: per-seat worktrees, their diff, apply and discard. */
 export function DiffView() {
-  const [open, setOpen] = useState(false);
+  const target = useDiffTarget();
+  const [open, setOpen] = useState(target !== undefined);
+  useEffect(() => {
+    if (target) setOpen(true);
+  }, [target]);
   return (
     <section className="diff-view" aria-label="Diff and worktrees">
       <h2 className="diff-heading">
@@ -34,12 +54,12 @@ export function DiffView() {
           Diff &amp; worktrees
         </button>
       </h2>
-      {open ? <DiffBody /> : null}
+      {open ? <DiffBody target={target} /> : null}
     </section>
   );
 }
 
-function DiffBody() {
+function DiffBody({ target }: { target: string | undefined }) {
   const rpc = useRpc();
   const connection = useEngine((s) => s.connection);
   const sessionId = useEngine((s) => s.session?.id);
@@ -104,6 +124,15 @@ function DiffBody() {
     if (wasLive.current && live === null && seatId) void load(seatId);
     if (live !== undefined) wasLive.current = Boolean(live);
   }, [live, seatId, load]);
+
+  // A file link: show the executor's worktree (else the first seat) at that file.
+  const firstSeat = (groupSeats(seats ?? {}).find((g) => g.key === "executor") ?? groupSeats(seats ?? {})[0])?.seats[0]?.seatId;
+  useEffect(() => {
+    if (target && !seatId && firstSeat) void load(firstSeat);
+  }, [target, seatId, firstSeat, load]);
+  useEffect(() => {
+    if (target && diff?.files.includes(target)) setFile(target);
+  }, [target, diff]);
 
   const blocked = !canWrite
     ? WRITE_REASON

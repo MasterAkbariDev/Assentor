@@ -202,7 +202,7 @@ function ProposalCard({ proposal, critiques, reveal, name }: ProposalCardProps) 
       <h3 className="proposal-label">{proposal.label}</h3>
       {reveal ? (
         <p className="proposal-author">
-          {proposal.seatId ? `Author: ${name(proposal.seatId)}` : "Author not in the event stream"}
+          {proposal.seatId ? `Author: ${name(proposal.seatId)}` : "Author not recorded"}
         </p>
       ) : null}
       <p className="proposal-text">{proposal.text}</p>
@@ -285,22 +285,27 @@ function rankCell(ranking: readonly string[], label: string): string {
   return position < 0 ? "–" : String(position + 1);
 }
 
-/** Consensus score from the event, with its threshold when the log has one; the reached flag is the engine's own. */
-/** Debate reaches consensus at score ≥ threshold; vote and synthesize need score > threshold. */
+/** Debate reaches consensus at score ≥ threshold; vote and synthesize need score > threshold. The marker shows the threshold when the log has one. */
 function ConsensusMeter({ consensus, debate }: { consensus: ConsensusView; debate: boolean }) {
   const percent = Math.round(consensus.score * 100);
+  const threshold = consensus.threshold === undefined ? undefined : Math.round(consensus.threshold * 100);
   return (
     <section className="consensus" aria-label="Consensus">
       <p className="consensus-line">
-        <meter min={0} max={1} value={consensus.score} aria-label="Consensus score" aria-valuetext={`${percent}%`} />
+        <span className="consensus-bar">
+          <meter min={0} max={1} value={consensus.score} aria-label="Consensus score" aria-valuetext={`${percent}%`} />
+          {threshold !== undefined ? (
+            <span className="consensus-marker" style={{ left: `${threshold}%` }} role="img" aria-label={`Threshold ${threshold}%`} />
+          ) : null}
+        </span>
         <span className="consensus-value">{percent}%</span>
         <span className={consensus.reached ? "consensus-state is-reached" : "consensus-state"}>
           {consensus.reached ? "Consensus reached" : "No consensus"}
         </span>
-        {consensus.threshold !== undefined ? (
+        {threshold !== undefined ? (
           <span className="consensus-threshold">
             {" "}
-            · threshold {debate ? "≥" : ">"} {Math.round(consensus.threshold * 100)}%
+            · threshold {debate ? "≥" : ">"} {threshold}%
           </span>
         ) : null}
       </p>
@@ -335,6 +340,11 @@ function DecisionCard({ run, name }: DecisionCardProps) {
         {status}
         {preferred ? ` · preferred ${preferred}` : ""}
       </p>
+      {decided ? (
+        <p className="decision-winner">
+          Winner: {decided.winner ?? "none (a synthesized answer)"}
+        </p>
+      ) : null}
       {decided ? <p className="decision-rationale">{decided.rationale}</p> : null}
       {preferredProposal ? (
         <blockquote className="decision-text">

@@ -102,7 +102,7 @@ describe("NegotiationView: reveal authors", () => {
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-checked")).toBe("true");
     // The fixture's proposal events carry no author, so the view says so instead of inventing one.
-    expect(getAllByText("Author not in the event stream")).toHaveLength(3);
+    expect(getAllByText("Author not recorded")).toHaveLength(3);
   });
 
   it("shows the seat's name when the proposal event does carry the author", () => {
@@ -188,6 +188,10 @@ describe("NegotiationView: threshold and decision from the stream", () => {
       store.getState().applyEvents("dec", events(false));
     });
     expect(getByText(/threshold ≥ 70%/)).toBeTruthy();
+    // The marker sits at the threshold on the meter.
+    const marker = getByRole("img", { name: "Threshold 70%" });
+    expect(marker.style.left).toBe("70%");
+    expect(getByText("Winner: Proposal B")).toBeTruthy();
     const card = getByRole("region", { name: "Decision" });
     expect(within(card).getByText("No consensus · preferred Proposal B")).toBeTruthy();
     expect(within(card).getByText("no consensus; the judge chose Proposal B <b>x</b>")).toBeTruthy();
