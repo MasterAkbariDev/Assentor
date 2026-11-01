@@ -12,8 +12,9 @@ export interface AnsiSpan {
   bold?: boolean;
 }
 
-// CSI (ESC [ params intermediates final), OSC (ESC ] ... BEL or ESC \), or ESC plus one char (or an intermediate and a final, like ESC ( B).
-const SEQUENCE = /\u001b(?:\[([0-?]*)[ -/]*([@-~])|\[[0-?]*[ -/]*$|\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|[ -/][0-~]|[@-Z\\-_])/g;
+// CSI (ESC [ params intermediates final; an incomplete one is dropped too), OSC (ESC ] ... BEL or ESC \; an
+// unterminated one ends at the line, so it cannot swallow later output), or ESC plus one char (or an intermediate and a final, like ESC ( B).
+const SEQUENCE = /\u001b(?:\[([0-?]*)[ -/]*([@-~])?|\][^\u0007\u001b\n]*(?:\u0007|\u001b\\)?|[ -/][0-~]|[@-Z\\-_])/g;
 
 interface Style {
   fg?: number;
@@ -73,7 +74,14 @@ function applySgr(prev: Style, params: string): Style {
         }
         i += 2;
       } else if (mode === 2) {
-        i += 4; // truecolor is skipped, not approximated
+        const rgb = codes.slice(i + 2, i + 5);
+        if (rgb.length === 3 && rgb.every((v) => Number.isInteger(v) && v >= 0 && v <= 255)) {
+          const [r, g, b] = rgb.map((v) => Math.round(((v as number) / 255) * 5)) as [number, number, number];
+          const n = 16 + 36 * r + 6 * g + b; // nearest colour of the 6x6x6 cube
+          if (code === 38) style.fg = n;
+          else style.bg = n;
+        }
+        i += 4;
       } else {
         i += 1;
       }

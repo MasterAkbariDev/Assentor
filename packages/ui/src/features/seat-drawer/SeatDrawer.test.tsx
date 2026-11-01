@@ -277,6 +277,30 @@ describe("SeatDrawer: Transcript", () => {
     expect(link.getAttribute("href")).toBe("#/sessions?diff=src%2Faverage.ts&seat=executor");
   });
 
+  it("cuts long tool args at 200 characters and keeps the whole text in the title", () => {
+    const id = "args-run";
+    const { store, container, getByRole } = renderWithStore(
+      <>
+        <SessionBoard />
+        <SeatDrawer />
+      </>,
+    );
+    const at = new Date(Date.UTC(2026, 9, 25, 10, 0, 0)).toISOString();
+    const long = "x".repeat(450);
+    act(() => {
+      store.getState().select(id);
+      store.getState().applyEvents(id, [
+        { seq: 1, sessionId: id, seatId: "a", at, type: "seat.spawned", data: { displayName: "A", provider: "mock", transport: "api", model: "AUTO", role: "x", permissions: "edit" } },
+        { seq: 2, sessionId: id, seatId: "a", at, type: "seat.tool_call", data: { name: "bash", summary: long } },
+      ] as EngineEvent[]);
+    });
+    fireEvent.click(cardFor(container, "a"));
+    fireEvent.click(getByRole("tab", { name: "Transcript" }));
+    const text = getByRole("list", { name: "Transcript" }).querySelector(".seat-activity-text") as HTMLElement;
+    expect(text.textContent).toBe(`bash ${"x".repeat(200)}…`);
+    expect(text.title).toBe(long);
+  });
+
   it("shows only the last rows and loads earlier ones on request", () => {
     const id = "long-run";
     const { store, container, getByRole, queryByRole } = renderWithStore(

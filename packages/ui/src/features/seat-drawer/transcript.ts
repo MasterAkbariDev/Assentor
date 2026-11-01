@@ -8,8 +8,11 @@ import { formatClock } from "./activity.js";
  */
 
 export type TranscriptItem =
-  | { kind: "tool"; key: number; at: string; time: string; name: string; args?: string; file?: string }
+  | { kind: "tool"; key: number; at: string; time: string; name: string; args?: string; /** The whole text, set only when `args` was cut. */ fullArgs?: string; file?: string }
   | { kind: "message"; key: number; at: string; time: string; text: string; error: boolean };
+
+/** Longest tool args shown whole. */
+const ARGS_MAX = 200;
 
 /** A summary that is only a repo-relative path, such as `src/average.ts`. */
 const PATH_ONLY = /^[\w@~./-]+\.\w{1,8}$/;
@@ -21,7 +24,15 @@ export function transcriptItems(events: readonly EngineEvent[]): TranscriptItem[
     if (event.type === "seat.tool_call") {
       const { name, summary, file } = event.data;
       const path = file ?? (summary && PATH_ONLY.test(summary) && !summary.includes("://") ? summary : undefined);
-      items.push({ kind: "tool", ...base, name, ...(summary ? { args: summary } : {}), ...(path ? { file: path } : {}) });
+      const cut = summary !== undefined && summary.length > ARGS_MAX;
+      items.push({
+        kind: "tool",
+        ...base,
+        name,
+        ...(summary ? { args: cut ? `${summary.slice(0, ARGS_MAX)}…` : summary } : {}),
+        ...(cut ? { fullArgs: summary } : {}),
+        ...(path ? { file: path } : {}),
+      });
     } else if (event.type === "seat.done") {
       items.push({ kind: "message", ...base, text: event.data.summary ?? (event.data.ok ? "Done." : "Failed."), error: !event.data.ok });
     } else if (event.type === "seat.error") {

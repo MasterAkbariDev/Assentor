@@ -28,7 +28,7 @@ export function SeatTranscript({ seatId }: { seatId: string }) {
               {item.time}
             </time>
             {item.kind === "tool" ? (
-              <span className="seat-activity-text">
+              <span className="seat-activity-text" title={item.fullArgs}>
                 <strong className="seat-tool-name">{item.name}</strong>
                 {item.args ? <> {item.file === item.args ? <a href={diffHref(seatId, item.file)}>{item.args}</a> : item.args}</> : null}
                 {item.file && item.file !== item.args ? (

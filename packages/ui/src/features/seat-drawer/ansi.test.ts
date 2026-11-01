@@ -37,10 +37,27 @@ describe("parseAnsi", () => {
   });
 
   it("drops other escape sequences, skipping truecolor without leaking its numbers", () => {
-    const text = `a${E}[2Jb${E}[1;1Hc${E}]0;title\u0007d${E}]8;;http://x${E}\\e${E}[38;2;1;2;3mf${E}[3mg${E}(Bh${E}[31`;
-    const out = parseAnsi(text).map((s) => s.text).join("");
-    expect(out).toBe("abcdefgh");
-    expect(parseAnsi(`${E}[38;2;1;2;3mx`)).toEqual([{ text: "x" }]);
+    const text = `a${E}[2Jb${E}[1;1Hc${E}]0;title\u0007d${E}]8;;http://x${E}\\e${E}[3mf${E}(Bg${E}[31`;
+    expect(parseAnsi(text).map((s) => s.text).join("")).toBe("abcdefg");
+  });
+
+  it("drops an incomplete CSI instead of leaking its parameters", () => {
+    expect(parseAnsi(`a${E}[31\nb`)).toEqual([{ text: "a\nb" }]);
+    expect(parseAnsi(`a${E}[3`)).toEqual([{ text: "a" }]);
+  });
+
+  it("ends an unterminated OSC at the line, so later output survives", () => {
+    expect(parseAnsi(`${E}]0;title\nnext`)).toEqual([{ text: "\nnext" }]);
+    expect(parseAnsi(`${E}]0;title${E}[31mred`)).toEqual([{ text: "red", fg: 1 }]);
+    expect(parseAnsi(`${E}]0;title${E}\\after`)).toEqual([{ text: "after" }]);
+  });
+
+  it("maps truecolor to the nearest colour of the 256 cube, and ignores out-of-range values", () => {
+    expect(parseAnsi(`${E}[38;2;255;0;0mx${E}[48;2;0;0;255my`)).toEqual([
+      { text: "x", fg: 196 },
+      { text: "y", fg: 196, bg: 21 },
+    ]);
+    expect(parseAnsi(`${E}[38;2;1;2;999mz`)).toEqual([{ text: "z" }]);
   });
 
   it("never turns text into markup: it stays literal", () => {
