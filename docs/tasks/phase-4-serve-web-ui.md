@@ -306,6 +306,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-18 · Usage view
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T04-06, TE-01
 
+**Merged 2026-11-01 (planner, under the owner's standing merge direction):** `980e86b` + review fix `edd157d`; Sonnet review PASS. `#/usage`: per-run totals (tokens in/out, cached share, cost, calls, retries), tables by seat / stage / model, budget bars for budgets that warned; refreshes from `usage.get` with one call in flight. Follow-up: show `skill.loaded` (TE-07, now merged) and estimate vs actual (TE-09).
+
 **Goal** — See where tokens and money go, per run.
 
 **Deliverables** — a Usage section (sidebar) and a per-session panel: totals, per seat / stage / model table, cached share, estimate vs actual (TE-09), budget bars with the 50/80% warnings, skills loaded and their cost (TE-07 `skill.loaded`). Data from RPC `usage.get` (TE-01). Read-only.

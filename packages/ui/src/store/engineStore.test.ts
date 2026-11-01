@@ -66,6 +66,7 @@ describe("engine store", () => {
       lead: emptyLeadBoardView(),
       lastSeq: 0,
       eventCount: 0,
+      tokenEvents: 0,
     });
   });
 
