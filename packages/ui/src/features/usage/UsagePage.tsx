@@ -7,8 +7,8 @@ import { budgetBars, cachedShare, compareEstimate, formatBudget, sortedRows, sor
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 4 });
 const count = new Intl.NumberFormat("en-US");
 /** Costs too small to show to the cent read "<$0.01" rather than rounding to $0.00. */
-const formatUsd = (n: number) => (n > 0 && n < 0.01 ? "<$0.01" : usd.format(n));
-const formatCount = (n: number) => count.format(n);
+export const formatUsd = (n: number) => (n > 0 && n < 0.01 ? "<$0.01" : usd.format(n));
+export const formatCount = (n: number) => count.format(n);
 
 const STATE_TEXT: Record<BudgetState, string> = {
   below: "under 50%",

@@ -2,7 +2,9 @@ import { useMemo } from "react";
 import { useEngine } from "../../store/context.js";
 import { groupSeats, isLiveSeat, selectLeadBoard, selectSeats } from "../../store/selectors.js";
 import { ApprovalsPanel } from "../controls/ApprovalsPanel.js";
+import { BudgetBar } from "./BudgetBar.js";
 import { SeatCard } from "./SeatCard.js";
+import { StageRail } from "./StageRail.js";
 import { useNow } from "./useNow.js";
 
 /** Refresh period of the board's one elapsed-time ticker. */
@@ -20,9 +22,13 @@ export function SessionBoard() {
   const isLead = useEngine((s) => selectLeadBoard(s) !== undefined);
   const live = Object.values(seats ?? {}).some(isLiveSeat);
   const now = useNow(TICK_MS, live);
+  const sessionId = useEngine((s) => s.session?.id);
+  const stages = useEngine((s) => s.session?.stages);
 
   return (
     <div className="seat-board">
+      {sessionId ? <BudgetBar sessionId={sessionId} /> : null}
+      <StageRail stages={stages ?? []} />
       <ApprovalsPanel scope={isLead ? "other" : "all"} />
       {groups.map((group) => (
         <section key={group.key} className="seat-group" aria-label={group.title}>
