@@ -67,6 +67,8 @@ export interface SkillScope {
   permissions?: "read-only" | "edit";
   mode?: string;
   profile?: string;
+  /** Opt-in skills the config turned on (presets already expanded). */
+  enabled?: readonly string[];
 }
 
 export function builtinSkillDir(): string {
@@ -125,6 +127,7 @@ export class SkillLibrary {
     if (skill.layer === "project" && !(PROJECT_SKILL_ROLES.has(scope.role) && scope.permissions === "edit")) {
       return `project skills reach only built-in builder roles on edit seats (not "${scope.role}", ${scope.permissions ?? "no"} permission)`;
     }
+    if (skill.optIn && !scope.enabled?.includes(skill.name)) return "off by default: add it to skills.enabled";
     if (skill.roles && !skill.roles.includes(scope.role)) return `not for role "${scope.role}"`;
     if (skill.modes && !(scope.mode && skill.modes.includes(scope.mode))) return `not for mode "${scope.mode ?? "(none)"}"`;
     if (skill.profiles && !(scope.profile && (skill.profiles as string[]).includes(scope.profile))) {

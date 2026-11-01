@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +11,13 @@ import { templateVariables } from "#assentor/engine/prompts/template.js";
 import { UsageLedger } from "#assentor/engine/usage/ledger.js";
 import { estimateTokens } from "#assentor/engine/usage/tokens.js";
 import { cliUsage } from "#assentor/engine/usage/cli-usage.js";
+import {
+  fenceSkill,
+  renderSkillsIndex,
+  SKILL_PRESETS,
+  validateSkillFrontMatter,
+  type SkillDefinition,
+} from "#assentor/engine/skills/index.js";
 import { BENCH_TASKS, type BenchTask, type TaskResult } from "./tasks.js";
 
 /**
@@ -57,8 +64,20 @@ export interface Variant {
   overlay: { style?: string; profile?: string; skills?: string[] };
   /** Text added to every seat prompt (style fragment, skills index, or a skill body). */
   alwaysOn: string;
+  /**
+   * Skills variants: what a seat of `role` gets. The index (plus style) is always on;
+   * `loaded` holds the fenced bodies of the skills eligible for the role, present from
+   * the first call (best case for cost: no extra `load_skill` turn).
+   */
+  perRole?: (role: string) => { alwaysOn: string; loaded: string };
   notes: string[];
   mock?: MockScript;
+}
+
+/** Everything a seat of `role` gets in front of its role prompt under `variant`. */
+export function seatExtra(variant: Variant, role: string): string {
+  const { alwaysOn, loaded } = variant.perRole?.(role) ?? { alwaysOn: variant.alwaysOn, loaded: "" };
+  return joinParts(alwaysOn, loaded);
 }
 
 /** A style fragment as shipped (`prompts/builtin/style-<name>.md`); empty with a note when it does not exist. */
@@ -72,19 +91,30 @@ function styleText(style: string, root: string, notes: string[]): string {
   return text.startsWith("---") ? splitPromptFile(text).body : text.trim();
 }
 
-/** The skills index lines (name + description) for skills that exist; a note for each that does not. */
-function skillsIndex(skills: string[], root: string, notes: string[]): string {
-  return skills
-    .flatMap((skill) => {
-      const file = path.join(root, "skills", skill, "SKILL.md");
-      if (!existsSync(file)) {
-        notes.push(`skill ${skill} is not built yet (TE-07/08): no effect`);
-        return [];
-      }
-      return [`- ${skill}: ${String(splitPromptFile(readFileSync(file, "utf8")).frontMatter.description ?? "")}`];
-    })
-    .join("\n");
+/** Skill names with presets (`lean`) and `all` expanded. */
+function expandNames(names: string[], root: string): string[] {
+  const dir = path.join(root, "skills");
+  const all = existsSync(dir) ? readdirSync(dir).filter((d) => existsSync(path.join(dir, d, "SKILL.md"))).sort() : [];
+  return [...new Set(names.flatMap((name) => (name === "all" ? all : (SKILL_PRESETS[name] ?? [name]))))];
 }
+
+/** Built-in skills read from `skills/<name>/SKILL.md`; a note for each missing. */
+function readSkills(names: string[], root: string, notes: string[]): SkillDefinition[] {
+  const dir = path.join(root, "skills");
+  return expandNames(names, root).flatMap((name) => {
+    const file = path.join(dir, name, "SKILL.md");
+    if (!existsSync(file)) {
+      notes.push(`skill ${name} is not built yet (TE-07/08): no effect`);
+      return [];
+    }
+    const { frontMatter, body } = splitPromptFile(readFileSync(file, "utf8"));
+    const checked = validateSkillFrontMatter(frontMatter);
+    if (!checked.ok) throw new Error(`${file}: ${checked.message}`);
+    return [{ ...checked.value, body, layer: "builtin", file, tokens: estimateTokens(body) } as SkillDefinition];
+  });
+}
+
+const eligibleFor = (skills: SkillDefinition[], role: string) => skills.filter((s) => !s.roles || s.roles.includes(role));
 
 /** Style and skills of the default config (`output.style`, `skills.enabled` once TE-02/TE-07 add them). */
 function defaults(): { style: string; skills: string[] } {
@@ -102,7 +132,7 @@ const joinParts = (...parts: string[]) => parts.filter(Boolean).join("\n\n");
  */
 export function defaultAlwaysOn(root = REPO_ROOT): string {
   const { style, skills } = defaults();
-  return joinParts(styleText(style, root, []), skillsIndex(skills, root, []));
+  return joinParts(styleText(style, root, []), renderSkillsIndex(readSkills(skills, root, [])));
 }
 
 /**
@@ -118,15 +148,23 @@ export function resolveVariant(name: string, root = REPO_ROOT): Variant {
     return { name, overlay: {}, alwaysOn: defaultAlwaysOn(root), notes };
   }
   if (kind === "style" && value) {
-    return { name, overlay: { style: value }, alwaysOn: joinParts(styleText(value, root, notes), skillsIndex(base.skills, root, [])), notes };
+    return { name, overlay: { style: value }, alwaysOn: joinParts(styleText(value, root, notes), renderSkillsIndex(readSkills(base.skills, root, []))), notes };
   }
   if (kind === "profile" && value) {
     notes.push("profiles are not built yet (TE-06): no effect in the mock; live runs need the feature");
     return { name, overlay: { profile: value }, alwaysOn: defaultAlwaysOn(root), notes };
   }
   if (kind === "skills" && value) {
-    const skills = [...new Set([...base.skills, ...value.split("+")])];
-    return { name, overlay: { skills }, alwaysOn: joinParts(styleText(base.style, root, []), skillsIndex(skills, root, notes)), notes };
+    const names = expandNames([...base.skills, ...value.split("+")], root);
+    const skills = readSkills(names, root, notes);
+    const style = styleText(base.style, root, []);
+    const perRole = (role: string) => {
+      const eligible = eligibleFor(skills, role);
+      return { alwaysOn: joinParts(style, renderSkillsIndex(eligible)), loaded: eligible.map(fenceSkill).join("\n\n") };
+    };
+    // The report's always-on size is the largest index any fixture role sees.
+    const alwaysOn = BENCH_TASKS.map((t) => perRole(t.role).alwaysOn).reduce((a, b) => (b.length > a.length ? b : a), "");
+    return { name, overlay: { skills: names }, alwaysOn, perRole, notes };
   }
   throw new Error(`Unknown variant "${name}" (use baseline, style:<name>, profile:<name> or skills:<a>+<b>)`);
 }
@@ -275,7 +313,8 @@ function mockAttempt(library: PromptLibrary, task: BenchTask, variant: Variant, 
     ledger.add({ seq: ++seq, sessionId, seatId: task.role, at: "", type, data } as EngineEvent);
 
   const contextScale = script.contextScale ?? 1;
-  const base = (variant.alwaysOn ? `${variant.alwaysOn}\n\n` : "") + rolePrompt(library, task, contextScale);
+  const prefix = seatExtra(variant, task.role);
+  const base = (prefix ? `${prefix}\n\n` : "") + rolePrompt(library, task, contextScale);
   // The seat reads each project file in its own tool turn; extra turns re-read the first one.
   const reads = Object.values(task.files);
   const extra = reads.length ? Array.from({ length: script.extraTurns ?? 0 }, () => reads[0]!) : [];
@@ -378,7 +417,8 @@ export async function runLive(options: LiveOptions): Promise<BenchReport> {
             await fs.mkdir(path.dirname(path.join(dir, file)), { recursive: true });
             await fs.writeFile(path.join(dir, file), text);
           }
-          const prompt = (variant.alwaysOn ? `${variant.alwaysOn}\n\n` : "") + rolePrompt(options.library, task);
+          const extra = seatExtra(variant, task.role);
+          const prompt = (extra ? `${extra}\n\n` : "") + rolePrompt(options.library, task);
           const executor = await createExecutor(options.executor, dir, { model: options.executorModel, timeoutMs: 15 * 60_000 });
           const result = await executor.run({ taskId: createId(), projectPath: dir, contract: buildContract(task.variables.goal ?? task.id), prompt });
           const output = result.summary;

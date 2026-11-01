@@ -11,6 +11,7 @@ import {
   resolveVariant,
   runLive,
   runMock,
+  seatExtra,
   type BenchReport,
   type MockScript,
   type Variant,
@@ -157,12 +158,15 @@ describe("variants", () => {
     await fs.mkdir(path.join(root, "prompts/builtin"), { recursive: true });
     await fs.writeFile(path.join(root, "prompts/builtin/style-concise.md"), "---\nid: style-concise\n---\nAnswer first.\n");
     await fs.mkdir(path.join(root, "skills/answer-first"), { recursive: true });
-    await fs.writeFile(path.join(root, "skills/answer-first/SKILL.md"), "---\nname: answer-first\ndescription: Lead with the result.\n---\nBody that loads on demand.\n");
+    await fs.writeFile(path.join(root, "skills/answer-first/SKILL.md"), "---\nname: answer-first\ndescription: Lead with the result.\nversion: 1\n---\nBody that loads on demand.\n");
     expect(resolveVariant("style:concise", root).alwaysOn).toBe("Answer first.");
-    expect(resolveVariant("skills:answer-first+missing", root)).toMatchObject({
-      overlay: { skills: ["answer-first", "missing"] },
-      alwaysOn: "- answer-first: Lead with the result.",
-    });
+    const withSkill = resolveVariant("skills:answer-first+missing", root);
+    expect(withSkill).toMatchObject({ overlay: { skills: ["answer-first", "missing"] } });
+    expect(withSkill.alwaysOn).toContain("- answer-first: Lead with the result.");
+    expect(withSkill.notes[0]).toMatch(/missing is not built yet/);
+    // The body is loaded text, not always-on: it is in the seat's extra, not in the index.
+    expect(withSkill.alwaysOn).not.toContain("Body that loads on demand");
+    expect(seatExtra(withSkill, "engineer")).toContain("Body that loads on demand");
   });
 });
 

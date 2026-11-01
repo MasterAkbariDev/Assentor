@@ -415,7 +415,8 @@ describe("skill CLI and RPC", () => {
     const client = new RpcClient(createInProcessTransport(server).client);
     try {
       const list = await client.call("skill.list");
-      expect(list.skills).toEqual([
+      // The shipped built-in skills (TE-08) are listed too; this test is about the project one.
+      expect(list.skills.filter((skill) => skill.source === "project")).toEqual([
         { name: "local", description: "Use for local.", source: "project", overridden: false, roles: ["engineer"], tokens: estimateTokens("BODY-OF-local") },
       ]);
       expect(list.errors).toEqual([{ file: "broken/SKILL.md", message: expect.stringMatching(/front-matter/) }]);

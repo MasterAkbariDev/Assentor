@@ -210,6 +210,12 @@ export const AssentorConfigSchema = z.object({
       screenshots: z.boolean().default(false),
     })
     .default({}),
+  skills: z
+    .object({
+      /** Opt-in skills (`optIn: true`) to offer, by name or preset (`lean`). User and project skills are always offered. */
+      enabled: z.array(z.string().trim().min(1).max(48)).max(50).default([]),
+    })
+    .default({}),
   worktrees: z
     .object({
       /**

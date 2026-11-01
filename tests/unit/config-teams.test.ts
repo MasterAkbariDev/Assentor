@@ -24,6 +24,7 @@ describe("config teams and modes", () => {
       "git",
       "security",
       "artifacts",
+      "skills",
       "worktrees",
       "verification",
     ]);

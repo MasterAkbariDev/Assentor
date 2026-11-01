@@ -95,6 +95,8 @@ export interface SkillSessionOptions {
   sessionId: string;
   mode?: string;
   profile?: string;
+  /** Opt-in skills turned on (`expandSkillPresets(config.skills.enabled)`). */
+  enabled?: readonly string[];
   /** Session events (`skill.loaded`, `session.warning`); must not throw. */
   emit?: (draft: EngineEventDraft) => void;
   maxIndexTokens?: number;
@@ -122,7 +124,7 @@ export class SkillSession {
   ) {}
 
   private scope(seat: SkillSeat): SkillScope {
-    return { role: seat.role, permissions: seat.permissions, mode: this.options.mode, profile: this.options.profile };
+    return { role: seat.role, permissions: seat.permissions, mode: this.options.mode, profile: this.options.profile, enabled: this.options.enabled };
   }
 
   /** The seat's index text; identical bytes for every seat with the same role and permissions. */

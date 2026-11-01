@@ -1,7 +1,9 @@
 export {
   estimateTokens,
+  expandSkillPresets,
   MAX_SKILL_DESCRIPTION_CHARS,
   PROJECT_SKILL_ROLES,
+  SKILL_PRESETS,
   SKILL_PROFILES,
   SkillFrontMatterSchema,
   validateSkillFrontMatter,
