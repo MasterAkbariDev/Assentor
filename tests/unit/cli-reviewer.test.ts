@@ -270,13 +270,13 @@ describe("CLI reviewer model flag", () => {
     return { calls, spawnFn };
   }
 
-  it("claude gets --model after --output-format text and before the prompt", async () => {
+  it("claude gets --model after --output-format json and before the prompt", async () => {
     const { calls, spawnFn } = captureSpawn();
     await new CliReviewer({ adapter: "claude", binary: "/fake/claude", model: "opus", spawnFn }).review(
       reviewInput(),
     );
     const args = calls[0]!;
-    expect(args.slice(0, 5)).toEqual(["-p", "--output-format", "text", "--model", "opus"]);
+    expect(args.slice(0, 5)).toEqual(["-p", "--output-format", "json", "--model", "opus"]);
     expect(args).toHaveLength(6);
   });
 

@@ -1,6 +1,6 @@
 ---
 name: smallest-solution
-description: Use when implementing, least code that fully solves it. Off, mock bench +18% tokens.
+description: Use when implementing, least code that fully solves it. Off, mock bench +13% tokens.
 roles: [engineer, refactorer, debugger, devops, db-migrations]
 optIn: true
 version: 1

@@ -1,6 +1,6 @@
 ---
 name: targeted-reading
-description: Use when exploring code, search first, read line ranges. Off, mock bench +26% tokens.
+description: Use when exploring code, search first, read line ranges. Off, mock bench +19% tokens.
 roles: [engineer, refactorer, debugger, test-writer, docs-writer, devops, db-migrations]
 optIn: true
 version: 1

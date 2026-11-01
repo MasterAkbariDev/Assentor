@@ -1,6 +1,6 @@
 ---
 name: answer-first
-description: Use when replying, lead with the result. Off, mock bench +33% tokens.
+description: Use when replying, lead with the result. Off, mock bench +29% tokens.
 roles: [engineer, refactorer, debugger, test-writer, docs-writer, devops, db-migrations, planner, architect, requirements-analyst, code-reviewer, security-reviewer, performance-reviewer, ux-reviewer, test-reviewer, architecture-reviewer]
 optIn: true
 version: 1

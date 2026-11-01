@@ -1,6 +1,6 @@
 ---
 name: plan-in-bullets
-description: Use when planning, short numbered steps. Off, mock bench +4% tokens.
+description: Use when planning, short numbered steps. Off, mock bench +3% tokens.
 roles: [planner, architect, requirements-analyst]
 optIn: true
 version: 1

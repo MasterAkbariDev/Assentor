@@ -25,3 +25,4 @@ export {
   type TemplateValue,
   type TemplateVariables,
 } from "./template.js";
+export { assembleSeatPrompt, type AssembledPrompt, type SeatPromptParts } from "./assemble.js";

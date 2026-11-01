@@ -20,6 +20,7 @@ import type {
   ExecutorResult,
   ExecutorTask,
 } from "../../providers/executors/types.js";
+import { runFollowUp } from "../../providers/executors/follow-up.js";
 import type { Reviewer } from "../../providers/reviewers/types.js";
 import type { RunVerificationCommand } from "../../review/verification-gates.js";
 import { redactSecrets } from "../../security/redact.js";
@@ -251,11 +252,13 @@ export function createTddExecutor(deps: TddDeps): Executor {
     }
   }
 
-  /** One seat run through the scheduler; resolves with a completed result or throws. */
+  /** One seat run through the scheduler; resolves with a completed result or throws. With `previous`, a follow-up turn (`runFollowUp`). */
   async function runSeat(
     s: TddSeat,
     task: ExecutorTask,
     controller: AbortController,
+    previous?: ExecutorResult,
+    followUp = "",
   ): Promise<ExecutorResult> {
     const outcome = await deps.scheduler.run(
       s.seat,
@@ -267,7 +270,7 @@ export function createTddExecutor(deps: TddDeps): Executor {
         if (job.signal.aborted) stop();
         else job.signal.addEventListener("abort", stop, { once: true });
         try {
-          return await s.executor.run(task);
+          return await runFollowUp(s.executor, task, previous, followUp);
         } finally {
           job.signal.removeEventListener("abort", stop);
         }
@@ -519,6 +522,7 @@ export function createTddExecutor(deps: TddDeps): Executor {
 
       const coderResult = await withSeat(coder.seat, "tdd: coder", controller.signal, async () => {
         let feedback = "";
+        let previous: ExecutorResult | undefined;
         for (let attempt = 1; attempt <= options.maxCoderAttempts; attempt += 1) {
           const result = await runSeat(
             coder,
@@ -530,7 +534,10 @@ export function createTddExecutor(deps: TddDeps): Executor {
               ...(task.messages ? { messages: task.messages } : {}),
             },
             controller,
+            previous,
+            feedback.trim(),
           );
+          previous = result;
           const b = await gate(seatKey, worktree, template, [...locks.keys()], controller.signal, warnings);
           event("tdd.gate", { gate: "B", passed: b.code === 0, exitCode: b.code, attempt });
 

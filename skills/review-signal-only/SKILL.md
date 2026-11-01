@@ -1,6 +1,6 @@
 ---
 name: review-signal-only
-description: Use when reviewing, actionable, evidenced findings only. Off, mock bench +4% tokens.
+description: Use when reviewing, actionable, evidenced findings only. Off, mock bench +9% tokens.
 roles: [code-reviewer, security-reviewer, performance-reviewer, ux-reviewer, test-reviewer, architecture-reviewer]
 optIn: true
 version: 1

@@ -1,6 +1,6 @@
 ---
 name: minimal-diff-edits
-description: Use when editing, change the smallest region only. Off, mock bench +25% tokens.
+description: Use when editing, change the smallest region only. Off, mock bench +18% tokens.
 roles: [engineer, refactorer, debugger, test-writer, docs-writer, devops, db-migrations]
 optIn: true
 version: 1

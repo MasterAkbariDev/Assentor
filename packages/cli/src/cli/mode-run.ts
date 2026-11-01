@@ -29,13 +29,13 @@ import { MockExecutor } from "#assentor/engine/providers/executors/mock/index.js
 import type { Executor, ExecutorResult } from "#assentor/engine/providers/executors/types.js";
 import { withAssentorGitignore } from "#assentor/engine/providers/executors/with-gitignore.js";
 import { ProcessCliTransport, resolveCliAdapter } from "#assentor/engine/providers/reviewers/cli/index.js";
-import type { Reviewer } from "#assentor/engine/providers/reviewers/types.js";
+import type { Reviewer, ReviewerTurnResult } from "#assentor/engine/providers/reviewers/types.js";
 import { PanelReviewer, REVIEW_POLICIES, type ReviewPolicy } from "#assentor/engine/review/index.js";
 import { createSeatScheduler, reviewerProviderForSeat } from "#assentor/engine/seats/index.js";
 import { PromptLibrary } from "#assentor/engine/prompts/library.js";
 import { expandSkillPresets, SkillLibrary, SkillSession, withSkillsAsk } from "#assentor/engine/skills/index.js";
 import { WorktreeManager } from "#assentor/engine/worktrees/manager.js";
-import { cliUsage } from "#assentor/engine/usage/cli-usage.js";
+import { cliUsage, type CliUsage } from "#assentor/engine/usage/cli-usage.js";
 import type { EngineEvent, EngineEventDraft } from "#assentor/protocol/events.js";
 import { extractJsonCandidate } from "#assentor/protocol/parse.js";
 import { estimateRun } from "#assentor/engine/estimate/cost.js";
@@ -312,38 +312,33 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
   const outputs = new WeakMap<Executor, Set<(chunk: ExecutorOutputChunk) => void>>();
 
   /**
-   * Token use of one CLI turn (TE-01), read from its output. Exactly one source per turn: edit
-   * executors' results (below), read-only executors' asks, and `askSeat` replies (through the
-   * caller's `reportUsage`, so the scheduler also budgets it). Text-format CLIs (the reviewer
-   * transport runs claude with `--output-format text`, codex, opencode) and API seats print no
-   * usage, so they report nothing yet (API usage: TE-05).
+   * Token use of one turn (TE-01, TE-05). Exactly one source per turn: edit executors' results
+   * (stream-json output, below), read-only executors' asks and `askSeat` replies (the transport's
+   * reported usage: API seats and Claude Code's JSON output; through the caller's `reportUsage`,
+   * so the scheduler also budgets it), and reviewer turns (`reviewerFor`). Codex and OpenCode print
+   * plain text: no usage.
    */
-  const emitTokens = (seat: Seat, raw: string | undefined, stageId?: string): void => {
-    const usage = raw ? cliUsage(raw) : undefined;
+  const emitUsage = (seatId: string, usage: CliUsage | undefined, stageId?: string): void => {
     if (!usage) return;
-    const { turns, costUsd, ...tokens } = usage;
-    input.emit({
-      type: "seat.tokens",
-      sessionId,
-      seatId: seat.id,
-      ...(stageId ? { stageId } : {}),
-      data: { ...tokens, turns, ...(costUsd !== undefined ? { costUsd } : {}) },
-    });
+    input.emit({ type: "seat.tokens", sessionId, seatId, ...(stageId ? { stageId } : {}), data: { ...usage } });
+  };
+  const emitTokens = (seat: Seat, raw: string | undefined, stageId?: string): void => emitUsage(seat.id, raw ? cliUsage(raw) : undefined, stageId);
+
+  /** A hook's reply carries its usage in the text (as a CLI's would); the real transports report it. */
+  const reply = async (seat: Seat, prompt: string, signal: AbortSignal, cwd: string, hookRequest: Parameters<NonNullable<ModeRunHooks["askSeat"]>>[0]): Promise<SeatReply> => {
+    if (!hooks.askSeat) return askSeatText(config, projectPath, cwd, seat, prompt, signal);
+    const text = await hooks.askSeat(hookRequest);
+    return { text, usage: cliUsage(text) };
   };
 
   /** A free-form ask with the CLI started in `cwd` (a read-only seat runs in its task's worktree). */
   const ask = async (seat: Seat, prompt: string, signal: AbortSignal, cwd: string, stageId?: string): Promise<string> => {
-    const text = hooks.askSeat
-      ? await hooks.askSeat({ seat, prompt, signal, reportUsage: () => undefined })
-      : await askSeatText(config, projectPath, cwd, seat, prompt, signal);
-    emitTokens(seat, text, stageId);
+    const { text, usage } = await reply(seat, prompt, signal, cwd, { seat, prompt, signal, reportUsage: () => undefined });
+    emitUsage(seat.id, usage, stageId);
     return text;
   };
   const askSeat: NonNullable<ModeHostServices["askSeat"]> = async (request) => {
-    const text = hooks.askSeat
-      ? await hooks.askSeat(request)
-      : await askSeatText(config, projectPath, projectPath, request.seat, request.prompt, request.signal);
-    const usage = cliUsage(text);
+    const { text, usage } = await reply(request.seat, request.prompt, request.signal, projectPath, request);
     if (usage) request.reportUsage(usage);
     return text;
   };
@@ -407,34 +402,43 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
   };
 
   const reviewerFor = (stage: StageSpec | undefined, tiebreak: Parameters<StageRunnerDeps["createReviewer"]>[1]): Reviewer => {
-    let built: Promise<Reviewer> | undefined;
+    let built: Promise<{ reviewer: Reviewer; seatId: string }> | undefined;
     // Reviewers are built on first use (API keys are read then); the stage runner wants one now.
     const get = () =>
       (built ??= (async () => {
         const team = stage?.team && Object.hasOwn(config.teams, stage.team) ? { name: stage.team, team: config.teams[stage.team]! } : undefined;
-        const { members, backends, reviewStrategy, teamMode } = await createMembersFromBackends({
+        const { members, backends, reviewStrategy, teamMode, seatIds } = await createMembersFromBackends({
           config,
           projectPath,
           prompt: input.goal,
           ...(team ? { team } : {}),
           onStatus: (message) => reporter.onReviewerStatus(message),
         });
-        if ((reviewStrategy === "SINGLE" && !teamMode) || members.length <= 1) return members[0]!;
+        if ((reviewStrategy === "SINGLE" && !teamMode) || members.length <= 1) return { reviewer: members[0]!, seatId: seatIds?.[0] ?? members[0]!.name };
         const policy = stage?.options.policy;
-        return new PanelReviewer({
+        const panel = new PanelReviewer({
           name: `panel:${team?.name ?? "review"}`,
           reviewers: members,
+          ...(seatIds ? { memberSeatIds: seatIds } : {}),
           goal: input.goal,
           acceptanceCriteria: input.acceptanceCriteria ?? [],
           ...panelPolicyOptions(config, backends),
           ...((REVIEW_POLICIES as readonly string[]).includes(policy as string) ? { policy: policy as ReviewPolicy } : {}),
           ...tiebreak,
         });
+        return { reviewer: panel as Reviewer, seatId: panel.name };
       })());
+    /** The turn's token use (TE-05): a panel reports each member's, a lone reviewer its own. */
+    const counted = async (call: (reviewer: Reviewer) => Promise<ReviewerTurnResult>): Promise<ReviewerTurnResult> => {
+      const { reviewer, seatId } = await get();
+      const turn = await call(reviewer);
+      for (const member of turn.memberUsage ?? (turn.usage ? [{ seatId, usage: turn.usage }] : [])) emitUsage(member.seatId, member.usage, stage?.id);
+      return turn;
+    };
     return {
       name: `panel:${stage?.team ?? "review"}`,
-      review: async (turn) => (await get()).review(turn),
-      continue: async (turn) => (await get()).continue(turn),
+      review: (turn) => counted((reviewer) => reviewer.review(turn)),
+      continue: (turn) => counted((reviewer) => reviewer.continue(turn)),
     };
   };
 
@@ -549,11 +553,17 @@ function readOnlyExecutor(seat: Seat, ask: (seat: Seat, prompt: string, signal: 
   };
 }
 
+interface SeatReply {
+  text: string;
+  /** Token use the transport reported (API seats, Claude Code's JSON output). */
+  usage?: CliUsage;
+}
+
 /**
  * One free-form prompt on a seat, read-only: CLI seats through the reviewer
  * transport (read-only flags only), API seats through the provider's generate.
  */
-async function askSeatText(config: AssentorConfig, projectPath: string, cwd: string, seat: Seat, prompt: string, signal: AbortSignal): Promise<string> {
+async function askSeatText(config: AssentorConfig, projectPath: string, cwd: string, seat: Seat, prompt: string, signal: AbortSignal): Promise<SeatReply> {
   const model = seat.model && seat.model !== "AUTO" ? seat.model : undefined;
   if (seat.provider === "gemini" || seat.provider === "openai") {
     const apiModel = model ?? [config.models[seat.provider], config.models.default].find((m) => m && m !== "AUTO");
@@ -567,7 +577,8 @@ async function askSeatText(config: AssentorConfig, projectPath: string, cwd: str
       if (signal.aborted) reject(new Error("cancelled"));
       signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
     });
-    return (await Promise.race([call, aborted])).text;
+    const response = await Promise.race([call, aborted]);
+    return { text: response.text, ...(response.tokens ? { usage: { ...response.tokens, turns: 1 } } : {}) };
   }
   const adapter = resolveCliAdapter(reviewerProviderForSeat(seat.provider) ?? seat.provider);
   if (adapter === "mock") throw new Error(`seat "${seat.id}": a mock seat cannot answer free-form prompts`);
@@ -576,7 +587,7 @@ async function askSeatText(config: AssentorConfig, projectPath: string, cwd: str
   if (signal.aborted) throw new Error("cancelled");
   if (result.timedOut) throw new Error(`${adapter} CLI timed out`);
   if (result.code !== 0 && !result.stdout.trim()) throw new Error(result.stderr.trim() || `${adapter} CLI exited with code ${result.code}`);
-  return result.stdout;
+  return { text: result.stdout, ...(result.usage ? { usage: result.usage } : {}) };
 }
 
 const BINARY: Record<(typeof SEAT_CLI_PROVIDERS)[number], BinaryTool> = {

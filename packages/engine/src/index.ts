@@ -136,6 +136,7 @@ export {
 } from "./providers/reviewers/fallback.js";
 export {
   buildReviewPrompt,
+  buildReviewPromptParts,
   reviewResultFromModelText,
 } from "./providers/reviewers/shared/prompt.js";
 
