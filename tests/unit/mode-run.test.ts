@@ -6,7 +6,7 @@ import { PassThrough, Writable } from "node:stream";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addYarnLock, fakePackageManagers } from "./fake-package-managers.js";
-import { readSessionEvents, type EngineEvent } from "../../packages/engine/src/index.js";
+import { acquireRunLock, isSessionRunLocked, readSessionEvents, type EngineEvent } from "../../packages/engine/src/index.js";
 import { createMockLead, type MockLeadStep } from "../../packages/engine/src/modes/lead/mock.js";
 import type { RosterEntry } from "../../packages/engine/src/modes/roster.js";
 import type { Executor, ExecutorTask } from "../../packages/engine/src/providers/executors/types.js";
@@ -166,6 +166,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     expect(of("mode.selected")[0]?.data).toMatchObject({ mode: "review", kind: "static" });
     // The session log is the one the run wrote.
     expect((await readSessionEvents(repo, result.taskId)).map((e) => e.type)).toContain("session.completed");
+    expect(await isSessionRunLocked(repo, result.taskId)).toBe(false);
   });
 
   it("negotiate: each step renders the library prompt for a seat and parses its JSON reply", async () => {
@@ -239,6 +240,15 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     // The lead seat fails after planning: the session ends blocked with the board saved.
     const first = await run("lead", { askSeat: createMockLead([LEAD_SCRIPT[0]!]).askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts") });
     expect(first.result.status).toBe("blocked");
+    expect(await isSessionRunLocked(repo, first.result.taskId)).toBe(false);
+    // FU-15: while another run holds the task, a resume is refused before any work.
+    const held = await acquireRunLock(repo, first.result.taskId);
+    const logged = await readSessionEvents(repo, first.result.taskId);
+    await expect(resumeAssentorTask({ projectPath: repo, taskId: first.result.taskId, modeHooks: { questions: noTerminal() } })).rejects.toThrow(
+      `Task ${first.result.taskId} is already running in process ${process.pid}`,
+    );
+    expect(await readSessionEvents(repo, first.result.taskId)).toEqual(logged);
+    await held.release();
     const lead = createMockLead(LEAD_SCRIPT.slice(1));
     const resumed = await resumeAssentorTask({
       projectPath: repo,
@@ -247,6 +257,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     });
     expect(resumed).toMatchObject({ taskId: first.result.taskId, status: "completed", reason: "x added" });
     expect(lead.prompts[0]).toContain("T1");
+    expect(await isSessionRunLocked(repo, first.result.taskId)).toBe(false);
 
     const review = await run("review");
     await expect(resumeAssentorTask({ projectPath: repo, taskId: review.result.taskId })).rejects.toThrow(/Mode review cannot resume/);
@@ -335,6 +346,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     await writeConfig({ teams: PLAYBOOK_TEAMS });
     const { result } = await run("pipeline", { askSeat: async () => STEP_REPLY });
     expect(result.status).toBe("cancelled");
+    expect(await isSessionRunLocked(repo, result.taskId)).toBe(false);
   });
 
   it.each(["explore", "plan"])("%s: read-only playbook runs its debates on the seats", async (mode) => {
@@ -492,5 +504,8 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     await expect(run("negotiate")).rejects.toThrow(/modes\.negotiate/);
     const sessions = await fs.readdir(path.join(repo, ".assentor", "sessions")).catch(() => []);
     for (const id of sessions) await expect(fs.stat(path.join(repo, ".assentor", "sessions", id, "mode-run.json"))).rejects.toThrow();
+    // The failed run released its run lock.
+    for (const id of sessions) expect(await isSessionRunLocked(repo, id)).toBe(false);
+    expect(sessions.length).toBeGreaterThan(0);
   });
 });

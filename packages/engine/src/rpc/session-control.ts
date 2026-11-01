@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import { EventLog, EventLogLockedError, isSessionLogLocked } from "../events/log.js";
+import { EventLog, EventLogLockedError, RunLockedError, acquireRunLock, isSessionLogLocked, isSessionRunLocked, type RunLock } from "../events/log.js";
 import { sessionPaths } from "../persistence/paths.js";
 import { createId, isId } from "../core/ids.js";
 import type { ModeDefinition } from "../modes/registry.js";
@@ -59,6 +59,8 @@ interface Live {
   abort: AbortController;
   state: LiveState;
   log?: EventLog;
+  /** Task-level run lock (FU-15), held from start until the run settles. */
+  runLock?: RunLock;
   /** Approval question ids (dynamic) and stage ids (static) the session is waiting on. */
   approvals: Set<string>;
   title: string;
@@ -103,7 +105,9 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
   /** Worktrees of a session that is running (here or in another process) are not changed from outside. */
   const assertIdle = async (sessionId: string) => {
     if (sessions.has(sessionId)) throw rejected("the session is live; cancel it first");
-    if (await isSessionLogLocked(projectPath, sessionId)) throw rejected("another process is running this session");
+    if ((await isSessionRunLocked(projectPath, sessionId)) || (await isSessionLogLocked(projectPath, sessionId))) {
+      throw rejected("another process is running this session");
+    }
   };
 
   const summaryOf = async (sessionId: string): Promise<RpcResult<"session.get">["session"]> => {
@@ -131,6 +135,7 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
     }
     // Close first: while the entry is live, worktree changes stay refused.
     await live.log?.close().catch(() => undefined);
+    await live.runLock?.release().catch(() => undefined);
     sessions.delete(sessionId);
   };
 
@@ -181,18 +186,27 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
     "session.start": async ({ sessionId }) => {
       const live = liveOf(sessionId);
       if (live.state !== "created") throw rejected(`session is already ${live.state}`);
+      let runLock: RunLock;
       let log: EventLog;
+      try {
+        runLock = await acquireRunLock(projectPath, sessionId);
+      } catch (error) {
+        throw error instanceof RunLockedError ? rejected("another process is running this session") : asRpcError(error);
+      }
       try {
         log = await EventLog.open(projectPath, sessionId);
       } catch (error) {
+        await runLock.release().catch(() => undefined);
         throw error instanceof EventLogLockedError ? rejected("another process owns this session's event log") : asRpcError(error);
       }
       // A cancel or expiry during the open wins: do not run an aborted session.
       if (live.state !== "created" || sessions.get(sessionId) !== live || live.abort.signal.aborted) {
         await log.close().catch(() => undefined);
+        await runLock.release().catch(() => undefined);
         throw rejected("the session was cancelled before it started");
       }
       clearTimeout(live.expiry);
+      live.runLock = runLock;
       live.log = log;
       live.state = "running";
       void finish(sessionId, live, live.prepared.run());
