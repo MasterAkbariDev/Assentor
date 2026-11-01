@@ -456,6 +456,7 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
           coder: { seat: seats.coder, executor: seatExecutor(seats.coder, stage) },
           options: stage.options,
           verification: config.verification,
+          install: config.worktrees.install,
           emit: input.emit,
           decideTestChange: reviewerTestChangeDecision(reviewerFor(undefined, {}), projectPath),
         });

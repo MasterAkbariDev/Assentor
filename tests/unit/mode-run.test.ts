@@ -5,12 +5,13 @@ import path from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { addYarnLock, fakePackageManagers } from "./fake-package-managers.js";
 import { readSessionEvents, type EngineEvent } from "../../packages/engine/src/index.js";
 import { createMockLead, type MockLeadStep } from "../../packages/engine/src/modes/lead/mock.js";
 import type { RosterEntry } from "../../packages/engine/src/modes/roster.js";
 import type { Executor, ExecutorTask } from "../../packages/engine/src/providers/executors/types.js";
 import { resumeAssentorTask, runAssentorTask } from "../../packages/cli/src/cli/commands.js";
-import { createModeHost, runModeTask, type ModeRunHooks } from "../../packages/cli/src/cli/mode-run.js";
+import { createModeHost, type ModeRunHooks } from "../../packages/cli/src/cli/mode-run.js";
 import { RunReporter } from "../../packages/cli/src/cli/ui/reporter.js";
 import { parseAssentorConfig } from "../../packages/engine/src/config/load.js";
 import { PromptLibrary } from "../../packages/engine/src/prompts/library.js";
@@ -46,6 +47,7 @@ const ed = (role: string) => ({ provider: "mock", role, permissions: "edit" });
 let repo: string;
 let userDir: string;
 const savedUserDir = process.env.ASSENTOR_USER_DIR;
+let pm: Awaited<ReturnType<typeof fakePackageManagers>> | undefined;
 
 beforeEach(async () => {
   repo = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "mode-run-")));
@@ -62,6 +64,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  await pm?.restore();
+  pm = undefined;
   if (savedUserDir === undefined) delete process.env.ASSENTOR_USER_DIR;
   else process.env.ASSENTOR_USER_DIR = savedUserDir;
   await fs.rm(repo, { recursive: true, force: true });
@@ -94,14 +98,10 @@ function terminal(answers: string[], endWhenOut = false): QuestionIO & { asked: 
 }
 const noTerminal = (): QuestionIO => ({ input: new PassThrough(), output: new PassThrough(), interactive: false });
 
-/**
- * Through `runAssentorTask` (the CLI command function). `direct`: through `runModeTask`, past the
- * `available` check, for modes whose routing is wired but which stay unavailable (lead, pair,
- * redteam, tdd, swarm, debug: no dependency install in new worktrees yet).
- */
-async function run(modeId: string, hooks: ModeRunHooks = {}, over: Record<string, unknown> = {}, direct = false) {
+/** Through `runAssentorTask` (the CLI command function). */
+async function run(modeId: string, hooks: ModeRunHooks = {}, over: Record<string, unknown> = {}) {
   const events: EngineEvent[] = [];
-  const { result } = await (direct ? runModeTask : runAssentorTask)({
+  const { result } = await runAssentorTask({
     projectPath: repo,
     prompt: GOAL,
     modeId: modeId as never,
@@ -112,6 +112,26 @@ async function run(modeId: string, hooks: ModeRunHooks = {}, over: Record<string
     ...over,
   });
   return { result, events, of: (type: string) => events.filter((e) => e.type === type) };
+}
+
+/**
+ * Fake package managers on PATH and a committed yarn.lock: `worktrees.install: auto` runs `yarn install`
+ * (which makes `node_modules`) in each new worktree. Real gates, so `--skip-gates` stays off.
+ */
+async function withInstall(): Promise<void> {
+  pm = await fakePackageManagers();
+  await addYarnLock(repo, git);
+}
+/** A gate that records itself in the fake package managers' log and fails without the install's `node_modules`. */
+const GATE = { commands: { test: 'echo gate >> "$FAKE_PM_LOG" && test -d node_modules' } };
+const GATES_ON = { skipGates: false };
+/** The install ran in a worktree before the first gate. */
+async function expectInstallBeforeGate(): Promise<void> {
+  const calls = await pm!.logged();
+  const install = calls.findIndex((c) => c.startsWith("yarn install"));
+  expect(install).toBeGreaterThanOrEqual(0);
+  const gate = calls.indexOf("gate");
+  expect(gate).toBeGreaterThan(install);
 }
 
 /** An agent that writes `file` in its worktree and reports it as Lead expects. */
@@ -192,11 +212,13 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
   });
 
   it("lead: plans, hires from the roster, the agent works in a worktree, the terminal approves the landing", async () => {
-    await writeConfig({ modes: { lead: { lead: { provider: "mock", model: "lead" } } } });
+    await withInstall();
+    await writeConfig({ modes: { lead: { lead: { provider: "mock", model: "lead" } } }, verification: GATE });
     const lead = createMockLead(LEAD_SCRIPT);
     const io = terminal(["y"]);
-    const { result, of } = await run("lead", { askSeat: lead.askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts"), questions: io }, {}, true);
+    const { result, of } = await run("lead", { askSeat: lead.askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts"), questions: io }, GATES_ON);
     expect(result).toMatchObject({ status: "completed", reason: "x added" });
+    await expectInstallBeforeGate();
     expect(io.asked).toEqual([expect.stringContaining("to your branch")]);
     expect(of("user.answer")).toEqual([expect.objectContaining({ data: expect.objectContaining({ answer: "approve" }) })]);
     expect(await git(repo, "show", "HEAD:a/x.ts")).toBe("export const x = 1;");
@@ -205,7 +227,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
   it("lead without a terminal: the landing is denied (fail closed) and nothing reaches the branch", async () => {
     await writeConfig({ modes: { lead: { lead: { provider: "mock", model: "lead" } } } });
     const lead = createMockLead(LEAD_SCRIPT);
-    const { result, of } = await run("lead", { askSeat: lead.askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts") }, {}, true);
+    const { result, of } = await run("lead", { askSeat: lead.askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts") });
     // The refused landing goes back to the lead (whose script then runs out); the work never lands.
     expect(result.status).not.toBe("completed");
     expect(of("user.answer")).toEqual([expect.objectContaining({ data: expect.objectContaining({ answer: "deny" }) })]);
@@ -215,7 +237,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
   it("lead resumes through assentor resume with the saved board; a non-resumable mode says so", async () => {
     await writeConfig({ modes: { lead: { lead: { provider: "mock", model: "lead" } } } });
     // The lead seat fails after planning: the session ends blocked with the board saved.
-    const first = await run("lead", { askSeat: createMockLead([LEAD_SCRIPT[0]!]).askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts") }, {}, true);
+    const first = await run("lead", { askSeat: createMockLead([LEAD_SCRIPT[0]!]).askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts") });
     expect(first.result.status).toBe("blocked");
     const lead = createMockLead(LEAD_SCRIPT.slice(1));
     const resumed = await resumeAssentorTask({
@@ -322,64 +344,85 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
   });
 
   it("pair: the navigator watches through the host and the driver's work lands after approval", async () => {
+    await withInstall();
     await writeConfig({
       teams: { drivers: { seats: [ed("engineer")] }, navigators: { seats: [ro("navigator")] } },
       modes: { pair: { driverTeam: "drivers", navigatorTeam: "navigators", intervalSec: 600 } },
+      verification: GATE,
     });
     const navigator: string[] = [];
     const { result } = await run("pair", {
       askSeat: async ({ prompt }) => (navigator.push(prompt), "NO_COMMENT"),
       seatExecutor: () => writer("a/x.ts"),
       questions: terminal(["y", "y"], true),
-    }, {}, true);
+    }, GATES_ON);
     expect(result.status).toBe("completed");
     expect(navigator.length).toBeGreaterThan(0);
+    await expectInstallBeforeGate();
   });
 
-  it("redteam: the read-only attacker answers through a read-only ask, never an edit executor", async () => {
+  it("redteam: the read-only attacker answers through a read-only ask, never an edit executor; the builder's worktree gets its install before the gate", async () => {
+    await withInstall();
     await writeConfig({
       teams: { attackers: { seats: [ro("red-team-attacker")] }, builders: { seats: [ed("engineer")] } },
       modes: { redteam: { attackerTeam: "attackers", builderTeam: "builders", maxRounds: 1 } },
-      verification: { commands: { test: "true" } },
+      verification: GATE,
     });
     const attacker: string[] = [];
     const { result } = await run("redteam", {
       askSeat: async ({ seat, prompt }) => (attacker.push(`${seat.role}:${prompt.slice(0, 20)}`), JSON.stringify({ yield: true, attacks: [] })),
       questions: terminal(["y"]),
-    }, {}, true);
+    }, GATES_ON);
     expect(attacker).toEqual([expect.stringMatching(/^red-team-attacker:/)]);
+    await expectInstallBeforeGate();
     expect(["completed", "blocked"]).toContain(result.status);
   });
 
-  it("tdd: the host builds the TDD executor for strategy tdd (its gates run)", async () => {
+  it("tdd: the test-writer's failing test, then the coder's code that passes it; the worktree is installed before the first gate", async () => {
+    await withInstall();
     await writeConfig({
       teams: { tdd: { seats: [ed("test-writer"), ed("engineer")] } },
-      modes: { tdd: { team: "tdd", testCommand: "true" } },
+      // The locked-test gate runs in the worktree and needs the installed node_modules; the run's own gate runs in the project.
+      modes: { tdd: { team: "tdd", testCommand: 'echo gate >> "$FAKE_PM_LOG"; test -d node_modules && node {files}' } },
+      verification: { commands: { test: "true" } },
     });
-    const { result, of } = await run("tdd", {}, {}, true);
-    // The mock test-writer changes nothing, so TDD blocks the round: proof its executor ran, not plain solo.
-    expect(result.status).not.toBe("completed");
-    expect(JSON.stringify(of("seat.status").map((e) => e.data)) + (result.reason ?? "")).toMatch(/test|TDD/i);
+    // The test fails until a/x.js exists; the coder (the other seat) writes it.
+    const agent = (file: string, content: string): Executor => ({
+      ...writer(file),
+      run: async (task: ExecutorTask) => (await fs.writeFile(path.join(task.projectPath, file), content), { status: "completed", summary: `wrote ${file}` }),
+    });
+    const { result, of } = await run("tdd", {
+      seatExecutor: (seat) => (seat.role === "test-writer" ? agent("a/x.test.js", 'if (require("./x.js").x !== 1) process.exit(1);\n') : agent("a/x.js", "exports.x = 1;\n")),
+      questions: terminal(["y", "y"], true),
+    }, GATES_ON);
+    expect(result.status).toBe("completed");
+    expect(of("mode.selected")[0]?.data).toMatchObject({ mode: "tdd" });
+    await expectInstallBeforeGate();
   });
 
   it("swarm: items split from the config run on the worker team", async () => {
     await fs.writeFile(path.join(repo, "a", "one.txt"), "1\n");
     await git(repo, "add", ".");
     await git(repo, "commit", "-q", "-m", "one");
+    await withInstall();
     await writeConfig({
       teams: { cheap: { seats: [ed("engineer")] } },
       modes: { swarm: { workerTeam: "cheap", files: ["a/one.txt"] } },
-      verification: { commands: { test: "true" } },
+      verification: GATE,
     });
-    const { result, of } = await run("swarm", { questions: terminal(["y", "y"], true) }, {}, true);
+    const edit: Executor = { ...writer("a/one.txt"), run: async (task: ExecutorTask) => (await fs.writeFile(path.join(task.projectPath, "a", "one.txt"), "2\n"), { status: "completed", summary: "changed one.txt" }) };
+    const { result, of } = await run("swarm", { seatExecutor: () => edit, questions: terminal(["y", "y", "y"], true) }, GATES_ON);
     expect(of("mode.selected")[0]?.data).toMatchObject({ mode: "swarm" });
-    expect(["completed", "blocked"]).toContain(result.status);
+    expect(result.status).toBe("completed");
+    expect(await git(repo, "show", "HEAD:a/one.txt")).toBe("2");
+    await expectInstallBeforeGate();
   });
 
-  it("debug: hypothesis seats run in their own worktrees", async () => {
+  it("debug: hypothesis seats run in their own worktrees, installed before the repro", async () => {
+    await withInstall();
     await writeConfig({
       teams: { hyp: { seats: [{ ...ed("debugger"), count: 2 }] }, fixers: { seats: [ed("engineer")] } },
-      modes: { debug: { hypothesisTeam: "hyp", fixTeam: "fixers", reproCommand: "false", maxRounds: 1 } },
+      modes: { debug: { hypothesisTeam: "hyp", fixTeam: "fixers", reproCommand: 'echo gate >> "$FAKE_PM_LOG"; false', maxRounds: 1 } },
     });
     const cwds: string[] = [];
     const reply = JSON.stringify({ hypothesis: "h", experiment: "log", verdict: "refuted", confidence: 0.5, evidence: "none" });
@@ -392,10 +435,11 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
         cancel: async () => undefined,
       }),
       questions: terminal(["y"]),
-    }, {}, true);
+    }, GATES_ON);
     expect(cwds.length).toBeGreaterThanOrEqual(2);
     for (const cwd of cwds) expect(cwd).not.toBe(repo);
     expect(["completed", "blocked"]).toContain(result.status);
+    await expectInstallBeforeGate();
   });
 
   it("--retro appends the retro seat's lessons to .assentor/memory/lessons.md", async () => {
@@ -408,9 +452,9 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     expect(lessons).not.toContain("not a bullet");
   });
 
-  it("lead, pair, redteam, tdd, swarm and debug are refused by the CLI until worktrees get dependencies", async () => {
+  it("race, interactive, auto and watch are refused by the CLI", async () => {
     await writeConfig({});
-    for (const id of ["lead", "pair", "redteam", "tdd", "swarm", "debug"]) {
+    for (const id of ["race", "interactive", "auto", "watch"]) {
       await expect(run(id)).rejects.toThrow(`Mode ${id} is not available yet.`);
     }
   });
@@ -420,7 +464,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     const lead = createMockLead(LEAD_SCRIPT);
     // stdin ends (Ctrl+D) when the landing question is shown.
     const io = terminal([], true);
-    const { result, of } = await run("lead", { askSeat: lead.askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts"), questions: io }, {}, true);
+    const { result, of } = await run("lead", { askSeat: lead.askSeat, roster: () => ROSTER, seatExecutor: () => writer("a/x.ts"), questions: io });
     expect(result.status).toBe("cancelled");
     expect(of("user.answer")).toEqual([]);
     await expect(git(repo, "show", "HEAD:a/x.ts")).rejects.toThrow();
@@ -438,7 +482,7 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
       askSeat: async ({ seat }) => (asked.push(seat.permissions), JSON.stringify({ yield: true, attacks: [] })),
       seatExecutor: (seat) => (hooked.push(seat.permissions), writer("a/x.ts")),
       questions: terminal(["y"]),
-    }, {}, true);
+    });
     expect(asked).toEqual(["read-only"]);
     expect(hooked).toEqual(["edit"]);
   });

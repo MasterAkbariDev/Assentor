@@ -337,37 +337,35 @@ const MODES: readonly ModeDefinition[] = [
   // Today's `assentor run`: one executor in a review loop (one reviewer or a `--team` panel).
   mode("solo", "Solo", "One executor with a review loop; today's assentor run.", "static", true, true, solo),
   // Modes below with a buildSession/createController run from `assentor run --mode <id>` through
-  // prepareModeSession (CLI host: packages/cli/src/cli/mode-run.ts), except lead, pair, redteam, tdd,
-  // swarm and debug: their gates run in fresh worktrees and the host does not install dependencies there yet
-  // (follow-up), so on real projects they would block. The routing for them is in place.
+  // prepareModeSession (CLI host: packages/cli/src/cli/mode-run.ts).
   mode("review", "Review", "Several reviewers judge existing work; a policy merges their verdicts.", "static", false, true, review),
   mode("negotiate", "Negotiate", "Several peers reach consensus with a strategy (vote, debate, synthesize).", "static", true, true, negotiate),
-  mode("lead", "Lead (Supervisor)", "A lead seat plans tasks, picks agents and accepts or rejects their reports. Not runnable yet: new worktrees get no dependency install before its gates.", "dynamic", true, false, lead),
+  mode("lead", "Lead (Supervisor)", "A lead seat plans tasks, picks agents and accepts or rejects their reports.", "dynamic", true, true, lead),
   mode("cascade", "Cascade", "Start with a cheap model; escalate on failure or risk.", "dynamic", true, true, {
     validate: cascadeProblems,
     createController: (input) => createCascadeController(input, { approve: (question) => input.requestApproval({ question }) }),
   }),
   mode("pipeline", "Pipeline", "Requirements, architect, coder, tester, reviewer and docs stages in order.", "static", true, true, pipeline),
   // A controller loop (driver turns, live navigator, gates, review), not a stage graph: an interjection restarts a turn.
-  mode("pair", "Pair", "A driver codes while a navigator watches the stream and interjects. Not runnable yet: new worktrees get no dependency install before its gates.", "dynamic", true, false, {
+  mode("pair", "Pair", "A driver codes while a navigator watches the stream and interjects.", "dynamic", true, true, {
     validate: (config) => [...teamProblems(config), ...pairProblems(config)],
     createController: (input) => createPairController(input, { approve: (question) => input.requestApproval({ question }) }),
   }),
   mode("race", "Race", "Several seats implement in parallel worktrees; a judge picks one.", "static", true),
   // A controller loop (attacker round, builder fix, gates), not a stage graph: the number of rounds depends on the attacker.
-  mode("redteam", "Red team", "An attacker writes failing tests or exploits; a builder fixes; repeat. Not runnable yet: new worktrees get no dependency install before its gates.", "dynamic", true, false, {
+  mode("redteam", "Red team", "An attacker writes failing tests or exploits; a builder fixes; repeat.", "dynamic", true, true, {
     validate: (config) => [...teamProblems(config), ...redteamProblems(config)],
     createController: (input) => createRedteamController(input, { approve: (question) => input.requestApproval({ question }) }),
   }),
   // The CLI host returns createTddExecutor for strategy "tdd".
-  mode("tdd", "TDD", "Failing tests first, then code that passes them without touching the tests. Not runnable yet: new worktrees get no dependency install before its gates.", "static", true, false, tddRuntime),
+  mode("tdd", "TDD", "Failing tests first, then code that passes them without touching the tests.", "static", true, true, tddRuntime),
   // A controller loop (split, batches, tier retries, gates, review), not a stage graph: the batches depend on the split and on what fails.
-  mode("swarm", "Swarm", "Many small independent items split across cheap seats, then merged. Not runnable yet: new worktrees get no dependency install before its gates.", "dynamic", true, false, {
+  mode("swarm", "Swarm", "Many small independent items split across cheap seats, then merged.", "dynamic", true, true, {
     validate: (config) => [...teamProblems(config), ...swarmProblems(config)],
     createController: (input) => createSwarmController(input),
   }),
   // A controller loop (hypothesis rounds, then a fix), not a stage graph: how many rounds it takes depends on the evidence.
-  mode("debug", "Debug", "Seats test competing hypotheses in their own worktrees; evidence picks the fix. Not runnable yet: new worktrees get no dependency install before its gates.", "dynamic", true, false, {
+  mode("debug", "Debug", "Seats test competing hypotheses in their own worktrees; evidence picks the fix.", "dynamic", true, true, {
     validate: (config) => [...teamProblems(config), ...debugProblems(config)],
     createController: (input) => createDebugController(input, { approve: (question) => input.requestApproval({ question }) }),
   }),
