@@ -40,11 +40,7 @@ export function touchedFiles(items: readonly TranscriptItem[]): string[] {
   return [...files];
 }
 
-/**
- * Link to the diff view for one file of a seat's worktree.
- * shortcut: the diff view (T04-11) has no route for a file yet and unknown routes open Sessions, so this only
- * carries the target; change it here once the diff route exists.
- */
+/** Link to the diff view (opened by `DiffView`) at one file of a seat's worktree. */
 export function diffHref(seatId: string, file: string): string {
-  return `#/diff?seat=${encodeURIComponent(seatId)}&file=${encodeURIComponent(file)}`;
+  return `#/sessions?diff=${encodeURIComponent(file)}&seat=${encodeURIComponent(seatId)}`;
 }

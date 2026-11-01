@@ -274,7 +274,7 @@ describe("SeatDrawer: Transcript", () => {
     const rows = Array.from(list.querySelectorAll("li")).map((li) => li.querySelector(".seat-activity-text")!.textContent);
     expect(rows).toEqual(["editing src/average.ts", "average() added"]);
     const link = within(list).getByRole("link", { name: "src/average.ts" });
-    expect(link.getAttribute("href")).toBe("#/diff?seat=executor&file=src%2Faverage.ts");
+    expect(link.getAttribute("href")).toBe("#/sessions?diff=src%2Faverage.ts&seat=executor");
   });
 
   it("shows only the last rows and loads earlier ones on request", () => {
@@ -317,7 +317,7 @@ describe("SeatDrawer: Files", () => {
     const list = await findByRole("list", { name: "Files" });
     const links = Array.from(list.querySelectorAll("a"));
     expect(links.map((a) => a.textContent)).toEqual(["src/a.ts", "docs/b.md"]);
-    expect(links[1]!.getAttribute("href")).toBe("#/diff?seat=executor&file=docs%2Fb.md");
+    expect(links[1]!.getAttribute("href")).toBe("#/sessions?diff=docs%2Fb.md&seat=executor");
     expect(transport.calls.some((c) => c.method === "worktree.diff")).toBe(true);
   });
 
