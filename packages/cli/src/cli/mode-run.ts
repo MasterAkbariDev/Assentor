@@ -201,6 +201,7 @@ export async function runModeTask(input: ModeTaskInput) {
       sessionId,
       goal,
       autonomy,
+      ...(input.selectedVia ? { via: input.selectedVia } : {}),
       config,
       deps,
       worktrees,

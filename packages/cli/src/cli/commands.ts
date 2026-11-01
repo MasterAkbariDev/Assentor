@@ -113,6 +113,8 @@ export interface RunAssentorInput {
   profile?: RunProfile;
   /** Registry mode (`--mode <id>`). Only `available` modes run; solo runs the Supervisor below, others through prepareModeSession. */
   modeId?: ModeId;
+  /** Set by `--mode auto` on the mode it chose; recorded as `via` on `mode.selected` (not for solo, which emits none). */
+  selectedVia?: "auto";
   /** Live seat-scoped engine events (T00-07), in log order. Errors thrown here are reported, not propagated. */
   onEngineEvent?: (event: EngineEvent) => void;
   /** `--mode` runs (not solo): after the session, a retro appends lessons to `.assentor/memory/lessons.md`. */
@@ -869,6 +871,11 @@ export function runAssentorTask(input: RunAssentorInput & { modeId?: "solo" }): 
 export function runAssentorTask(input: RunAssentorInput): Promise<SoloRun | ModeRun>;
 export async function runAssentorTask(input: RunAssentorInput): Promise<SoloRun | ModeRun> {
   assertReviewerOrTeam(input);
+  if (input.modeId === "auto" && getMode("auto")?.available) {
+    // Not a second dispatcher: pick a mode, then run it through the normal --mode path below.
+    const { chooseAutoMode } = await import("./auto-run.js");
+    return runAssentorTask({ ...input, modeId: await chooseAutoMode(input), selectedVia: "auto" });
+  }
   if (input.modeId && !getMode(input.modeId)?.available) {
     throw new Error(`Mode ${input.modeId} is not available yet.`);
   }

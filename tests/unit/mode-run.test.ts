@@ -224,6 +224,19 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     expect(await git(repo, "show", "HEAD:a/x.ts")).toBe("export const x = 1;");
   });
 
+  it("auto: the chosen mode runs through the normal path and mode.selected records via auto", async () => {
+    await writeConfig({});
+    const io = terminal(["y"]);
+    const { result, of } = await run("auto", { questions: io }, { prompt: "Please review a/base.txt" });
+    expect(result).toMatchObject({ status: "completed" });
+    expect(of("mode.selected")[0]?.data).toMatchObject({ mode: "review", via: "auto" });
+  });
+
+  it("auto: cancel runs nothing", async () => {
+    await writeConfig({});
+    await expect(run("auto", { questions: terminal(["n"]) }, { prompt: "Please review a/base.txt" })).rejects.toThrow("cancelled");
+  });
+
   it("lead without a terminal: the landing is denied (fail closed) and nothing reaches the branch", async () => {
     await writeConfig({ modes: { lead: { lead: { provider: "mock", model: "lead" } } } });
     const lead = createMockLead(LEAD_SCRIPT);
@@ -452,9 +465,9 @@ describe("assentor run --mode (mock seats, real CLI command path)", { timeout: 1
     expect(lessons).not.toContain("not a bullet");
   });
 
-  it("race, interactive, auto and watch are refused by the CLI", async () => {
+  it("race, interactive and watch are refused by the CLI", async () => {
     await writeConfig({});
-    for (const id of ["race", "interactive", "auto", "watch"]) {
+    for (const id of ["race", "interactive", "watch"]) {
       await expect(run(id)).rejects.toThrow(`Mode ${id} is not available yet.`);
     }
   });
