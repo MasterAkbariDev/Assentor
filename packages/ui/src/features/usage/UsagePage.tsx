@@ -1,0 +1,183 @@
+import { useEffect, useState } from "react";
+import type { UsageReport, UsageTotals } from "#assentor/protocol/rpc.js";
+import { useEngine } from "../../store/context.js";
+import { useRpc } from "../../transport/context.js";
+import { budgetBars, cachedShare, formatBudget, sortedRows, type BudgetBar, type BudgetState } from "./usageModel.js";
+
+/** Reloads wait this long after the last `seat.tokens`, so a burst of token events costs one `usage.get`. */
+export const USAGE_REFRESH_MS = 300;
+
+const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 4 });
+const count = new Intl.NumberFormat("en-US");
+const formatUsd = (n: number) => usd.format(n);
+const formatCount = (n: number) => count.format(n);
+
+const STATE_TEXT: Record<BudgetState, string> = {
+  below: "under 50%",
+  warn50: "past the 50% warning",
+  warn80: "past the 80% warning",
+  limit: "limit reached",
+};
+
+/** Sidebar "Usage" section: the selected run's token use, read-only. */
+export function UsagePage() {
+  const selectedId = useEngine((s) => s.selectedId);
+  const title = useEngine((s) => s.sessions.find((x) => x.id === s.selectedId)?.title);
+  return (
+    <section className="usage-page" aria-label="Usage">
+      <h1 className="session-heading">
+        Usage
+        {title ? <span className="session-state"> · {title}</span> : null}
+      </h1>
+      {selectedId ? <UsagePanel key={selectedId} sessionId={selectedId} /> : <p className="empty">Select a run in the sidebar to see its token use.</p>}
+    </section>
+  );
+}
+
+/** Totals, per seat / stage / model tables and budget bars for one run. Reloads when its `seat.tokens` events arrive. */
+export function UsagePanel({ sessionId }: { sessionId: string }) {
+  const rpc = useRpc();
+  const connection = useEngine((s) => s.connection);
+  const tokenEvents = useEngine((s) => s.session?.tokenEvents ?? 0);
+  const seats = useEngine((s) => s.session?.seats);
+  const [report, setReport] = useState<UsageReport>();
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    let current = true;
+    const timer = setTimeout(() => {
+      rpc.call("usage.get", { sessionId }).then(
+        (next) => {
+          if (!current) return;
+          setReport(next);
+          setError(undefined);
+        },
+        (e: unknown) => {
+          if (current) setError(e instanceof Error ? e.message : String(e));
+        },
+      );
+    }, USAGE_REFRESH_MS);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [rpc, sessionId, tokenEvents, connection]);
+
+  if (!report) {
+    return error ? <p className="notice error">Could not load usage: {error}</p> : <p className="empty">Loading usage…</p>;
+  }
+  const seatName = (id: string) => seats?.[id]?.displayName ?? id;
+  return (
+    <div className="usage-panel">
+      {error ? <p className="notice error">Could not refresh usage: {error}</p> : null}
+      {report.truncated ? <p className="notice warn">The log is longer than the reader's limit, so these totals cover only its start.</p> : null}
+      {report.skippedLines ? <p className="notice warn">{formatCount(report.skippedLines)} log lines could not be read and were skipped.</p> : null}
+      {report.total.calls === 0 ? (
+        <p className="empty">No token counts reported for this run yet.</p>
+      ) : (
+        <>
+          <Totals report={report} />
+          <UsageTable
+            caption="By seat"
+            label="Seat"
+            rows={sortedRows(report.bySeat).map(([id, totals]) => ({ id, name: id === "-" ? "(no seat)" : seatName(id), totals }))}
+          />
+          <UsageTable
+            caption="By stage"
+            label="Stage"
+            rows={sortedRows(report.byStage).map(([id, totals]) => ({ id, name: id === "-" ? "(outside a stage)" : id, totals }))}
+          />
+          <UsageTable caption="By model" label="Model" rows={sortedRows(report.byModel).map(([id, totals]) => ({ id, name: id, totals }))} />
+          <Budgets bars={budgetBars(report, seatName)} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function Totals({ report }: { report: UsageReport }) {
+  const { total } = report;
+  const share = cachedShare(total);
+  return (
+    <dl className="usage-totals">
+      <div>
+        <dt>Tokens in</dt>
+        <dd>{formatCount(total.tokensIn)}</dd>
+      </div>
+      <div>
+        <dt>Tokens out</dt>
+        <dd>{formatCount(total.tokensOut)}</dd>
+      </div>
+      <div>
+        <dt>Cached share</dt>
+        <dd>{share === undefined ? "—" : `${Math.round(share * 100)}%`}</dd>
+      </div>
+      <div>
+        <dt>Cost</dt>
+        <dd>{formatUsd(total.costUsd)}</dd>
+      </div>
+      <div>
+        <dt>Model calls</dt>
+        <dd>{formatCount(total.calls)}</dd>
+      </div>
+      <div>
+        <dt>Retries</dt>
+        <dd>{formatCount(report.retries)}</dd>
+      </div>
+    </dl>
+  );
+}
+
+function UsageTable({ caption, label, rows }: { caption: string; label: string; rows: Array<{ id: string; name: string; totals: UsageTotals }> }) {
+  return (
+    <div className="usage-table-wrap">
+      <table className="usage-table">
+        <caption>{caption}</caption>
+        <thead>
+          <tr>
+            <th scope="col">{label}</th>
+            <th scope="col">Calls</th>
+            <th scope="col">Tokens in</th>
+            <th scope="col">Tokens out</th>
+            <th scope="col">Cached</th>
+            <th scope="col">Cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ id, name, totals }) => {
+            const share = cachedShare(totals);
+            return (
+              <tr key={id}>
+                <th scope="row">{name}</th>
+                <td>{formatCount(totals.calls)}</td>
+                <td>{formatCount(totals.tokensIn)}</td>
+                <td>{formatCount(totals.tokensOut)}</td>
+                <td>{share === undefined ? "—" : `${Math.round(share * 100)}%`}</td>
+                <td>{formatUsd(totals.costUsd)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Budgets are known only through their warnings (the report has no limits), so a bar appears once one has warned. */
+function Budgets({ bars }: { bars: BudgetBar[] }) {
+  return (
+    <section className="usage-budgets" aria-labelledby="usage-budgets-title">
+      <h2 id="usage-budgets-title">Budgets</h2>
+      {bars.length === 0 ? <p className="empty">No budget has reached 50%.</p> : null}
+      {bars.map((bar) => (
+        <div key={bar.key} className="usage-budget" data-state={bar.state}>
+          <p className="usage-budget-text">
+            {bar.label}: {formatBudget(bar.kind, bar.used, formatUsd, formatCount)} of {formatBudget(bar.kind, bar.limit, formatUsd, formatCount)} (
+            {Math.round(bar.pct * 100)}%), {STATE_TEXT[bar.state]}
+          </p>
+          <progress max={bar.limit} value={Math.min(bar.used, bar.limit)} aria-hidden="true" />
+        </div>
+      ))}
+    </section>
+  );
+}

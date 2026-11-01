@@ -74,6 +74,8 @@ export interface SessionView {
   /** Last applied `seq`; resubscribe from here. */
   lastSeq: number;
   eventCount: number;
+  /** `seat.tokens` events applied. The usage panel reloads `usage.get` when it changes. */
+  tokenEvents: number;
   /** Latest reviewer-scoped `review.verdict` (it has a seat id; Lead's per-task verdict does not). */
   reviewVerdict?: EngineEventOf<"review.verdict">;
   /** Each panel member's latest own `review.verdict` (`panelMember`), keyed by seat id. */
@@ -115,7 +117,7 @@ export type EngineStore = StoreApi<EngineState>;
 export const RECENT_LIMIT = 5;
 
 function emptySession(id: string): SessionView {
-  return { id, seats: {}, seatInfo: {}, seatEvents: {}, negotiationEvents: [], lead: emptyLeadBoardView(), reviewFindings: [], memberVerdicts: {}, lastSeq: 0, eventCount: 0 };
+  return { id, seats: {}, seatInfo: {}, seatEvents: {}, negotiationEvents: [], lead: emptyLeadBoardView(), reviewFindings: [], memberVerdicts: {}, lastSeq: 0, eventCount: 0, tokenEvents: 0 };
 }
 
 export function createEngineStore(): EngineStore {
@@ -145,7 +147,7 @@ export function createEngineStore(): EngineStore {
         if (!current || current.id !== sessionId || events.length === 0) {
           return s;
         }
-        let { seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, lastSeq, eventCount, state, mode } = current;
+        let { seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, lastSeq, eventCount, tokenEvents, state, mode } = current;
         for (const event of events) {
           if (event.sessionId !== sessionId || event.seq <= lastSeq) {
             continue;
@@ -179,6 +181,9 @@ export function createEngineStore(): EngineStore {
           }
           lastSeq = event.seq;
           eventCount += 1;
+          if (event.type === "seat.tokens") {
+            tokenEvents += 1;
+          }
           if (event.type === "session.state") {
             state = event.data.to;
           }
@@ -187,7 +192,7 @@ export function createEngineStore(): EngineStore {
           return s;
         }
         return {
-          session: { ...current, seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, lastSeq, eventCount, mode, ...(state ? { state } : {}) },
+          session: { ...current, seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, lastSeq, eventCount, tokenEvents, mode, ...(state ? { state } : {}) },
         };
       }),
     failSession: (sessionId, message) =>

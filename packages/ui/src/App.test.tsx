@@ -66,7 +66,7 @@ describe("sections and useRpc", () => {
   it("lists every section, shows an empty state for the unbuilt ones, and keeps Sessions the default", async () => {
     const { getByRole, getByText, queryByText, findByText } = renderWithStore(<App />);
     const nav = getByRole("navigation", { name: "Sections" });
-    expect(Array.from(nav.querySelectorAll("a")).map((a) => a.textContent)).toEqual(["Sessions", "Prompts", "Teams", "Playbooks", "Settings"]);
+    expect(Array.from(nav.querySelectorAll("a")).map((a) => a.textContent)).toEqual(["Sessions", "Prompts", "Teams", "Playbooks", "Usage", "Settings"]);
     expect(queryByText(/Not built yet/)).toBeNull();
     expect(getByText("Select a run to watch it live.")).toBeTruthy();
 
