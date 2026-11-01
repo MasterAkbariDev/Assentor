@@ -269,6 +269,8 @@ Paths below assume the layout after **T04-01** (`packages/engine`, `packages/pro
 ### T04-16 · Mode picker (new session)
 **Tier:** 🟢 H · **Review:** S · **Size:** S · **Depends:** T04-06, T02B-01, T02B-08
 
+**Merged 2026-11-01 (planner, under the owner's standing merge direction):** `8585079` + merge `13049a6` + review fixes `deb57bd`; Sonnet review PASS after fixes. `#/new-session`: mode cards (unavailable modes disabled with the engine's own reason), goal, manual/supervised (no autopilot from the browser), create then start; a start failure cancels the created session. Mode catalog is a UI literal pinned to `listModes()` by a parity test (no modes RPC yet). Not done: team picker, mode suggestion, cost estimate.
+
 **Allowed files** — `packages/ui/src/features/mode-picker/*`, tests; modify: the new-session route only.
 
 **Spec**

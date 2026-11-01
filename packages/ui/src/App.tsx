@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { NegotiationView } from "./features/negotiation/NegotiationView.js";
 import { LeadBoard } from "./features/lead-board/LeadBoard.js";
+import { NewSessionPage } from "./features/mode-picker/NewSessionPage.js";
 import { SeatDrawer } from "./features/seat-drawer/SeatDrawer.js";
 import { CommandPalette } from "./features/palette/CommandPalette.js";
 import { KeyboardHelp } from "./features/palette/KeyboardHelp.js";
@@ -84,12 +85,20 @@ export function App() {
       </header>
       <aside className="sidebar">
         <SectionNav route={route} />
-        {route === "sessions" ? <SessionList /> : null}
+        {route === "sessions" ? (
+          <>
+            <a className="new-session-link" href="#/new-session">
+              New session
+            </a>
+            <SessionList />
+          </>
+        ) : null}
       </aside>
       <main className="main">
         <ConnectionNotice />
         {route === "sessions" ? <SessionPanel /> : null}
         {route === "settings" ? <SettingsPage /> : null}
+        {route === "new-session" ? <NewSessionPage /> : null}
         {route === "dev/fixtures" && FixturesPage ? (
           <Suspense fallback={<p className="empty">Loading…</p>}>
             <FixturesPage />

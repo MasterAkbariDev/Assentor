@@ -193,7 +193,7 @@ Measure first: TE-01 and TE-10 come first; every saving must pass the TE-10 net-
 | T04-13 | Settings, Doctor, Onboarding | 🟢 H | S | M | T04-06 ✅ |
 | T04-14 | Command palette + keyboard map | 🟢 H | S | S | T04-06 |
 | T04-15 | `assentor app` launcher ✅ | 🟢 H | S | S | T04-03 |
-| T04-16 | Mode picker (new session) | 🟢 H | S | S | T04-06, T02B-01, T02B-08 |
+| T04-16 | Mode picker (new session) | 🟢 H | S | S | T04-06, T02B-01, T02B-08 ✅ |
 | T04-17 | Lead team board view | 🟢 H | S | M | T04-06, T02B-18 |
 | T04-18 | Usage view (tokens, cost, budgets per run) | 🟢 H | S | S | T04-06, TE-01 |
 
