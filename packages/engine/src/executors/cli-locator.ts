@@ -415,6 +415,9 @@ export function isWindowsCmdShim(command: string): boolean {
   return process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
 }
 
+/** `code` of the error `assertCmdSafeArgs` throws. */
+export const CMD_UNSAFE_ARG = "ASSENTOR_CMD_UNSAFE_ARG";
+
 /**
  * Throws for an argument cmd.exe would alter (`%VAR%` expansion), cut short
  * (newline), or that would re-split argv once the shim's `%*` reaches node.exe
@@ -423,8 +426,11 @@ export function isWindowsCmdShim(command: string): boolean {
 export function assertCmdSafeArgs(args: readonly string[]): void {
   for (const arg of args) {
     if (/[%"\r\n]/.test(arg) || arg.endsWith("\\")) {
-      throw new Error(
-        `Refusing to run a .cmd/.bat CLI with an argument containing "%", a double quote, a newline or a trailing backslash (cmd.exe would expand, split or truncate it): ${JSON.stringify(arg.slice(0, 120))}`,
+      throw Object.assign(
+        new Error(
+          `Refusing to run a .cmd/.bat CLI with an argument containing "%", a double quote, a newline or a trailing backslash (cmd.exe would expand, split or truncate it): ${JSON.stringify(arg.slice(0, 120))}`,
+        ),
+        { code: CMD_UNSAFE_ARG },
       );
     }
   }
