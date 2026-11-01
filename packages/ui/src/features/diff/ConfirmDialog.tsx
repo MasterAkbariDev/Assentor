@@ -12,11 +12,13 @@ export function ConfirmDialog(props: {
   confirmLabel: string;
   busy?: boolean;
   confirmDisabled?: boolean;
+  /** Red confirm button (default). Pass false for a non-destructive answer. */
+  danger?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
   children: ReactNode;
 }) {
-  const { title, confirmLabel, busy, confirmDisabled, onConfirm, onCancel, children } = props;
+  const { title, confirmLabel, busy, confirmDisabled, danger = true, onConfirm, onCancel, children } = props;
   const titleId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -59,7 +61,7 @@ export function ConfirmDialog(props: {
           <button ref={cancelRef} type="button" className="help-close" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
-          <button type="button" className="help-close diff-danger" onClick={onConfirm} disabled={busy || confirmDisabled}>
+          <button type="button" className={danger ? "help-close diff-danger" : "help-close"} onClick={onConfirm} disabled={busy || confirmDisabled}>
             {busy ? "Working…" : confirmLabel}
           </button>
         </div>

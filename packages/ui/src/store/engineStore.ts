@@ -86,6 +86,10 @@ export interface SessionView {
   lead: LeadBoardView;
   /** Latest `session.state` value, e.g. EXECUTING. */
   state?: string;
+  /** Text of each approval question (`user.question` with kind "approval"), by question id. Static stage gates have none. */
+  prompts: Record<string, string>;
+  /** Counts `user.question`, `user.answer` and `session.state` events: the write controls refetch `session.get` when it changes. */
+  controlTick: number;
   /** Set when the stream stopped for good (e.g. `unreadable_log`). */
   error?: string;
 }
@@ -100,6 +104,8 @@ export interface EngineState {
   /** Session ids, most recently selected first (at most `RECENT_LIMIT`). The command palette's "Recent" group. */
   recentIds: string[];
   session?: SessionView;
+  /** What `session.get` last said about a run (shared by every write control): live state and open approval ids. `live` undefined = unknown, null = not live here. */
+  control?: { sessionId: string; live: "created" | "running" | "cancelling" | null | undefined; ids: string[] };
   /** The seat whose drawer is open. Cleared when the selected run changes. */
   openSeatId?: string;
   setConnection(status: ConnectionStatus, engineVersion?: string): void;
@@ -117,7 +123,7 @@ export type EngineStore = StoreApi<EngineState>;
 export const RECENT_LIMIT = 5;
 
 function emptySession(id: string): SessionView {
-  return { id, seats: {}, seatInfo: {}, seatEvents: {}, negotiationEvents: [], lead: emptyLeadBoardView(), reviewFindings: [], memberVerdicts: {}, lastSeq: 0, eventCount: 0, tokenEvents: 0 };
+  return { id, seats: {}, seatInfo: {}, seatEvents: {}, negotiationEvents: [], lead: emptyLeadBoardView(), reviewFindings: [], memberVerdicts: {}, prompts: {}, controlTick: 0, lastSeq: 0, eventCount: 0, tokenEvents: 0 };
 }
 
 export function createEngineStore(): EngineStore {
@@ -147,7 +153,7 @@ export function createEngineStore(): EngineStore {
         if (!current || current.id !== sessionId || events.length === 0) {
           return s;
         }
-        let { seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, lastSeq, eventCount, tokenEvents, state, mode } = current;
+        let { seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, lastSeq, eventCount, tokenEvents, state, mode, prompts, controlTick } = current;
         for (const event of events) {
           if (event.sessionId !== sessionId || event.seq <= lastSeq) {
             continue;
@@ -187,12 +193,18 @@ export function createEngineStore(): EngineStore {
           if (event.type === "session.state") {
             state = event.data.to;
           }
+          if (event.type === "user.question" || event.type === "user.answer" || event.type === "session.state") {
+            controlTick += 1;
+          }
+          if (event.type === "user.question" && event.data.kind === "approval") {
+            prompts = { ...prompts, [String(event.data.questionId)]: event.data.question };
+          }
         }
         if (lastSeq === current.lastSeq) {
           return s;
         }
         return {
-          session: { ...current, seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, lastSeq, eventCount, tokenEvents, mode, ...(state ? { state } : {}) },
+          session: { ...current, seats, seatInfo, seatEvents, negotiationEvents, lead, reviewVerdict, memberVerdicts, reviewFindings, lastSeq, eventCount, tokenEvents, mode, prompts, controlTick, ...(state ? { state } : {}) },
         };
       }),
     failSession: (sessionId, message) =>

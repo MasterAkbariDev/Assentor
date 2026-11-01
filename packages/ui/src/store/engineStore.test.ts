@@ -62,6 +62,8 @@ describe("engine store", () => {
       seatEvents: {},
       reviewFindings: [],
       memberVerdicts: {},
+      prompts: {},
+      controlTick: 0,
       negotiationEvents: [],
       lead: emptyLeadBoardView(),
       lastSeq: 0,

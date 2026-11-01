@@ -1,6 +1,6 @@
 # Assentor web UI (`packages/ui/`)
 
-Watch-only browser view of Assentor runs, served by `assentor serve` (T04-03p). Vite + React 18 + TypeScript + Zustand. Plain CSS with variables (light/dark/system); no CSS framework yet.
+Browser view of Assentor runs (watching, plus write controls when the link allows them), served by `assentor serve` (T04-03p). Vite + React 18 + TypeScript + Zustand. Plain CSS with variables (light/dark/system); no CSS framework yet.
 
 ```bash
 pnpm build:ui          # → packages/ui/dist, served by `assentor serve`
@@ -110,9 +110,20 @@ act(() => {
 
 `test/fixtures.ts` exports `sessionFixture`, `negotiationFixture`, `leadFixture`, `negotiateReviewFixture` and `burstFixture(seats, perSeat)`. `fixtures/session-negotiate-review.ndjson` is `negotiateReviewFixture` as one JSON event per line; `test/fixtures.test.ts` fails if they differ. Regenerate with `UPDATE_FIXTURES=1 npx vitest run packages/ui/src/test`. In a dev build, `#/dev/fixtures` replays any fixture into a private store with a slider for "reload at event N".
 
+## Write controls
+
+`features/controls/` (T04-W). Every control reads `useSessionControl()`: `useCanWrite()`, and `session.get` (`live`, `pendingApprovals`) fetched once per `user.question`/`user.answer`/`session.state` event (`session.controlTick`) into the store's `control` slice, shared by every control and the store's `session.prompts` (approval question text). `reasonFor(method)` says why a control is disabled: read-only connection, session not live, or (seats) seat finished. Only methods the engine really has are used; `NotSupported` (-32004) reads "Not supported by this engine yet."
+
+- **Session header:** Cancel session (confirm) → `session.cancel`.
+- **Approvals panel** (`ApprovalsPanel`, in the session board; the integrate approval moves to the Lead board as "Approve integration", behind a confirm): Approve / Deny → `session.approve`. A static stage gate (no question text) can only be approved.
+- **Seat drawer:** Stop seat (confirm) → `seat.stop`; Change model (checked with `ModelIdSchema`) → `seat.setModel`.
+- **Palette:** `/approve`, `/cancel`, `/stop <seat>`, `/model <seat> <model>` (seat by id or display name). A complete typed command shows a "Run …" entry on top. `/pause` and `/inject` stay disabled with their reason. Confirms are the same dialogs.
+- `ConfirmAction` wraps the confirm dialog: one call at a time, failure shown as text in the dialog, focus trapped, Escape cancels, focus returns to the opener.
+
 ## Rules
 
 - `serve`'s CSP allows no inline scripts and no inline `<style>` blocks; use CSS classes in `styles.css`.
 - Never log or render the token.
+- A write control uses only RPCs the engine implements, is disabled with a visible reason when it can't run, and guards against double submit.
 - Writes: `WebSocketTransport` always sends `{"auth":token,"write":true}`; the server grants it only under `serve --allow-write` and replies `{"auth":"ok","write":<granted>}`. `transport.canWrite` (and `useCanWrite()`) is true only while open and granted; reads work either way. Disable write controls when it is false and say why (`WriteNote`). `mockTransport({ canWrite })` defaults to true.
 - No CodeMirror (not an approved dependency): prompt bodies use a monospace `<textarea>`.

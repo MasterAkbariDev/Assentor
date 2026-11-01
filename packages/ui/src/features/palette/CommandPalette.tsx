@@ -1,7 +1,11 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { detectPlatform, isComposing, shortcutLabel } from "../../keymap.js";
 import { useEngine } from "../../store/context.js";
-import { selectHasNegotiation, selectHasReview, selectLeadBoard } from "../../store/selectors.js";
+import { selectHasNegotiation, selectHasReview, selectLeadBoard, selectSeats } from "../../store/selectors.js";
+import { useToast } from "../../shell/Toasts.js";
+import { ConfirmAction } from "../controls/ConfirmAction.js";
+import { errorText, useSessionControl } from "../controls/useSessionControl.js";
+import type { Command } from "./commands.js";
 import { holdTab, restoreFocus, useEscapeKey } from "./dialog.js";
 import { rankItems } from "./fuzzy.js";
 import { buildPaletteItems, type PaletteItem } from "./items.js";
@@ -47,6 +51,14 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const hasLeadBoard = useEngine((s) => selectLeadBoard(s) !== undefined);
   const hasReview = useEngine(selectHasReview);
 
+  const control = useSessionControl();
+  const seats = useEngine(selectSeats);
+  const toast = useToast();
+  const [confirm, setConfirm] = useState<{ title: string; confirmLabel: string; body: string; danger?: boolean; run: () => Promise<unknown> }>();
+  const confirmRef = useRef(false);
+  confirmRef.current = confirm !== undefined;
+  const sentRef = useRef(false);
+
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const [notice, setNotice] = useState("");
@@ -57,11 +69,14 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   const [opener] = useState<Element | null>(() => document.activeElement);
   const platform = useMemo(() => detectPlatform(), []);
 
-  const items = useMemo(
-    () => buildPaletteItems({ sessions, recentIds, hasSeats, hasNegotiation, hasLeadBoard, hasReview }),
-    [sessions, recentIds, hasSeats, hasNegotiation, hasLeadBoard, hasReview],
-  );
-  const ranked = useMemo(() => rankItems(items, query), [items, query]);
+  // Rebuilt each render: the write reasons change with the control's state, and the lists are small.
+  const items = buildPaletteItems({ sessions, recentIds, hasSeats, hasNegotiation, hasLeadBoard, hasReview, reasonFor: control.reasonFor, query });
+  const ranked = (() => {
+    const list = rankItems(items, query);
+    // A complete typed command runs from the top.
+    const typed = list.find((i) => i.id === "run:typed");
+    return typed ? [typed, ...list.filter((i) => i !== typed)] : list;
+  })();
   const shown = ranked.slice(0, MAX_RESULTS);
   const more = ranked.length - shown.length;
   const index = shown.length === 0 ? 0 : Math.min(active, shown.length - 1);
@@ -75,14 +90,62 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
       if (!handledRef.current) restoreFocus(opener);
     };
   }, [opener]);
-  useEscapeKey(onClose);
+  // The confirm dialog handles its own Escape; the palette stays open underneath it.
+  useEscapeKey(() => {
+    if (!confirmRef.current) onClose();
+  });
 
   useEffect(() => {
     if (activeId) document.getElementById(activeId)?.scrollIntoView?.({ block: "nearest" });
   }, [activeId]);
 
+  /** A seat typed by id or display name. */
+  const findSeat = (name: string) => {
+    const all = Object.values(seats ?? {});
+    return all.find((s) => s.seatId === name) ?? all.find((s) => s.displayName.toLowerCase() === name.toLowerCase());
+  };
+
+  const runCommand = async (command: Command) => {
+    if (sentRef.current) return;
+    if (command.name === "cancel") {
+      return setConfirm({ title: "Cancel this session?", confirmLabel: "Cancel session", body: "Running seats are stopped and the run ends as cancelled. This cannot be undone.", run: control.cancelSession });
+    }
+    if (command.name === "approve") {
+      const [only, ...rest] = control.approvals;
+      if (!only) return setNotice("No approval is pending.");
+      if (rest.length > 0) return setNotice(`${control.approvals.length} approvals are pending; answer them in the approvals panel.`);
+      return setConfirm({ title: "Approve?", confirmLabel: "Approve", body: only.text, danger: false, run: () => control.answerApproval(only.id, "approve") });
+    }
+    const seat = findSeat(command.seat);
+    if (!seat) return setNotice(`No seat named “${command.seat}”.`);
+    if (command.name === "stop") {
+      return setConfirm({ title: `Stop ${seat.displayName}?`, confirmLabel: "Stop seat", body: "The seat stops working now.", run: () => control.stopSeat(seat.seatId) });
+    }
+    sentRef.current = true;
+    try {
+      await control.setModel(seat.seatId, command.model);
+      toast(`Model change for ${seat.displayName} to ${command.model} requested.`);
+      onClose();
+    } catch (e) {
+      setNotice(errorText(e));
+    } finally {
+      sentRef.current = false;
+    }
+  };
+
   const run = (item: PaletteItem) => {
     const { action } = item;
+    if (action.kind === "command") {
+      void runCommand(action.command);
+      return;
+    }
+    if (action.kind === "fill") {
+      setQuery(action.text);
+      setActive(0);
+      setNotice("");
+      inputRef.current?.focus();
+      return;
+    }
     if (action.kind === "blocked") {
       // Disabled: say why, do nothing else. The palette stays open.
       setNotice(`${item.label}: ${action.reason}`);
@@ -127,6 +190,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   };
 
   return (
+    <>
     <div className="palette-backdrop" onMouseDown={onBackdropMouseDown}>
       <div role="dialog" aria-modal="true" aria-label="Command palette" className="palette" onKeyDown={holdTab}>
         <input
@@ -192,5 +256,11 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         </p>
       </div>
     </div>
+    {confirm ? (
+      <ConfirmAction title={confirm.title} confirmLabel={confirm.confirmLabel} danger={confirm.danger} run={confirm.run} onDone={onClose} onCancel={() => setConfirm(undefined)}>
+        <p>{confirm.body}</p>
+      </ConfirmAction>
+    ) : null}
+    </>
   );
 }

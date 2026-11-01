@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { NegotiationView } from "./features/negotiation/NegotiationView.js";
+import { SessionActions } from "./features/controls/SessionActions.js";
 import { LeadBoard } from "./features/lead-board/LeadBoard.js";
 import { NewSessionPage } from "./features/mode-picker/NewSessionPage.js";
 import { DiffView } from "./features/diff/DiffView.js";
@@ -187,10 +188,13 @@ export function SessionPanel() {
   const seatCount = Object.keys(session.seats).length;
   return (
     <section aria-label="Seats">
-      <h1 className="session-heading">
-        {summary?.title ?? session.id}
-        {session.state ? <span className="session-state"> · {session.state}</span> : null}
-      </h1>
+      <div className="session-head">
+        <h1 className="session-heading">
+          {summary?.title ?? session.id}
+          {session.state ? <span className="session-state"> · {session.state}</span> : null}
+        </h1>
+        <SessionActions />
+      </div>
       {session.error ? <p className="notice error">{session.error}</p> : null}
       <LeadBoard />
       {seatCount === 0 ? (

@@ -753,6 +753,22 @@ button.lead-task-open:focus-visible { outline: 2px solid var(--accent); outline-
 .usage-budget progress { width: 100%; height: 10px; accent-color: var(--accent); }
 .usage-budget[data-state="warn50"] progress, .usage-budget[data-state="warn80"] progress { accent-color: var(--warn); }
 .usage-budget[data-state="limit"] progress { accent-color: var(--error); }
+
+/* Write controls (T04-W) */
+.session-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin: 0 0 12px; }
+.session-head .session-heading { margin: 0; }
+.session-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.write-reason { margin: 0; font-size: 13px; color: var(--muted); }
+.write-btn:disabled { cursor: not-allowed; opacity: 0.6; }
+.write-btn:focus-visible, .seat-actions input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.approvals { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; }
+.approvals-title { font-size: 14px; font-weight: 600; margin: 0 0 6px; }
+.approvals-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.approval { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.approval-text { flex: 1 1 240px; overflow-wrap: anywhere; }
+.seat-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; }
+.seat-actions-model { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.seat-actions .notice, .seat-actions .write-reason { flex-basis: 100%; }
 /* Prompts / Teams / Playbooks (T04-12) */
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .lib-grid { display: grid; gap: 16px; grid-template-columns: minmax(200px, 280px) minmax(0, 1fr); align-items: start; }
