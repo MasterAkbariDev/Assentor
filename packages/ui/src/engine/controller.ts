@@ -14,7 +14,7 @@ export interface ControllerOptions {
   listIntervalMs?: number;
   /** Delays between `engine.hello` retries on an open link; the last one repeats. Default 1 s, 2 s, 5 s. */
   helloRetryMs?: number[];
-  schedule?: (flush: () => void) => void;
+  schedule?: (flush: () => void) => unknown;
 }
 
 export class EngineController {

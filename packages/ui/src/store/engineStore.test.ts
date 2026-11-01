@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { EngineEvent } from "#assentor/protocol/events.js";
 import { burstFixture, negotiateReviewFixture, sessionFixture } from "../test/fixtures.js";
 import { emptyLeadBoardView } from "#assentor/ui-shared/lead.js";
@@ -171,6 +171,75 @@ describe("engine store", () => {
     expect(session.eventCount).toBe(events.length);
     expect(session.lastSeq).toBe(events.at(-1)!.seq);
     expect(session.seats["seat-3"]!.lastLine).toBe("line 49");
+  });
+
+  describe("manual flush() and the scheduled callback", () => {
+    const setup = () => {
+      const { id, events } = burstFixture(2, 200);
+      const store = createEngineStore();
+      store.getState().select(id);
+      return { id, events, store };
+    };
+
+    it("cancels the waiting timer, so repeated flush() calls add no extra callbacks", () => {
+      vi.useFakeTimers();
+      try {
+        const { id, events, store } = setup();
+        let armed = 0;
+        const batcher = createFrameBatcher(store, (flush) => {
+          armed += 1;
+          const t = setTimeout(flush, 16);
+          return () => clearTimeout(t);
+        });
+        for (let i = 0; i < 10; i += 1) {
+          batcher.push(id, events[i]!);
+          batcher.flush();
+        }
+        expect(armed).toBe(10); // one per push-after-flush, never more
+        expect(vi.getTimerCount()).toBe(0); // every one of them cancelled by its flush
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps the configured cadence after a manual flush (no second timer chain)", () => {
+      vi.useFakeTimers();
+      try {
+        const { id, events, store } = setup();
+        const batcher = createFrameBatcher(store, (flush) => {
+          const t = setTimeout(flush, 16);
+          return () => clearTimeout(t);
+        });
+        let applies = 0;
+        store.subscribe(() => (applies += 1));
+        batcher.push(id, events[0]!);
+        batcher.flush(); // the case that used to leave the first timer behind
+        // 100 ms of events arriving every 2 ms: one apply per 16 ms is ~6, a doubled chain would be ~12.
+        applies = 0;
+        for (let t = 0; t < 100; t += 2) {
+          batcher.push(id, events[1 + t / 2]!);
+          vi.advanceTimersByTime(2);
+        }
+        expect(applies).toBeGreaterThanOrEqual(5);
+        expect(applies).toBeLessThanOrEqual(7);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("ignores a stale callback from a schedule that cannot cancel", () => {
+      const { id, events, store } = setup();
+      const armed: Array<() => void> = [];
+      const batcher = createFrameBatcher(store, (flush) => void armed.push(flush));
+      batcher.push(id, events[0]!);
+      batcher.flush();
+      batcher.push(id, events[1]!);
+      expect(armed).toHaveLength(2);
+      armed[0]!(); // the orphan fires: it must not flush the second push early
+      expect(store.getState().session!.eventCount).toBe(1);
+      armed[1]!();
+      expect(store.getState().session!.eventCount).toBe(2);
+    });
   });
 
   it("stays bounded when frames never run (hidden tab)", () => {

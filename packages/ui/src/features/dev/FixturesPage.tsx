@@ -4,9 +4,10 @@ import { SessionPanel } from "../../App.js";
 import { EngineStoreProvider } from "../../store/context.js";
 import { createEngineStore } from "../../store/engineStore.js";
 import { leadFixture, negotiationFixture, sessionFixture } from "../../test/fixtures.js";
+import { PerfHarness } from "./perf/PerfHarness.js";
 import ndjson from "../../../fixtures/session-negotiate-review.ndjson?raw";
 
-/** Dev-only (`#/dev/fixtures`): replay a recorded stream into a private store and scrub through it. */
+/** Dev-only (`#/dev/fixtures`): replay a recorded stream into a private store and scrub through it. `?perf=1` switches to the streaming perf harness (T05-02). */
 
 const FIXTURES: Record<string, { id: string; events: EngineEvent[] }> = {
   "negotiate + review (ndjson)": (() => {
@@ -19,6 +20,18 @@ const FIXTURES: Record<string, { id: string; events: EngineEvent[] }> = {
 };
 
 export default function FixturesPage() {
+  const perf = new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("perf") === "1";
+  return perf ? (
+    <section aria-label="Streaming perf">
+      <h1 className="session-heading">Streaming perf harness (dev only)</h1>
+      <PerfHarness />
+    </section>
+  ) : (
+    <Fixtures />
+  );
+}
+
+function Fixtures() {
   const [name, setName] = useState(Object.keys(FIXTURES)[0]!);
   const fixture = FIXTURES[name]!;
   const [count, setCount] = useState<number | undefined>(undefined);

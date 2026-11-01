@@ -37,7 +37,8 @@
     "install-cli": "./scripts/install-cli.sh",
     "assentor": "./bin/assentor",
     "screenshots": "npm run build && node scripts/capture-tui-screens.mjs",
-    "bench:tokens": "node scripts/bench-tokens.mjs"
+    "bench:tokens": "node scripts/bench-tokens.mjs",
+    "perf:streaming": "node scripts/perf/streaming.mjs"
   },
   "keywords": [
     "ai",
