@@ -1,6 +1,7 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { z } from "zod";
 import { resolveVerificationCommands } from "../config/detect-commands.js";
-import { profileOf } from "../config/profile.js";
 import type { AssentorConfig } from "../config/schema.js";
 import { expandSeatSpecs, StageSpecSchema, type Seat } from "#assentor/protocol/seats.js";
 import { createEmptyContract } from "../core/task-contract.js";
@@ -16,6 +17,8 @@ import { WorktreeError, type SeatKey, type WorktreeDiff } from "../worktrees/man
 import { fitFailureOutput, roleBudget } from "../context/budget.js";
 import { binaryFiles } from "./debug.js";
 import { classifyRisk } from "./danger.js";
+import { hasSymlink, runnerKeys } from "./redteam.js";
+import { isRunnerFile, isTestFile } from "./tdd/tamper.js";
 import { ApprovalDeniedError, type ModeController, type ModeControllerInput, type ModeControllerResult } from "./registry.js";
 
 /**
@@ -23,19 +26,21 @@ import { ApprovalDeniedError, type ModeController, type ModeControllerInput, typ
  * its own worktree; the evidence and then a judge pick one; only that one lands.
  *
  * A dynamic mode (a plain controller loop, like debug):
- * 1. Build: `modes.race.seats` candidates (default 2, max 4; at most 2 under the
- *    economy profile) from the edit seats of `modes.race.team` (default: the
+ * 1. Build: `modes.race.seats` candidates (default 2, max 4) from the edit seats of `modes.race.team` (default: the
  *    executor), round-robin, each with its own id (`race-1`…) and the base seat's
  *    model and budget. All run at once through the scheduler.
  * 2. Verify: the project's gates (`verification.commands`) run in each worktree.
  *    A candidate that failed, changed nothing, added a binary file, failed a gate
  *    or had a gate change its files is out. Evidence first: no judge sees it.
+ *    A candidate that changes how tests run (the shared runner-file list, FU-09,
+ *    and package.json runner keys, as TDD/red team check) or changes or deletes an
+ *    existing test file could pass by weakening the checks: it is "suspect".
  * 3. Judge: one candidate left wins unopposed. Several go to the review team's
- *    first seat (`host.askSeat`), shown in tie-break order (smallest diff, then
- *    seat order) as anonymous labels. No judge, a failed judge or an unusable reply
+ *    first seat (`host.askSeat`), shown in tie-break order (clean before suspect,
+ *    then smallest diff, then seat order) as anonymous labels. No judge, a failed judge or an unusable reply
  *    falls back to that order. `negotiation.decided` carries the winner and why.
- * 4. Apply: a danger-area winner (T02B-07) gets the full review first and asks even
- *    under autopilot. `applyTo("main")` (asks unless autopilot) lands exactly the
+ * 4. Apply: a danger-area (T02B-07) or suspect winner gets the full review first
+ *    and asks even under autopilot. `applyTo("main")` (asks unless autopilot) lands exactly the
  *    verified diff, limited to its files.
  *
  * Cleanup: every candidate worktree is discarded on success, failure and cancel.
@@ -81,11 +86,10 @@ export function raceProblems(config: AssentorConfig): string[] {
   return [];
 }
 
-/** Candidates a run starts: `modes.race.seats`, capped at 2 under the economy profile (TE-06). */
+/** Candidates a run starts: `modes.race.seats` (default 2; profiles leave it alone, TE-06: explicit wins). */
 export function raceSeatCount(config: AssentorConfig): number {
   const parsed = parseConfig(config);
-  const seats = parsed.ok ? parsed.value.seats : 2;
-  return profileOf(config) === "economy" ? Math.min(seats, 2) : seats;
+  return parsed.ok ? parsed.value.seats : 2;
 }
 
 /** `n` candidate seats from the edit seats of `base`, round-robin, each with its own id; model and budget stay the base seat's. */
@@ -110,9 +114,9 @@ export function diffSize(diff: string): number {
   return size;
 }
 
-/** Tie-break order: smaller diff first, then seat order. */
-export function raceOrder<T extends { index: number; size: number }>(candidates: readonly T[]): T[] {
-  return [...candidates].sort((a, b) => a.size - b.size || a.index - b.index);
+/** Tie-break order: clean before suspect (a deleted test must not win by being small), then smaller diff, then seat order. */
+export function raceOrder<T extends { index: number; size: number; suspect: readonly string[] }>(candidates: readonly T[]): T[] {
+  return [...candidates].sort((a, b) => Number(a.suspect.length > 0) - Number(b.suspect.length > 0) || a.size - b.size || a.index - b.index);
 }
 
 const JudgeReplySchema = z.object({ winner: z.string().min(1).max(10), reason: z.string().min(1).max(4000) });
@@ -144,6 +148,8 @@ interface Candidate {
   /** The verified diff; set only for a candidate still in the race. */
   diff?: WorktreeDiff;
   size: number;
+  /** Changed runner files and changed or deleted existing tests: it may pass by weakening the checks. */
+  suspect: string[];
   /** Why it is out. */
   out?: string;
 }
@@ -176,6 +182,7 @@ async function runRace(input: ModeControllerInput, extras: RaceExtras): Promise<
     index,
     key: { sessionId, seatId: seat.id },
     size: 0,
+    suspect: [],
   }));
   if (cands.length === 0) throw new Error("race mode: the builder team has no edit seat");
   const contract = deps.contract ?? createEmptyContract(goal);
@@ -271,10 +278,24 @@ async function runRace(input: ModeControllerInput, extras: RaceExtras): Promise<
       if (after.diff !== snapshot.diff) throw new Error(`the checks changed files in its worktree (${after.files.filter((f) => !snapshot.files.includes(f)).join(", ") || "tracked files"}); ignore them in .gitignore`);
       c.diff = snapshot;
       c.size = diffSize(snapshot.diff);
+      c.suspect = await suspectFiles(c, snapshot.files);
     } catch (error) {
       if (error instanceof Stop) throw error;
       c.out = error instanceof Error ? error.message : String(error);
     }
+  }
+
+  /** Changed files that alter how tests are found or run, or change or delete a test that exists at the base. */
+  async function suspectFiles(c: Candidate, files: readonly string[]): Promise<string[]> {
+    const out: string[] = [];
+    for (const file of files) {
+      if (isRunnerFile(file)) out.push(file);
+      else if (path.posix.basename(file) === "package.json") {
+        const now = (await hasSymlink(c.root!, file)) ? "<symlink>" : await fs.readFile(path.join(c.root!, file), "utf8").catch(() => undefined);
+        if (runnerKeys(now) !== runnerKeys(await manager!.readAtBase(c.key, file))) out.push(file);
+      } else if (isTestFile(file) && (await manager!.readAtBase(c.key, file)) !== undefined) out.push(file);
+    }
+    return out;
   }
 
   /** Picks among verified candidates (already in tie-break order). */
@@ -363,8 +384,12 @@ async function runRace(input: ModeControllerInput, extras: RaceExtras): Promise<
     const diff = winner.diff!;
     const kept = ` (winner kept in ${winner.root})`;
     const risk = classifyRisk({ taskText: goal, paths: diff.files, diff: diff.diff }, { projectRoot: winner.root!, extraRules: input.config.modes.cascade?.dangerAreas });
-    const danger = risk.level === "danger";
-    const summary = `race: ${winner.seat.displayName} won of ${cands.length}, ${diff.files.length} file(s)${danger ? ` [danger area: ${risk.categories.join(", ")}]` : ""}`;
+    const flags = [
+      ...(risk.level === "danger" ? [`danger area: ${risk.categories.join(", ")}`] : []),
+      ...(winner.suspect.length ? [`changes tests or test runner config: ${winner.suspect.slice(0, 10).join(", ")}`] : []),
+    ];
+    const danger = flags.length > 0;
+    const summary = `race: ${winner.seat.displayName} won of ${cands.length}, ${diff.files.length} file(s)${flags.map((f) => ` [${f}]`).join("")}`;
     if (danger) {
       const reviewDiff = redactSecrets(diff.diff).text;
       const review = input.config.modes.review;
@@ -391,7 +416,7 @@ async function runRace(input: ModeControllerInput, extras: RaceExtras): Promise<
       }
       // The session asks before applyTo("main") under supervised; only autopilot, which it does not gate, asks here.
       if (input.autonomy === "autopilot") {
-        if (!extras.approve) throw new Stop({ status: "blocked", reason: `approval needed to apply a danger-area change (${risk.categories.join(", ")})${kept}` });
+        if (!extras.approve) throw new Stop({ status: "blocked", reason: `approval needed to apply this change (${flags.join("; ")})${kept}` });
         if (!(await extras.approve(summary))) throw new Stop({ status: "blocked", reason: `apply was not approved${kept}` });
       }
     }
@@ -413,8 +438,10 @@ async function runRace(input: ModeControllerInput, extras: RaceExtras): Promise<
       reason: [summary, decision.reason, ...(outs.length ? ["out:", ...outs] : []), ...(result.warning ? [`warning: ${result.warning}`] : [])].join("\n"),
     };
   } catch (error) {
-    if (error instanceof Stop) return error.result;
+    // A cancel discards everything (below), whatever the stop said about keeping the winner.
     if (signal.aborted) return { status: "blocked", reason: "cancelled" };
+    if (error instanceof Stop) return error.result;
+    if (winner && !applied) throw new Error(`${error instanceof Error ? error.message : String(error)} (winner kept in ${winner.root})`, { cause: error });
     throw error;
   } finally {
     // Keep only a winner that did not land (and was not cancelled); every other worktree goes.

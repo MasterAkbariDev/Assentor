@@ -206,7 +206,7 @@ export function testPathProblem(raw: string, patterns: readonly string[] = DEFAU
 }
 
 /** Whether any existing component of `root/rel` (the leaf included) is a symlink. */
-async function hasSymlink(root: string, rel: string): Promise<boolean> {
+export async function hasSymlink(root: string, rel: string): Promise<boolean> {
   let current = root;
   for (const segment of normalizePath(rel).split("/")) {
     current = path.join(current, segment);
@@ -249,7 +249,7 @@ function isRunArtifact(own: string, file: string): boolean {
 }
 
 /** The runner keys of a package.json text, comparable as a string; missing file = no keys. */
-function runnerKeys(text: string | undefined): string {
+export function runnerKeys(text: string | undefined): string {
   if (text === undefined) return JSON.stringify(RUNNER_PACKAGE_KEYS.map(() => null));
   try {
     const json = JSON.parse(text) as Record<string, unknown> | null;

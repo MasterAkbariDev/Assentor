@@ -73,7 +73,7 @@ const writes = (text: string) => async (task: ExecutorTask) => {
 
 type Build = (task: ExecutorTask, signal: AbortSignal) => Promise<ExecutorResult>;
 
-async function setup(opts: { builds: Build[]; cfg?: ReturnType<typeof config>; judge?: (prompt: string) => Promise<string> | string; review?: MockReviewerStep[] }) {
+async function setup(opts: { builds: Build[]; cfg?: ReturnType<typeof config>; judge?: (prompt: string, signal: AbortSignal) => Promise<string> | string; review?: MockReviewerStep[] }) {
   const repo = await makeRepo();
   const manager = new WorktreeManager({ repoPath: repo });
   const cfg = opts.cfg ?? config();
@@ -112,9 +112,9 @@ async function setup(opts: { builds: Build[]; cfg?: ReturnType<typeof config>; j
   } as ModeControllerInput["deps"];
   const host: ModeControllerInput["host"] = opts.judge
     ? {
-        askSeat: async ({ prompt }) => {
+        askSeat: async ({ prompt, signal }) => {
           judgePrompts.push(prompt);
-          return opts.judge!(prompt);
+          return opts.judge!(prompt, signal);
         },
       }
     : {};
@@ -144,8 +144,9 @@ async function setup(opts: { builds: Build[]; cfg?: ReturnType<typeof config>; j
     reviewSpy,
     run: (over: Partial<ModeControllerInput> = {}, extras: RaceExtras = {}): Promise<ModeControllerResult> =>
       createRaceController({ ...input, ...over }, { runCommand, ...extras }).run(),
-    runInSession: async (autonomy: "manual" | "supervised" | "autopilot", answer: "approve" | "deny") => {
+    runInSession: async (autonomy: "manual" | "supervised" | "autopilot", answer: "approve" | "deny" | "cancel") => {
       const questions: string[] = [];
+      const abort = new AbortController();
       const session: ReturnType<typeof prepareModeSession> = prepareModeSession({
         mode: { ...getMode("race")!, createController: (i: ModeControllerInput) => createRaceController(i, { runCommand }) },
         sessionId: SESSION,
@@ -155,11 +156,12 @@ async function setup(opts: { builds: Build[]; cfg?: ReturnType<typeof config>; j
         deps,
         host,
         worktrees: manager,
+        signal: abort.signal,
         emit: (e) => {
           if (e.type !== "user.question") return;
           const data = e.data as unknown as { questionId: string; question: string };
           questions.push(data.question);
-          queueMicrotask(() => session.answer(data.questionId, answer));
+          queueMicrotask(() => (answer === "cancel" ? abort.abort() : session.answer(data.questionId, answer)));
         },
       });
       return { result: await session.run(), questions };
@@ -289,6 +291,85 @@ describe("race mode", { timeout: 60_000 }, () => {
     expect(plain.reviewSpy).not.toHaveBeenCalled();
   });
 
+  it("a candidate that changes test runner config loses ties and, if picked, gets the full review and an ask", async () => {
+    const withConftest = async (task: ExecutorTask) => {
+      await fs.writeFile(path.join(task.projectPath, "conftest.py"), "collect_ignore = ['tests']\n");
+      return writes("works\n")(task);
+    };
+    const clean = writes("works\nand more\nand more\n");
+    // No judge: the clean candidate wins although its diff is bigger.
+    const tie = await setup({ builds: [withConftest, clean] });
+    expect((await tie.run()).status).toBe("completed");
+    expect(await impl(tie)).toBe("works\nand more\nand more");
+    expect(tie.reviewSpy).not.toHaveBeenCalled();
+
+    // The judge picks it (label B: suspect candidates come last): review, then the mode asks even under autopilot.
+    const picked = await setup({ builds: [withConftest, clean], judge: () => '{"winner": "B", "reason": "smaller"}' });
+    const blocked = await picked.run();
+    expect(blocked.status).toBe("blocked");
+    expect(blocked.reason).toContain("changes tests or test runner config: conftest.py");
+    expect(picked.reviewSpy).toHaveBeenCalledOnce();
+    await expect(git(picked.repo, "show", "HEAD:conftest.py")).rejects.toThrow();
+
+    const approved = await setup({ builds: [withConftest, clean], judge: () => '{"winner": "B", "reason": "smaller"}' });
+    const approve = vi.fn(async (_summary: string) => true);
+    expect((await approved.run({}, { approve })).status).toBe("completed");
+    expect(approve.mock.calls[0]![0]).toContain("[changes tests or test runner config: conftest.py]");
+  });
+
+  it("deleting an existing test is suspect: full review and an ask, never a silent landing", async () => {
+    const s = await setup({
+      builds: [
+        async (task) => {
+          await fs.rm(path.join(task.projectPath, "tests", "impl.test.js"));
+          return writes("works\n")(task);
+        },
+        writes("broken\n"),
+      ],
+    });
+    await fs.mkdir(path.join(s.repo, "tests"));
+    await fs.writeFile(path.join(s.repo, "tests", "impl.test.js"), "expect(impl).toBe('right');\n");
+    await git(s.repo, "add", ".");
+    await git(s.repo, "commit", "-q", "-m", "a test");
+    const result = await s.run();
+    expect(result.status).toBe("blocked");
+    expect(result.reason).toContain("changes tests or test runner config: tests/impl.test.js");
+    expect(s.reviewSpy).toHaveBeenCalledOnce();
+    expect(await git(s.repo, "show", "HEAD:tests/impl.test.js")).toBe("expect(impl).toBe('right');");
+    expect((await s.manager.list(SESSION)).map((w) => w.outcome)).toEqual(["failed"]); // kept for the user
+  });
+
+  it("cancel mid-gate, mid-judge and at the apply question leaves no worktrees", async () => {
+    const abort = new AbortController();
+    const gate = await setup({ builds: [writes("works\n"), writes("works\n")] });
+    const hangingGate: NonNullable<RaceExtras["runCommand"]> = async (_c, _cwd, options) => {
+      setTimeout(() => abort.abort(), 10);
+      await new Promise((resolve) => options?.signal?.addEventListener("abort", resolve, { once: true }));
+      return { stdout: "", stderr: "killed", code: 1 };
+    };
+    expect(await gate.run({ signal: abort.signal }, { runCommand: hangingGate })).toEqual({ status: "blocked", reason: "cancelled" });
+    await expectNoWorktrees(gate);
+
+    const judgeAbort = new AbortController();
+    const judged = await setup({
+      builds: [writes("one\n"), writes("two\n")],
+      judge: (_prompt, signal) => {
+        setTimeout(() => judgeAbort.abort(), 10);
+        return new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+      },
+    });
+    expect(await judged.run({ signal: judgeAbort.signal })).toEqual({ status: "blocked", reason: "cancelled" });
+    expect(judged.of("negotiation.decided")).toEqual([]);
+    await expectNoWorktrees(judged);
+
+    const asked = await setup({ builds: [writes("works\n"), writes("broken\n")] });
+    const out = await asked.runInSession("supervised", "cancel");
+    expect(out.questions).toHaveLength(1);
+    expect(out.result.status).toBe("cancelled");
+    await expect(impl(asked)).rejects.toThrow();
+    await expectNoWorktrees(asked);
+  });
+
   it("manual asks once before any work; a no runs nothing", async () => {
     const build = vi.fn(writes("works\n"));
     const s = await setup({ builds: [build, build] });
@@ -301,18 +382,20 @@ describe("race mode", { timeout: 60_000 }, () => {
 });
 
 describe("race config, order and estimate", () => {
-  it("validates modes.race and caps seats under economy", () => {
+  it("validates modes.race; profiles do not override an explicit seat count", () => {
     expect(raceProblems(config())).toEqual([]);
     expect(raceProblems(parseAssentorConfig({}))).toEqual([]);
     expect(raceProblems(config({ seats: 5 }))[0]).toContain("modes.race.seats");
     expect(raceProblems(config({ team: "judges" }))).toEqual(['race team "judges" has no edit seat']);
     expect(raceProblems(config({ team: "nope" }))).toEqual(['unknown team "nope" in modes.race']);
     expect(raceSeatCount(config({ seats: 4 }))).toBe(4);
-    expect(raceSeatCount(config({ seats: 4 }, { run: { profile: "economy" } }))).toBe(2);
+    expect(raceSeatCount(config({ seats: 4 }, { run: { profile: "economy" } }))).toBe(4);
+    expect(raceSeatCount(parseAssentorConfig({ run: { profile: "economy" } }))).toBe(2);
   });
 
-  it("tie-break: smaller diff, then seat order", () => {
-    expect(raceOrder([{ index: 0, size: 5 }, { index: 1, size: 2 }, { index: 2, size: 2 }]).map((c) => c.index)).toEqual([1, 2, 0]);
+  it("tie-break: clean before suspect, then smaller diff, then seat order", () => {
+    expect(raceOrder([{ index: 0, size: 5, suspect: [] }, { index: 1, size: 2, suspect: [] }, { index: 2, size: 2, suspect: [] }]).map((c) => c.index)).toEqual([1, 2, 0]);
+    expect(raceOrder([{ index: 0, size: 1, suspect: ["conftest.py"] }, { index: 1, size: 9, suspect: [] }]).map((c) => c.index)).toEqual([1, 0]);
     expect(diffSize("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1,2 @@\n-a\n+b\n+c\n")).toBe(3);
   });
 
@@ -325,6 +408,6 @@ describe("race config, order and estimate", () => {
     expect(three.totalLow - one.totalLow).toBe(builds(three)[0]!.low);
     expect(three.notes[0]).toBe("race: 3 candidates build in parallel, 3× the build cost");
     const economy = estimateRun(config({ seats: 4 }, { run: { profile: "economy" } }), { prompt: "goal", modeId: "race" });
-    expect(builds(economy)).toHaveLength(2);
+    expect(builds(economy)).toHaveLength(4);
   });
 });
