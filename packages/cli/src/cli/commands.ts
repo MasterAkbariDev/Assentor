@@ -73,6 +73,7 @@ import {
   type OutputStyle,
 } from "#assentor/engine/output/style.js";
 import { resolveTeams, ReviewModeSchema } from "#assentor/engine/config/teams.js";
+import { applyRunProfile, profileNote, reviewNarrowing, type RunProfile } from "#assentor/engine/config/profile.js";
 import {
   createReviewerSeats,
   reviewerProviderForSeat,
@@ -108,6 +109,8 @@ export interface RunAssentorInput {
   autonomy?: Autonomy;
   /** `--style` / `--brief`; overrides `output.style`. */
   style?: OutputStyle;
+  /** `--profile`; overrides `run.profile` (TE-06). */
+  profile?: RunProfile;
   /** Registry mode (`--mode <id>`). Only `available` modes run; solo runs the Supervisor below, others through prepareModeSession. */
   modeId?: ModeId;
   /** Live seat-scoped engine events (T00-07), in log order. Errors thrown here are reported, not propagated. */
@@ -683,6 +686,12 @@ async function buildMembersFromBackends(input: {
   return { members, backends, complexity, reviewStrategy, teamMode: false };
 }
 
+/** `narrow` for a `PanelReviewer` under the economy profile (TE-06); nothing otherwise or when a team defines the panel. */
+export function panelNarrowing(config: AssentorConfig, goal: string, projectPath: string, teamMode: boolean) {
+  const narrow = teamMode ? undefined : reviewNarrowing(config, goal, projectPath);
+  return narrow ? { narrow } : {};
+}
+
 async function instantiateBackend(
   backend: ReviewerBackend,
   config: AssentorConfig,
@@ -931,9 +940,13 @@ async function runAssentorTaskBody(
     mode: input.autopilot ? "autopilot" : input.mode,
     autonomy: input.autonomy,
     style: input.style,
+    profile: input.profile,
   });
-  const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
+  const profiled = applyRunProfile(loaded);
+  const config = input.team ? withReviewTeam(profiled, input.team) : profiled;
   reporter.setStyle(config.output.style);
+  const profileLine = profileNote(config);
+  if (profileLine) reporter.note(profileLine);
   const pricing = await observedPricing(projectPath).catch(() => ({}));
   const estimate = estimateRun(config, {
     prompt: input.prompt,
@@ -1030,6 +1043,7 @@ async function runAssentorTaskBody(
           reviewers: memberReviewers,
           goal: input.prompt,
           acceptanceCriteria: input.acceptanceCriteria ?? [],
+          ...panelNarrowing(config, input.prompt, projectPath, teamMode),
           ...panelPolicyOptions(config, memberBackends),
         });
 
@@ -1156,6 +1170,8 @@ export async function resumeAssentorTask(input: {
   modeHooks?: ModeRunHooks;
   /** `--style` / `--brief`; overrides `output.style`. */
   style?: OutputStyle;
+  /** `--profile`; overrides `run.profile` (TE-06). */
+  profile?: RunProfile;
 }) {
   assertReviewerOrTeam(input);
   if (input.taskId) {
@@ -1197,8 +1213,12 @@ export async function resumeAssentorTask(input: {
       maxMessages: input.maxMessages,
       autonomy: input.autonomy,
       style: input.style,
+      profile: input.profile,
     });
-    const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
+    const profiled = applyRunProfile(loaded);
+    const config = input.team ? withReviewTeam(profiled, input.team) : profiled;
+    const profileLine = profileNote(config);
+    if (profileLine) reporter.note(profileLine);
     // The resumed executor session keeps the style of its first run (its continuation
     // prompts carry no style). `--style` here restyles reviewers and the Lead only.
     reporter.setStyle(config.output.style);
@@ -1314,6 +1334,7 @@ export async function resumeAssentorTask(input: {
             name: teamMode ? "panel:team" : `panel:${reviewStrategy.toLowerCase()}`,
             reviewers: memberReviewers,
             goal: resume.snapshot.contract.goal,
+            ...panelNarrowing(config, resume.snapshot.contract.goal, projectPath, teamMode),
             ...panelPolicyOptions(config, memberBackends),
             acceptanceCriteria:
               resume.snapshot.contract.acceptanceCriteria ?? [],

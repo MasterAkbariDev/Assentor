@@ -141,6 +141,22 @@ describe("mock runner", () => {
   });
 });
 
+describe("profile variants (TE-06)", () => {
+  it("balanced is the baseline; economy sends the review panel task to one reviewer; max pays its verbose fragment", () => {
+    const report = bench(resolveVariant("profile:balanced"), resolveVariant("profile:economy"), resolveVariant("profile:max"));
+    const base = result(report, "baseline");
+    expect(result(report, "profile:balanced")).toMatchObject({ alwaysOnTokens: 0, promptTokens: base.promptTokens, calls: base.calls });
+    // The review fixture is a 3-member panel with no danger area in its diff: economy runs 1 member (2 calls fewer per run).
+    const economy = result(report, "profile:economy");
+    expect(economy).toMatchObject({ alwaysOnTokens: 0, calls: base.calls - 2, successRate: 1 });
+    expect(economy.promptTokens).toBeLessThan(base.promptTokens);
+    expect(economy.netPerSuccess.mean).toBeLessThan(base.netPerSuccess.mean);
+    expect(result(report, "profile:max").alwaysOnTokens).toBeGreaterThan(0);
+    expect(result(report, "profile:max").promptTokens).toBeGreaterThan(base.promptTokens);
+    expect(economy.notes.join()).toMatch(/not modelled: negotiation rounds and Lead model routing/);
+  });
+});
+
 describe("gate thresholds (live)", () => {
   const row = (name: string, net: number, successRate = 1): VariantResult => ({
     name,
@@ -170,7 +186,10 @@ describe("variants", () => {
   it("resolves overlays, with no-ops for features not built yet", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "bench-root-"));
     dirs.push(root);
-    expect(resolveVariant("profile:economy", root)).toMatchObject({ overlay: { profile: "economy" }, alwaysOn: "" });
+    // Profiles go through the real resolver (TE-06): economy leaves style and skills at today's values, so it adds nothing.
+    expect(resolveVariant("profile:economy", root)).toMatchObject({ overlay: { profile: "economy", style: "normal", skills: ["lean"] }, alwaysOn: "" });
+    expect(resolveVariant("profile:balanced", root).alwaysOn).toBe(resolveVariant("baseline", root).alwaysOn);
+    expect(() => resolveVariant("profile:turbo", root)).toThrow(/Unknown profile/);
     expect(resolveVariant("style:concise", root).notes[0]).toMatch(/not built yet/);
     expect(() => resolveVariant("nonsense", root)).toThrow(/Unknown variant/);
 

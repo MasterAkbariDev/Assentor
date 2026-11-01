@@ -16,7 +16,7 @@ Runner: mock · 5 runs × 5 tasks (bug-fix, add-test, refactor, review, plan)
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | baseline | 0 | 12,254 | 2,254 | 6,353 | 11.0 | 0.0 | 100% | 2,902 (2,898–2,904) | — |
 | style:concise | 92 | 13,266 | 2,254 | 6,905 | 11.0 | 0.0 | 100% | 3,104 (3,100–3,106) | +7% |
-| profile:economy | 0 | 12,254 | 2,254 | 6,353 | 11.0 | 0.0 | 100% | 2,902 (2,898–2,904) | +0% |
+| profile:economy | 0 | 9,343 | 1,414 | 3,785 | 9.0 | 0.0 | 100% | 2,151 (2,148–2,154) | -25.9% |
 | cache:stable | 0 | 12,254 | 2,254 | 6,353 | 11.0 | 0.0 | 100% | 2,902 (2,898–2,904) | +0% |
 | cache:legacy | 0 | 12,254 | 2,254 | 3,793 | 11.0 | 0.0 | 100% | 2,902 (2,898–2,904) | +0% |
 | context:packed | 0 | 12,254 | 2,254 | 6,353 | 11.0 | 0.0 | 100% | 2,902 (2,898–2,904) | +0% |
@@ -33,7 +33,6 @@ Runner: mock · 5 runs × 5 tasks (bug-fix, add-test, refactor, review, plan)
 | skills:all | 182 | 23,637 | 2,254 | 12,657 | 11.0 | 0.0 | 100% | 5,178 (5,175–5,180) | +78.5% |
 | skills:lean | 0 | 12,254 | 2,254 | 6,353 | 11.0 | 0.0 | 100% | 2,902 (2,898–2,904) | +0% |
 
-- profile:economy: profiles are not built yet (TE-06): no effect in the mock; live runs need the feature
 - cache:stable: TE-05 prompt order (static → shared → per-seat delta), the shipped default: the same as baseline
 - cache:stable: mock panels assume a warm cache (same model, after the first member's call); live runs use the engine's order
 - cache:legacy: pre-TE-05 order: each panel member's specialty before the shared task, so members share only the always-on text
@@ -54,7 +53,7 @@ Runner: mock · 5 runs × 5 tasks (bug-fix, add-test, refactor, review, plan)
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | baseline | 0 | 26,802 | 2,254 | 15,535 | 11.0 | 0.0 | 100% | 5,811 (5,808–5,813) | — |
 | style:concise | 92 | 27,814 | 2,254 | 16,087 | 11.0 | 0.0 | 100% | 6,014 (6,010–6,016) | +3.5% |
-| profile:economy | 0 | 26,802 | 2,254 | 15,535 | 11.0 | 0.0 | 100% | 5,811 (5,808–5,813) | +0% |
+| profile:economy | 0 | 16,253 | 1,414 | 5,331 | 9.0 | 0.0 | 100% | 3,533 (3,530–3,536) | -39.2% |
 | cache:stable | 0 | 26,802 | 2,254 | 15,535 | 11.0 | 0.0 | 100% | 5,811 (5,808–5,813) | +0% |
 | cache:legacy | 0 | 26,802 | 2,254 | 5,339 | 11.0 | 0.0 | 100% | 5,811 (5,808–5,813) | +0% |
 | context:packed | 0 | 26,802 | 2,254 | 15,535 | 11.0 | 0.0 | 100% | 5,811 (5,808–5,813) | +0% |
@@ -71,7 +70,6 @@ Runner: mock · 5 runs × 5 tasks (bug-fix, add-test, refactor, review, plan)
 | skills:all | 182 | 38,184 | 2,254 | 21,841 | 11.0 | 0.0 | 100% | 8,088 (8,084–8,090) | +39.2% |
 | skills:lean | 0 | 26,802 | 2,254 | 15,535 | 11.0 | 0.0 | 100% | 5,811 (5,808–5,813) | +0% |
 
-- profile:economy: profiles are not built yet (TE-06): no effect in the mock; live runs need the feature
 - cache:stable: TE-05 prompt order (static → shared → per-seat delta), the shipped default: the same as baseline
 - cache:stable: mock panels assume a warm cache (same model, after the first member's call); live runs use the engine's order
 - cache:legacy: pre-TE-05 order: each panel member's specialty before the shared task, so members share only the always-on text
@@ -146,3 +144,26 @@ Mock numbers prove prompt-structure effects only. Each `skills:<name>` row above
 - Enabling all eight is the owner's failure mode, reproduced: +78.5% net tokens even though a seat loads at most 3 bodies (`MAX_SKILLS_PER_SEAT`, applied in the benchmark: the first 3 eligible by name). The shipped design keeps them off, and one index line each when enabled.
 - Best live-A/B candidates: `review-signal-only` and `plan-in-bullets` (smallest overhead, narrow roles). When a live run passes the gate, add the skill to `SKILL_PRESETS.lean` in `packages/engine/src/skills/format.ts` (the test in `tests/unit/skills-builtin.test.ts` then checks it against the benchmark) and paste the live output here.
 - Reproduce: `pnpm bench:tokens --runs 5 --variants skills:answer-first,…,skills:all,skills:lean --gate skills:<name>`; live: `pnpm bench:tokens --live --budget 300000 --executor claude-code --variants skills:<name> --gate skills:<name>`.
+
+## TE-06 run profiles (`--profile economy | balanced | max`, mock, 2026-11-01)
+
+`profile:<name>` runs the real resolver (`applyRunProfile` in `packages/engine/src/config/profile.ts`) on the default config: it sends the profile's output style and skills index, and on the review task (a 3-member panel since TE-05) it asks the real narrowing (`reviewNarrowing`: `classifyRisk` on the task text, changed files and diff) whether one member is enough. Reproduce: `pnpm bench:tokens --runs 5 --variants profile:economy,profile:balanced,profile:max`.
+
+| variant | always-on | prompt | calls | net tokens / success | vs baseline |
+|---|---:|---:|---:|---:|---:|
+| baseline | 0 | 12,254 | 11.0 | 2,902 | — |
+| profile:balanced | 0 | 12,254 | 11.0 | 2,902 | +0% |
+| profile:economy | 0 | 9,343 | 9.0 | 2,151 | -25.9% |
+| profile:max | 102 | 13,376 | 11.0 | 3,126 | +7.7% |
+
+Large fixtures: economy 3,533 vs 5,811 (-39.2%). **Read this number with care.** The whole economy saving is the review panel going from 3 members to 1 on the one fixture whose diff touches no danger area (calls 11.0 to 9.0); the other four tasks are one seat and do not move, and the always-on text is unchanged (0 tokens). It assumes one reviewer catches what three would: the mock scripts the replies, so success stays 100% by construction. Whether one reviewer misses findings the panel would catch needs the live A/B on a multi-reviewer team, and it is what the gate's "no success drop" is for. A real run saves only when 2 or more reviewers are configured and the changes touch no danger area; a danger area brings the whole panel back (tested). Not modelled by the bench: negotiation rounds (3 to 2, by construction), Lead model routing, and the economy skill preset `lean` (empty today). `max` costs the verbose fragment (+7.7%); its FULL panel is already the fixture's 3.
+
+What `economy` does NOT switch on (the shipping gate: net tokens per success down 10% or more, no success drop), pending the live A/B:
+
+| saving | mock result | why it is off |
+|---|---|---|
+| `output.style: concise` | +7.8% (original fixtures), +4.7% (large) | its fragment is paid on every call; the mock scripts replies, so shorter output cannot show |
+| `context.budgetTokens` cuts | 0% (original), -8.5% at 2500 and -21.9% at 1000 (large) | the fixtures are small, a seat that loses a line it needs fails; success under cuts is unproven with real models |
+| the eight token-saver skills | +4% to +33% each, +92% together | none passes the gate; `lean` stays empty |
+
+When a live run passes the gate for one of these, add it to the `economy` branch of `applyRunProfile` (and to `PROFILE_CHANGES`, `PENDING_LIVE_AB`) and paste the live output here.

@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { loadAssentorConfig, type AssentorConfig } from "#assentor/engine/config/load.js";
+import { applyRunProfile, profileNote } from "#assentor/engine/config/profile.js";
 import { resolveTeams } from "#assentor/engine/config/teams.js";
 import { createId, isId } from "#assentor/engine/core/ids.js";
 import { EventLog } from "#assentor/engine/events/log.js";
@@ -46,6 +47,7 @@ import {
   buildContract,
   createMembersFromBackends,
   executorEmitsPlainText,
+  panelNarrowing,
   panelPolicyOptions,
   resolveExecutorModel,
   withReviewTeam,
@@ -105,8 +107,12 @@ export async function runModeTask(input: ModeTaskInput) {
       maxMessages: input.maxMessages,
       mode: input.autopilot ? "autopilot" : input.mode,
       autonomy: input.autonomy,
+      profile: input.profile,
     });
-    const config = input.team ? withReviewTeam(loaded, input.team) : loaded;
+    const profiled = applyRunProfile(loaded);
+    const config = input.team ? withReviewTeam(profiled, input.team) : profiled;
+    const profileLine = profileNote(config);
+    if (profileLine) reporter.note(profileLine);
     const autonomy = config.run.autonomy ?? config.run.mode;
     const pricing = await observedPricing(projectPath).catch(() => ({}));
     const estimate = estimateRun(config, { prompt: input.prompt, modeId: mode.id, pricing });
@@ -422,6 +428,7 @@ export function createModeHost(input: HostInput): { deps: StageRunnerDeps; host:
           ...(seatIds ? { memberSeatIds: seatIds } : {}),
           goal: input.goal,
           acceptanceCriteria: input.acceptanceCriteria ?? [],
+          ...panelNarrowing(config, input.goal, projectPath, teamMode),
           ...panelPolicyOptions(config, backends),
           ...((REVIEW_POLICIES as readonly string[]).includes(policy as string) ? { policy: policy as ReviewPolicy } : {}),
           ...tiebreak,

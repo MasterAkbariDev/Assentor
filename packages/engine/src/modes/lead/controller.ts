@@ -28,6 +28,7 @@ import type { JobOutcome } from "../../seats/scheduler.js";
 import { ControllerActionSchema, type ControllerAction } from "../controller.js";
 import { ApprovalDeniedError, type ModeController, type ModeControllerInput, type ModeControllerResult } from "../registry.js";
 import { costRank, type RosterEntry } from "../roster.js";
+import { routeSeatModel } from "../../config/profile.js";
 import { LEAD_AGENT_STRATEGY, LeadConfigSchema, type LeadConfig } from "./config.js";
 import { applyBoardOp } from "./board.js";
 import { withOutputStyle } from "../../output/style.js";
@@ -429,7 +430,8 @@ class LeadController implements ModeController {
         if (task.status === "rejected" && task.reassignCount >= limits.maxReassignPerTask) {
           throw new Refused(`task ${task.id} was reassigned ${task.reassignCount} times (limit ${limits.maxReassignPerTask}); ask the user or split it`);
         }
-        const seat = this.newSeat(action.seat);
+        // Economy (TE-06): planning, tests and docs seats go to the cheapest capable model of their provider.
+        const seat = this.newSeat({ ...action.seat, model: routeSeatModel(this.input.config, this.roster, action.seat) });
         await this.startRun(task, seat, [{ op: "assign", taskId: task.id, seatId: seat.id }]);
         return { accepted: true, reason: `${task.id} started on ${seat.id} (${seat.provider}/${seat.model})` };
       }

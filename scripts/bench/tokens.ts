@@ -23,6 +23,7 @@ import {
   validateSkillFrontMatter,
   type SkillDefinition,
 } from "#assentor/engine/skills/index.js";
+import { applyRunProfile, parseRunProfile, reviewNarrowing } from "#assentor/engine/config/profile.js";
 import { BENCH_TASKS, type BenchTask, type TaskResult } from "./tasks.js";
 
 /**
@@ -96,6 +97,8 @@ export interface Variant {
   summaries?: "model" | "truncate";
   /** Today's Lead with `modes.lead.summarizer` set (its ad-hoc rolling summary). */
   leadSummarizer?: boolean;
+  /** Members of a panel task that review under this variant (default all): the economy profile's one-or-all choice (TE-06). */
+  panelFor?: (task: BenchTask) => number | undefined;
 }
 
 /** Everything a seat of `role` gets in front of its role prompt under `variant`. */
@@ -159,6 +162,30 @@ export function defaultAlwaysOn(root = REPO_ROOT): string {
   return joinParts(styleText(style, root, []), renderSkillsIndex(readSkills(skills, root, [])));
 }
 
+/** The evidence pack a review of `task` would carry: its diff and the files the diff changes. */
+function fixturePack(task: BenchTask): { git: { isRepo: true; changedFiles: string[]; diff: string } } {
+  const diff = task.variables.diff ?? "";
+  const changedFiles = [...diff.matchAll(/^\+\+\+ b\/(.+)$/gm)].map((m) => m[1]!);
+  return { git: { isRepo: true, changedFiles, diff } };
+}
+
+/** A variant with these skills (names or presets) on top of `style`: the index is always on, the bodies load per role. */
+function skillsVariant(name: string, styleName: string, skillNames: string[], root: string, notes: string[]): Variant {
+  const names = expandNames(skillNames, root);
+  const skills = readSkills(names, root, notes);
+  const style = styleText(styleName, root, []);
+  const perRole = (role: string) => {
+    const eligible = eligibleFor(skills, role);
+    // A seat loads at most MAX_SKILLS_PER_SEAT skills / MAX_SKILL_TOKENS_PER_SEAT body tokens (first by name).
+    let tokens = 0;
+    const bodies = eligible.filter((s) => (tokens += s.tokens) <= MAX_SKILL_TOKENS_PER_SEAT).slice(0, MAX_SKILLS_PER_SEAT);
+    return { alwaysOn: joinParts(style, renderSkillsIndex(eligible)), loaded: bodies.map(fenceSkill).join("\n\n") };
+  };
+  // The report's always-on size is the largest index any fixture role sees.
+  const alwaysOn = BENCH_TASKS.map((t) => perRole(t.role).alwaysOn).reduce((a, b) => (b.length > a.length ? b : a), "");
+  return { name, overlay: { skills: names }, alwaysOn, perRole, notes };
+}
+
 /**
  * `baseline`, `style:<name>`, `profile:<name>`, `cache:stable|legacy`, `skills:<a>+<b>` or `context:packed[@<tokens>]`, each on top
  * of the default config. Features that are not built yet resolve to a no-op
@@ -175,8 +202,23 @@ export function resolveVariant(name: string, root = REPO_ROOT): Variant {
     return { name, overlay: { style: value }, alwaysOn: joinParts(styleText(value, root, notes), renderSkillsIndex(readSkills(base.skills, root, []))), notes };
   }
   if (kind === "profile" && value) {
-    notes.push("profiles are not built yet (TE-06): no effect in the mock; live runs need the feature");
-    return { name, overlay: { profile: value }, alwaysOn: defaultAlwaysOn(root), notes };
+    // The real resolver (TE-06): what the profile sets for style and skills is what the variant sends.
+    const effective = applyRunProfile(parseAssentorConfig({}), { profile: parseRunProfile(value) });
+    const skills = effective.skills.enabled;
+    // The review task is a three-member panel: the real narrowing decides, from the task's changed files and diff, whether one member is enough.
+    const narrows = Boolean(reviewNarrowing(effective, ""));
+    notes.push(
+      narrows
+        ? "review panel: one member when classifyRisk finds no danger area in the task's changed files and diff, else all (the real narrowing, on the fixture diff)"
+        : "review panel: unchanged (this profile does not narrow it)",
+      "not modelled: negotiation rounds and Lead model routing (the bench has no negotiation or Lead seats)",
+    );
+    const panelFor = narrows ? (task: BenchTask) => (task.panel && reviewNarrowing(effective, task.variables.goal ?? "")?.({ evidencePack: fixturePack(task) }) ? 1 : undefined) : undefined;
+    return {
+      ...(skills.length ? skillsVariant(name, effective.output.style, skills, root, notes) : { name, alwaysOn: joinParts(styleText(effective.output.style, root, notes), renderSkillsIndex([])), notes }),
+      overlay: { profile: value, style: effective.output.style, skills },
+      ...(panelFor ? { panelFor } : {}),
+    };
   }
   if (kind === "cache" && (value === "stable" || value === "legacy")) {
     notes.push(
@@ -188,19 +230,7 @@ export function resolveVariant(name: string, root = REPO_ROOT): Variant {
     return { name, overlay: {}, alwaysOn: defaultAlwaysOn(root), notes, mock: { promptOrder: value } };
   }
   if (kind === "skills" && value) {
-    const names = expandNames([...base.skills, ...value.split("+")], root);
-    const skills = readSkills(names, root, notes);
-    const style = styleText(base.style, root, []);
-    const perRole = (role: string) => {
-      const eligible = eligibleFor(skills, role);
-      // A seat loads at most MAX_SKILLS_PER_SEAT skills / MAX_SKILL_TOKENS_PER_SEAT body tokens (first by name).
-      let tokens = 0;
-      const bodies = eligible.filter((s) => (tokens += s.tokens) <= MAX_SKILL_TOKENS_PER_SEAT).slice(0, MAX_SKILLS_PER_SEAT);
-      return { alwaysOn: joinParts(style, renderSkillsIndex(eligible)), loaded: bodies.map(fenceSkill).join("\n\n") };
-    };
-    // The report's always-on size is the largest index any fixture role sees.
-    const alwaysOn = BENCH_TASKS.map((t) => perRole(t.role).alwaysOn).reduce((a, b) => (b.length > a.length ? b : a), "");
-    return { name, overlay: { skills: names }, alwaysOn, perRole, notes };
+    return skillsVariant(name, base.style, [...base.skills, ...value.split("+")], root, notes);
   }
   if (kind === "context" && /^(summaries|truncate)(@\d+)?$/.test(value)) {
     const budgetTokens = value.includes("@") ? Number(value.split("@")[1]) : undefined;
@@ -375,7 +405,7 @@ function mockAttempt(library: PromptLibrary, task: BenchTask, variant: Variant, 
   // A seat that was not given what the task needs cannot answer it.
   const blind = !(task.needs ?? []).every((text) => role.includes(text) || prefix.includes(text));
   // A panel task runs once per member, each with its own specialty (the per-seat delta).
-  const deltas = task.panel?.map((specialty) => specialtyAddendum(specialty)) ?? [""];
+  const deltas = (task.panel?.map((specialty) => specialtyAddendum(specialty)) ?? [""]).slice(0, variant.panelFor?.(task));
   const bases = deltas.map((delta) =>
     script.promptOrder === "legacy"
       ? [prefix, delta, role].filter(Boolean).join("\n\n")

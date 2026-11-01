@@ -88,7 +88,7 @@ describe("pre-run estimate line", () => {
     expect(estimate.totalLow).toBe(7_002);
     expect(estimate.totalHigh).toBe(36_006);
     expect(formatRunEstimate(estimate, config, "solo", { excludesExecutor: false })).toBe(
-      "Estimate: 7,002–36,006 tokens, cost not estimated (no pricing) · solo · legacy reviewers · 2 seats · review rounds 1–3 · profile n/a",
+      "Estimate: 7,002–36,006 tokens, cost not estimated (no pricing) · solo · legacy reviewers · 2 seats · review rounds 1–3 · profile balanced",
     );
   });
 
@@ -103,7 +103,7 @@ describe("pre-run estimate line", () => {
     expect(lead.totalHigh).toBe(18_003);
     expect(negotiate.totalHigh).toBeGreaterThan(lead.totalHigh);
     expect(formatRunEstimate(negotiate, config, "mode negotiate", { excludesExecutor: true })).toMatch(
-      /^Estimate: [\d,]+–[\d,]+ tokens, cost not estimated \(no pricing\) · mode negotiate · excludes executor · legacy reviewers · \d+ seats · review rounds 1–3 · profile n\/a$/,
+      /^Estimate: [\d,]+–[\d,]+ tokens, cost not estimated \(no pricing\) · mode negotiate · excludes executor · legacy reviewers · \d+ seats · review rounds 1–3 · profile balanced$/,
     );
   });
 });
@@ -296,7 +296,7 @@ describe("run gate end to end", () => {
     );
     expect(value.result.status).toBe("DONE");
     expect(text).toContain("Estimate: ");
-    expect(text).toContain("profile n/a");
+    expect(text).toContain("profile balanced");
     expect(text).toContain("starting anyway (--yes)");
 
     const report = await readSessionUsage(projectDir, value.result.taskId);

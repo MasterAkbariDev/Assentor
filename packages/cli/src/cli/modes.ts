@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { formatProfiles } from "#assentor/engine/config/profile.js";
 import { listModes, type ModeDefinition } from "#assentor/engine/modes/registry.js";
 
 const HEADER = ["ID", "TITLE", "KIND", "AVAILABLE", "EDITS CODE", "AUTONOMY", "DESCRIPTION"];
@@ -34,9 +35,9 @@ export function formatModesJson(modes: readonly ModeDefinition[] = listModes()):
 export function registerModesCommand(program: Command): void {
   program
     .command("modes")
-    .description("List modes: availability, edits code, default autonomy")
+    .description("List modes: availability, edits code, default autonomy (and what each --profile changes)")
     .option("--json", "Emit the registry as JSON", false)
     .action((options: { json?: boolean }) => {
-      console.log(options.json ? formatModesJson() : formatModesTable());
+      console.log(options.json ? formatModesJson() : `${formatModesTable()}\n\n${formatProfiles()}`);
     });
 }

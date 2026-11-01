@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { formatProfiles } from "../../packages/engine/src/config/profile.js";
 import { formatModesJson, formatModesTable, registerModesCommand } from "../../packages/cli/src/cli/modes.js";
 import { listModes } from "../../packages/engine/src/modes/registry.js";
 
@@ -48,7 +49,7 @@ describe("assentor modes text table", () => {
 
   it("prints the table to stdout with no config loaded, and sets no exit code", async () => {
     const [output] = await runModes([]);
-    expect(output).toBe(formatModesTable());
+    expect(output).toBe(`${formatModesTable()}\n\n${formatProfiles()}`);
     expect(process.exitCode).toBeUndefined();
   });
 });
