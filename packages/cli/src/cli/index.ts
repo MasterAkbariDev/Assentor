@@ -5,6 +5,7 @@ import {
   doctorAssentor,
   initAssentorProject,
   parseModeFlags,
+  resolveStyleFlags,
   resumeAssentorTask,
   runAssentorTask,
   statusAssentorTask,
@@ -192,6 +193,8 @@ program
   )
   .option("--autonomy <level>", "How much runs without asking: manual|supervised|autopilot")
   .option("--autopilot", "Shortcut for --autonomy autopilot (auto next-phase)", false)
+  .option("--style <style>", "Output style: concise|normal|verbose (default: output.style in config)")
+  .option("--brief", "Shortcut for --style concise", false)
   .option("--playbook <id>", "Playbook to run (validates the id only; running playbooks is not wired yet)")
   .action(
     async (
@@ -210,6 +213,8 @@ program
         autonomy?: string;
         autopilot?: boolean;
         playbook?: string;
+        style?: string;
+        brief?: boolean;
       },
     ) => {
       if (options.playbook !== undefined) {
@@ -244,6 +249,7 @@ program
         skipGates: options.skipGates,
         autonomy: flags.autonomy,
         modeId: flags.modeId,
+        style: resolveStyleFlags(options),
       });
 
       console.log(`Task ${result.taskId} finished: ${result.status}`);
@@ -282,6 +288,8 @@ program
   )
   .option("--team <name>", "Review with this configured team (overrides modes.review.team)")
   .option("--autonomy <level>", "How much runs without asking: manual|supervised|autopilot")
+  .option("--style <style>", "Output style: concise|normal|verbose (default: output.style in config)")
+  .option("--brief", "Shortcut for --style concise", false)
   .action(
     async (
       taskId: string | undefined,
@@ -295,6 +303,8 @@ program
         executorModel?: string;
         team?: string;
         autonomy?: string;
+        style?: string;
+        brief?: boolean;
       },
     ) => {
     const { autonomy } = parseModeFlags({ autonomy: options.autonomy });
@@ -309,6 +319,7 @@ program
       executorModel: options.executorModel,
       team: options.team,
       autonomy,
+      style: resolveStyleFlags(options),
     });
       console.log(`Task ${result.taskId} finished: ${result.status}`);
       if (result.status !== "DONE") {

@@ -7,6 +7,7 @@ import {
   type AssentorConfig,
 } from "./schema.js";
 import { defaultTransportForProvider } from "../review/backends.js";
+import type { OutputStyle } from "../output/style.js";
 import {
   AutonomySchema,
   blankToUndefined,
@@ -132,6 +133,8 @@ export async function loadAssentorConfig(
     /** Deprecated: legacy `--mode supervised|autopilot`. `autonomy` wins when both are set. */
     mode: AssentorConfig["run"]["mode"];
     autonomy: Autonomy;
+    /** `--style` / `--brief`: beats `output.style` from the config files. */
+    style: OutputStyle;
   }> = {},
 ): Promise<AssentorConfig> {
   const userRaw = (await readYamlFile(userConfigPath())) as Record<
@@ -172,6 +175,9 @@ export async function loadAssentorConfig(
         transport: defaultTransportForProvider(provider),
       },
     ];
+  }
+  if (overrides.style) {
+    parsed.output.style = overrides.style;
   }
   if (overrides.maxRounds) {
     parsed.limits.maxRounds = overrides.maxRounds;

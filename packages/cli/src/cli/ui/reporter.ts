@@ -12,6 +12,10 @@ import {
   summarizeExecutorStreamOutput,
 } from "#assentor/engine/providers/executors/cursor/stream-status.js";
 import {
+  DEFAULT_OUTPUT_STYLE,
+  type OutputStyle,
+} from "#assentor/engine/output/style.js";
+import {
   emptyLeadBoardView,
   LEAD_COLUMN_LABELS,
   LEAD_COLUMNS,
@@ -74,6 +78,11 @@ export class RunReporter {
   /** Team board folded from lead events. Printed on each lead turn in lead mode. */
   private leadView: LeadBoardView = emptyLeadBoardView();
   private leadMode = false;
+  /**
+   * `normal` is today's output. `concise` keeps one line per stage and the decision,
+   * and drops the detail blocks; `verbose` also lists a single reviewer seat.
+   */
+  private style: OutputStyle = DEFAULT_OUTPUT_STYLE;
 
   constructor(
     private readonly options: {
@@ -82,6 +91,11 @@ export class RunReporter {
       reviewerName: string;
     },
   ) {}
+
+  /** Set once the run's config is loaded (`output.style`, or `--style` / `--brief`). */
+  setStyle(style: OutputStyle): void {
+    this.style = style;
+  }
 
   updateAgentLabels(labels: {
     executorName?: string;
@@ -123,6 +137,7 @@ export class RunReporter {
   }
 
   note(message: string): void {
+    if (this.style === "concise") return;
     this.writeln(`  ${c.dim}${message}${c.reset}`);
   }
 
@@ -145,7 +160,7 @@ export class RunReporter {
       this.leadMode = event.data.mode === "lead";
     }
     this.leadView = reduceLeadEvents(this.leadView, event);
-    if (event.type === "lead.turn" && this.leadMode) {
+    if (event.type === "lead.turn" && this.leadMode && this.style !== "concise") {
       this.printLeadBoard();
     }
   }
@@ -175,7 +190,7 @@ export class RunReporter {
    */
   printReviewSeats(): void {
     const seats = Object.values(this.reviewerSeats);
-    if (seats.length <= 1) {
+    if (this.style === "concise" || (seats.length <= 1 && this.style !== "verbose")) {
       return;
     }
     const ascii = useAsciiIcons(this.isTty);
@@ -260,7 +275,7 @@ export class RunReporter {
           : truncate(String(event.data?.error ?? summary), 80);
       this.finishStatus(ok, ok ? "done" : failLabel);
       const body = preferPlainExecutorText(summary, raw);
-      if (body) {
+      if (body && this.style !== "concise") {
         console.log(`\n  ${c.bold}Executor response${c.reset}`);
         for (const line of wrapMultiline(body, 88)) {
           console.log(`  ${line}`);
@@ -666,6 +681,9 @@ export class RunReporter {
     console.log(
       `\n  ${statusColor}${c.bold}Decision: ${status}${c.reset}${c.dim}${confidence}${c.reset}`,
     );
+    if (this.style === "concise") {
+      return;
+    }
     if (summary) {
       for (const paragraph of wrapText(summary, 88)) {
         console.log(`  ${paragraph}`);

@@ -25,6 +25,7 @@ import { ApprovalDeniedError, type ModeController, type ModeControllerInput, typ
 import { costRank, type RosterEntry } from "../roster.js";
 import { LEAD_AGENT_STRATEGY, LeadConfigSchema, type LeadConfig } from "./config.js";
 import { applyBoardOp } from "./board.js";
+import { withOutputStyle } from "../../output/style.js";
 import { parseAgentReport, repairPrompt, verifyReportClaims } from "./report.js";
 import { AgentReportSchema, TaskBoardSchema, emptyTaskBoard, type AgentReport, type BoardOp, type LeadTask } from "./types.js";
 
@@ -1075,7 +1076,8 @@ class LeadController implements ModeController {
   }
 
   private agentPrompt(task: LeadTask, feedback: string | undefined): string {
-    return [
+    // The style fragment leads, so it sits at the same offset for every agent (TE-02).
+    return withOutputStyle([
       `You are a ${task.role ?? "engineer"} on a team run by a lead. Do only this task, in this working copy.`,
       `Task ${task.id}: ${task.title}`,
       task.description,
@@ -1088,7 +1090,7 @@ class LeadController implements ModeController {
       this.reportInstructions(task),
     ]
       .filter(Boolean)
-      .join("\n\n");
+      .join("\n\n"), this.input.config.output?.style);
   }
 
   // -------------------------------------------------------------------------

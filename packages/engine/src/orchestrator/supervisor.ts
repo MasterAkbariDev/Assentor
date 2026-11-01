@@ -57,6 +57,7 @@ import { ArtifactType } from "../artifacts/types.js";
 import { AUTO_MODEL_ID, isModelId } from "../models/cli-catalog.js";
 import { redactSecrets } from "../security/redact.js";
 import { LoopDetector } from "./loop-detector.js";
+import { withOutputStyle, type OutputStyle } from "../output/style.js";
 import type { SeatEventSink } from "./seat-events.js";
 import {
   applyPhaseProgressToContract,
@@ -150,6 +151,8 @@ export interface SupervisorConfig {
    * PASS while phases remain. Default supervised (opt-in).
    */
   autopilot?: boolean;
+  /** Output style (TE-02) for the executor task prompt. Default `normal`: prompt unchanged. */
+  outputStyle?: OutputStyle;
   /** Retry transient executor/reviewer failures with debounce. Default 3. */
   maxFailureRetries?: number;
   /**
@@ -819,9 +822,12 @@ export class Supervisor {
           taskId,
           projectPath: this.config.projectPath,
           contract: this.contract,
-          prompt: this.autopilot
-            ? buildAutonomousTaskPrompt(this.contract.goal, this.contract)
-            : this.contract.goal,
+          prompt: withOutputStyle(
+            this.autopilot
+              ? buildAutonomousTaskPrompt(this.contract.goal, this.contract)
+              : this.contract.goal,
+            this.config.outputStyle,
+          ),
           messages: queued,
         },
       };
