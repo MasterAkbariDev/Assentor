@@ -11,11 +11,12 @@ export function ConfirmDialog(props: {
   title: string;
   confirmLabel: string;
   busy?: boolean;
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
   children: ReactNode;
 }) {
-  const { title, confirmLabel, busy, onConfirm, onCancel, children } = props;
+  const { title, confirmLabel, busy, confirmDisabled, onConfirm, onCancel, children } = props;
   const titleId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -25,7 +26,9 @@ export function ConfirmDialog(props: {
     cancelRef.current?.focus();
     return () => restoreFocus(opener);
   }, [opener]);
-  useEscapeKey(onCancel);
+  useEscapeKey(() => {
+    if (!busy) onCancel();
+  });
 
   const trapTab = (event: KeyboardEvent) => {
     if (event.key !== "Tab") return;
@@ -56,7 +59,7 @@ export function ConfirmDialog(props: {
           <button ref={cancelRef} type="button" className="help-close" onClick={onCancel} disabled={busy}>
             Cancel
           </button>
-          <button type="button" className="help-close diff-danger" onClick={onConfirm} disabled={busy}>
+          <button type="button" className="help-close diff-danger" onClick={onConfirm} disabled={busy || confirmDisabled}>
             {busy ? "Working…" : confirmLabel}
           </button>
         </div>

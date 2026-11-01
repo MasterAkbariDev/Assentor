@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RpcResult } from "#assentor/protocol/rpc.js";
 import { useEngine } from "../../store/context.js";
 import { selectSeats } from "../../store/selectors.js";
@@ -11,9 +11,18 @@ type Strategy = "merge" | "squash" | "patch";
 const STRATEGIES: Strategy[] = ["squash", "merge", "patch"];
 /** Files named in a confirm dialog; the rest are counted. */
 const LISTED_FILES = 50;
+/** The protocol caps `allowedPaths` at 500 entries. */
+const MAX_ALLOWED_PATHS = 500;
+const STRATEGY_HELP: Record<Strategy, string> = {
+  squash: "squash: all changes become one new commit.",
+  merge: "merge: the worktree's commits are merged in.",
+  patch: "patch: changes are left staged and uncommitted.",
+};
 const WRITE_REASON = "This connection is read-only. Run `assentor serve --allow-write` and turn on write access in the UI to apply or discard.";
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const NO_WORKTREE = "No worktree for this seat.";
+const sameDiff = (a: Diff, b: Diff) => a.head === b.head && a.baseSha === b.baseSha && a.dirty === b.dirty && a.files.length === b.files.length && a.files.every((f, i) => f === b.files[i]);
 
 /** Collapsed section of the session panel: per-seat worktrees, their diff, apply and discard. */
 export function DiffView() {
@@ -37,7 +46,8 @@ function DiffBody() {
   const state = useEngine((s) => s.session?.state);
   const seats = useEngine(selectSeats);
   const [canWrite, setCanWrite] = useState(false);
-  const [live, setLive] = useState<string | undefined>();
+  // undefined = not known yet (treated as blocked), null = not live here.
+  const [live, setLive] = useState<string | null | undefined>();
   const [seatId, setSeatId] = useState<string | undefined>();
   const [diff, setDiff] = useState<Diff | undefined>();
   const [error, setError] = useState<string | undefined>();
@@ -60,9 +70,10 @@ function DiffBody() {
   useEffect(() => {
     if (!sessionId) return;
     let alive = true;
+    setLive(undefined);
     rpc
       .call("session.get", { sessionId })
-      .then((r) => alive && setLive(r.session.live))
+      .then((r) => alive && setLive(r.session.live ?? null))
       .catch(() => alive && setLive(undefined));
     return () => void (alive = false);
   }, [rpc, sessionId, state, connection]);
@@ -79,7 +90,7 @@ function DiffBody() {
         setDiff(await rpc.call("worktree.diff", { sessionId, seatId: id }));
       } catch (e) {
         setDiff(undefined);
-        setError(errText(e));
+        setError(/no worktree/i.test(errText(e)) ? NO_WORKTREE : errText(e));
       } finally {
         setLoading(false);
       }
@@ -87,7 +98,21 @@ function DiffBody() {
     [rpc, sessionId],
   );
 
-  const blocked = !canWrite ? WRITE_REASON : live ? `The session is ${live}; apply and discard wait until it finishes.` : undefined;
+  // The diff a live session had may be stale once it stops: reload it.
+  const wasLive = useRef(false);
+  useEffect(() => {
+    if (wasLive.current && live === null && seatId) void load(seatId);
+    wasLive.current = Boolean(live);
+  }, [live, seatId, load]);
+
+  const blocked = !canWrite
+    ? WRITE_REASON
+    : live === undefined
+      ? "Checking whether the session is still running…"
+      : live
+        ? `The session is ${live}; apply and discard wait until it finishes.`
+        : undefined;
+  const seatName = seats?.[seatId ?? ""]?.displayName ?? seatId ?? "";
   const entries = Object.values(seats ?? {});
 
   return (
@@ -130,8 +155,15 @@ function DiffBody() {
         <ActionDialog
           kind={dialog}
           diff={diff}
+          seatName={seatName}
           onClose={() => setDialog(undefined)}
           run={async ({ strategy, force }) => {
+            // Land only what the dialog showed: re-read the worktree and stop if it moved.
+            const fresh = await rpc.call("worktree.diff", { sessionId, seatId });
+            if (!sameDiff(diff, fresh)) {
+              setDiff(fresh);
+              throw new Error("The worktree changed since you opened this dialog. The file list is updated; review it and confirm again.");
+            }
             if (dialog === "discard") {
               await rpc.call("worktree.discard", { sessionId, seatId, confirm: true, ...(force ? { force } : {}) });
               setDiff(undefined);
@@ -139,7 +171,7 @@ function DiffBody() {
               setNotice("Worktree discarded.");
               return;
             }
-            const r = await rpc.call("worktree.apply", { sessionId, seatId, confirm: true, strategy });
+            const r = await rpc.call("worktree.apply", { sessionId, seatId, confirm: true, strategy, allowedPaths: diff.files });
             if ("conflicts" in r) {
               setNotice(`Apply (${r.strategy}) stopped on conflicts: ${r.conflicts.join(", ")}. ${r.message}`);
             } else {
@@ -156,23 +188,29 @@ function DiffBody() {
 function ActionDialog(props: {
   kind: "apply" | "discard";
   diff: Diff;
+  seatName: string;
   onClose: () => void;
   run: (params: { strategy: Strategy; force: boolean }) => Promise<void>;
 }) {
-  const { kind, diff, onClose, run } = props;
+  const { kind, diff, seatName, onClose, run } = props;
   const [strategy, setStrategy] = useState<Strategy>("squash");
   const [force, setForce] = useState(false);
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
   const [error, setError] = useState<string | undefined>();
   const shown = diff.files.slice(0, LISTED_FILES);
   const apply = kind === "apply";
+  const tooMany = apply && diff.files.length > MAX_ALLOWED_PATHS;
   return (
     <ConfirmDialog
-      title={apply ? "Apply this worktree to main?" : "Discard this worktree?"}
+      title={apply ? `Apply the worktree of ${seatName}?` : `Discard the worktree of ${seatName}?`}
+      confirmDisabled={tooMany}
       confirmLabel={apply ? "Apply" : "Discard"}
       busy={busy}
       onCancel={onClose}
       onConfirm={async () => {
+        if (inFlight.current) return;
+        inFlight.current = true;
         setBusy(true);
         setError(undefined);
         try {
@@ -180,13 +218,17 @@ function ActionDialog(props: {
           onClose();
         } catch (e) {
           setError(errText(e));
+          inFlight.current = false;
           setBusy(false);
         }
       }}
     >
       <p>
-        {apply ? "These changes will be applied to the main branch of the repository." : "The worktree and its branch will be deleted. This cannot be undone."}
+        {apply
+          ? `These changes will be applied to your current branch in the main checkout, limited to the files listed below (${seatName}).`
+          : `The worktree of ${seatName} and its branch will be deleted. This cannot be undone.`}
       </p>
+      {tooMany ? <p className="notice error">Too many files to apply safely ({diff.files.length}, the limit is {MAX_ALLOWED_PATHS}).</p> : null}
       <p className="diff-meta">{diff.files.length} file{diff.files.length === 1 ? "" : "s"}:</p>
       <ul className="diff-dialog-files">
         {shown.map((f) => (
@@ -206,6 +248,11 @@ function ActionDialog(props: {
               </option>
             ))}
           </select>
+          <ul className="diff-meta">
+            {STRATEGIES.map((s) => (
+              <li key={s}>{STRATEGY_HELP[s]}</li>
+            ))}
+          </ul>
         </label>
       ) : (
         <label className="diff-field">
@@ -218,9 +265,8 @@ function ActionDialog(props: {
   );
 }
 
-function DiffViewer({ diff, file, onFile }: { diff: Diff; file: string | undefined; onFile: (f: string | undefined) => void }) {
-  const parsed = parseUnifiedDiff(diff.diff);
-  const byPath = new Map(parsed.map((f) => [f.path, f]));
+const DiffViewer = memo(function DiffViewer({ diff, file, onFile }: { diff: Diff; file: string | undefined; onFile: (f: string | undefined) => void }) {
+  const byPath = useMemo(() => new Map(parseUnifiedDiff(diff.diff).map((f) => [f.path, f])), [diff.diff]);
   const visible = diff.files.filter((f) => !file || f === file);
   return (
     <div className="diff-viewer">
@@ -268,4 +314,4 @@ function DiffViewer({ diff, file, onFile }: { diff: Diff; file: string | undefin
       })}
     </div>
   );
-}
+});

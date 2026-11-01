@@ -18,7 +18,8 @@ const DIFF = [
   "+const x = 1;",
 ].join("\n");
 
-function setup(opts: { write?: boolean; live?: "running"; truncated?: boolean } = {}) {
+type Handlers = NonNullable<Parameters<typeof mockTransport>[0]>["handlers"];
+function setup(opts: { write?: boolean; live?: "running"; truncated?: boolean; handlers?: Handlers } = {}) {
   const transport = mockTransport({
     handlers: {
       "engine.hello": () => ({
@@ -30,6 +31,7 @@ function setup(opts: { write?: boolean; live?: "running"; truncated?: boolean } 
       "worktree.diff": () => ({ baseSha: "abcdef0123", head: "0123abcdef", dirty: false, files: ["src/a.ts", "src/b.ts"], diff: DIFF, truncated: Boolean(opts.truncated) }),
       "worktree.apply": () => ({ ok: true, strategy: "squash", changed: true, commit: "feedface00" }),
       "worktree.discard": () => ({ ok: true }),
+      ...opts.handlers,
     },
   });
   const store = createEngineStore();
@@ -114,5 +116,107 @@ describe("DiffView", () => {
     await openDiff(v);
     expect(v.getByText(/cut at 512 KiB/)).toBeTruthy();
     expect(v.getByText(/No diff text \(cut off\)/)).toBeTruthy();
+  });
+
+  async function openApply(v: ReturnType<typeof setup>) {
+    await openDiff(v);
+    await waitFor(() => expect((v.getByRole("button", { name: "Apply…" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(v.getByRole("button", { name: "Apply…" }));
+    return v.getByRole("dialog");
+  }
+  const applyCalls = (v: ReturnType<typeof setup>) => v.transport.calls.filter((c) => c.method === "worktree.apply");
+
+  it("sends allowedPaths and names the seat and the target", async () => {
+    const v = setup({ write: true });
+    const dialog = await openApply(v);
+    expect(within(dialog).getByText(/current branch in the main checkout/)).toBeTruthy();
+    expect(within(dialog).getByText(/left staged and uncommitted/)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(applyCalls(v)[0]?.params).toMatchObject({ allowedPaths: ["src/a.ts", "src/b.ts"] }));
+  });
+
+  it("refuses a stale diff: no apply call, the dialog shows the new file list", async () => {
+    let n = 0;
+    const v = setup({
+      write: true,
+      handlers: {
+        "worktree.diff": () => ({ baseSha: "abcdef0123", head: ++n > 1 ? "99999999" : "0123abcdef", dirty: false, files: n > 1 ? ["src/a.ts", "src/c.ts"] : ["src/a.ts", "src/b.ts"], diff: DIFF, truncated: false }),
+      },
+    });
+    const dialog = await openApply(v);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Apply" }));
+    expect((await within(dialog).findByRole("alert")).textContent).toMatch(/changed since/);
+    expect(applyCalls(v)).toHaveLength(0);
+    expect(within(dialog).getByText("src/c.ts")).toBeTruthy();
+  });
+
+  it("shows an apply error inside the dialog and keeps it open", async () => {
+    const v = setup({
+      write: true,
+      handlers: {
+        "worktree.apply": () => {
+          throw new Error("boom");
+        },
+      },
+    });
+    const dialog = await openApply(v);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Apply" }));
+    expect((await within(dialog).findByRole("alert")).textContent).toBe("boom");
+    expect(v.getByRole("dialog")).toBe(dialog);
+  });
+
+  it("prevents a double submit and ignores Escape while working", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const v = setup({
+      write: true,
+      handlers: {
+        "worktree.apply": async () => {
+          await gate;
+          return { ok: true, strategy: "squash", changed: true };
+        },
+      },
+    });
+    const dialog = await openApply(v);
+    const confirm = within(dialog).getByRole("button", { name: "Apply" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    await waitFor(() => expect(applyCalls(v)).toHaveLength(1));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(v.getByRole("dialog")).toBeTruthy();
+    release();
+    await waitFor(() => expect(v.queryByRole("dialog")).toBeNull());
+    expect(applyCalls(v)).toHaveLength(1);
+  });
+
+  it("shows conflicts from a failed apply", async () => {
+    const v = setup({
+      write: true,
+      handlers: { "worktree.apply": () => ({ ok: false, strategy: "squash", conflicts: ["src/a.ts"], message: "resolve by hand" }) },
+    });
+    const dialog = await openApply(v);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Apply" }));
+    await v.findByText(/stopped on conflicts: src\/a\.ts\. resolve by hand/);
+  });
+
+  it("blocks writes until session.get answers", async () => {
+    const v = setup({ write: true, handlers: { "session.get": () => new Promise(() => {}) } });
+    await openDiff(v);
+    expect((v.getByRole("button", { name: "Apply…" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(v.getByText(/Checking whether the session/)).toBeTruthy();
+  });
+
+  it("says plainly when a seat has no worktree", async () => {
+    const v = setup({
+      write: true,
+      handlers: {
+        "worktree.diff": () => {
+          throw new Error("Invalid params: no worktree for that session and seat");
+        },
+      },
+    });
+    fireEvent.click(v.getByRole("button", { name: /Diff & worktrees/ }));
+    fireEvent.click((await v.findAllByRole("button", { name: "View diff" }))[0]!);
+    expect((await v.findByRole("alert")).textContent).toBe("No worktree for this seat.");
   });
 });
