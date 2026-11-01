@@ -7,7 +7,7 @@ import { renderWithStore } from "../../test/render.js";
 import { sessionFixture } from "../../test/fixtures.js";
 import { createEngineStore } from "../../store/engineStore.js";
 import { mockTransport } from "../../transport/mock.js";
-import { UsagePage, USAGE_REFRESH_MS } from "./UsagePage.js";
+import { UsagePage } from "./UsagePage.js";
 
 afterEach(() => cleanup());
 
@@ -41,7 +41,7 @@ function setup(report: UsageReport, extra: { warnings?: UsageReport["warnings"] 
 }
 
 /** The value next to a totals label (`<dt>` then `<dd>`). */
-function total(view: ReturnType<typeof setup>, label: string): string | null {
+function total(view: { container: HTMLElement }, label: string): string | null {
   const term = within(view.container.querySelector(".usage-totals") as HTMLElement).getByText(label);
   return term.nextElementSibling?.textContent ?? null;
 }
@@ -84,9 +84,41 @@ describe("UsagePage", () => {
     expect(bar.closest(".usage-budget")!.getAttribute("data-state")).toBe("warn80");
   });
 
+  it("shows a cost under one cent as <$0.01", async () => {
+    const view = setup({ ...REPORT, total: { ...TOTAL, costUsd: 0.004 } });
+    await view.findByRole("table", { name: "By seat" });
+    expect(total(view, "Cost")).toBe("<$0.01");
+  });
+
   it("says no budget has reached 50% when there are no warnings", async () => {
     const view = setup(REPORT);
     await view.findByText("No budget has reached 50%.");
+  });
+
+  it("never has two usage.get calls in flight, and applies every result", async () => {
+    const resolvers: Array<(r: UsageReport) => void> = [];
+    const report = (tokensIn: number): UsageReport => ({ ...REPORT, total: { ...TOTAL, tokensIn }, bySeat: {}, byStage: {}, byModel: {} });
+    const transport = mockTransport({ handlers: { "usage.get": () => new Promise<UsageReport>((resolve) => resolvers.push(resolve)) } });
+    const store = createEngineStore();
+    store.getState().select(SESSION);
+    const view = renderWithStore(<UsagePage />, store, transport);
+    await waitFor(() => expect(resolvers.length).toBe(1));
+
+    // Events keep arriving while the first call is still out: none may start another call.
+    const tokens = (seq: number): EngineEvent =>
+      ({ type: "seat.tokens", sessionId: SESSION, seatId: "executor", seq, at: new Date(0).toISOString(), data: { tokensIn: 100, tokensOut: 10 } }) as never;
+    for (let seq = 1; seq <= 5; seq += 1) act(() => store.getState().applyEvents(SESSION, [tokens(seq)]));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(resolvers.length).toBe(1);
+
+    // The first result is shown, not dropped; one follow-up call covers all the events that came meanwhile.
+    act(() => resolvers[0]!(report(1111)));
+    await waitFor(() => expect(resolvers.length).toBe(2));
+    expect(total(view, "Tokens in")).toBe("1,111");
+    act(() => resolvers[1]!(report(2222)));
+    await waitFor(() => expect(total(view, "Tokens in")).toBe("2,222"));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(resolvers.length).toBe(2);
   });
 
   it("reloads the report when seat.tokens events arrive, once per burst", async () => {
@@ -114,7 +146,7 @@ describe("UsagePage", () => {
       store.getState().applyEvents(SESSION, [tokens(5)]);
     });
     await waitFor(() => expect(loads).toBe(3));
-    await new Promise((resolve) => setTimeout(resolve, USAGE_REFRESH_MS + 100));
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(loads).toBe(3);
   });
 });

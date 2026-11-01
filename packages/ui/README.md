@@ -83,7 +83,7 @@ Import other workspace packages only through `#assentor/…` (aliased to their s
 
 ## Usage
 
-`#/usage` shows the run picked in the sidebar: totals (tokens in and out, cached share, cost, calls, retries), tables by seat, stage and model, and a budget bar for each budget that has passed its 50% warning (the report carries limits only through warnings). It reads `usage.get`, reloading 300 ms after the last `seat.tokens` of the run (`tokenEvents` in the store). Read-only. Not shown yet: estimate vs actual (no field in `UsageReport`) and skills loaded (no `skill.loaded` event in the protocol).
+`#/usage` shows the run picked in the sidebar: totals (tokens in and out, cached share, cost, calls, retries), tables by seat, stage and model, and a budget bar for each budget that has passed its 50% warning (the report carries limits only through warnings). It reads `usage.get`: at most one call is in flight, and `seat.tokens` events that arrive meanwhile (`tokenEvents` in the store) trigger one follow-up call once it settles. Read-only. Not shown yet: estimate vs actual (no field in `UsageReport`) and skills loaded (no `skill.loaded` event in the protocol).
 
 ## Diff & worktrees
 

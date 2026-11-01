@@ -1,15 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { UsageReport, UsageTotals } from "#assentor/protocol/rpc.js";
 import { useEngine } from "../../store/context.js";
 import { useRpc } from "../../transport/context.js";
 import { budgetBars, cachedShare, formatBudget, sortedRows, type BudgetBar, type BudgetState } from "./usageModel.js";
 
-/** Reloads wait this long after the last `seat.tokens`, so a burst of token events costs one `usage.get`. */
-export const USAGE_REFRESH_MS = 300;
-
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 4 });
 const count = new Intl.NumberFormat("en-US");
-const formatUsd = (n: number) => usd.format(n);
+/** Costs too small to show to the cent read "<$0.01" rather than rounding to $0.00. */
+const formatUsd = (n: number) => (n > 0 && n < 0.01 ? "<$0.01" : usd.format(n));
 const formatCount = (n: number) => count.format(n);
 
 const STATE_TEXT: Record<BudgetState, string> = {
@@ -42,26 +40,44 @@ export function UsagePanel({ sessionId }: { sessionId: string }) {
   const seats = useEngine((s) => s.session?.seats);
   const [report, setReport] = useState<UsageReport>();
   const [error, setError] = useState<string>();
+  // At most one `usage.get` in flight. Events that arrive meanwhile set `dirty`, and one more call follows the settled one.
+  const busy = useRef(false);
+  const dirty = useRef(false);
+  const mounted = useRef(false);
 
   useEffect(() => {
-    let current = true;
-    const timer = setTimeout(() => {
-      rpc.call("usage.get", { sessionId }).then(
-        (next) => {
-          if (!current) return;
-          setReport(next);
-          setError(undefined);
-        },
-        (e: unknown) => {
-          if (current) setError(e instanceof Error ? e.message : String(e));
-        },
-      );
-    }, USAGE_REFRESH_MS);
+    mounted.current = true;
     return () => {
-      current = false;
-      clearTimeout(timer);
+      mounted.current = false;
     };
-  }, [rpc, sessionId, tokenEvents, connection]);
+  }, []);
+
+  const load = (): void => {
+    if (busy.current) {
+      dirty.current = true;
+      return;
+    }
+    busy.current = true;
+    dirty.current = false;
+    rpc.call("usage.get", { sessionId }).then(
+      (next) => {
+        // Every result is applied, even when newer events arrived while it was in flight.
+        if (!mounted.current) return;
+        setReport(next);
+        setError(undefined);
+      },
+      (e: unknown) => {
+        if (mounted.current) setError(e instanceof Error ? e.message : String(e));
+      },
+    ).finally(() => {
+      busy.current = false;
+      if (dirty.current) load();
+    });
+  };
+
+  useEffect(() => {
+    load();
+  }, [rpc, sessionId, connection, tokenEvents]);
 
   if (!report) {
     return error ? <p className="notice error">Could not load usage: {error}</p> : <p className="empty">Loading usage…</p>;
