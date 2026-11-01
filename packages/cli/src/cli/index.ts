@@ -5,6 +5,7 @@ import {
   doctorAssentor,
   initAssentorProject,
   parseModeFlags,
+  resolveStyleFlags,
   resumeAssentorTask,
   runAssentorTask,
   statusAssentorTask,
@@ -211,6 +212,11 @@ program
   .option("--retro", "With a non-solo --mode: append the session's lessons to .assentor/memory/lessons.md", false)
   .option("--autonomy <level>", "How much runs without asking: manual|supervised|autopilot")
   .option("--autopilot", "Shortcut for --autonomy autopilot (auto next-phase)", false)
+  .option(
+    "--style <style>",
+    "Output style: concise|normal|verbose (default: output.style). Applies to solo, review and lead prompts; other modes are unstyled for now",
+  )
+  .option("--brief", "Shortcut for --style concise", false)
   .option("--playbook <id>", "Playbook to run (validates the id only; running playbooks is not wired yet)")
   .option("-y, --yes", "Start without asking when the pre-run estimate is over limits.confirmAbove*", false)
   .action(
@@ -232,6 +238,8 @@ program
         playbook?: string;
         retro?: boolean;
         yes?: boolean;
+        style?: string;
+        brief?: boolean;
       },
     ) => {
       if (options.playbook !== undefined) {
@@ -271,6 +279,7 @@ program
         modeId: flags.modeId,
         retro: options.retro,
         yes: options.yes,
+        style: resolveStyleFlags(options),
       });
 
       console.log(`Task ${result.taskId} finished: ${result.status}`);
@@ -310,6 +319,11 @@ program
   )
   .option("--team <name>", "Review with this configured team (overrides modes.review.team)")
   .option("--autonomy <level>", "How much runs without asking: manual|supervised|autopilot")
+  .option(
+    "--style <style>",
+    "Output style: concise|normal|verbose. Reviewers and lead use it; the resumed executor keeps the style of its first run",
+  )
+  .option("--brief", "Shortcut for --style concise", false)
   .action(
     async (
       taskId: string | undefined,
@@ -323,6 +337,8 @@ program
         executorModel?: string;
         team?: string;
         autonomy?: string;
+        style?: string;
+        brief?: boolean;
       },
     ) => {
     const { autonomy } = parseModeFlags({ autonomy: options.autonomy });
@@ -337,6 +353,7 @@ program
       executorModel: options.executorModel,
       team: options.team,
       autonomy,
+      style: resolveStyleFlags(options),
     });
       console.log(`Task ${result.taskId} finished: ${result.status}`);
       if (result.status !== "DONE" && result.status !== "completed") {

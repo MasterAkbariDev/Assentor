@@ -310,7 +310,7 @@ export async function saveGlobalDefaults(
   // user toggled the mode in this session; then only that mode is written.
   const saved = await saveAssentorConfig(services.projectPath, config, {
     scope: "user",
-    preserveFromExisting: ["teams", "modes", options.runChanged ? "run.autonomy" : "run"],
+    preserveFromExisting: ["teams", "modes", "output", options.runChanged ? "run.autonomy" : "run"],
   });
   await services.audit.append(
     "agent.updated",

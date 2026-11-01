@@ -115,9 +115,15 @@ describe("mock runner", () => {
   });
 
   it("a no-op variant passes the mock gate", () => {
+    const report = bench(resolveVariant("style:normal"));
+    expect(gateVariant(report, "style:normal")).toEqual({ pass: true, reasons: [] });
+    expect(renderReport(report)).toContain("| style:normal | 0 |");
+  });
+
+  it("style:concise pays its fragment on every call in the mock: no output saving is modelled", () => {
     const report = bench(resolveVariant("style:concise"));
-    expect(gateVariant(report, "style:concise")).toEqual({ pass: true, reasons: [] });
-    expect(renderReport(report)).toContain("| style:concise | 0 |");
+    expect(renderReport(report)).toMatch(/\| style:concise \| [1-9]\d* \|/);
+    expect(result(report, "style:concise").promptTokens).toBeGreaterThan(result(report, "baseline").promptTokens);
   });
 });
 

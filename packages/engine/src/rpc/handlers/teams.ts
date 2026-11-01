@@ -65,7 +65,7 @@ export function registerTeamMethods(server: RpcServer, options: TeamMethodsOptio
 
   // Sections other than `teams` stay exactly as they are in the file.
   const saveUser = (config: Awaited<ReturnType<typeof userConfig>>) =>
-    saveAssentorConfig(projectPath, config, { scope: "user", preserveFromExisting: ["modes", "run"] });
+    saveAssentorConfig(projectPath, config, { scope: "user", preserveFromExisting: ["modes", "run", "output"] });
 
   async function problemsOf(team: unknown): Promise<string[]> {
     const parsed = TeamSchema.safeParse(team);
