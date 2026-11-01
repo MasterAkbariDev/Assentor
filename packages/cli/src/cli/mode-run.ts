@@ -40,6 +40,7 @@ import { cliUsage, type CliUsage } from "#assentor/engine/usage/cli-usage.js";
 import type { EngineEvent, EngineEventDraft } from "#assentor/protocol/events.js";
 import { extractJsonCandidate } from "#assentor/protocol/parse.js";
 import { estimateRun } from "#assentor/engine/estimate/cost.js";
+import { raceSeatCount } from "#assentor/engine/modes/race.js";
 import { observedPricing } from "#assentor/engine/usage/observed.js";
 import { expandSeatSpecs, SEAT_CLI_PROVIDERS, type Seat, type StageSpec } from "#assentor/protocol/seats.js";
 import {
@@ -119,7 +120,9 @@ export async function runModeTask(input: ModeTaskInput) {
     const autonomy = config.run.autonomy ?? config.run.mode;
     const pricing = await observedPricing(projectPath).catch(() => ({}));
     const estimate = estimateRun(config, { prompt: input.prompt, modeId: mode.id, pricing });
-    reporter.note(formatRunEstimate(estimate, config, `mode ${mode.id}`, { excludesExecutor: true }));
+    // Race counts its candidates (N× one build); other modes leave the executor out.
+    const label = mode.id === "race" ? `mode race (${raceSeatCount(config)}× build)` : `mode ${mode.id}`;
+    reporter.note(formatRunEstimate(estimate, config, label, { excludesExecutor: mode.id !== "race" }));
     // Resume has no --yes and the run was already started: no gate.
     if (!input.resumeSessionId) {
       await confirmRunEstimate({

@@ -61,9 +61,9 @@ describe("NewSessionPage", () => {
       expect(card.reason).toBeTruthy();
       expect(reason?.textContent).toBe(card.reason);
     }
-    // Race is still unavailable; lead is runnable now.
-    expect(modeInput("race").disabled).toBe(true);
-    expect(document.getElementById("mode-race-reason")?.textContent).toBe(UNAVAILABLE_REASON);
+    // Watch is still unavailable; lead is runnable now.
+    expect(modeInput("watch").disabled).toBe(true);
+    expect(document.getElementById("mode-watch-reason")?.textContent).toBe(UNAVAILABLE_REASON);
     expect(modeInput("lead").disabled).toBe(false);
   });
 
