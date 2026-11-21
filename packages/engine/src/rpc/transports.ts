@@ -74,9 +74,10 @@ export function createInProcessTransport(server: RpcServer): {
 export function serveStdio(
   server: RpcServer,
   streams: { input: Readable; output: Writable },
+  options: { resetLine?: string } = {},
 ): Promise<void> {
   const { input, output } = streams;
-  const connection = server.connect(
+  const connect = () => server.connect(
     (frame) =>
       new Promise<void>((resolve, reject) => {
         const ok = output.write(`${frame}\n`, (error) => (error ? reject(error) : undefined));
@@ -89,8 +90,14 @@ export function serveStdio(
     // The peer is the parent process that spawned us (the Tauri shell): writes allowed.
     { allowWrite: true },
   );
+  let connection = connect();
   const lines = createInterface({ input, crlfDelay: Infinity });
   lines.on("line", (line) => {
+    if (line === options.resetLine) {
+      connection.close();
+      connection = connect();
+      return;
+    }
     if (line.trim().length > 0) {
       void connection.receive(line);
     }

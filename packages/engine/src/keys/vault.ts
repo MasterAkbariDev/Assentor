@@ -26,11 +26,24 @@ export interface StoredApiKey {
   failureCount: number;
   cooldownUntil?: string;
   lastCheckMessage?: string;
+  mirrored?: true;
 }
 
 export interface KeyVaultFile {
   version: 1;
   keys: StoredApiKey[];
+}
+
+export interface VaultSecretMirror {
+  get(root: string, id: string): Promise<string | undefined>;
+  set(root: string, id: string, secret: string): Promise<void>;
+  delete(root: string, id: string): Promise<void>;
+}
+
+let nativeMirror: VaultSecretMirror | undefined;
+
+export function installVaultSecretMirror(mirror: VaultSecretMirror): void {
+  nativeMirror = mirror;
 }
 
 export class KeyVault {
@@ -150,6 +163,10 @@ export class KeyVault {
 
   async remove(id: string): Promise<boolean> {
     await this.ensureLoaded();
+    if (this.get(id)?.mirrored) {
+      if (!nativeMirror) throw new Error("Remove the OS keychain copy in Assentor Desktop before deleting this key");
+      await nativeMirror.delete(path.resolve(this.projectPath), id);
+    }
     const before = this.data.keys.length;
     this.data.keys = this.data.keys.filter((k) => k.id !== id);
     if (this.data.keys.length < before) {
@@ -174,13 +191,35 @@ export class KeyVault {
     if (!key) {
       throw new Error(`Key not found: ${id}`);
     }
-    const masterKey = await this.ensureMasterKey();
+    const secret = key.mirrored
+      ? await nativeMirror?.get(path.resolve(this.projectPath), id).catch(() => undefined)
+      : undefined;
     return {
       id: key.id,
       provider: key.provider,
       name: key.name,
-      secret: decryptSecret(masterKey, key.ciphertext),
+      secret: secret ?? decryptSecret(await this.ensureMasterKey(), key.ciphertext),
     };
+  }
+
+  /** Copy or remove OS entries while preserving the CLI-compatible encrypted vault. */
+  async applyNativeMirror(remove: boolean): Promise<number> {
+    await this.ensureLoaded();
+    if (!nativeMirror) throw new Error("The OS keychain is unavailable");
+    const root = path.resolve(this.projectPath);
+    const keys = this.data.keys.filter((key) => remove ? key.mirrored : !key.mirrored);
+    const masterKey = !remove && keys.length ? await this.ensureMasterKey() : undefined;
+    for (const key of keys) {
+      if (remove) {
+        await nativeMirror.delete(root, key.id);
+        delete key.mirrored;
+      } else {
+        await nativeMirror.set(root, key.id, decryptSecret(masterKey!, key.ciphertext));
+        key.mirrored = true;
+      }
+      await this.save();
+    }
+    return keys.length;
   }
 
   /**

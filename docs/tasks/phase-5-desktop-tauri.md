@@ -8,7 +8,11 @@ Phase exit criteria:
 - [ ] Quitting the app (normally, via tray, or force-quit of the window) leaves zero CLI processes.
 - [ ] Auto-update from a beta channel works on all three OSes.
 
-**Go/no-go gate:** T05-01 and T05-03 must pass before T05-04+. If they fail, re-plan with Electron using the same `engine` + `ui` packages.
+**Validation decision (2026-11-21):** The owner approved closely matched
+mock providers for development because signed-in native desktops are
+unavailable. Run the real host, engine, and process tree in CI with a
+stand-in provider executable. Actual provider accounts remain outside this
+test scope.
 
 Windows x64 preview build and GUI smoke results are in the
 [desktop preview README](../../apps/desktop/README.md).

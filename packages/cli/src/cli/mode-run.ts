@@ -312,7 +312,7 @@ interface HostInput {
   /** Negotiation steps ask through it; `prepareModeSession` wraps executors and `host.askSeat` with the same session. */
   skills?: SkillSession;
   emit: (draft: EngineEventDraft) => void;
-  reporter: RunReporter;
+  reporter: Pick<RunReporter, "onExecutorStatus" | "onReviewerStatus" | "onEvent">;
   hooks: ModeRunHooks;
   executorModel?: string;
   skipGates?: boolean;

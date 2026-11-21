@@ -1,3 +1,4 @@
+import { isTauri } from "@tauri-apps/api/core";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.js";
@@ -9,14 +10,20 @@ import { TransportProvider } from "./transport/context.js";
 import { closedTransport } from "./transport/closed.js";
 import { connectWebSocket, engineUrl } from "./transport/websocket.js";
 import { WebSocketTransport } from "./transport/websocketTransport.js";
+import { createTauriTransport } from "./transport/tauriTransport.js";
 import { ToastProvider } from "./shell/Toasts.js";
+import { notifyDesktop, watchDesktop } from "./shell/desktopEvents.js";
 import "./styles.css";
 
 const store = createEngineStore();
 const token = takeToken();
 
 let transport;
-if (token) {
+if (isTauri()) {
+  transport = createTauriTransport();
+  watchDesktop(store);
+  new EngineController({ store, transport, onEvent: notifyDesktop }).start();
+} else if (token) {
   transport = new WebSocketTransport({ connect: () => connectWebSocket(engineUrl(), token) });
   new EngineController({ store, transport }).start();
 } else {

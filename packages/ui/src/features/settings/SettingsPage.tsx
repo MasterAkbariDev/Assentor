@@ -1,10 +1,12 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { isTauri } from "@tauri-apps/api/core";
 import { AUTONOMY_LEVELS } from "#assentor/protocol/events.js";
 import { useEngine } from "../../store/context.js";
 import { useToast } from "../../shell/Toasts.js";
 import { useRpc } from "../../transport/context.js";
 import { disabledReason, useCallableMethods } from "./access.js";
 import { CliCheck, DoctorCheck } from "./Diagnostics.js";
+import { DesktopUpdates } from "./DesktopUpdates.js";
 import {
   ARTIFACT_FIELDS,
   AUTONOMY_LABELS,
@@ -69,6 +71,7 @@ export function SettingsPage() {
   const [loadError, setLoadError] = useState<string>();
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string>();
+  const [keychainBusy, setKeychainBusy] = useState(false);
 
   useEffect(() => {
     if (connection !== "connected") return;
@@ -125,6 +128,22 @@ export function SettingsPage() {
       setSaveError(messageOf(failure));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function keychain(action: "copy" | "remove") {
+    const message = action === "copy"
+      ? "Copy stored Assentor keys to this device’s OS keychain? The encrypted vault remains available for the CLI."
+      : "Remove Assentor’s copies from the OS keychain? The encrypted vault will remain available.";
+    if (!window.confirm(message)) return;
+    setKeychainBusy(true);
+    try {
+      const { count } = await rpc.call("keys.mirror", { action });
+      toast(action === "copy" ? `Copied ${count} keys to the OS keychain.` : `Removed OS copies for ${count} keys.`);
+    } catch {
+      toast("The OS keychain could not complete the request. The encrypted vault is still available.", "error");
+    } finally {
+      setKeychainBusy(false);
     }
   }
 
@@ -273,6 +292,12 @@ export function SettingsPage() {
           Stored keys are listed by provider and name only; a secret is never shown or requested here. The web UI cannot add or
           delete keys yet: use <code>assentor keys add --help</code> and <code>assentor keys delete</code> in a terminal.
         </p>
+        {disabledReason(methods, "keys.mirror") === undefined ? (
+          <div className="settings-actions">
+            <button type="button" disabled={keychainBusy} onClick={() => void keychain("copy")}>Copy keys to OS keychain</button>
+            <button type="button" disabled={keychainBusy} onClick={() => void keychain("remove")}>Remove keychain copies</button>
+          </div>
+        ) : null}
         {keys.length === 0 ? (
           <p className="empty">No keys stored.</p>
         ) : (
@@ -297,6 +322,7 @@ export function SettingsPage() {
         <h2 id="cli-title">CLIs</h2>
         <CliCheck disabledReason={disabledReason(methods, "env.detectClis")} />
       </section>
+      {isTauri() ? <DesktopUpdates /> : null}
     </section>
   );
 }

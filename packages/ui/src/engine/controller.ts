@@ -15,6 +15,7 @@ export interface ControllerOptions {
   /** Delays between `engine.hello` retries on an open link; the last one repeats. Default 1 s, 2 s, 5 s. */
   helloRetryMs?: number[];
   schedule?: (flush: () => void) => unknown;
+  onEvent?: (event: EngineEvent) => void;
 }
 
 export class EngineController {
@@ -133,7 +134,10 @@ export class EngineController {
     const fromSeq = store.getState().session?.lastSeq ?? 0;
     try {
       const sub = await transport.subscribe(sessionId, fromSeq, {
-        onEvent: (event) => this.batcher.push(sessionId, event),
+        onEvent: (event) => {
+          this.batcher.push(sessionId, event);
+          this.options.onEvent?.(event);
+        },
         onResync: (params) => {
           this.batcher.flush();
           if (params.reason === "unreadable_log") {
@@ -155,3 +159,4 @@ export class EngineController {
     }
   }
 }
+import type { EngineEvent } from "#assentor/protocol/events.js";

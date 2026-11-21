@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-main",
+  "description": "Local workspace and engine access for the Assentor main window",
+  "windows": ["main"],
+  "permissions": [
+    "allow-engine-connect",
+    "allow-rpc-call",
+    "allow-current-project",
+    "allow-choose-project",
+    "allow-update-tray",
+    "allow-os-notify",
+    "allow-os-open-external",
+    "allow-desktop-update"
+  ]
+}

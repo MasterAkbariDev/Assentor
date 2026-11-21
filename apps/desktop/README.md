@@ -1,9 +1,8 @@
-# Assentor desktop preview
+# Assentor Desktop
 
-This is the Phase 5 sidecar and GUI discovery spike. The preview performs an
-`engine.hello` handshake over stdin and stdout, then closes the engine. The
-provider CLI check uses Assentor's normal binary discovery without launching a
-provider or changing configuration.
+The desktop app runs the Assentor workspace, sessions, and review UI with a
+bundled engine. It connects over local native IPC. Open a project from the
+header, then create a session or use **Settings → CLIs** to check discovery.
 
 ## Build and run on a native host
 
@@ -13,6 +12,7 @@ architecture. Run from the repository root.
 
 ```sh
 pnpm install --frozen-lockfile
+pnpm build:ui
 node scripts/desktop/build-sidecar.mjs
 cargo build --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
@@ -29,9 +29,18 @@ executable. It stays idle for the test. On macOS and Linux the probe covers
 descendants that remain in the launcher's process group.
 
 Open `apps/desktop/src-tauri/target/debug/assentor-desktop` from the OS file
-manager (`assentor-desktop.exe` on Windows). The window should report the engine
-and protocol versions. Select **Check provider CLIs** to see what the app can
-discover in its GUI-launched environment.
+manager (`assentor-desktop.exe` on Windows). The header shows the active
+project and engine connection. An absolute project path can also be passed
+as the first command-line argument.
+
+The native session test starts the actual desktop host, worker, sidecar, and
+CLI subprocesses. It substitutes a small executable for the Codex provider
+and a mock reviewer, streams a completed session, then force-quits the host
+with a second provider subprocess still running.
+
+```sh
+node scripts/desktop/session-smoke.mjs apps/desktop/src-tauri/target/debug/assentor-desktop
+```
 
 The sidecar builder emits one executable for the OS and architecture running
 it. Run it natively for each target.
@@ -43,10 +52,32 @@ it. Run it natively for each target.
 | Linux | `x86_64-unknown-linux-gnu` | `aarch64-unknown-linux-gnu` |
 
 The macOS builder applies an ad hoc signature after injecting the SEA blob.
-Production signing, notarization, installers, and installer size measurements
-are still pending. The SEA smoke test covers the handshake and the preview
-exercises CLI discovery. The packaged engine still needs the built-in prompts,
-playbooks, and skills resources before it can host real sessions.
+Installers include the built-in prompts, playbooks, and skills. Preview
+packaging validates the handshake and prompt lookup with the packaged files.
+Uninstalling the application leaves the Assentor vault and project files
+available to the CLI.
+
+## Keychain and updates
+
+**Settings → API keys** can copy credentials into the OS keychain. The CLI's
+encrypted vault remains available for older builds and when the OS store
+cannot be reached. Remove the keychain copies before deleting mirrored keys
+from the CLI. The webview receives only metadata and counts.
+
+The tag workflow builds the shared npm package and signed desktop artifacts
+for a draft release. Align the package, Rust, and Tauri versions before pushing
+a `desktop-v<version>` tag. Beta versions use `-beta.<number>`.
+
+- Repository variables supply the public Tauri verification key and the
+  stable and beta HTTPS manifest URLs. Each release produces a
+  `latest.json` manifest. Point the corresponding channel at that asset only
+  after publishing its release.
+- GitHub secrets supply the updater private key and the Windows and macOS
+  signing credentials. Tests use preview bundles and do not need these
+  credentials. Review the draft bundle signatures and hashes before publishing.
+- To roll back a channel, point its manifest at the last trusted release.
+  Clients on a newer version can reinstall that release manually. Publish a
+  higher-version corrective release for automatic rollback.
 
 ## Phase 5 validation
 
@@ -96,12 +127,10 @@ handshake, and waiting for the sidecar to exit. Each is a single sample.
 
 ### Remaining checks
 
-- Verify production-signed installers on all three OSes.
-- Compare discovery from the OS launcher with discovery from a login shell.
-- In a disposable project, check that force-quit leaves no provider child
-  processes after a long-running Claude or Codex invocation. The current
-  preview only starts short-lived sidecar processes. Whole-tree cleanup is
-  still unverified.
+- Verify the production-signed installer and updater flow with release
+  credentials and hosted manifests.
+- Verify notification-click navigation on each native platform. Tray and
+  session deep links already use the session selector.
 - Run three-repetition benchmarks with process CPU and memory in WKWebView
   and WebKitGTK.
 

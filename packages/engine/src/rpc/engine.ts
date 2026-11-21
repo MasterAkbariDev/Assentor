@@ -33,6 +33,7 @@ export interface EngineRpcOptions {
   maxAutonomy?: Autonomy;
   /** A created session not started within this time is dropped. Default 10 min (tests use less). */
   createdTtlMs?: number;
+  signal?: AbortSignal;
 }
 
 /**
@@ -95,6 +96,7 @@ export function createEngineRpcServer(options: EngineRpcOptions): RpcServer {
     ...(options.worktrees ? { worktrees: options.worktrees } : {}),
     ...(options.maxAutonomy ? { maxAutonomy: options.maxAutonomy } : {}),
     ...(options.createdTtlMs ? { createdTtlMs: options.createdTtlMs } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
   });
   return server;
 }

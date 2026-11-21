@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { isTauri } from "@tauri-apps/api/core";
 import { NegotiationView } from "./features/negotiation/NegotiationView.js";
 import { SessionActions } from "./features/controls/SessionActions.js";
 import { LeadBoard } from "./features/lead-board/LeadBoard.js";
@@ -22,6 +23,7 @@ import { selectHasNegotiation, selectHasReview } from "./store/selectors.js";
 import { DEV_PAGES, useRoute } from "./shell/route.js";
 import { SectionNav } from "./shell/Sidebar.js";
 import { useConnectionToasts } from "./shell/Toasts.js";
+import { DesktopProject } from "./shell/DesktopProject.js";
 
 // Dev only: `DEV_PAGES` is false in the production build, so this chunk is never emitted.
 const FixturesPage = DEV_PAGES ? lazy(() => import("./features/dev/FixturesPage.js")) : undefined;
@@ -77,6 +79,7 @@ export function App() {
           {CONNECTION_LABEL[connection]}
           {engineVersion && connection === "connected" ? ` · engine ${engineVersion}` : ""}
         </span>
+        {isTauri() ? <DesktopProject /> : null}
         <button type="button" className="header-keys" onClick={openHelp}>
           Shortcuts
         </button>

@@ -1,0 +1,185 @@
+name: Desktop release
+
+on:
+  push:
+    tags: ["desktop-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.verify.outputs.version }}
+      beta: ${{ steps.verify.outputs.beta }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - id: verify
+        name: Verify the shared version
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const version = JSON.parse(readFileSync('package.json')).version;
+          const config = JSON.parse(readFileSync('apps/desktop/src-tauri/tauri.conf.json'));
+          const rust = readFileSync('apps/desktop/src-tauri/Cargo.toml', 'utf8');
+          if (!/^\d+\.\d+\.\d+(?:-beta\.\d+)?$/.test(version) ||
+              process.env.GITHUB_REF_NAME !== `desktop-v${version}` ||
+              config.version !== version ||
+              !rust.split(/\r?\n/).includes(`version = "${version}"`)) {
+            throw new Error('The release tag, npm package, Tauri config and Rust package must share one version.');
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\nbeta=${version.includes('-beta.')}\n`);
+          JS
+
+  desktop:
+    needs: version
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15-intel, macos-15, windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    env:
+      ASSENTOR_UPDATER_PUBLIC_KEY: ${{ vars.ASSENTOR_UPDATER_PUBLIC_KEY }}
+      ASSENTOR_STABLE_UPDATE_URL: ${{ vars.ASSENTOR_STABLE_UPDATE_URL }}
+      ASSENTOR_BETA_UPDATE_URL: ${{ vars.ASSENTOR_BETA_UPDATE_URL }}
+      APPIMAGE_EXTRACT_AND_RUN: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - if: runner.os == 'Linux'
+        name: Install native packaging prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev libfuse2t64
+
+      - if: runner.os == 'Windows'
+        name: Install the Authenticode certificate for this runner
+        shell: pwsh
+        env:
+          SIGNING_PFX: ${{ secrets.WINDOWS_SIGNING_PFX }}
+          SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          if (!$env:SIGNING_PFX -or !$env:SIGNING_PASSWORD) { throw 'Windows signing credentials are missing.' }
+          $certPath = Join-Path $env:RUNNER_TEMP 'assentor-production-signing.pfx'
+          try {
+            [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:SIGNING_PFX))
+            $password = ConvertTo-SecureString $env:SIGNING_PASSWORD -AsPlainText -Force
+            $cert = Import-PfxCertificate -FilePath $certPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+            "ASSENTOR_CERT_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+          } finally {
+            if (Test-Path -LiteralPath $certPath) { Remove-Item -LiteralPath $certPath }
+          }
+
+      - name: Validate configuration and prepare the release bundle
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          node --input-type=module <<'JS'
+          import { writeFileSync } from 'node:fs';
+          const env = process.env;
+          const required = ['TAURI_SIGNING_PRIVATE_KEY', 'ASSENTOR_UPDATER_PUBLIC_KEY'];
+          if (process.platform === 'darwin') required.push(
+            'APPLE_CERTIFICATE', 'APPLE_CERTIFICATE_PASSWORD', 'APPLE_SIGNING_IDENTITY',
+            'APPLE_ID', 'APPLE_PASSWORD', 'APPLE_TEAM_ID',
+          );
+          if (process.platform === 'win32') required.push('ASSENTOR_CERT_THUMBPRINT');
+          if (required.some(name => !env[name])) throw new Error('A required desktop signing credential is missing.');
+          const endpoints = [env.ASSENTOR_STABLE_UPDATE_URL, env.ASSENTOR_BETA_UPDATE_URL];
+          if (endpoints.some(url => !url || new URL(url).protocol !== 'https:')) {
+            throw new Error('Stable and beta update channels require HTTPS manifest URLs.');
+          }
+          const bundle = { createUpdaterArtifacts: true };
+          if (process.platform === 'win32') bundle.windows = {
+            certificateThumbprint: env.ASSENTOR_CERT_THUMBPRINT,
+            digestAlgorithm: 'sha256',
+            timestampUrl: 'http://timestamp.digicert.com',
+            tsp: true,
+          };
+          writeFileSync('apps/desktop/src-tauri/tauri.release-config.json', JSON.stringify({
+            bundle, plugins: { updater: { pubkey: env.ASSENTOR_UPDATER_PUBLIC_KEY, endpoints: endpoints.slice(0, 1) } },
+          }));
+          JS
+          pnpm install --frozen-lockfile
+          pnpm build:ui
+          node scripts/desktop/build-sidecar.mjs
+
+      - name: Build signed installers and the update manifest
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: npm exec --yes --package=@tauri-apps/cli@2.12.0 -- tauri
+          args: --config src-tauri/tauri.release-config.json
+          tagName: ${{ github.ref_name }}
+          releaseName: Assentor ${{ needs.version.outputs.version }}
+          releaseDraft: true
+          prerelease: ${{ needs.version.outputs.beta }}
+          includeUpdaterJson: true
+
+      - if: runner.os == 'Linux'
+        name: Add Linux package checksums
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          target=$(rustc --print host-tuple)
+          checksum="SHA256SUMS-$target.txt"
+          bundle=$(find apps/desktop/src-tauri/target -type d -name bundle -print -quit)
+          test -n "$bundle"
+          find "$bundle" -type f \( -name '*.deb' -o -name '*.AppImage' \) -print0 |
+            xargs -0 -r sha256sum | sed -E 's|  .*/|  |' > "$checksum"
+          test -s "$checksum"
+          gh release upload "$GITHUB_REF_NAME" "$checksum" --clobber
+
+  npm-package:
+    needs: [version, desktop]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build
+      - name: Attach the matching npm package to the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          npm pack --pack-destination "$RUNNER_TEMP"
+          gh release upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/assentor-$VERSION.tgz" --clobber

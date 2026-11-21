@@ -281,6 +281,11 @@ export const RpcMethods = {
       capabilities: z.array(z.string()),
     }),
   },
+  "keys.mirror": {
+    access: "write",
+    params: z.object({ action: z.enum(["copy", "remove"]) }).strict(),
+    result: z.object({ count: z.number().int().nonnegative() }),
+  },
   "sessions.list": {
     access: "read",
     params: z.object({}).strict().optional(),

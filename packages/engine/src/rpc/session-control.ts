@@ -39,7 +39,13 @@ export interface SessionHost {
    * Skills (TE-07): serve's host should return `skills: await SkillLibrary.load({ projectPath })`
    * here (a library: the session id does not exist yet, `prepareModeSession` makes the session).
    */
-  launch(request: { mode: string; goal: string; autonomy?: Autonomy }): SessionLaunch | Promise<SessionLaunch>;
+  launch(request: {
+    mode: string;
+    goal: string;
+    autonomy?: Autonomy;
+    sessionId: string;
+    emit: (draft: EngineEventDraft) => void;
+  }): SessionLaunch | Promise<SessionLaunch>;
 }
 
 export interface SessionControlOptions {
@@ -53,6 +59,8 @@ export interface SessionControlOptions {
   maxAutonomy?: Autonomy;
   /** A created session that is not started within this time is dropped. Default 10 min. */
   createdTtlMs?: number;
+  /** The native host is closing and will no longer accept requests. */
+  signal?: AbortSignal;
 }
 
 type LiveState = "created" | "running" | "cancelling";
@@ -83,6 +91,13 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
   const { projectPath } = options;
   const manager = options.worktrees ?? new WorktreeManager({ repoPath: projectPath });
   const sessions = new Map<string, Live>();
+  options.signal?.addEventListener("abort", () => {
+    for (const [id, live] of sessions) {
+      clearTimeout(live.expiry);
+      if (live.state === "created") sessions.delete(id);
+      live.abort.abort();
+    }
+  }, { once: true });
 
   const liveOf = (sessionId: string): Live => {
     const live = isId(sessionId) ? sessions.get(sessionId) : undefined;
@@ -164,11 +179,13 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
         if (sessions.size >= MAX_LIVE_SESSIONS) throw rejected("too many live sessions; cancel or finish one first");
       };
       checkCap();
-      const launch = await options.host.launch({ mode, goal, ...(autonomy ? { autonomy } : {}) });
-      checkCap(); // other creates may have finished while the host was working
       const sessionId = createId();
       const abort = new AbortController();
       const live = { abort, state: "created", approvals: new Set(), title: title?.trim() || goal.trim().split("\n")[0]!.slice(0, 80) } as Live;
+      const emit = emitFor(live);
+      const launch = await options.host.launch({ mode, goal, sessionId, emit, ...(autonomy ? { autonomy } : {}) });
+      checkCap(); // other creates may have finished while the host was working
+      if (options.signal?.aborted) throw rejected("the engine is shutting down");
       try {
         live.prepared = prepareModeSession({
           // The lowest of what the host, the client and this server's cap allow: never more autonomy than any of them.
@@ -184,7 +201,7 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
           goal,
           ...(title ? { title } : {}),
           signal: abort.signal,
-          emit: emitFor(live),
+          emit,
         });
       } catch (error) {
         if (error instanceof ModeValidationError) throw invalid(scrubPaths(error.message));
@@ -213,7 +230,7 @@ export function registerSessionControlMethods(server: RpcServer, options: Sessio
         throw error instanceof EventLogLockedError ? rejected("another process owns this session's event log") : asRpcError(error);
       }
       // A cancel or expiry during the open wins: do not run an aborted session.
-      if (live.state !== "created" || sessions.get(sessionId) !== live || live.abort.signal.aborted) {
+      if (live.state !== "created" || sessions.get(sessionId) !== live || live.abort.signal.aborted || options.signal?.aborted) {
         await log.close().catch(() => undefined);
         await runLock.release().catch(() => undefined);
         throw rejected("the session was cancelled before it started");
