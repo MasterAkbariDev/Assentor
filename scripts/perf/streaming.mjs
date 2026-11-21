@@ -24,10 +24,12 @@ if (existsSync(out) && !inRepoBuild && !(statSync(out).isDirectory() && readdirS
 }
 
 if (!values["no-build"]) {
-  const vite = path.join(root, "node_modules", ".bin", "vite");
-  const r = spawnSync(vite, ["build", "--config", path.join(root, "packages/ui/vite.config.ts"), "--outDir", out, "--emptyOutDir"], {
+  const vitePackage = fileURLToPath(import.meta.resolve("vite/package.json"));
+  const vite = path.join(path.dirname(vitePackage), "bin", "vite.js");
+  const r = spawnSync(process.execPath, [vite, "build", "--config", path.join(root, "packages/ui/vite.config.ts"), "--outDir", out, "--emptyOutDir"], {
     cwd: root, stdio: "inherit", env: { ...process.env, VITE_PERF: "1" },
   });
+  if (r.error) throw r.error;
   if (r.status !== 0) process.exit(r.status ?? 1);
   writeFileSync(path.join(out, ".assentor-perf"), "built by scripts/perf/streaming.mjs; safe to rebuild\n");
 }

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Assentor Desktop Preview",
+  "version": "0.3.19",
+  "identifier": "dev.masterakbari.assentor",
+  "build": {
+    "frontendDist": "../spike-ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [{ "label": "main", "title": "Assentor Desktop Preview", "width": 580, "height": 360 }],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "externalBin": ["binaries/assentor-engine"],
+    "icon": ["icons/icon.png", "icons/icon.ico"]
+  }
+}

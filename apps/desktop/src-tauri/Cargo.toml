@@ -1,0 +1,13 @@
+[package]
+name = "assentor-desktop"
+version = "0.3.19"
+edition = "2021"
+publish = false
+
+[build-dependencies]
+tauri-build = "2"
+
+[dependencies]
+serde_json = "1"
+tauri = { version = "2", features = ["custom-protocol"] }
+tokio = { version = "1", features = ["io-util", "process", "time"] }

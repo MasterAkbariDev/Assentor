@@ -10,6 +10,9 @@ Phase exit criteria:
 
 **Go/no-go gate:** T05-01 and T05-03 must pass before T05-04+. If they fail, re-plan with Electron using the same `engine` + `ui` packages.
 
+Windows x64 preview build and GUI smoke results are in the
+[desktop preview README](../../apps/desktop/README.md).
+
 ---
 
 ### T05-01 · Spike: Node SEA engine sidecar on 3 OSes
