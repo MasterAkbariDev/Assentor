@@ -56,11 +56,16 @@ jobs:
         if: runner.os == 'macOS'
         working-directory: apps/desktop/src-tauri/target/debug/bundle
         run: |
-          sidecar=$(find macos -path '*/Contents/MacOS/assentor-engine' -print -quit)
+          package=$(find dmg -name '*.dmg' -print -quit)
+          test -n "$package"
+          mounted=$(mktemp -d "$RUNNER_TEMP/assentor-dmg.XXXXXX")
+          hdiutil attach -readonly -nobrowse -mountpoint "$mounted" "$package"
+          trap 'hdiutil detach "$mounted"' EXIT
+          sidecar=$(find "$mounted" -path '*/Contents/MacOS/assentor-engine' -print -quit)
           test -n "$sidecar"
           codesign --verify --strict "$sidecar"
           "${sidecar%/*}/assentor-desktop" --smoke-test
-          du -h dmg/*.dmg
+          du -h "$package"
 
       - name: Verify the Linux package binaries
         if: runner.os == 'Linux'
