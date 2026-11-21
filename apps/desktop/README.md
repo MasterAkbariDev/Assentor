@@ -22,6 +22,12 @@ To verify the same host-to-engine handshake without opening a window, run
 The desktop spike workflow runs that check with the native sidecar on each
 supported OS and architecture.
 
+Run `node scripts/desktop/lifecycle/run.mjs` to verify that force-quitting the
+probe owner shuts down a launcher and its child on the current OS. To use the
+actual Codex app-server as the child, append the path to the native Codex
+executable. It stays idle for the test. On macOS and Linux the probe covers
+descendants that remain in the launcher's process group.
+
 Open `apps/desktop/src-tauri/target/debug/assentor-desktop` from the OS file
 manager (`assentor-desktop.exe` on Windows). The window should report the engine
 and protocol versions. Select **Check provider CLIs** to see what the app can
@@ -58,6 +64,16 @@ playbooks, and skills resources before it can host real sessions.
 - The [streaming benchmark](../../docs/benchmarks/streaming.md#windows-x64--webview2-157-november-21-2026)
   completed its Windows WebView2 exploratory run. All 21 cases applied all
   events.
+- In the isolated Windows lifecycle probe, force-terminating the Job Object
+  owner stopped both the Node launcher and the real idle Codex app-server.
+  The probe does not yet supervise provider processes launched by the GUI.
+
+### Native build matrix, November 21, 2026
+
+All six Windows, macOS, and Linux targets built their own Node SEA sidecar
+and passed the Rust host-to-engine handshake. The build uses ad hoc signing
+for the macOS sidecar.
+[Native build results](https://github.com/MasterAkbariDev/Assentor/actions/runs/44928307191)
 
 ### Remaining checks
 

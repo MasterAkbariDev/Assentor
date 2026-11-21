@@ -55,3 +55,15 @@ jobs:
 
       - name: Build Tauri and verify the bundled sidecar handshake
         run: cargo run --locked --manifest-path apps/desktop/src-tauri/Cargo.toml -- --smoke-test
+
+      - name: Verify force-quit reaps a native child process tree
+        run: node scripts/desktop/lifecycle/run.mjs
+
+      - name: Verify the integration branch
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          git config --global user.name "Assentor CI"
+          git config --global user.email "ci@assentor.invalid"
+          pnpm typecheck
+          pnpm test --maxWorkers=3
+          pnpm build
