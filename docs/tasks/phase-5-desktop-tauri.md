@@ -49,7 +49,7 @@ and Antigravity. Desktop qualification uses standalone mock Codex and Claude
 executables with the real native host, engine, and process tree. Each mock
 streams a completed session and leaves no live descendants after force-quit.
 The macOS and Linux cases obtain the providers from an isolated login shell.
-[Native validation](https://github.com/MasterAkbariDev/Assentor/actions/runs/44935100427)
+[Native validation](https://github.com/MasterAkbariDev/Assentor/actions/runs/44935625004)
 
 **Deliverables** — on each OS, launch the hello-world app from the GUI (not a terminal): verify which CLIs are found with inherited PATH vs login-shell PATH; spawn `claude -p` and `codex exec` long runs; force-quit the app; verify zero survivors. Document results and the exact strategy for T05-05/T05-06.
 
@@ -144,7 +144,7 @@ The macOS and Linux cases obtain the providers from an isolated login shell.
 ### T05-11 · Installer configs per OS ✅
 **Tier:** 🟡 S · **Review:** O · **Size:** M · **Depends:** T05-04
 
-**Status** — The unsigned preview workflow packages the Windows NSIS installer, macOS disk image, Linux DEB, and AppImage. [Preview packages](https://github.com/MasterAkbariDev/Assentor/actions/runs/44934566622)
+**Status** — The unsigned preview workflow packages the Windows NSIS installer, macOS disk image, Linux DEB, and AppImage. [Preview packages](https://github.com/MasterAkbariDev/Assentor/actions/runs/44935100379)
 
 **Deliverables** — `tauri.conf.json` bundle config: macOS `.dmg` (min 10.15, universal or per-arch per T05-01 findings), Windows NSIS (per-user install, WebView2 `downloadBootstrapper`), Linux AppImage + `.deb` (depends `libwebkit2gtk-4.1-0`, `libayatana-appindicator3-1`); icons for all sizes; file associations none; uninstall leaves `~/.assentor` untouched (document); CI job building unsigned artifacts on all 3 OSes.
 

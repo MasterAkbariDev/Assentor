@@ -89,8 +89,8 @@ The current preview includes the integrated session UI and bundled engine.
 The native fixture exercises Codex and Claude command-line formats with
 stand-in executables and checks that force-quitting leaves no live provider
 descendants. The installer artifacts are unsigned previews.
-[Native validation](https://github.com/MasterAkbariDev/Assentor/actions/runs/44935100427) ·
-[Preview downloads](https://github.com/MasterAkbariDev/Assentor/actions/runs/44934566622) ·
+[Native validation](https://github.com/MasterAkbariDev/Assentor/actions/runs/44935625004) ·
+[Preview downloads](https://github.com/MasterAkbariDev/Assentor/actions/runs/44935100379) ·
 [Native WebView measurements](../../docs/benchmarks/streaming.md)
 
 ### Windows x64, November 21, 2026

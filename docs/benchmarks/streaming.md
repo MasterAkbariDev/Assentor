@@ -85,7 +85,7 @@ resident memory for about four seconds at six seats and 500 events/s per seat.
 Host and WebView processes can share memory pages. Linux process CPU time
 is reported at one-second resolution. Native CI hardware, rendering setup,
 and window dimensions differ from the Windows host.
-[macOS and Linux benchmark logs](https://github.com/MasterAkbariDev/Assentor/actions/runs/44934566820)
+[macOS and Linux benchmark logs](https://github.com/MasterAkbariDev/Assentor/actions/runs/44934566820). A subsequent run also verified the bundled engine's RPC response over native IPC inside each WebView. [Native IPC fixture](https://github.com/MasterAkbariDev/Assentor/actions/runs/44935100399)
 
 | Platform | FPS at 6 × 50 | FPS at 6 × 500 | FPS at 6 × 1,000 | CPU cores at 6 × 500 | Summed memory |
 |---|---:|---:|---:|---:|---:|
