@@ -37,7 +37,7 @@ if (process.argv[2] === "--prepare") {
     }
     console.log(`Native process sample: ${JSON.stringify(await sample)}`);
     console.log(JSON.stringify(sweeps.map(({ name, userAgent, summary }) => ({ name, userAgent, summary }))));
-    console.log("PASS: all 63 native WebView runs delivered every event.");
+    console.log("PASS: all 63 native WebView runs delivered every event and the packaged engine responded over native IPC.");
   } finally {
     clearTimeout(timer);
     for (const file of [result, marker]) {

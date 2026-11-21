@@ -30,7 +30,7 @@ impl GuardedChild {
             .env_remove("NODE_OPTIONS")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(if resolve_login {
+            .stderr(if resolve_login && !cfg!(debug_assertions) {
                 Stdio::null()
             } else {
                 Stdio::inherit()

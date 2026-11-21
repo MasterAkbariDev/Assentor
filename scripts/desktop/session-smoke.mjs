@@ -11,15 +11,18 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const arch = { x64: "x86_64", arm64: "aarch64" }[process.arch];
 const osTriple = { win32: "pc-windows-msvc.exe", linux: "unknown-linux-gnu", darwin: "apple-darwin" }[process.platform];
 if (!arch || !osTriple) throw new Error("Unsupported desktop fixture target.");
+const tool = process.argv[3] ?? "codex";
+if (!["codex", "claude"].includes(tool)) throw new Error("Use the codex or claude fixture.");
 const engine = path.join(root, "apps", "desktop", "src-tauri", "binaries", `assentor-engine-${arch}-${osTriple}`);
 const project = await mkdtemp(path.join(os.tmpdir(), "assentor-desktop-session-"));
 const config = path.join(project, ".assentor");
 const marker = path.join(project, "provider-was-called");
-const provider = path.join(project, "codex-provider.cjs");
-const shim = path.join(project, process.platform === "win32" ? "codex.cmd" : "codex");
+const provider = path.join(project, "fixture-provider.cjs");
+const shim = path.join(project, process.platform === "win32" ? `${tool}.cmd` : tool);
 await writeFile(provider, [
-  'if (process.argv.includes("--version")) { console.log("codex-cli 0.171.0"); process.exit(0); }',
-  'if (!process.argv.includes("exec")) process.exit(2);',
+  'const claude = process.env.ASSENTOR_FIXTURE_TOOL === "claude";',
+  'if (process.argv.includes("--version")) { console.log(claude ? "2.1.0 (Claude Code)" : "codex-cli 0.171.0"); process.exit(0); }',
+  'if (!process.argv.includes(claude ? "-p" : "exec")) process.exit(2);',
   'function finish(prompt) {',
   '  if (prompt.includes("Hold the desktop fixture open")) {',
   '    const child = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 20000)"], { stdio: "ignore", windowsHide: true });',
@@ -28,20 +31,21 @@ await writeFile(provider, [
   '  }',
   '  if (!prompt.includes("Exercise the desktop session fixture")) process.exit(3);',
   '  require("node:fs").writeFileSync(process.env.ASSENTOR_FIXTURE_MARKER, "exec");',
-  '  console.log("The fixture provider completed successfully.");',
+  '  const result = "The fixture provider completed successfully.";',
+  '  console.log(claude ? JSON.stringify({ type: "result", subtype: "success", is_error: false, result, session_id: "fixture-session" }) : result);',
   '}',
   'const last = process.argv.at(-1);',
-  'if (last === "-") {',
+  'if (last === "-" || (claude && process.platform === "win32")) {',
   '  let prompt = ""; process.stdin.setEncoding("utf8").on("data", (chunk) => prompt += chunk);',
   '  process.stdin.once("end", () => finish(prompt));',
   '} else { finish(last); }',
 ].join("\n"));
 await writeFile(shim, process.platform === "win32"
-  ? `@echo off\r\n"${process.execPath}" "%~dp0codex-provider.cjs" %*\r\n`
+  ? `@echo off\r\n"${process.execPath}" "%~dp0fixture-provider.cjs" %*\r\n`
   : '#!/bin/sh\nexec "$ASSENTOR_FIXTURE_NODE" "$ASSENTOR_FIXTURE_PROVIDER" "$@"\n', { mode: 0o755 });
 await mkdir(config);
 await writeFile(path.join(config, "config.yaml"), JSON.stringify({
-  executor: { provider: "codex" },
+  executor: { provider: tool === "claude" ? "claude-code" : "codex" },
   reviewers: [{ provider: "mock" }],
   run: { autonomy: "supervised" },
 }));
@@ -50,7 +54,7 @@ if (git.status !== 0) throw new Error(git.stderr || "Could not initialize the fi
 const env = {
   ...process.env,
   ASSENTOR_USER_DIR: path.join(project, "user", ".assentor"),
-  ASSENTOR_CODEX_BINARY: shim,
+  ASSENTOR_FIXTURE_TOOL: tool,
   ASSENTOR_FIXTURE_MARKER: marker,
   ASSENTOR_FIXTURE_NODE: process.execPath,
   ASSENTOR_FIXTURE_PROVIDER: provider,
@@ -58,6 +62,17 @@ const env = {
 delete env.ASSENTOR_DESKTOP_HOST;
 delete env.NODE_OPTIONS;
 const hostArg = process.argv[2];
+delete env.ASSENTOR_CODEX_BINARY;
+delete env.ASSENTOR_CLAUDE_BINARY;
+if (process.platform === "win32" || !hostArg) {
+  env[tool === "claude" ? "ASSENTOR_CLAUDE_BINARY" : "ASSENTOR_CODEX_BINARY"] = shim;
+} else {
+  const shell = path.join(project, "fixture-shell");
+  await writeFile(shell, '#!/bin/sh\nprintf "mock login banner\\nASSENTOR_PATH=%s\\n" "$ASSENTOR_FIXTURE_BIN"\n', { mode: 0o755 });
+  env.SHELL = shell;
+  env.ASSENTOR_FIXTURE_BIN = project;
+  env.PATH = "/usr/bin:/bin:/usr/sbin:/sbin";
+}
 const host = hostArg ? path.resolve(process.platform === "win32" && !hostArg.endsWith(".exe") ? `${hostArg}.exe` : hostArg) : undefined;
 const child = spawn(host ?? engine, host ? ["--fixture-engine", project, root] : [project, root], {
   cwd: project, env, windowsHide: true, stdio: ["pipe", "pipe", "inherit"],
@@ -128,9 +143,9 @@ try {
   if (!events.some((event) => event.type.startsWith("seat.") || event.stageId)) {
     throw new Error(`No worker stages were streamed: ${events.map((event) => event.type).join(", ")}`);
   }
-  if (await readFile(marker, "utf8") !== "exec") throw new Error("The stand-in Codex executable was not called.");
+  if (await readFile(marker, "utf8") !== "exec") throw new Error(`The stand-in ${tool} executable was not called.`);
   await call("events.unsubscribe", { subscriptionId });
-  console.log(`PASS: ${host ? "native host" : "packaged engine"} ran the stand-in Codex executable and streamed ${events.length} events.`);
+  console.log(`PASS: ${host ? "native host" : "packaged engine"} ran the stand-in ${tool} executable and streamed ${events.length} events.`);
   if (host) {
     child.stdin.write("--assentor-reset-desktop-rpc--\n");
     const hold = await call("session.create", { mode: "solo", goal: "Hold the desktop fixture open", autonomy: "supervised" });
@@ -149,7 +164,7 @@ try {
     forceQuit = true;
     for (let attempt = 0; attempt < 70 && pids.some(running); attempt += 1) await delay(100);
     if (pids.some(running)) throw new Error("A fixture subprocess survived force-quit.");
-    console.log("PASS: force-quitting the native host stopped the stand-in provider and its child.");
+    console.log(`PASS: force-quitting the native host stopped the stand-in ${tool} executable and its child.`);
   }
 } finally {
   child.stdin.end();

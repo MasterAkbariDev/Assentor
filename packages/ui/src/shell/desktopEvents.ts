@@ -14,7 +14,7 @@ export function watchDesktop(store: EngineStore): void {
   let previous = "";
   store.subscribe((state) => {
     const sessions = state.sessions.filter((session) => /^(running|executing|reviewing|waiting|paused|planning)$/i.test(session.status ?? ""))
-      .slice(0, 12).map(({ id, title }) => ({ id, title }));
+      .slice(0, 12).map(({ id, title, status }) => ({ id, title, status: status?.toLowerCase() }));
     const fingerprint = JSON.stringify(sessions);
     if (previous === fingerprint) return;
     previous = fingerprint;

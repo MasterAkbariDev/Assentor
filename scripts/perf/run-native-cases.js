@@ -28,7 +28,40 @@
       location.reload();
     } else {
       sessionStorage.removeItem(key);
-      void window.__TAURI_INTERNALS__.invoke("report_webview_fixture", { report: results });
+      void verifyNativeRpc().then(
+        () => window.__TAURI_INTERNALS__.invoke("report_webview_fixture", { report: results }),
+        (error) => window.__TAURI_INTERNALS__.invoke("report_webview_fixture", { report: { error: String(error) } }),
+      );
     }
   }, 250);
+
+  async function verifyNativeRpc() {
+    const ipc = window.__TAURI_INTERNALS__;
+    const id = 619;
+    let resolve;
+    const response = new Promise((done) => { resolve = done; });
+    const callback = ipc.transformCallback(({ message }) => {
+      if (message?.frame) {
+        const reply = JSON.parse(message.frame);
+        if (reply.id === id) resolve(reply);
+      }
+    });
+    let timer;
+    try {
+      const connection = await ipc.invoke("engine_connect", { channel: `__CHANNEL__:${callback}` });
+      if (connection.writeGranted !== true) throw new Error("Native engine denied desktop write access.");
+      const frame = JSON.stringify({ jsonrpc: "2.0", id, method: "prompt.list", params: {} });
+      await ipc.invoke("rpc_call", { generation: connection.generation, frame });
+      const reply = await Promise.race([
+        response,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Timed out waiting for the native RPC reply.")), 10000);
+        }),
+      ]);
+      if (!reply.result?.prompts?.length) throw new Error("Native RPC did not return the packaged prompts.");
+    } finally {
+      clearTimeout(timer);
+      ipc.unregisterCallback(callback);
+    }
+  }
 })();

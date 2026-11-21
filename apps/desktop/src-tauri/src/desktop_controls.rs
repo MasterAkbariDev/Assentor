@@ -56,18 +56,8 @@ pub async fn update_tray(window: WebviewWindow, sessions: Vec<Value>) -> Result<
         return Ok(());
     };
     let mut menu = MenuBuilder::new(app).text("show", "Open Assentor");
-    for session in sessions.iter().take(12) {
-        let Some(id) = session["id"].as_str().filter(|id| valid_id(id)) else {
-            continue;
-        };
-        let name: String = session["title"]
-            .as_str()
-            .unwrap_or("Session")
-            .chars()
-            .filter(|c| !c.is_control())
-            .take(70)
-            .collect();
-        menu = menu.text(format!("session:{id}"), name.replace('&', "&&"));
+    for (id, label) in session_menu_entries(&sessions) {
+        menu = menu.text(id, label);
     }
     let menu = menu
         .separator()
@@ -75,6 +65,53 @@ pub async fn update_tray(window: WebviewWindow, sessions: Vec<Value>) -> Result<
         .build()
         .map_err(|error| error.to_string())?;
     tray.set_menu(Some(menu)).map_err(|error| error.to_string())
+}
+
+fn session_menu_entries(sessions: &[Value]) -> impl Iterator<Item = (String, String)> + '_ {
+    sessions
+        .iter()
+        .filter_map(|session| {
+            let id = session["id"].as_str().filter(|id| valid_id(id))?;
+            let status = match session["status"].as_str()? {
+                "running" | "executing" | "reviewing" | "planning" => "●",
+                "waiting" | "paused" => "◐",
+                _ => return None,
+            };
+            let name: String = session["title"]
+                .as_str()
+                .unwrap_or("Session")
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(70)
+                .collect();
+            Some((
+                format!("session:{id}"),
+                format!("{status} {}", name.replace('&', "&&")),
+            ))
+        })
+        .take(12)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tray_labels_running_and_waiting_sessions_and_omits_other_entries() {
+        let sessions = serde_json::json!([
+            {"id": "one", "title": "Build & review", "status": "running"},
+            {"id": "two", "title": "Needs approval", "status": "waiting"},
+            {"id": "three", "status": "completed"},
+            {"id": "invalid&session", "status": "running"}
+        ]);
+        assert_eq!(
+            session_menu_entries(sessions.as_array().unwrap()).collect::<Vec<_>>(),
+            vec![
+                ("session:one".into(), "● Build && review".into()),
+                ("session:two".into(), "◐ Needs approval".into()),
+            ],
+        );
+    }
 }
 
 #[tauri::command]

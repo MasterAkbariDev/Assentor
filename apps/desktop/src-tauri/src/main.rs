@@ -344,7 +344,7 @@ async fn fixture_engine() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args_os().skip(2);
     let project = PathBuf::from(args.next().ok_or("missing fixture project")?);
     let resources = PathBuf::from(args.next().ok_or("missing fixture resources")?);
-    let mut guard = process_guard::GuardedChild::start(&project, &resources, false)?;
+    let mut guard = process_guard::GuardedChild::start(&project, &resources, true)?;
     let mut input = guard.child.stdin.take().ok_or("missing fixture input")?;
     let mut output = BufReader::new(guard.child.stdout.take().ok_or("missing fixture output")?);
     input.write_all(&[1]).await?;

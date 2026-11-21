@@ -40,15 +40,20 @@ fn merge(inherited: Option<&std::ffi::OsStr>, output: &str) -> Option<OsString> 
 
 #[cfg(unix)]
 fn login_output() -> Option<String> {
+    use std::{path::Path, time::Duration};
+    let shell = env::var_os("SHELL")?;
+    run_login_shell(Path::new(&shell), Duration::from_secs(3))
+}
+
+#[cfg(unix)]
+fn run_login_shell(shell: &std::path::Path, timeout: std::time::Duration) -> Option<String> {
     use std::{
         io::Read,
         os::unix::process::CommandExt,
-        path::PathBuf,
         process::{Command, Stdio},
         thread,
         time::{Duration, Instant},
     };
-    let shell = PathBuf::from(env::var_os("SHELL")?);
     if !shell.is_absolute() {
         return None;
     }
@@ -68,7 +73,7 @@ fn login_output() -> Option<String> {
             .then(|| String::from_utf8(bytes).ok())
             .flatten()
     });
-    let deadline = Instant::now() + Duration::from_secs(3);
+    let deadline = Instant::now() + timeout;
     // Wait for the pipe to drain first, so a profile leaving a background
     // child with an open pipe cannot make this resolver hang indefinitely.
     while Instant::now() < deadline {
@@ -91,8 +96,45 @@ fn login_output() -> Option<String> {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::merge;
-    use std::ffi::OsStr;
+    use super::{merge, run_login_shell};
+    use std::{
+        env,
+        ffi::OsStr,
+        fs,
+        os::unix::fs::PermissionsExt,
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn fake_login_shells_report_paths_or_fall_back_after_failure() {
+        let directory =
+            env::temp_dir().join(format!("assentor-shell-fixture-{}", std::process::id()));
+        fs::create_dir(&directory).unwrap();
+        let shell = directory.join("shell");
+        let run = |contents: &str, timeout| {
+            fs::write(&shell, contents).unwrap();
+            fs::set_permissions(&shell, fs::Permissions::from_mode(0o700)).unwrap();
+            run_login_shell(&shell, timeout)
+        };
+        let output = run(
+            "#!/bin/sh\nprintf 'profile started\\nASSENTOR_PATH=/opt/homebrew/bin:relative\\n'",
+            Duration::from_secs(1),
+        );
+        let failed = run("#!/bin/sh\nexit 9", Duration::from_secs(1));
+        let started = Instant::now();
+        let timed_out = run(
+            "#!/bin/sh\n/bin/sleep 10 &\nexit 0",
+            Duration::from_millis(120),
+        );
+        let elapsed = started.elapsed();
+        fs::remove_file(shell).unwrap();
+        fs::remove_dir(directory).unwrap();
+
+        assert_eq!(merge(None, &output.unwrap()).unwrap(), "/opt/homebrew/bin");
+        assert!(failed.is_none());
+        assert!(timed_out.is_none());
+        assert!(elapsed < Duration::from_secs(2));
+    }
 
     #[test]
     fn ignores_profile_noise_duplicates_and_relative_paths() {
