@@ -201,17 +201,17 @@ Measure first: TE-01 and TE-10 come first; every saving must pass the TE-10 net-
 | ID | Title | Tier | Review | Size | Depends |
 |---|---|---|---|---|---|
 | T05-01 ✅ | Spike: Node SEA engine sidecar on 3 OSes | 🔴 O | human | M | T04-02 |
-| T05-02 | Spike: streaming perf harness | 🟡 S | O | S | T04-07 |
-| T05-03 | Spike: GUI-launched CLIs, PATH + kill-all | 🔴 O | human | S | — |
-| T05-04 | Rust host: sidecar supervisor + RPC broker | 🔴 O | O2 + human | L | T05-01 |
-| T05-05 | Rust: process guard (Job Object / pgroup) | 🔴 O | O2 + human | M | T05-04 |
-| T05-06 | Rust: login-shell PATH resolver | 🔴 O | O2 | S | T05-03 |
-| T05-07 | Capabilities + CSP lockdown | 🔴 O | O2 + human | S | T05-04 |
-| T05-08 | Keychain bridge | 🔴 O | O2 + human | M | T05-04 |
-| T05-09 | `TauriTransport` in UI | 🟢 H | S | S | T05-04 |
-| T05-10 | Tray, notifications, single-instance, window state | 🟢 H | S | M | T05-04 |
-| T05-11 | Installer configs per OS | 🟡 S | O | M | T05-04 |
-| T05-12 | Updater + signing + release workflow | 🔴 O | O2 + human | L | T05-11 |
+| T05-02 ✅ | Spike: streaming perf harness | 🟡 S | O | S | T04-07 |
+| T05-03 ✅ | Spike: GUI-launched CLIs, PATH + kill-all | 🔴 O | human | S | — |
+| T05-04 ✅ | Rust host: sidecar supervisor + RPC broker | 🔴 O | O2 + human | L | T05-01 |
+| T05-05 ✅ | Rust: process guard (Job Object / pgroup) | 🔴 O | O2 + human | M | T05-04 |
+| T05-06 ✅ | Rust: login-shell PATH resolver | 🔴 O | O2 | S | T05-03 |
+| T05-07 ✅ | Capabilities + CSP lockdown | 🔴 O | O2 + human | S | T05-04 |
+| T05-08 ✅ | Keychain bridge | 🔴 O | O2 + human | M | T05-04 |
+| T05-09 ✅ | `TauriTransport` in UI | 🟢 H | S | S | T05-04 |
+| T05-10 ✅ | Tray, notifications, single-instance, window state | 🟢 H | S | M | T05-04 |
+| T05-11 ✅ | Installer configs per OS | 🟡 S | O | M | T05-04 |
+| T05-12 ✅ | Updater + signing + release workflow | 🔴 O | O2 + human | L | T05-11 |
 
 ### Phase 6 — Backlog · [phase-6-backlog.md](./phase-6-backlog.md)
 Model scoreboard · session export · PR-review GitHub Action · MCP server mode · user-defined CLI recipes · Watch mode · Interactive mode · scoreboard-driven roster tuning.

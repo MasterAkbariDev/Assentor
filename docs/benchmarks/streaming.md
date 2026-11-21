@@ -1,6 +1,6 @@
 # Streaming perf harness (T05-02)
 
-Question: can the real Session board keep up with 6 seats streaming events, and what coalescer interval should the desktop app use? This file holds the method, the numbers measured on the dev Mac, and what the owner still has to run in the three production webviews.
+Question: can the real Session board keep up with 6 seats streaming events, and what coalescer interval should the desktop app use? This report covers the method, the development Chrome baseline, and measurements from the three native WebViews.
 
 ## Method
 
@@ -69,28 +69,43 @@ Measured limit of the un-virtualized board: 48 seats (2,400 ev/s) is clean at 60
 
 ## Recommendation
 
-- **Coalescer interval: 16 ms** (one timer tick, about one frame), which is what the rAF default already does on desktop. It was never worse than rAF in the data above and was the steadier of the two at 6,000 ev/s. Do not lengthen it to save work: 33 to 100 ms were equal or worse at stress rates and add latency. The data is n=3 on one engine; the owner's webview runs decide whether a timer at 16 ms or rAF is better on WKWebView, WebView2 and WebKitGTK. Keep rAF with the existing hidden-tab timer fallback unless a webview shows frame-rate loss.
+- **Coalescer interval: 16 ms** (one timer tick, about one frame), which is what the rAF default already does on desktop. It was never worse than rAF in the data above and was the steadier of the two at 6,000 ev/s. Do not lengthen it to save work: 33 to 100 ms were equal or worse at stress rates and add latency. This Chrome baseline covers three repeats per case. The native WebView results below inform the desktop recommendation.
 - Keep `MAX_PENDING_EVENTS` at 1,000.
 - Do not virtualize the Session board (6 seats is tiny; 48 is fine). Revisit if seat counts above ~50 become real.
 - Treat ~3,000 events/s total (6 x 500) as the comfortable ceiling on this Mac; the webview rows below decide whether it is lower on Windows and Linux.
 
-## Owner must run: WKWebView, WebView2, WebKitGTK
+## Native Tauri WebViews
 
-The Windows native run is recorded below. For the remaining webviews, use a
-dev build of the desktop app or the matching browser engine (Safari,
-Edge, Epiphany/GNOME Web as stand-ins):
+The native Tauri fixture uses the production React Session board and a
+synthetic engine. The Windows measurements are recorded below. On November 21,
+2026, GitHub Actions ran the same 21 cases three times in WKWebView on macOS
+ARM64 and in WebKitGTK on Linux x64 under Xvfb. All 63 runs on each platform
+applied their full event stream. CI also sampled process CPU time and summed
+resident memory for about four seconds at six seats and 500 events/s per seat.
+Host and WebView processes can share memory pages. Linux process CPU time
+is reported at one-second resolution. Native CI hardware, rendering setup,
+and window dimensions differ from the Windows host.
+[macOS and Linux benchmark logs](https://github.com/MasterAkbariDev/Assentor/actions/runs/44934566820)
 
-1. `pnpm perf:streaming` (or `pnpm --filter @assentor/ui dev` and the same hash URL).
-2. Open each URL it prints, with the window visible and in front (a hidden window pauses animation frames and the page warns about it). Close other heavy apps; plug in a laptop.
-3. Run: the rate sweep (`rate=25,50,100,250,500,1000`), the coalescer sweep (`rate=250,1000&coalesce=raf,16,33,50,100`) and the seat sweep, each with `&repeat=3` and `duration=5`. Press **Export JSON** and attach the files here or paste the table under a dated heading per OS.
-4. CPU is not measured in the page. While a `rate=500` case runs, note the webview process CPU in Activity Monitor / Task Manager / `top`, and the memory of the same process.
-5. Long-task and heap columns show `n/a` in WebKit engines (no API); fps, frame percentiles and coalescer columns work everywhere.
+| Platform | FPS at 6 × 50 | FPS at 6 × 500 | FPS at 6 × 1,000 | CPU cores at 6 × 500 | Summed memory |
+|---|---:|---:|---:|---:|---:|
+| macOS WKWebView | 60.0 | 58.6 | 55.7 | ~0.85 | 327 MiB |
+| Linux WebKitGTK under Xvfb | 38.4 | 31.5 | 30.6 | ~2.50 | 713 MiB |
+| Windows WebView2 | 357–360 in rate sweep | 357–360 in rate sweep | 357–360 in rate sweep | ~0.49 | 452 MiB |
 
-| OS / webview | rate ceiling at 60 fps (6 seats) | best interval | CPU at 6 x 500 | notes |
-|---|---|---|---|---|
-| macOS / WKWebView | _owner_ | _owner_ | _owner_ | |
-| Windows / WebView2 | ≥1,000 events/s/seat | rAF | 0.49 logical core | 452 MiB summed working set across six webview processes |
-| Linux / WebKitGTK | _owner_ | _owner_ | _owner_ | |
+FPS describes animation callback cadence. Values in the macOS and Linux
+columns are the median of three five-second runs with rAF coalescing. The
+reported CPU and memory come from a separate 12-second case.
+
+Keep rAF and the existing hidden-window fallback. On macOS, at 1,000
+events/s per seat, the coalescer sweep recorded 58.7 fps and 40 ms median
+maximum batch wait for rAF. At the same rate on Linux, the 100 ms timer
+raised median callback cadence from 30.0 to 43.6 fps and increased maximum
+batch wait from 52 to 108 ms. Linux CI performance warrants profiling on a
+hardware-accelerated desktop before expanding beyond six seats. At 50
+events/s per seat, Linux fell from 36.4 fps at six seats to 21.1 at twelve.
+macOS and Windows showed no consistent drop through twelve seats. Keep the
+current unvirtualized board for normal session sizes.
 
 ### Windows x64 / WebView2 157, November 21, 2026
 

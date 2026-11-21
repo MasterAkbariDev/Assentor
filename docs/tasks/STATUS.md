@@ -6,11 +6,13 @@ _Last updated: 2026-11-21._
 
 ## Phase 5 checkpoint
 
-**80 of 91 cards complete.** Desktop work is on `desktop/phase-5`, based on
-`claude/multi-model-cli-app-9319c3`. T05-01 is complete. T05-02 has Windows
-WebView2 results, and T05-03 has Windows GUI discovery and native lifecycle
-probes. The remaining T05-03 GUI provider checks still gate T05-04 and later
-cards. The [desktop cards](phase-5-desktop-tauri.md) link to measurements and CI.
+**91 of 91 development cards complete under the owner-approved fixture
+scope.** The desktop work is on `desktop/phase-5`. It includes a native
+workspace, the bundled engine, process supervision, local keychain
+integration, preview packaging, and a signed-release workflow. The
+[desktop cards](phase-5-desktop-tauri.md) record the fixtures and separate
+release qualification checks. The release checks require production signing
+credentials, hosted update feeds, and native sessions with signed-in providers.
 
 The sections below preserve the November 1 integration handoff and its
 earlier worktree history.

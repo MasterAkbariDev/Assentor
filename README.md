@@ -1,8 +1,8 @@
 # Assentor
 
-**Assentor** is a local supervisor CLI for AI coding agents.
+**Assentor** is a local workspace and supervisor for AI coding agents.
 
-It does not write your code itself. It **coordinates**:
+It coordinates the agents that implement and review your work:
 
 - an **executor** that edits the project
 - a **reviewer** that decides `PASS` / `NEEDS_WORK` / `BLOCKED` from evidence
@@ -12,7 +12,15 @@ Reviewers must request evidence instead of guessing. Executors work in rounds un
 
 ---
 
-## Install (one line)
+## Desktop preview
+
+The desktop app opens a local project, runs supervised coding sessions, and
+shows each agent's output and approvals. It includes the Assentor engine
+and supports locally installed provider CLIs. See the
+[desktop build instructions](./apps/desktop/README.md) and the
+[unsigned preview installers](https://github.com/MasterAkbariDev/Assentor/actions/workflows/desktop-packaging-spike.yml?query=branch%3Adesktop%2Fphase-5).
+
+## Install the CLI
 
 **macOS / Linux**
 

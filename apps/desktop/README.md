@@ -19,7 +19,7 @@ cargo build --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
 
 To verify the same host-to-engine handshake without opening a window, run
 `cargo run --locked --manifest-path apps/desktop/src-tauri/Cargo.toml -- --smoke-test`.
-The desktop spike workflow runs that check with the native sidecar on each
+The desktop validation workflow runs that check with the native sidecar on each
 supported OS and architecture.
 
 Run `node scripts/desktop/lifecycle/run.mjs` to verify that force-quitting the
@@ -34,12 +34,16 @@ project and engine connection. An absolute project path can also be passed
 as the first command-line argument.
 
 The native session test starts the actual desktop host, worker, sidecar, and
-CLI subprocesses. It substitutes a small executable for the Codex provider
-and a mock reviewer, streams a completed session, then force-quits the host
-with a second provider subprocess still running.
+CLI subprocesses. It uses stand-in executables for Codex and Claude Code and
+a mock reviewer. Each stand-in handles the provider's command-line prompt and
+output format. The test streams a completed session, then force-quits the host
+during a second session and verifies that the provider and its child stop.
+On macOS and Linux, both stand-ins are discovered through the output of an
+isolated login-shell fixture.
 
 ```sh
-node scripts/desktop/session-smoke.mjs apps/desktop/src-tauri/target/debug/assentor-desktop
+node scripts/desktop/session-smoke.mjs apps/desktop/src-tauri/target/debug/assentor-desktop codex
+node scripts/desktop/session-smoke.mjs apps/desktop/src-tauri/target/debug/assentor-desktop claude
 ```
 
 The sidecar builder emits one executable for the OS and architecture running
@@ -81,6 +85,14 @@ a `desktop-v<version>` tag. Beta versions use `-beta.<number>`.
 
 ## Phase 5 validation
 
+The current preview includes the integrated session UI and bundled engine.
+The native fixture exercises Codex and Claude command-line formats with
+stand-in executables and checks that force-quitting leaves no live provider
+descendants. The installer artifacts are unsigned previews.
+[Native validation](https://github.com/MasterAkbariDev/Assentor/actions/runs/44935100427) ·
+[Preview downloads](https://github.com/MasterAkbariDev/Assentor/actions/runs/44934566622) ·
+[Native WebView measurements](../../docs/benchmarks/streaming.md)
+
 ### Windows x64, November 21, 2026
 
 - Node.js 24.16.0 packaged the engine into an 89.5 MiB sidecar. The smoke
@@ -99,7 +111,7 @@ a `desktop-v<version>` tag. Beta versions use `-beta.<number>`.
   applied their full event stream.
 - In the isolated Windows lifecycle probe, force-terminating the Job Object
   owner stopped both the Node launcher and the real idle Codex app-server.
-  The probe does not yet supervise provider processes launched by the GUI.
+  The integrated host and engine use their own Job Object, which is exercised by the provider fixtures above.
 
 ### Native build matrix, November 21, 2026
 
