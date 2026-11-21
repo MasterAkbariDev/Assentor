@@ -15,8 +15,14 @@ Windows x64 preview build and GUI smoke results are in the
 
 ---
 
-### T05-01 · Spike: Node SEA engine sidecar on 3 OSes
+### T05-01 · Spike: Node SEA engine sidecar on 3 OSes ✅
 **Tier:** 🔴 O · **Review:** human · **Size:** M · **Depends:** T04-02
+
+**Status** — Verified native x64 and ARM64 sidecars and Rust-to-engine
+handshakes on all three OSes. The [preview report](../../apps/desktop/README.md)
+records the startup samples, installer sizes, and macOS nested signature check.
+The launch and stdio APIs passed the smoke checks. Built-in resources still
+need to be bundled for real sessions.
 
 **Deliverables** — build script producing `assentor-engine-<target-triple>[.exe]` via Node SEA for: aarch64/x86_64 apple-darwin, x86_64/aarch64 pc-windows-msvc, x86_64/aarch64 unknown-linux-gnu; hello-world Tauri app that spawns it and completes `engine.hello` over stdio; macOS signing of the nested binary; report: installer sizes, cold-start time, any Node APIs that broke under SEA. Bun-compile comparison optional.
 
@@ -25,12 +31,23 @@ Windows x64 preview build and GUI smoke results are in the
 ### T05-02 · Spike: streaming perf harness
 **Tier:** 🟡 S · **Review:** O · **Size:** S · **Depends:** T04-07
 
+**Status** — Windows WebView2 completed all 63 measured runs, with process
+CPU and memory sampled at six seats and 500 events/s/seat. WKWebView and
+WebKitGTK measurements remain open. [Benchmark report](../benchmarks/streaming.md)
+
 **Deliverables** — `fake-engine` mode emitting 6 seats × configurable rate of deltas; measure FPS, CPU, memory in WKWebView, WebView2, WebKitGTK (dev builds) with the real Session board; report + recommended coalescer interval and list virtualization limits per OS.
 
 ---
 
 ### T05-03 · Spike: GUI-launched CLIs, PATH + kill-all
 **Tier:** 🔴 O · **Review:** human · **Size:** S · **Depends:** —
+
+**Status** — The Windows GUI found Codex, Cursor, and Antigravity. The isolated
+Job Object probe stopped a real idle Codex app-server and its launcher.
+The [native lifecycle matrix](https://github.com/MasterAkbariDev/Assentor/actions/runs/44929052109)
+also passed the synthetic process-tree cases on all six targets. Native GUI
+launch, login-shell comparison, and force-quit during real provider runs are
+still required to close the card.
 
 **Deliverables** — on each OS, launch the hello-world app from the GUI (not a terminal): verify which CLIs are found with inherited PATH vs login-shell PATH; spawn `claude -p` and `codex exec` long runs; force-quit the app; verify zero survivors. Document results and the exact strategy for T05-05/T05-06.
 

@@ -2,7 +2,18 @@
 
 **Read this first if you are an AI (or a person) picking up this work.** It is the one authoritative record of where the Assentor multi-model / app build stands, how it is run, and what to do next. Where it disagrees with [../plans/](../plans/) or older notes, this file wins.
 
-_Last updated: 2026-10-27 by the planner session "Multi-model CLI app architecture" (Opus)._
+_Last updated: 2026-11-21._
+
+## Phase 5 checkpoint
+
+**80 of 91 cards complete.** Desktop work is on `desktop/phase-5`, based on
+`claude/multi-model-cli-app-9319c3`. T05-01 is complete. T05-02 has Windows
+WebView2 results, and T05-03 has Windows GUI discovery and native lifecycle
+probes. The remaining T05-03 GUI provider checks still gate T05-04 and later
+cards. The [desktop cards](phase-5-desktop-tauri.md) link to measurements and CI.
+
+The sections below preserve the November 1 integration handoff and its
+earlier worktree history.
 
 ---
 

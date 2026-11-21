@@ -64,8 +64,8 @@ playbooks, and skills resources before it can host real sessions.
   Claude. The Assentor check tested file discovery only. The standalone
   Codex CLI independently reported an active cached ChatGPT sign-in.
 - The [streaming benchmark](../../docs/benchmarks/streaming.md#windows-x64--webview2-157-november-21-2026)
-  completed its Windows WebView2 exploratory run. All 21 cases applied all
-  events.
+  completed across 21 WebView2 cases with three repetitions each. All 63 runs
+  applied their full event stream.
 - In the isolated Windows lifecycle probe, force-terminating the Job Object
   owner stopped both the Node launcher and the real idle Codex app-server.
   The probe does not yet supervise provider processes launched by the GUI.
@@ -77,17 +77,33 @@ and passed the Rust host-to-engine handshake. The build uses ad hoc signing
 for the macOS sidecar.
 [Native build results](https://github.com/MasterAkbariDev/Assentor/actions/runs/44928307191)
 
+The following CI smoke times include starting the sidecar, exchanging the
+handshake, and waiting for the sidecar to exit. Each is a single sample.
+
+| OS | x64 | ARM64 |
+| --- | ---: | ---: |
+| Windows | 191 ms | 2,225 ms |
+| macOS | 529 ms | 123 ms |
+| Linux | 99 ms | 91 ms |
+
+| Preview package | Size | Verified |
+| --- | ---: | --- |
+| Windows x64 NSIS | 24.57 MiB | Installer script includes the sidecar next to the app |
+| macOS ARM64 DMG | 44.18 MiB | The app on the mounted image completed the handshake and its nested sidecar passed strict ad hoc signature verification |
+| Linux x64 DEB | 81.67 MiB | The binaries extracted from the package completed the handshake |
+
+[Native packaging results](https://github.com/MasterAkbariDev/Assentor/actions/runs/44929782193)
+
 ### Remaining checks
 
-- Record macOS and Linux preview package sizes. Verify production-signed
-  installers on all three OSes.
+- Verify production-signed installers on all three OSes.
 - Compare discovery from the OS launcher with discovery from a login shell.
 - In a disposable project, check that force-quit leaves no provider child
   processes after a long-running Claude or Codex invocation. The current
   preview only starts short-lived sidecar processes. Whole-tree cleanup is
   still unverified.
-- Run three-repetition benchmarks with process CPU and memory in WebView2,
-  WKWebView, and WebKitGTK.
+- Run three-repetition benchmarks with process CPU and memory in WKWebView
+  and WebKitGTK.
 
 See the [desktop task cards](../../docs/tasks/phase-5-desktop-tauri.md) for the
 go/no-go criteria.

@@ -76,8 +76,8 @@ Measured limit of the un-virtualized board: 48 seats (2,400 ev/s) is clean at 60
 
 ## Owner must run: WKWebView, WebView2, WebKitGTK
 
-The Windows exploratory run is recorded below. For release validation on each
-OS, use a dev build of the desktop app or the matching browser engine (Safari,
+The Windows native run is recorded below. For the remaining webviews, use a
+dev build of the desktop app or the matching browser engine (Safari,
 Edge, Epiphany/GNOME Web as stand-ins):
 
 1. `pnpm perf:streaming` (or `pnpm --filter @assentor/ui dev` and the same hash URL).
@@ -89,24 +89,27 @@ Edge, Epiphany/GNOME Web as stand-ins):
 | OS / webview | rate ceiling at 60 fps (6 seats) | best interval | CPU at 6 x 500 | notes |
 |---|---|---|---|---|
 | macOS / WKWebView | _owner_ | _owner_ | _owner_ | |
-| Windows / WebView2 | ≥1,000 events/s/seat | rAF in the exploratory run | pending | One repetition per case |
+| Windows / WebView2 | ≥1,000 events/s/seat | rAF | 0.49 logical core | 452 MiB summed working set across six webview processes |
 | Linux / WebKitGTK | _owner_ | _owner_ | _owner_ | |
 
 ### Windows x64 / WebView2 157, November 21, 2026
 
 The native Tauri preview displayed the production benchmark build in a visible
 580 × 360 CSS-pixel webview. Each of the 21 synthetic cases ran for five
-seconds, once. All cases applied their full event stream.
+seconds, three times. All 63 runs applied their full event stream. The table
+reports the medians of the three runs for each case.
 
 | Sweep | Range | Observed rAF cadence | Frame interval p95 |
 |---|---|---:|---:|
-| Rate with six seats and rAF coalescing | 25–1,000 events/s/seat | 355–360 fps | 2.9 ms |
-| Coalescer with six seats | 250 and 1,000 events/s/seat, rAF and 16–100 ms timers | 353–360 fps | 2.9 ms |
-| Seat count at 50 events/s/seat | 6–48 seats | 358–360 fps | 2.9 ms |
-| Seat count at 50 events/s/seat | 96 seats | 286 fps | 5.6 ms |
+| Rate with six seats and rAF coalescing | 25–1,000 events/s/seat | 357–360 fps | 2.9 ms |
+| Coalescer with six seats | 250 and 1,000 events/s/seat, rAF and 16–100 ms timers | 356–360 fps | 2.9 ms |
+| Seat count at 50 events/s/seat | 6–48 seats | 357–360 fps | 2.9 ms |
+| Seat count at 50 events/s/seat | 96 seats | 284 fps | 5.6 ms |
 
-At 1,000 events/s/seat, the longest wait before applying a batch was 9.7 ms
-with rAF and 23–108 ms with the timer settings. At six seats and 500
-events/s/seat, peak JavaScript heap was 18.7 MB. Process CPU, resident memory,
-and three-repetition results are pending. The harness counts animation frame
-callbacks, so the FPS here describes observed callback cadence.
+At 1,000 events/s/seat, the median of the maximum batch waits was 8.3 ms with
+rAF and 21.8–110.4 ms with the timer settings. At six seats and 500 events/s/seat,
+the median peak JavaScript heap was 31.3 MB. In a separate 12-second run at
+that rate, six WebView2 processes used a combined 1.97 CPU seconds over the
+4.03-second sample and had a 452 MiB summed working set, which can count
+shared pages more than once. This was about 2.4% of the 20-logical-core host.
+The harness counts animation frame callbacks, so FPS describes callback cadence.

@@ -200,7 +200,7 @@ Measure first: TE-01 and TE-10 come first; every saving must pass the TE-10 net-
 ### Phase 5 — Desktop (Tauri) · [phase-5-desktop-tauri.md](./phase-5-desktop-tauri.md)
 | ID | Title | Tier | Review | Size | Depends |
 |---|---|---|---|---|---|
-| T05-01 | Spike: Node SEA engine sidecar on 3 OSes | 🔴 O | human | M | T04-02 |
+| T05-01 ✅ | Spike: Node SEA engine sidecar on 3 OSes | 🔴 O | human | M | T04-02 |
 | T05-02 | Spike: streaming perf harness | 🟡 S | O | S | T04-07 |
 | T05-03 | Spike: GUI-launched CLIs, PATH + kill-all | 🔴 O | human | S | — |
 | T05-04 | Rust host: sidecar supervisor + RPC broker | 🔴 O | O2 + human | L | T05-01 |
