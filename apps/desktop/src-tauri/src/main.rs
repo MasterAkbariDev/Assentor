@@ -6,6 +6,7 @@ mod keychain;
 mod login_path;
 mod process_guard;
 mod updates;
+mod webview_fixture;
 
 use broker::Broker;
 use serde_json::{json, Value};
@@ -279,9 +280,11 @@ fn main() {
             let resources = app.path().resource_dir()?.join("engine-resources");
             app.manage(Broker::new(project, resources, log.join("engine.ndjson")));
             app.manage(AtomicU8::new(DESKTOP_RUNNING));
+            app.manage(webview_fixture::WebviewFixture::from_args());
             if let Err(error) = desktop_controls::install_tray(app) {
                 eprintln!("Assentor tray unavailable: {error}");
             }
+            desktop_controls::install_notification_actions(app)?;
             let desktop = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 for url in event.urls() {
@@ -303,7 +306,8 @@ fn main() {
             desktop_controls::update_tray,
             desktop_controls::os_notify,
             desktop_controls::os_open_external,
-            updates::desktop_update
+            updates::desktop_update,
+            webview_fixture::report_webview_fixture
         ])
         .build(tauri::generate_context!())
         .expect("could not start Assentor Desktop");

@@ -1,0 +1,54 @@
+name: Native WebView fixture
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [desktop/phase-5]
+    paths:
+      - ".github/workflows/desktop-webview-fixture.yml"
+      - "scripts/perf/native-webview-fixture.mjs"
+      - "scripts/perf/run-native-cases.js"
+      - "apps/desktop/src-tauri/src/webview_fixture.rs"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: Mock streaming on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - if: runner.os == 'Linux'
+        name: Install GTK and a virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev libdbus-1-dev xvfb dbus-x11
+      - name: Build the native mock-streaming fixture
+        env:
+          VITE_PERF: "1"
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build:ui
+          node scripts/perf/native-webview-fixture.mjs --prepare
+          node scripts/desktop/build-sidecar.mjs
+          cargo build --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - name: Measure the native WebView
+        shell: bash
+        run: |
+          command=(node scripts/perf/native-webview-fixture.mjs apps/desktop/src-tauri/target/debug/assentor-desktop)
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            dbus-run-session -- xvfb-run -a "${command[@]}"
+          else
+            "${command[@]}"
+          fi

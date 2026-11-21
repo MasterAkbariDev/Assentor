@@ -29,5 +29,5 @@ export function notifyDesktop(event: EngineEvent): void {
     "session.failed": "failed",
     "user.question": "waiting",
   } as Record<string, string>)[event.type];
-  if (kind) void invoke("os_notify", { kind }).catch(() => undefined);
+  if (kind) void invoke("os_notify", { kind, sessionId: event.sessionId }).catch(() => undefined);
 }

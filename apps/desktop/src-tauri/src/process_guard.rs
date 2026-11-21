@@ -30,7 +30,11 @@ impl GuardedChild {
             .env_remove("NODE_OPTIONS")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(if resolve_login {
+                Stdio::null()
+            } else {
+                Stdio::inherit()
+            });
         #[cfg(unix)]
         command.process_group(0);
         #[cfg(windows)]
@@ -125,7 +129,12 @@ pub fn run_worker() -> io::Result<()> {
         thread::sleep(Duration::from_secs(4));
         if unsafe { libc::kill(-group, libc::SIGKILL) } != 0 {
             let error = io::Error::last_os_error();
-            if error.raw_os_error() != Some(libc::ESRCH) {
+            // Darwin can report EPERM when only the already-exited group
+            // leader remains. Confirm it exited before accepting that case.
+            let finished = cfg!(target_os = "macos")
+                && error.raw_os_error() == Some(libc::EPERM)
+                && child.try_wait()?.is_some();
+            if error.raw_os_error() != Some(libc::ESRCH) && !finished {
                 return Err(error);
             }
         }

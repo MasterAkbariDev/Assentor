@@ -19,7 +19,9 @@ const store = createEngineStore();
 const token = takeToken();
 
 let transport;
-if (isTauri()) {
+if (import.meta.env.VITE_PERF === "1" && window.location.hash.startsWith("#/dev/fixtures?")) {
+  transport = closedTransport;
+} else if (isTauri()) {
   transport = createTauriTransport();
   watchDesktop(store);
   new EngineController({ store, transport, onEvent: notifyDesktop }).start();

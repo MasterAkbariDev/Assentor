@@ -42,7 +42,7 @@ export interface VaultSecretMirror {
 
 let nativeMirror: VaultSecretMirror | undefined;
 
-export function installVaultSecretMirror(mirror: VaultSecretMirror): void {
+export function installVaultSecretMirror(mirror: VaultSecretMirror | undefined): void {
   nativeMirror = mirror;
 }
 

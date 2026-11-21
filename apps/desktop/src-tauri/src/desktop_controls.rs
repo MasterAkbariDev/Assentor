@@ -78,8 +78,15 @@ pub async fn update_tray(window: WebviewWindow, sessions: Vec<Value>) -> Result<
 }
 
 #[tauri::command]
-pub async fn os_notify(window: WebviewWindow, kind: String) -> Result<(), String> {
+pub async fn os_notify(
+    window: WebviewWindow,
+    kind: String,
+    session_id: String,
+) -> Result<(), String> {
     super::trusted(&window)?;
+    if !valid_id(&session_id) {
+        return Err(String::from("Invalid notification session"));
+    }
     if window.is_focused().unwrap_or(true) {
         return Ok(());
     }
@@ -95,8 +102,23 @@ pub async fn os_notify(window: WebviewWindow, kind: String) -> Result<(), String
         .builder()
         .title("Assentor")
         .body(message)
+        .extra("sessionId", session_id)
         .show()
         .map_err(|error| error.to_string())
+}
+
+pub fn install_notification_actions(app: &App) -> tauri_plugin_notification::Result<()> {
+    let handle = app.handle().clone();
+    app.notification().on_action(move |action| {
+        if action.action_id() != "tap" {
+            return;
+        }
+        let session = action
+            .notification()
+            .and_then(|notification| notification.extra().get("sessionId"))
+            .and_then(Value::as_str);
+        select_session(&handle, session);
+    })
 }
 
 #[tauri::command]

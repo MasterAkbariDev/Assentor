@@ -11,6 +11,7 @@
     "allow-update-tray",
     "allow-os-notify",
     "allow-os-open-external",
-    "allow-desktop-update"
+    "allow-desktop-update",
+    "allow-report-webview-fixture"
   ]
 }

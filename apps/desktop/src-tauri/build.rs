@@ -9,6 +9,7 @@ fn main() {
             "os_notify",
             "os_open_external",
             "desktop_update",
+            "report_webview_fixture",
         ]),
     ))
     .expect("build desktop command capabilities");

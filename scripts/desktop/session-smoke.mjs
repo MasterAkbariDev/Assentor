@@ -20,8 +20,7 @@ const shim = path.join(project, process.platform === "win32" ? "codex.cmd" : "co
 await writeFile(provider, [
   'if (process.argv.includes("--version")) { console.log("codex-cli 0.171.0"); process.exit(0); }',
   'if (!process.argv.includes("exec")) process.exit(2);',
-  'let prompt = ""; process.stdin.setEncoding("utf8").on("data", (chunk) => prompt += chunk);',
-  'process.stdin.once("end", () => {',
+  'function finish(prompt) {',
   '  if (prompt.includes("Hold the desktop fixture open")) {',
   '    const child = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 20000)"], { stdio: "ignore", windowsHide: true });',
   '    child.once("spawn", () => require("node:fs").writeFileSync(process.env.ASSENTOR_FIXTURE_MARKER, JSON.stringify([process.pid, child.pid])));',
@@ -30,7 +29,12 @@ await writeFile(provider, [
   '  if (!prompt.includes("Exercise the desktop session fixture")) process.exit(3);',
   '  require("node:fs").writeFileSync(process.env.ASSENTOR_FIXTURE_MARKER, "exec");',
   '  console.log("The fixture provider completed successfully.");',
-  '});',
+  '}',
+  'const last = process.argv.at(-1);',
+  'if (last === "-") {',
+  '  let prompt = ""; process.stdin.setEncoding("utf8").on("data", (chunk) => prompt += chunk);',
+  '  process.stdin.once("end", () => finish(prompt));',
+  '} else { finish(last); }',
 ].join("\n"));
 await writeFile(shim, process.platform === "win32"
   ? `@echo off\r\n"${process.execPath}" "%~dp0codex-provider.cjs" %*\r\n`
@@ -59,6 +63,7 @@ const child = spawn(host ?? engine, host ? ["--fixture-engine", project, root] :
   cwd: project, env, windowsHide: true, stdio: ["pipe", "pipe", "inherit"],
 });
 const ended = once(child, "exit");
+child.stdin.on("error", () => undefined);
 const lines = createInterface({ input: child.stdout });
 const calls = new Map();
 const events = [];
@@ -117,7 +122,8 @@ try {
     await delay(100);
   }
   if (!events.some((event) => event.type === "session.completed")) {
-    throw new Error(`The fixture did not complete: ${events.map((event) => event.type).join(", ")}`);
+    const failure = events.find((event) => event.type === "session.failed");
+    throw new Error(`The fixture did not complete: ${failure?.data?.reason ?? events.map((event) => event.type).join(", ")}`);
   }
   if (!events.some((event) => event.type.startsWith("seat.") || event.stageId)) {
     throw new Error(`No worker stages were streamed: ${events.map((event) => event.type).join(", ")}`);
