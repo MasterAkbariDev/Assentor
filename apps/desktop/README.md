@@ -56,6 +56,8 @@ playbooks, and skills resources before it can host real sessions.
   run took 845 ms from process launch through handshake and exit.
 - The Tauri debug build opened in WebView2 and showed Assentor 0.3.19,
   RPC protocol 1. The unpackaged desktop executable was 12.0 MiB.
+- Tauri built an unsigned x64 NSIS preview installer at 24.57 MiB. Its
+  installer script includes the sidecar beside the host executable.
 - GUI discovery found Antigravity, Cursor, and the standalone Codex CLI.
   The Codex binary bundled with the ChatGPT desktop app had previously been
   visible only from the test shell. Neither launch environment detected
@@ -77,7 +79,8 @@ for the macOS sidecar.
 
 ### Remaining checks
 
-- Record native startup and installer size for Windows, macOS and Linux.
+- Record macOS and Linux preview package sizes. Verify production-signed
+  installers on all three OSes.
 - Compare discovery from the OS launcher with discovery from a login shell.
 - In a disposable project, check that force-quit leaves no provider child
   processes after a long-running Claude or Codex invocation. The current
