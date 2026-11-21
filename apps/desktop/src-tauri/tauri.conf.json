@@ -13,7 +13,10 @@
       "csp": "default-src 'self'; script-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-src 'none'"
     }
   },
-  "plugins": { "deep-link": { "desktop": { "schemes": ["assentor"] } } },
+  "plugins": {
+    "deep-link": { "desktop": { "schemes": ["assentor"] } },
+    "updater": { "pubkey": "" }
+  },
   "bundle": {
     "active": true,
     "category": "DeveloperTool",

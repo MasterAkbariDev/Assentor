@@ -8,7 +8,7 @@ on:
       - ".github/workflows/desktop-webview-fixture.yml"
       - "scripts/perf/native-webview-fixture.mjs"
       - "scripts/perf/run-native-cases.js"
-      - "apps/desktop/src-tauri/src/webview_fixture.rs"
+      - "apps/desktop/src-tauri/**"
 
 permissions:
   contents: read
