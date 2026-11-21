@@ -6,15 +6,24 @@ on:
     branches: [desktop/phase-5]
     paths:
       - ".github/workflows/desktop-spike.yml"
-      - "apps/desktop/**"
+      - "apps/desktop/src-tauri/**"
+      - "apps/desktop/spike-ui/**"
+      - "packages/cli/**"
       - "packages/engine/**"
       - "packages/protocol/**"
+      - "packages/ui/**"
+      - "packages/ui-shared/**"
       - "scripts/desktop/**"
+      - "tests/**"
       - "package.json"
       - "pnpm-lock.yaml"
 
 permissions:
   contents: read
+
+concurrency:
+  group: desktop-sidecar-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   smoke:

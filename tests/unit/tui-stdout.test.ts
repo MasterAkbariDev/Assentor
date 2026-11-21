@@ -1,10 +1,17 @@
 import React from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render } from "ink";
 import { PassThrough } from "node:stream";
 import type { WriteStream } from "node:tty";
 import { Shell } from "../../packages/cli/src/tui/layout/shell.js";
 import { createInkStdout } from "../../packages/cli/src/tui/stdout.js";
+
+const restoreCi = vi.hoisted(() => {
+  // Ink selects CI mode at import time and otherwise skips interactive redraws.
+  vi.stubEnv("CI", "false");
+  return () => vi.unstubAllEnvs();
+});
+restoreCi();
 
 function createMockStdout(rows = 40): WriteStream {
   const stream = new PassThrough() as unknown as WriteStream & {
